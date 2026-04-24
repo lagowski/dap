@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#
+# Pre-push hook — blokuje bezpośredni push do main / develop.
+# Aktywacja: git config core.hooksPath .githooks
+#
+# Ten hook jest lokalnym safety net. Remote branch protection
+# (GitHub rules) jest właściwym enforcementem.
+
+set -euo pipefail
+
+protected_branches=("main" "develop")
+remote="$1"
+
+# Format stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # remote_ref ma format refs/heads/<branch>
+  branch="${remote_ref#refs/heads/}"
+
+  for protected in "${protected_branches[@]}"; do
+    if [[ "$branch" == "$protected" ]]; then
+      # Sprawdź czy to delete ref (push --delete)
+      zero_sha="0000000000000000000000000000000000000000"
+      if [[ "$local_sha" == "$zero_sha" ]]; then
+        echo "✗ Blokada: usuwanie branch '$protected' jest zabronione."
+        exit 1
+      fi
+
+      echo "✗ Blokada: bezpośredni push do '$protected' jest zabroniony."
+      echo ""
+      echo "  Workflow:"
+      echo "    1. Utwórz branch z develop: git checkout -b issue/<nr>-<slug>"
+      echo "    2. Commituj zmiany na tym branchu"
+      echo "    3. Push branch: git push -u origin issue/<nr>-<slug>"
+      echo "    4. Otwórz PR → $protected przez gh pr create"
+      echo ""
+      echo "  Override (use with caution):"
+      echo "    git push --no-verify $remote $branch"
+      echo ""
+      exit 1
+    fi
+  done
+done
+
+exit 0
