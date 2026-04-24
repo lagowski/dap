@@ -1,0 +1,12 @@
+{
+  "name": "@dap/dashboard",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo 'dashboard scaffolding scheduled for F6 — skipping' && exit 0",
+    "dev": "echo 'dashboard scaffolding scheduled for F6 — skipping' && exit 0",
+    "typecheck": "echo 'dashboard scaffolding scheduled for F6 — skipping' && exit 0",
+    "clean": "rm -rf .next dist .turbo"
+  }
+}
