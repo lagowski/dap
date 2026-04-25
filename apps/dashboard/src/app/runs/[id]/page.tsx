@@ -2,14 +2,22 @@
 
 import { use, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { useRun, usePipeline } from "@/hooks/api";
+import { ArrowLeft, Pause, Play, Square } from "lucide-react";
+import {
+  useAbortRun,
+  usePauseRun,
+  useResumeRun,
+  useRun,
+  usePipeline,
+} from "@/hooks/api";
+import { ApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RunStatusBadge } from "@/components/status-badge";
 import { PipelineGraph } from "@/components/pipeline-graph";
 import { NodeDrawer } from "@/components/node-drawer";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
+import type { Run } from "@/lib/api/types";
 
 export default function RunDetailPage({
   params,
@@ -52,6 +60,9 @@ export default function RunDetailPage({
         </Button>
         <h1 className="text-2xl font-semibold font-mono">{run.id}</h1>
         <RunStatusBadge status={run.final_status} />
+        <div className="ml-auto flex items-center gap-2">
+          <RunActions run={run} />
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-4 text-xs">
@@ -99,5 +110,78 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-muted-foreground">{label}</div>
       <div className="font-medium font-mono">{value}</div>
     </div>
+  );
+}
+
+function formatActionError(error: unknown): string {
+  if (error instanceof ApiError) {
+    // FastAPI error bodies are { detail: "..." } or { detail: [...] for 422 }
+    const detail = (error.detail as { detail?: unknown } | null)?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail) && detail.length > 0) {
+      return detail.map((d) => (d as { msg?: string })?.msg ?? String(d)).join("; ");
+    }
+    return error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function RunActions({ run }: { run: Run }) {
+  const pause = usePauseRun();
+  const resume = useResumeRun();
+  const abort = useAbortRun();
+
+  const status = run.final_status;
+  if (status !== "running" && status !== "paused") {
+    return null;
+  }
+
+  const busy = pause.isPending || resume.isPending || abort.isPending;
+  const lastError = pause.error ?? resume.error ?? abort.error;
+
+  const handleAbort = () => {
+    if (window.confirm("Abort this run? This cannot be undone.")) {
+      abort.mutate(run.id);
+    }
+  };
+
+  return (
+    <>
+      {lastError ? (
+        <span className="text-xs text-destructive" role="alert">
+          {formatActionError(lastError)}
+        </span>
+      ) : null}
+      {status === "running" ? (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => pause.mutate(run.id)}
+        >
+          <Pause className="mr-1 h-3.5 w-3.5" />
+          Pause
+        </Button>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => resume.mutate(run.id)}
+        >
+          <Play className="mr-1 h-3.5 w-3.5" />
+          Resume
+        </Button>
+      )}
+      <Button
+        variant="destructive"
+        size="sm"
+        disabled={busy}
+        onClick={handleAbort}
+      >
+        <Square className="mr-1 h-3.5 w-3.5" />
+        Abort
+      </Button>
+    </>
   );
 }

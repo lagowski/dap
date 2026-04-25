@@ -115,6 +115,18 @@ export async function triggerRun(payload: RunCreateRequest): Promise<Run> {
   return request<Run>("/runs", { method: "POST", json: payload });
 }
 
+export async function abortRun(id: string): Promise<Run> {
+  return request<Run>(`/runs/${encodeURIComponent(id)}/abort`, { method: "POST" });
+}
+
+export async function pauseRun(id: string): Promise<Run> {
+  return request<Run>(`/runs/${encodeURIComponent(id)}/pause`, { method: "POST" });
+}
+
+export async function resumeRun(id: string): Promise<Run> {
+  return request<Run>(`/runs/${encodeURIComponent(id)}/resume`, { method: "POST" });
+}
+
 // ---------------------------------------------------------------------------
 // Pipelines
 // ---------------------------------------------------------------------------
