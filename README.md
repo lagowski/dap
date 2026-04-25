@@ -183,9 +183,12 @@ GET    /pipelines/{id}/versions
 GET    /pipelines/{id}/versions/{v}
 ```
 
-### Runs (F2 — read-only; lifecycle ops w F5+)
+### Runs (F5 — trigger + read-only; pause/resume/abort w follow-up)
 
 ```bash
+POST /runs                       # F5: trigger pipeline execution (synchronous)
+                                 # body: {pipeline_id, pipeline_version?, initial_state}
+                                 # blocks until done; returns full Run object
 GET /runs?pipeline_id=...&final_status=...
 GET /runs/{id}
 GET /runs/{id}/state              # latest snapshot
@@ -193,7 +196,12 @@ GET /runs/{id}/state/history      # all snapshots
 GET /runs/{id}/nodes/{node_id}    # execution log
 ```
 
-Endpointy do triggerа / pause / resume / abort / retry / skip wymagają silnika LangGraph — w planie F5+.
+**F5 architecture:**
+- LangGraph `StateGraph(PipelineState)` (Pydantic state)
+- Generic node executor: render prompt (F4) → call adapter (F3) → save snapshot + log
+- Conditional edges via `EdgeCondition` (`==/!=/<=/>=/etc.` + `and`/`or`)
+- Synchronous execution; `recursion_limit=50` safeguard against infinite retry loops
+- Pause/resume/abort/retry/skip endpoints — separate issues
 
 ## Baza danych
 

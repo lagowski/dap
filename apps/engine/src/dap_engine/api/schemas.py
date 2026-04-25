@@ -84,6 +84,20 @@ class PipelineUpdate(BaseModel):
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
 
 
+class RunCreateRequest(BaseModel):
+    """POST /runs body — trigger pipeline execution.
+
+    `initial_state` is a partial PipelineState dict; missing fields use defaults.
+    `pipeline_version` is optional — defaults to current_version when omitted.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_id: str = Field(min_length=1)
+    pipeline_version: int | None = None
+    initial_state: dict[str, Any] = Field(default_factory=dict)
+
+
 class RenderPreviewRequest(BaseModel):
     """Body for POST /agents/{id}/render-preview."""
 
