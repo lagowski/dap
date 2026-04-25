@@ -40,17 +40,19 @@ def test_dap_runtimes_importable() -> None:
         create_default_registry,
     )
 
-    # Sanity check — adapter classes mają wymagane atrybuty
-    for cls in [
-        BashAdapter,
-        HttpAdapter,
-        ApiCallAdapter,
-        ClaudeCodeAdapter,
-        GeminiCliAdapter,
-        CodexAdapter,
-        AiderAdapter,
-    ]:
-        instance = cls()
+    # Sanity check — adapter classes mają wymagane atrybuty.
+    # Iterujemy po instancjach (nie po typach), żeby uniknąć zwężenia mypy
+    # do abstract type[BaseAdapter].
+    instances = [
+        BashAdapter(),
+        HttpAdapter(),
+        ApiCallAdapter(),
+        ClaudeCodeAdapter(),
+        GeminiCliAdapter(),
+        CodexAdapter(),
+        AiderAdapter(),
+    ]
+    for instance in instances:
         assert isinstance(instance.id, str) and instance.id
         assert isinstance(instance.display_name, str) and instance.display_name
         assert instance.kind in {"cli", "api", "shell", "http"}
