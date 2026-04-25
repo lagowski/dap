@@ -14,7 +14,7 @@ dependencies = [
     "alembic>=1.13.3",
     "pydantic>=2.9.2",
     "anyio>=4.6.0",
-    # langgraph dodajemy w F5 — nie potrzebny w F0
+    "langgraph>=0.2.50",
 ]
 
 [project.scripts]

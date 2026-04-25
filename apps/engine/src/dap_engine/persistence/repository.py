@@ -527,6 +527,64 @@ def list_run_state_history(session: Session, run_id: str) -> list[StateSnapshot]
     return [_state_snapshot_from_orm(s) for s in snapshots]
 
 
+def create_run(
+    session: Session,
+    *,
+    pipeline_id: str,
+    pipeline_version: int,
+    trigger_source: str,
+    initial_state: PipelineState,
+) -> RunORM:
+    """Insert a Run row in 'running' state. Caller commits."""
+    now = _now()
+    run = RunORM(
+        id=_new_id(),
+        pipeline_id=pipeline_id,
+        pipeline_version=pipeline_version,
+        trigger_source=trigger_source,
+        initial_state=initial_state.model_dump(mode="json"),
+        current_node=None,
+        node_statuses={},
+        final_status="running",
+        started_at=now,
+        ended_at=None,
+        tokens_used=0,
+        cost_usd=0.0,
+    )
+    session.add(run)
+    session.flush()
+    return run
+
+
+def finalize_run(
+    session: Session,
+    run_id: str,
+    *,
+    final_status: str,
+    final_state: PipelineState | None = None,
+) -> None:
+    """Mark a run as completed (success/failed/aborted) and aggregate metrics."""
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    run.final_status = final_status
+    run.ended_at = _now()
+
+    # Aggregate token usage + cost from node logs
+    logs = session.scalars(
+        select(NodeExecutionLogORM).where(NodeExecutionLogORM.run_id == run_id)
+    ).all()
+    run.tokens_used = sum(log.tokens_used for log in logs)
+    run.cost_usd = sum(log.cost_usd for log in logs)
+
+    if final_state is not None:
+        # Persist final state by overwriting the run's recorded final_status
+        # but the per-node snapshots remain authoritative.
+        run.current_node = None
+
+    session.flush()
+
+
 def get_run_node_log(session: Session, run_id: str, node_id: str) -> NodeExecutionLog:
     run = session.get(RunORM, run_id)
     if run is None:
