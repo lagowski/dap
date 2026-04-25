@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import uvicorn
 from rich.console import Console
@@ -12,6 +13,13 @@ from dap_cli.paths import (
     DEFAULT_ENGINE_PORT,
     local_dap_dir,
     local_db_path,
+)
+from dap_cli.process import (
+    install_pid_cleanup_handlers,
+    is_process_alive,
+    read_pid_file,
+    remove_pid_file,
+    write_pid_file,
 )
 
 console = Console()
@@ -26,6 +34,21 @@ def start_command(
         console.print("[red]✗ No .dap/ found in current directory.[/red]")
         console.print("[dim]  Run `dap init` first.[/dim]")
         raise SystemExit(1)
+
+    existing = read_pid_file()
+    if existing is not None:
+        if is_process_alive(existing["pid"]):
+            console.print(
+                f"[red]✗ DAP already running (PID {existing['pid']}, "
+                f"port {existing['port']}).[/red]",
+            )
+            console.print("[dim]  Use `dap stop` first if you want to restart.[/dim]")
+            raise SystemExit(1)
+        console.print(
+            f"[yellow]⚠ Stale PID file "
+            f"(process {existing['pid']} not running) — cleaning up.[/yellow]",
+        )
+        remove_pid_file()
 
     # Lazy import — dap --version / --help nie ładują FastAPI/SQLAlchemy
     from dap_engine.app import EngineConfig, create_app  # noqa: PLC0415
@@ -43,6 +66,9 @@ def start_command(
     )
     app = create_app(config)
 
+    write_pid_file(pid=os.getpid(), port=engine_port)
+    install_pid_cleanup_handlers()
+
     console.print("[cyan]Starting DAP...[/cyan]")
     console.print(f"[green]✓ engine[/green]  http://127.0.0.1:{engine_port}")
     console.print(
@@ -54,10 +80,13 @@ def start_command(
     console.print()
     console.print("[dim]Press Ctrl+C to stop.[/dim]")
 
-    uvicorn.run(
-        app,
-        host=config.host,
-        port=config.port,
-        log_level="info",
-        access_log=False,
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=config.host,
+            port=config.port,
+            log_level="info",
+            access_log=False,
+        )
+    finally:
+        remove_pid_file()

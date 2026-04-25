@@ -21,6 +21,7 @@ dev-dependencies = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
     "httpx>=0.27.2",
+    "types-psutil>=6.1.0.20241102",
 ]
 
 [tool.uv.sources]
