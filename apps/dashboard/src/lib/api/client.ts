@@ -11,10 +11,13 @@ import type {
   NodeExecutionLog,
   PaginatedList,
   Pipeline,
+  PipelineCreate,
   PipelineState,
+  PipelineUpdate,
   Run,
   RunCreateRequest,
   StateSnapshot,
+  ValidationResult,
 } from "./types";
 
 const ENGINE_URL =
@@ -131,6 +134,29 @@ export async function getPipelineVersion(
   return request<Pipeline>(
     `/pipelines/${encodeURIComponent(id)}/versions/${version}`,
   );
+}
+
+export async function createPipeline(payload: PipelineCreate): Promise<Pipeline> {
+  return request<Pipeline>("/pipelines", { method: "POST", json: payload });
+}
+
+export async function updatePipeline(
+  id: string,
+  payload: PipelineUpdate,
+): Promise<Pipeline> {
+  return request<Pipeline>(`/pipelines/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    json: payload,
+  });
+}
+
+export async function validatePipeline(
+  payload: PipelineCreate,
+): Promise<ValidationResult> {
+  return request<ValidationResult>("/pipelines/validate", {
+    method: "POST",
+    json: payload,
+  });
 }
 
 // ---------------------------------------------------------------------------

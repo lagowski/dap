@@ -38,7 +38,7 @@ Pivot z TS/Node na Python 3.13 + uv workspace. Scaffolding wszystkich workspace'
 | F4    | Prompt Builder (Jinja2 → XML, schema validator)                          |
 | F5    | Pipeline execution (LangGraph integration, state diff, checkpointing)   |
 | **F6** ✅ **UKOŃCZONE (2026-04-25)** | Dashboard MVP — Next.js 15 + shadcn/ui + React Flow + TanStack Query (polling 2s). Widoki: `/runs`, `/runs/[id]` z graph + drawer, `/agents` + `/agents/new`. CI: nowy job `Dashboard (typecheck + build)`. |
-| F7    | Dashboard Pipeline Designer (React Flow + designer)                     |
+| **F7** ✅ **UKOŃCZONE (2026-04-25)** | Pipeline Designer — `/pipelines` list + `/pipelines/new` + `/pipelines/[id]/edit`. React Flow edit mode, agent palette, inspector dla node/edge, condition builder (form, AND/OR nested), Validate (POST /pipelines/validate) + Save z inline errors. |
 | F8    | Agent & runtime registry UI                                             |
 | F9    | Runtime adapters 2nd wave — `gemini-cli`, `codex`, `aider`, `http`      |
 | F10   | New Run wizard + GitHub PAT integration                                 |
