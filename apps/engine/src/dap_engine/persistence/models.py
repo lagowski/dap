@@ -1,11 +1,26 @@
-"""SQLAlchemy 2.0 ORM models — odpowiednik Drizzle schema z TS scaffolding."""
+"""SQLAlchemy 2.0 ORM models.
+
+Versioning model:
+- `agents` and `pipelines` hold stable identity and a pointer to the current version.
+- `agent_versions` and `pipeline_versions` hold the full immutable configuration per
+  version. Updating an agent/pipeline always creates a new version row; previous
+  versions remain unchanged so runs can reference exact configurations forever.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -14,13 +29,49 @@ class Base(DeclarativeBase):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Agents
+# ---------------------------------------------------------------------------
+
+
 class AgentORM(Base):
+    """Logical agent — stable identity + pointer to current version."""
+
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     role: Mapped[str] = mapped_column(String, nullable=False)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    versions: Mapped[list[AgentVersionORM]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+        order_by="AgentVersionORM.version",
+    )
+
+
+class AgentVersionORM(Base):
+    """Immutable agent version — full configuration snapshot.
+
+    Includes display name so version history is fully recoverable even when
+    the agent is renamed.
+    """
+
+    __tablename__ = "agent_versions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "version", name="uq_agent_versions_agent_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String, ForeignKey("agents.id"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    name: Mapped[str] = mapped_column(String, nullable=False)
     runtime_id: Mapped[str] = mapped_column(String, nullable=False)
     runtime_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
@@ -29,39 +80,92 @@ class AgentORM(Base):
     constraints: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     budget_limit_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     timeout_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=60_000)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    agent: Mapped[AgentORM] = relationship(back_populates="versions")
+
+
+# ---------------------------------------------------------------------------
+# Pipelines
+# ---------------------------------------------------------------------------
 
 
 class PipelineORM(Base):
+    """Logical pipeline — stable identity + pointer to current version."""
+
     __tablename__ = "pipelines"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    versions: Mapped[list[PipelineVersionORM]] = relationship(
+        back_populates="pipeline",
+        cascade="all, delete-orphan",
+        order_by="PipelineVersionORM.version",
+    )
+
+
+class PipelineVersionORM(Base):
+    """Immutable pipeline version — DAG snapshot.
+
+    Includes name and description so version history reflects the metadata
+    at the time of each save.
+    """
+
+    __tablename__ = "pipeline_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "pipeline_id",
+            "version",
+            name="uq_pipeline_versions_pipeline_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    pipeline_id: Mapped[str] = mapped_column(String, ForeignKey("pipelines.id"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     schema_version: Mapped[str] = mapped_column(String, nullable=False, default="langgraph/1.0")
     state_schema_ref: Mapped[str] = mapped_column(String, nullable=False)
     entry_point: Mapped[str] = mapped_column(String, nullable=False)
     nodes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     edges: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     defaults: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    pipeline: Mapped[PipelineORM] = relationship(back_populates="versions")
+
+
+# ---------------------------------------------------------------------------
+# Runs (no schema change in F2)
+# ---------------------------------------------------------------------------
 
 
 class RunORM(Base):
+    """Pipeline execution instance — immutable FK to pipeline_versions row."""
+
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False)
     pipeline_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
     trigger_source: Mapped[str] = mapped_column(String, nullable=False)
     initial_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
     current_node: Mapped[str | None] = mapped_column(String, nullable=True)
     node_statuses: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+
     final_status: Mapped[str] = mapped_column(String, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -71,10 +175,12 @@ class RunORM(Base):
     state_snapshots: Mapped[list[StateSnapshotORM]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",
+        order_by="StateSnapshotORM.timestamp",
     )
     node_logs: Mapped[list[NodeExecutionLogORM]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",
+        order_by="NodeExecutionLogORM.started_at",
     )
 
 
