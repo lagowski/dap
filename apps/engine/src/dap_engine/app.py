@@ -3,13 +3,14 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from dap_runtimes import create_default_registry
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from dap_engine.api.agents import router as agents_router
 from dap_engine.api.health import router as health_router
@@ -40,6 +41,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         registry = create_default_registry()
         run_registry = RunRegistry()
 
+        # LangGraph checkpoints live in a sibling SQLite file so they don't
+        # collide with the application schema (Alembic-managed).
+        checkpoint_path = Path(cfg.db_path).with_suffix(".checkpoints.db")
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
         # Recover stale runs left by previous crashes
         with session_factory() as cleanup_session:
             stale_count = repo.mark_stale_running_runs_as_failed(
@@ -50,33 +56,43 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         if stale_count > 0:
             logger.warning("marked %d stale running run(s) as failed", stale_count)
 
-        app.state.config = cfg
-        app.state.db_engine = engine
-        app.state.session_factory = session_factory
-        app.state.runtime_registry = registry
-        app.state.run_registry = run_registry
+        async with AsyncExitStack() as stack:
+            checkpointer = await stack.enter_async_context(
+                AsyncSqliteSaver.from_conn_string(str(checkpoint_path))
+            )
 
-        logger.info("dap-engine started — db=%s", Path(cfg.db_path).resolve())
-        try:
-            yield
-        finally:
-            # Graceful shutdown — abort all running tasks
-            cancelled = await run_registry.shutdown(timeout=5.0)
-            if cancelled:
-                logger.info("aborted %d running run(s) on shutdown", len(cancelled))
-                # Mark them as aborted in DB
-                with session_factory() as shutdown_session:
-                    for run_id in cancelled:
-                        with contextlib.suppress(repo.NotFoundError):
-                            repo.finalize_run(
-                                shutdown_session,
-                                run_id,
-                                final_status="aborted",
-                            )
-                    shutdown_session.commit()
+            app.state.config = cfg
+            app.state.db_engine = engine
+            app.state.session_factory = session_factory
+            app.state.runtime_registry = registry
+            app.state.run_registry = run_registry
+            app.state.checkpointer = checkpointer
 
-            engine.dispose()
-            logger.info("dap-engine stopped")
+            logger.info(
+                "dap-engine started — db=%s, checkpoints=%s",
+                Path(cfg.db_path).resolve(),
+                checkpoint_path.resolve(),
+            )
+            try:
+                yield
+            finally:
+                # Graceful shutdown — abort all running tasks
+                cancelled = await run_registry.shutdown(timeout=5.0)
+                if cancelled:
+                    logger.info("aborted %d running run(s) on shutdown", len(cancelled))
+                    # Mark them as aborted in DB
+                    with session_factory() as shutdown_session:
+                        for run_id in cancelled:
+                            with contextlib.suppress(repo.NotFoundError):
+                                repo.finalize_run(
+                                    shutdown_session,
+                                    run_id,
+                                    final_status="aborted",
+                                )
+                        shutdown_session.commit()
+
+                engine.dispose()
+                logger.info("dap-engine stopped")
 
     app = FastAPI(
         title="dap-engine",

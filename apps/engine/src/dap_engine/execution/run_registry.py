@@ -17,13 +17,25 @@ class RunRegistry:
 
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._paused: set[str] = set()
 
     def register(self, run_id: str, task: asyncio.Task[None]) -> None:
-        if run_id in self._tasks:
+        existing = self._tasks.get(run_id)
+        if existing is not None and not existing.done():
             raise ValueError(f"Run already registered: {run_id}")
+        # Replace stale done-task slot (e.g. resume after pause where the
+        # done-callback has not been dispatched yet by the loop).
         self._tasks[run_id] = task
-        # Auto-cleanup on completion
-        task.add_done_callback(lambda _t: self._tasks.pop(run_id, None))
+        self._paused.discard(run_id)
+
+        def _cleanup(_t: asyncio.Task[None]) -> None:
+            # Only clear the slot if it still points at *this* task —
+            # a fast resume may have replaced it with a fresh task.
+            if self._tasks.get(run_id) is task:
+                self._tasks.pop(run_id, None)
+                self._paused.discard(run_id)
+
+        task.add_done_callback(_cleanup)
 
     def get(self, run_id: str) -> asyncio.Task[None] | None:
         return self._tasks.get(run_id)
@@ -51,6 +63,32 @@ class RunRegistry:
         except Exception:
             logger.exception("task for run %s raised during cancellation", run_id)
         return True
+
+    async def pause(self, run_id: str) -> bool:
+        """Mark a run as paused and cancel its task.
+
+        Pausing relies on LangGraph's checkpointer: the task is cancelled
+        between node boundaries, but the checkpointed state remains, so
+        a later resume() can pick up where it left off.
+
+        Returns True if a running task was found and cancelled.
+        """
+        task = self._tasks.get(run_id)
+        if task is None or task.done():
+            return False
+        self._paused.add(run_id)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("task for run %s raised during pause", run_id)
+        return True
+
+    def was_paused(self, run_id: str) -> bool:
+        """Whether the (now-cancelled) task was cancelled via pause(), not abort()."""
+        return run_id in self._paused
 
     async def shutdown(self, *, timeout: float = 5.0) -> list[str]:
         """Cancel all running tasks. Returns list of run_ids that were cancelled.

@@ -1,13 +1,13 @@
 """PipelineRunner — converts a Pipeline JSON into a LangGraph StateGraph and runs it.
 
-Synchronous in F5 MVP — `run()` blocks until the pipeline finishes.
-Async/background execution is a future issue.
+Optional `checkpointer` enables LangGraph state persistence — required for
+pause/resume. When supplied, `run_id` doubles as the LangGraph thread_id.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dap_runtimes import RuntimeRegistry
 from dap_types import Pipeline, PipelineState
@@ -24,6 +24,9 @@ from dap_engine.persistence.models import (
     PipelineORM,
     PipelineVersionORM,
 )
+
+if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
 
 logger = logging.getLogger("dap.engine.execution.runner")
 
@@ -42,10 +45,12 @@ class PipelineRunner:
         *,
         session: Session,
         registry: RuntimeRegistry,
+        checkpointer: BaseCheckpointSaver[Any] | None = None,
         recursion_limit: int = DEFAULT_RECURSION_LIMIT,
     ) -> None:
         self.session = session
         self.registry = registry
+        self.checkpointer = checkpointer
         self.recursion_limit = recursion_limit
 
     async def run(
@@ -54,13 +59,25 @@ class PipelineRunner:
         run_id: str,
         pipeline_orm: PipelineORM,
         pipeline_version_orm: PipelineVersionORM,
-        initial_state: PipelineState,
+        initial_state: PipelineState | None,
+        resume: bool = False,
     ) -> PipelineState:
         """Build graph for the given pipeline version + run end-to-end.
 
         Returns the final PipelineState. Persists snapshots + node logs along
         the way via the bound Session (caller commits).
+
+        When `resume=True`, `initial_state` is ignored and LangGraph resumes
+        from the checkpointed state for the given `run_id` (used as thread_id).
+        Requires a checkpointer to be configured.
         """
+        if resume and self.checkpointer is None:
+            msg = "Cannot resume without a checkpointer"
+            raise RunnerError(msg)
+        if not resume and initial_state is None:
+            msg = "initial_state required when resume=False"
+            raise RunnerError(msg)
+
         pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
 
         # Pre-load agents referenced by the pipeline + verify they exist.
@@ -72,11 +89,14 @@ class PipelineRunner:
             agent_lookup=agent_lookup,
         )
 
+        config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        if self.checkpointer is not None:
+            config["configurable"] = {"thread_id": run_id}
+
+        invoke_input: PipelineState | None = None if resume else initial_state
+
         try:
-            result = await graph.ainvoke(
-                initial_state,
-                config={"recursion_limit": self.recursion_limit},
-            )
+            result = await graph.ainvoke(invoke_input, config=config)
         except Exception as exc:
             logger.exception("pipeline execution failed for run %s", run_id)
             msg = f"Execution failed: {type(exc).__name__}: {exc}"
@@ -133,7 +153,7 @@ class PipelineRunner:
             else:
                 _add_conditional_edges(builder, source, edges)
 
-        return builder.compile()
+        return builder.compile(checkpointer=self.checkpointer)
 
     # -----------------------------------------------------------------------
     # ORM helpers
