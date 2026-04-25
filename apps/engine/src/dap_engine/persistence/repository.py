@@ -585,6 +585,34 @@ def finalize_run(
     session.flush()
 
 
+def pause_run(session: Session, run_id: str) -> None:
+    """Mark a run as paused without setting ended_at (resumable)."""
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    run.final_status = "paused"
+    # Aggregate metrics so the dashboard reflects work-done-so-far.
+    logs = session.scalars(
+        select(NodeExecutionLogORM).where(NodeExecutionLogORM.run_id == run_id)
+    ).all()
+    run.tokens_used = sum(log.tokens_used for log in logs)
+    run.cost_usd = sum(log.cost_usd for log in logs)
+    session.flush()
+
+
+def resume_run(session: Session, run_id: str) -> None:
+    """Reset a paused run back to running so the background task can take over."""
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if run.final_status != "paused":
+        msg = f"Run is not paused (final_status={run.final_status})"
+        raise ValueError(msg)
+    run.final_status = "running"
+    run.ended_at = None
+    session.flush()
+
+
 def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
     """Find Run rows still in 'running' state and mark them as failed.
 

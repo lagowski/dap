@@ -2,11 +2,12 @@
 
 POST /runs (F5+) triggers asynchronous pipeline execution via LangGraph.
 Returns 201 with Run immediately; pipeline runs in a background asyncio.Task
-tracked by the engine's RunRegistry. Use POST /runs/{id}/abort to cancel.
+tracked by the engine's RunRegistry. Use POST /runs/{id}/abort to cancel,
+POST /runs/{id}/pause to suspend (LangGraph checkpoint preserved), and
+POST /runs/{id}/resume to continue from the last checkpoint.
 
-GET endpoints provide read-only access; pause/resume/retry-node/skip-node
-endpoints are deferred to a follow-up issue (require LangGraph SqliteSaver
-checkpointing for state rollback semantics).
+retry-node/skip-node endpoints are deferred (require manual graph traversal
+via aupdate_state).
 """
 
 from __future__ import annotations
@@ -18,11 +19,13 @@ from typing import Any
 from dap_runtimes import RuntimeRegistry
 from dap_types import NodeExecutionLog, PipelineState, Run, StateSnapshot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.api.deps import (
+    get_checkpointer,
     get_registry,
     get_run_registry,
     get_session,
@@ -45,6 +48,7 @@ async def trigger_run(
     registry: RuntimeRegistry = Depends(get_registry),
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
+    checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
 ) -> Run:
     """Trigger asynchronous pipeline execution.
 
@@ -108,6 +112,9 @@ async def trigger_run(
             initial_state=initial_state_with_run_id,
             session_factory=session_factory,
             registry=registry,
+            run_registry=run_registry,
+            checkpointer=checkpointer,
+            resume=False,
         )
     )
     run_registry.register(run_id, task)
@@ -121,12 +128,14 @@ async def _execute_run_background(
     run_id: str,
     pipeline_id: str,
     pipeline_version: int,
-    initial_state: PipelineState,
+    initial_state: PipelineState | None,
     session_factory: sessionmaker[Session],
     registry: RuntimeRegistry,
+    run_registry: RunRegistry,
+    checkpointer: BaseCheckpointSaver[Any],
+    resume: bool,
 ) -> None:
     """Run the pipeline in a fresh DB session and finalize the Run row."""
-    final_status = "failed"
     try:
         with session_factory() as bg_session:
             pipeline_orm = bg_session.get(PipelineORM, pipeline_id)
@@ -146,13 +155,18 @@ async def _execute_run_background(
                 bg_session.commit()
                 return
 
-            runner = PipelineRunner(session=bg_session, registry=registry)
+            runner = PipelineRunner(
+                session=bg_session,
+                registry=registry,
+                checkpointer=checkpointer,
+            )
             try:
                 final_state = await runner.run(
                     run_id=run_id,
                     pipeline_orm=pipeline_orm,
                     pipeline_version_orm=version_orm,
                     initial_state=initial_state,
+                    resume=resume,
                 )
             except RunnerError as exc:
                 logger.exception("run %s failed: %s", run_id, exc)
@@ -166,13 +180,19 @@ async def _execute_run_background(
             repo.finalize_run(bg_session, run_id, final_status=final_status)
             bg_session.commit()
     except asyncio.CancelledError:
-        # Aborted via run_registry.abort() — finalize as aborted in a fresh session.
+        # Cancelled via pause() or abort(). Distinguish via was_paused() flag —
+        # paused runs keep their checkpoint and can be resumed (no ended_at);
+        # aborted runs are terminal.
+        was_paused = run_registry.was_paused(run_id)
         try:
             with session_factory() as cancel_session:
-                repo.finalize_run(cancel_session, run_id, final_status="aborted")
+                if was_paused:
+                    repo.pause_run(cancel_session, run_id)
+                else:
+                    repo.finalize_run(cancel_session, run_id, final_status="aborted")
                 cancel_session.commit()
         except Exception:
-            logger.exception("failed to finalize aborted run %s", run_id)
+            logger.exception("failed to finalize cancelled run %s", run_id)
         raise  # propagate so the registry sees the cancellation
     except Exception:
         logger.exception("background run %s crashed", run_id)
@@ -193,7 +213,41 @@ async def abort_run(
     """Cancel a running pipeline.
 
     409 if the run is already finalized (success/failed/aborted) or no
-    background task is registered for it.
+    background task is registered for it. Paused runs can also be aborted.
+    """
+    try:
+        run = repo.get_run(session, run_id)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if run.final_status not in {"running", "paused"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run is not running or paused (final_status={run.final_status})",
+        )
+
+    cancelled = await run_registry.abort(run_id)
+    if not cancelled:
+        # Background task already finished or run is paused with no live task.
+        # Mark the run as aborted defensively.
+        repo.finalize_run(session, run_id, final_status="aborted")
+
+    # Background task's CancelledError handler finalizes status; ensure
+    # we read the latest state after cancellation completes.
+    return repo.get_run(session, run_id)
+
+
+@router.post("/{run_id}/pause", response_model=Run)
+async def pause_run_endpoint(
+    run_id: str,
+    session: Session = Depends(get_session),
+    run_registry: RunRegistry = Depends(get_run_registry),
+) -> Run:
+    """Pause a running pipeline.
+
+    Cancels the background task between node boundaries; the LangGraph
+    checkpoint preserves state so the run can be resumed via
+    POST /runs/{id}/resume. 409 if the run is not currently running.
     """
     try:
         run = repo.get_run(session, run_id)
@@ -206,14 +260,67 @@ async def abort_run(
             detail=f"Run is not running (final_status={run.final_status})",
         )
 
-    cancelled = await run_registry.abort(run_id)
-    if not cancelled:
-        # Background task already finished — race window between status
-        # check and abort. Mark the run as aborted defensively.
-        repo.finalize_run(session, run_id, final_status="aborted")
+    paused = await run_registry.pause(run_id)
+    if not paused:
+        # Race window: task finished between status check and pause request.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No active background task for this run",
+        )
 
-    # Background task's CancelledError handler finalizes status; ensure
-    # we read the latest state after cancellation completes.
+    return repo.get_run(session, run_id)
+
+
+@router.post("/{run_id}/resume", response_model=Run)
+async def resume_run_endpoint(
+    run_id: str,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+    run_registry: RunRegistry = Depends(get_run_registry),
+    session_factory: sessionmaker[Session] = Depends(get_session_factory),
+    checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+) -> Run:
+    """Resume a paused run from its last LangGraph checkpoint.
+
+    409 if the run is not paused. Spawns a fresh background task using
+    the same run_id (= LangGraph thread_id), so execution picks up from
+    the last checkpointed node.
+    """
+    try:
+        run = repo.get_run(session, run_id)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if run.final_status != "paused":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run is not paused (final_status={run.final_status})",
+        )
+
+    if run_registry.is_running(run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Run already has an active background task",
+        )
+
+    repo.resume_run(session, run_id)
+    session.commit()
+
+    task = asyncio.create_task(
+        _execute_run_background(
+            run_id=run_id,
+            pipeline_id=run.pipeline_id,
+            pipeline_version=run.pipeline_version,
+            initial_state=None,
+            session_factory=session_factory,
+            registry=registry,
+            run_registry=run_registry,
+            checkpointer=checkpointer,
+            resume=True,
+        )
+    )
+    run_registry.register(run_id, task)
+
     return repo.get_run(session, run_id)
 
 

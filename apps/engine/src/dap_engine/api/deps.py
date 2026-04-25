@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 from dap_runtimes import RuntimeRegistry
 from fastapi import Request
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.execution import RunRegistry
@@ -39,3 +41,8 @@ def get_registry(request: Request) -> RuntimeRegistry:
 def get_run_registry(request: Request) -> RunRegistry:
     run_registry: RunRegistry = request.app.state.run_registry
     return run_registry
+
+
+def get_checkpointer(request: Request) -> BaseCheckpointSaver[Any]:
+    checkpointer: BaseCheckpointSaver[Any] = request.app.state.checkpointer
+    return checkpointer

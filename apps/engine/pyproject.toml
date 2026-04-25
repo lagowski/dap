@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.9.2",
     "anyio>=4.6.0",
     "langgraph>=0.2.50",
+    "langgraph-checkpoint-sqlite>=2.0.0",
 ]
 
 [project.scripts]
