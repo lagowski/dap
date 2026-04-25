@@ -75,9 +75,10 @@ PR template wypełni się automatycznie (patrz `.github/PULL_REQUEST_TEMPLATE.md
 
 **Definition of Done** dla PR do `develop`:
 - ✅ Wszystkie commity Conventional Commits
-- ✅ **CI green** — `.github/workflows/ci.yml` wymaga: ruff check, ruff format, pytest
+- ✅ **CI green** — `.github/workflows/ci.yml` wymaga: ruff check, ruff format, mypy, pytest
 - ✅ `uv run ruff check apps packages tests` clean
 - ✅ `uv run ruff format --check apps packages tests` clean
+- ✅ `uv run mypy apps packages tests` clean
 - ✅ `uv run pytest` passes (smoke testy w `tests/smoke/`, dodaj swoje testy gdy dotyczy)
 - ✅ Dashboard (gdy zmieniany): `pnpm --dir apps/dashboard build` passes
 - ✅ PR linkuje Issue (`Closes #42`)

@@ -193,8 +193,8 @@ Rozszerzalność przez plugin API — drop-in do `~/.dap/plugins/` (F11).
 ```bash
 uv run ruff check apps packages tests
 uv run ruff format apps packages tests
-uv run pytest                           # 9 smoke tests w tests/smoke/
-uv run mypy apps packages               # poza CI w F0 — sprzątamy w osobnym issue
+uv run mypy apps packages tests
+uv run pytest                           # smoke tests w tests/smoke/
 ```
 
 ## CI
@@ -203,11 +203,12 @@ Każdy PR do `develop` lub `main` jest automatycznie gateowany przez `.github/wo
 
 - ✅ `uv run ruff check apps packages` — blocking
 - ✅ `uv run ruff format --check apps packages` — blocking
+- ✅ `uv run mypy apps packages tests` — blocking
 - ✅ `uv run pytest -q` — blocking (smoke tests)
 
-Workflow używa `astral-sh/setup-uv@v3` z cache na `uv.lock`. Concurrency: nowy push do branch'a anuluje wcześniejszy bieg CI.
+Dla PR-ów do `main` dodatkowo `.github/workflows/enforce-main-source.yml` weryfikuje, że źródłem PR jest `develop` (release-only flow).
 
-mypy jest **out of scope** dla F0 CI — codebase ma niedociągnięcia typowe (Pydantic/SQLAlchemy generics) wymagające osobnego sprzątania (issue follow-up).
+Workflow używa `astral-sh/setup-uv@v3` z cache na `uv.lock`. Concurrency: nowy push do brancha anuluje wcześniejszy bieg CI.
 
 ## Git
 

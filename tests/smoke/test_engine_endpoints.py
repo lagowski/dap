@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client() -> Iterator[TestClient]:
     tmp = tempfile.mkdtemp(prefix="dap-smoke-")
     config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
     app = create_app(config)

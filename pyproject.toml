@@ -70,9 +70,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 exclude = ["build/", "dist/", ".venv/"]
 
-[[tool.mypy.overrides]]
-module = ["langgraph.*"]
-ignore_missing_imports = true
+# NB: dodaj override dla langgraph.* gdy zintegrujemy go w F5
 
 # --- pytest ---
 [tool.pytest.ini_options]
