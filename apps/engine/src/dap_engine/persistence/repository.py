@@ -556,6 +556,22 @@ def create_run(
     return run
 
 
+def _aggregate_run_metrics(session: Session, run: RunORM) -> None:
+    """Recompute tokens_used + cost_usd on a RunORM from its node-execution logs.
+
+    Uses SQL aggregation so we don't materialize every log row in memory —
+    runs with many nodes can have a lot of logs.
+    """
+    totals = session.execute(
+        select(
+            func.coalesce(func.sum(NodeExecutionLogORM.tokens_used), 0),
+            func.coalesce(func.sum(NodeExecutionLogORM.cost_usd), 0.0),
+        ).where(NodeExecutionLogORM.run_id == run.id)
+    ).one()
+    run.tokens_used = int(totals[0])
+    run.cost_usd = float(totals[1])
+
+
 def finalize_run(
     session: Session,
     run_id: str,
@@ -569,13 +585,7 @@ def finalize_run(
         raise NotFoundError(f"Run not found: {run_id}")
     run.final_status = final_status
     run.ended_at = _now()
-
-    # Aggregate token usage + cost from node logs
-    logs = session.scalars(
-        select(NodeExecutionLogORM).where(NodeExecutionLogORM.run_id == run_id)
-    ).all()
-    run.tokens_used = sum(log.tokens_used for log in logs)
-    run.cost_usd = sum(log.cost_usd for log in logs)
+    _aggregate_run_metrics(session, run)
 
     if final_state is not None:
         # Persist final state by overwriting the run's recorded final_status
@@ -592,11 +602,7 @@ def pause_run(session: Session, run_id: str) -> None:
         raise NotFoundError(f"Run not found: {run_id}")
     run.final_status = "paused"
     # Aggregate metrics so the dashboard reflects work-done-so-far.
-    logs = session.scalars(
-        select(NodeExecutionLogORM).where(NodeExecutionLogORM.run_id == run_id)
-    ).all()
-    run.tokens_used = sum(log.tokens_used for log in logs)
-    run.cost_usd = sum(log.cost_usd for log in logs)
+    _aggregate_run_metrics(session, run)
     session.flush()
 
 

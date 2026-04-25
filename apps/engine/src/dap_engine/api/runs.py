@@ -232,8 +232,10 @@ async def abort_run(
         # Mark the run as aborted defensively.
         repo.finalize_run(session, run_id, final_status="aborted")
 
-    # Background task's CancelledError handler finalizes status; ensure
-    # we read the latest state after cancellation completes.
+    # The background task's CancelledError handler finalizes status in a
+    # *separate* session. With expire_on_commit=False, our request session
+    # still has the stale RunORM cached — expire it so we read fresh state.
+    session.expire_all()
     return repo.get_run(session, run_id)
 
 
@@ -268,6 +270,9 @@ async def pause_run_endpoint(
             detail="No active background task for this run",
         )
 
+    # Pause finalization runs in the background task's session — expire
+    # this session's cached RunORM so the response reflects final_status="paused".
+    session.expire_all()
     return repo.get_run(session, run_id)
 
 
