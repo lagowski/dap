@@ -213,15 +213,50 @@ SQLite w WAL mode (`PRAGMA journal_mode = WAL`, `synchronous = NORMAL`, `foreign
 
 7 wbudowanych adapterów (F0 = szkielety, F3/F9 = implementacja):
 
-| Adapter       | Kind    | Status | Uzasadnienie                                         |
-| ------------- | ------- | ------ | ---------------------------------------------------- |
-| `bash`        | shell   | stub   | Deterministyczne pre/post steps (pytest, cov)        |
-| `http`        | http    | stub   | Wywołanie zewnętrznego endpointa                     |
-| `api-call`    | api     | stub   | Direct SDK call — tanie role (selector, verifier)    |
-| `claude-code` | cli     | stub   | Coding agent — testy, complex refactor               |
-| `gemini-cli`  | cli     | stub   | Duży context window, szybkie operacje                |
-| `codex`       | cli     | stub   | "Make tests green" loops                             |
-| `aider`       | cli     | stub   | Self-directed git-aware coding                       |
+| Adapter       | Kind    | Status      | Uzasadnienie                                         |
+| ------------- | ------- | ----------- | ---------------------------------------------------- |
+| `bash`        | shell   | stub        | Deterministyczne pre/post steps (pytest, cov)        |
+| `http`        | http    | stub        | Wywołanie zewnętrznego endpointa                     |
+| `api-call`    | api     | ✅ **F3**    | Direct Anthropic SDK call — async, prompt caching, adaptive thinking, effort, cost calc per model |
+| `claude-code` | cli     | stub        | Coding agent — testy, complex refactor               |
+| `gemini-cli`  | cli     | stub        | Duży context window, szybkie operacje                |
+| `codex`       | cli     | stub        | "Make tests green" loops                             |
+| `aider`       | cli     | stub        | Self-directed git-aware coding                       |
+
+### `api-call` adapter (F3)
+
+```python
+from dap_runtimes import ApiCallAdapter
+from dap_types import RuntimeTask
+
+adapter = ApiCallAdapter()
+# requires ANTHROPIC_API_KEY env var
+
+task = RuntimeTask(
+    execution_id="exec-001",
+    prompt_xml="<agent_prompt>...</agent_prompt>",  # rendered by dap_prompt_dsl
+    working_directory="/tmp",
+    runtime_config={
+        "provider": "anthropic",
+        "model_id": "claude-haiku-4-5",     # or claude-sonnet-4-6, claude-opus-4-7
+        "max_tokens": 4096,
+        "system_prompt": None,               # optional, prepended before XML
+        "enable_thinking": False,            # adaptive thinking on Opus 4.7/4.6 + Sonnet 4.6
+        "effort": None,                      # null | low | medium | high | xhigh | max
+        "prompt_cache": False,               # 5-min ephemeral cache
+    },
+)
+result = await adapter.execute(task)
+# result.output: str (text response)
+# result.tokens_used: int (input + cache + output)
+# result.cost_usd: float (per-model pricing, includes cache 1.25x/0.1x multipliers)
+# result.structured: {model, stop_reason, usage}
+```
+
+**Pricing (USD/1M tokens):**
+- Opus 4.7 / 4.6 / 4.5: $5 input, $25 output
+- Sonnet 4.6 / 4.5: $3 input, $15 output
+- Haiku 4.5: $1 input, $5 output
 
 Rozszerzalność przez plugin API — drop-in do `~/.dap/plugins/` (F11).
 
