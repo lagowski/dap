@@ -180,3 +180,39 @@ export interface RunCreateRequest {
   pipeline_version?: number | null;
   initial_state?: Partial<PipelineState>;
 }
+
+export interface PipelineCreate {
+  name: string;
+  description?: string;
+  schema_version: "langgraph/1.0";
+  state_schema_ref: string;
+  entry_point: string;
+  nodes: PipelineNode[];
+  edges: PipelineEdge[];
+  defaults: {
+    max_attempts: number;
+    budget_limit_usd: number;
+    approval_required_nodes: string[];
+  };
+}
+
+export interface PipelineUpdate {
+  name?: string | null;
+  description?: string | null;
+  schema_version: "langgraph/1.0";
+  state_schema_ref: string;
+  entry_point: string;
+  nodes: PipelineNode[];
+  edges: PipelineEdge[];
+  defaults: {
+    max_attempts: number;
+    budget_limit_usd: number;
+    approval_required_nodes: string[];
+  };
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}

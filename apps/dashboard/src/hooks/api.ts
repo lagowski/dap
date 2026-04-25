@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
-import type { AgentCreate } from "@/lib/api/types";
+import type { AgentCreate, PipelineCreate, PipelineUpdate } from "@/lib/api/types";
 
 export const queryKeys = {
   runs: ["runs"] as const,
@@ -82,6 +82,41 @@ export function usePipeline(id: string | null) {
     queryKey: id ? queryKeys.pipeline(id) : ["pipelines", "noop"],
     queryFn: () => (id ? api.getPipeline(id) : Promise.reject(new Error("no id"))),
     enabled: id != null,
+  });
+}
+
+export function usePipelinesList() {
+  return useQuery({
+    queryKey: queryKeys.pipelinesList,
+    queryFn: () => api.listPipelines(),
+  });
+}
+
+export function useCreatePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: PipelineCreate) => api.createPipeline(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
+    },
+  });
+}
+
+export function useUpdatePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: PipelineUpdate }) =>
+      api.updatePipeline(id, payload),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
+      qc.invalidateQueries({ queryKey: queryKeys.pipeline(variables.id) });
+    },
+  });
+}
+
+export function useValidatePipeline() {
+  return useMutation({
+    mutationFn: (payload: PipelineCreate) => api.validatePipeline(payload),
   });
 }
 
