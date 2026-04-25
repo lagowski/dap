@@ -1,4 +1,4 @@
-"""FastAPI dependencies — DB session, runtime registry."""
+"""FastAPI dependencies — DB session, runtime registry, run registry."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from collections.abc import Iterator
 from dap_runtimes import RuntimeRegistry
 from fastapi import Request
 from sqlalchemy.orm import Session, sessionmaker
+
+from dap_engine.execution import RunRegistry
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -23,6 +25,17 @@ def get_session(request: Request) -> Iterator[Session]:
         session.close()
 
 
+def get_session_factory(request: Request) -> sessionmaker[Session]:
+    """Return the session factory — used by background tasks that need a fresh session."""
+    factory: sessionmaker[Session] = request.app.state.session_factory
+    return factory
+
+
 def get_registry(request: Request) -> RuntimeRegistry:
     registry: RuntimeRegistry = request.app.state.runtime_registry
     return registry
+
+
+def get_run_registry(request: Request) -> RunRegistry:
+    run_registry: RunRegistry = request.app.state.run_registry
+    return run_registry

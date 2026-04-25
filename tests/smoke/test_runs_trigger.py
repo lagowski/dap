@@ -1,11 +1,13 @@
 """E2E test for POST /runs — triggers pipeline execution via REST.
 
-Stubs runtime adapter so no real LLM calls happen.
+Stubs runtime adapter so no real LLM calls happen. POST /runs is async
+(returns 202 with running status); we poll until completion.
 """
 
 from __future__ import annotations
 
 import tempfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,22 @@ from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
+
+POLL_INTERVAL_S = 0.05
+POLL_TIMEOUT_S = 5.0
+
+
+def _wait_for_completion(client: TestClient, run_id: str) -> dict[str, Any]:
+    """Poll the run until final_status is not 'running'. Returns the run JSON."""
+    deadline = time.monotonic() + POLL_TIMEOUT_S
+    while time.monotonic() < deadline:
+        response = client.get(f"/runs/{run_id}")
+        assert response.status_code == 200
+        body: dict[str, Any] = response.json()
+        if body["final_status"] != "running":
+            return body
+        time.sleep(POLL_INTERVAL_S)
+    raise AssertionError(f"Run {run_id} did not complete within {POLL_TIMEOUT_S}s")
 
 
 class TriggerStubAdapter:
@@ -92,12 +110,17 @@ def test_trigger_run_e2e(client_with_stub: tuple[TestClient, RuntimeRegistry]) -
     body = response.json()
     assert body["pipeline_id"] == pipeline_id
     assert body["pipeline_version"] == 1
-    assert body["final_status"] == "success"
+    # Async — initial response is "running"
+    assert body["final_status"] == "running"
     assert body["trigger_source"] == "api"
-    assert body["ended_at"] is not None
+
+    run_id = body["id"]
+    # Poll until complete
+    completed = _wait_for_completion(client, run_id)
+    assert completed["final_status"] == "success"
+    assert completed["ended_at"] is not None
 
     # Verify run was persisted + state snapshot recorded
-    run_id = body["id"]
     history = client.get(f"/runs/{run_id}/state/history").json()
     assert len(history) >= 1
 
