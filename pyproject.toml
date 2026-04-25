@@ -58,6 +58,19 @@ ignore = [
 ]
 # Pydantic models need runtime access to types — TC* rules don't apply
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI idiom: Depends/Query/Path/Body w argument defaults
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Form",
+    "fastapi.File",
+]
+
 # --- mypy ---
 [tool.mypy]
 python_version = "3.13"

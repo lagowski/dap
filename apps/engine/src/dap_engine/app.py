@@ -10,7 +10,10 @@ from dap_runtimes import create_default_registry
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from dap_engine.api.agents import router as agents_router
 from dap_engine.api.health import router as health_router
+from dap_engine.api.pipelines import router as pipelines_router
+from dap_engine.api.runs import router as runs_router
 from dap_engine.api.runtimes import router as runtimes_router
 from dap_engine.persistence.db import create_engine_for_sqlite, make_session_factory
 
@@ -63,5 +66,8 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(runtimes_router)
+    app.include_router(agents_router)
+    app.include_router(pipelines_router)
+    app.include_router(runs_router)
 
     return app

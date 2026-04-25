@@ -142,21 +142,54 @@ $OLDPWD/.venv/bin/dap start
 | `dap stop`       | ✅          | SIGTERM → wait 5s → SIGKILL fallback; cleanup PID file                  |
 | `dap status`     | ✅          | Pokazuje stan engine (running/stopped/stale), PID + port + uptime, tabelę runtime adapterów z healthcheck |
 
-## Dostępne endpointy engine (F0)
+## Dostępne endpointy engine
+
+### Health + runtimes
 
 ```bash
 curl http://127.0.0.1:7333/health
 # → {"status":"ok","service":"dap-engine","version":"0.0.1","timestamp":"..."}
 
-curl http://127.0.0.1:7333/runtimes
-# → lista 7 adapterów z displayName i kind (cli/api/shell/http)
-
-curl http://127.0.0.1:7333/runtimes/bash/health
-# → {"available":true,"version":"system"}
-
-curl http://127.0.0.1:7333/runtimes/claude-code/health
-# → {"available":false,"missing":["claude binary ..."]}
+curl http://127.0.0.1:7333/runtimes                       # lista 7 adapterów
+curl http://127.0.0.1:7333/runtimes/bash/health           # {"available":true,...}
+curl http://127.0.0.1:7333/runtimes/claude-code/health    # {"available":false,...}
 ```
+
+### Agents (F2 — pełen CRUD z immutable versioning)
+
+```bash
+POST   /agents                              # create v1
+GET    /agents?role=test_author&limit=50    # list (filters: role, archived, offset, limit)
+GET    /agents/{id}                         # current version
+PUT    /agents/{id}                         # create new version (vN+1)
+DELETE /agents/{id}                         # archive (soft delete)
+GET    /agents/{id}/versions                # full history
+GET    /agents/{id}/versions/{v}            # specific version
+```
+
+### Pipelines (F2 — analogicznie)
+
+```bash
+POST   /pipelines
+GET    /pipelines?archived=false
+GET    /pipelines/{id}
+PUT    /pipelines/{id}
+DELETE /pipelines/{id}
+GET    /pipelines/{id}/versions
+GET    /pipelines/{id}/versions/{v}
+```
+
+### Runs (F2 — read-only; lifecycle ops w F5+)
+
+```bash
+GET /runs?pipeline_id=...&final_status=...
+GET /runs/{id}
+GET /runs/{id}/state              # latest snapshot
+GET /runs/{id}/state/history      # all snapshots
+GET /runs/{id}/nodes/{node_id}    # execution log
+```
+
+Endpointy do triggerа / pause / resume / abort / retry / skip wymagają silnika LangGraph — w planie F5+.
 
 ## Baza danych
 
