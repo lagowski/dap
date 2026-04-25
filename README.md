@@ -183,12 +183,12 @@ GET    /pipelines/{id}/versions
 GET    /pipelines/{id}/versions/{v}
 ```
 
-### Runs (F5 — trigger + read-only; pause/resume/abort w follow-up)
+### Runs (F5 + background execution)
 
 ```bash
-POST /runs                       # F5: trigger pipeline execution (synchronous)
+POST /runs                       # async — returns 201 immediately, runs in bg task
                                  # body: {pipeline_id, pipeline_version?, initial_state}
-                                 # blocks until done; returns full Run object
+POST /runs/{id}/abort            # cancel a running task → final_status: aborted
 GET /runs?pipeline_id=...&final_status=...
 GET /runs/{id}
 GET /runs/{id}/state              # latest snapshot
@@ -196,12 +196,15 @@ GET /runs/{id}/state/history      # all snapshots
 GET /runs/{id}/nodes/{node_id}    # execution log
 ```
 
-**F5 architecture:**
+**Architecture:**
 - LangGraph `StateGraph(PipelineState)` (Pydantic state)
 - Generic node executor: render prompt (F4) → call adapter (F3) → save snapshot + log
 - Conditional edges via `EdgeCondition` (`==/!=/<=/>=/etc.` + `and`/`or`)
-- Synchronous execution; `recursion_limit=50` safeguard against infinite retry loops
-- Pause/resume/abort/retry/skip endpoints — separate issues
+- **Background execution** via `asyncio.create_task` + in-memory `RunRegistry`
+- Graceful shutdown — engine stop aborts running tasks, marks as `aborted`
+- Stale-on-startup recovery — runs left in `running` from crashes → marked `failed`
+- `recursion_limit=50` safeguard against infinite retry loops
+- Pause/resume/retry-node/skip-node — separate issues (require LangGraph SqliteSaver checkpointing)
 
 ## Baza danych
 

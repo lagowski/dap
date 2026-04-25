@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,6 +16,8 @@ from dap_engine.api.health import router as health_router
 from dap_engine.api.pipelines import router as pipelines_router
 from dap_engine.api.runs import router as runs_router
 from dap_engine.api.runtimes import router as runtimes_router
+from dap_engine.execution import RunRegistry
+from dap_engine.persistence import repository as repo
 from dap_engine.persistence.db import create_engine_for_sqlite, make_session_factory
 
 logger = logging.getLogger("dap.engine")
@@ -35,16 +38,43 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         engine = create_engine_for_sqlite(cfg.db_path)
         session_factory = make_session_factory(engine)
         registry = create_default_registry()
+        run_registry = RunRegistry()
+
+        # Recover stale runs left by previous crashes
+        with session_factory() as cleanup_session:
+            stale_count = repo.mark_stale_running_runs_as_failed(
+                cleanup_session,
+                reason="engine restarted before run completed",
+            )
+            cleanup_session.commit()
+        if stale_count > 0:
+            logger.warning("marked %d stale running run(s) as failed", stale_count)
 
         app.state.config = cfg
         app.state.db_engine = engine
         app.state.session_factory = session_factory
         app.state.runtime_registry = registry
+        app.state.run_registry = run_registry
 
         logger.info("dap-engine started — db=%s", Path(cfg.db_path).resolve())
         try:
             yield
         finally:
+            # Graceful shutdown — abort all running tasks
+            cancelled = await run_registry.shutdown(timeout=5.0)
+            if cancelled:
+                logger.info("aborted %d running run(s) on shutdown", len(cancelled))
+                # Mark them as aborted in DB
+                with session_factory() as shutdown_session:
+                    for run_id in cancelled:
+                        with contextlib.suppress(repo.NotFoundError):
+                            repo.finalize_run(
+                                shutdown_session,
+                                run_id,
+                                final_status="aborted",
+                            )
+                    shutdown_session.commit()
+
             engine.dispose()
             logger.info("dap-engine stopped")
 

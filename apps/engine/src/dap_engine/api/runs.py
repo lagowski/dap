@@ -1,12 +1,18 @@
 """REST endpoints for runs.
 
-POST /runs (F5) triggers synchronous pipeline execution via LangGraph.
-GET endpoints provide read-only access; pause/resume/abort/retry/skip
-endpoints will arrive in follow-up issues.
+POST /runs (F5+) triggers asynchronous pipeline execution via LangGraph.
+Returns 201 with Run immediately; pipeline runs in a background asyncio.Task
+tracked by the engine's RunRegistry. Use POST /runs/{id}/abort to cancel.
+
+GET endpoints provide read-only access; pause/resume/retry-node/skip-node
+endpoints are deferred to a follow-up issue (require LangGraph SqliteSaver
+checkpointing for state rollback semantics).
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from dap_runtimes import RuntimeRegistry
@@ -14,13 +20,20 @@ from dap_types import NodeExecutionLog, PipelineState, Run, StateSnapshot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from dap_engine.api.deps import get_registry, get_session
+from dap_engine.api.deps import (
+    get_registry,
+    get_run_registry,
+    get_session,
+    get_session_factory,
+)
 from dap_engine.api.schemas import RunCreateRequest
-from dap_engine.execution import PipelineRunner, RunnerError
+from dap_engine.execution import PipelineRunner, RunnerError, RunRegistry
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
+
+logger = logging.getLogger("dap.engine.api.runs")
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -30,11 +43,14 @@ async def trigger_run(
     payload: RunCreateRequest,
     session: Session = Depends(get_session),
     registry: RuntimeRegistry = Depends(get_registry),
+    run_registry: RunRegistry = Depends(get_run_registry),
+    session_factory: sessionmaker[Session] = Depends(get_session_factory),
 ) -> Run:
-    """Trigger synchronous pipeline execution.
+    """Trigger asynchronous pipeline execution.
 
-    Blocks until the pipeline finishes (mocked adapters: ms; real LLMs: seconds).
-    Returns the full Run object with final_status, tokens_used, cost_usd.
+    Returns immediately with the Run row in `running` state. The actual
+    execution happens in a background asyncio.Task. Poll the GET endpoints
+    for progress, or POST /runs/{id}/abort to cancel.
     """
     pipeline = session.get(PipelineORM, payload.pipeline_id)
     if pipeline is None or pipeline.archived_at is not None:
@@ -77,31 +93,128 @@ async def trigger_run(
         trigger_source="api",
         initial_state=initial_state,
     )
+    # Commit so the background task can see the row in its own session.
+    session.commit()
+    run_id = run_orm.id
 
-    # Patch run_id into state so node executors see it
-    initial_state = initial_state.model_copy(update={"run_id": run_orm.id})
+    initial_state_with_run_id = initial_state.model_copy(update={"run_id": run_id})
 
-    runner = PipelineRunner(session=session, registry=registry)
-    try:
-        final_state = await runner.run(
-            run_id=run_orm.id,
-            pipeline_orm=pipeline,
-            pipeline_version_orm=pipeline_version,
-            initial_state=initial_state,
+    # Spawn background task — runs pipeline in its own DB session.
+    task = asyncio.create_task(
+        _execute_run_background(
+            run_id=run_id,
+            pipeline_id=payload.pipeline_id,
+            pipeline_version=target_version,
+            initial_state=initial_state_with_run_id,
+            session_factory=session_factory,
+            registry=registry,
         )
-        final_status = final_state.final_status
-        if final_status not in {"success", "failed", "aborted"}:
-            # If pipeline didn't explicitly set final_status, treat as success.
-            final_status = "success"
-    except RunnerError as exc:
-        repo.finalize_run(session, run_orm.id, final_status="failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+    )
+    run_registry.register(run_id, task)
 
-    repo.finalize_run(session, run_orm.id, final_status=final_status)
-    return repo.get_run(session, run_orm.id)
+    # Re-fetch run to return current state (running)
+    return repo.get_run(session, run_id)
+
+
+async def _execute_run_background(
+    *,
+    run_id: str,
+    pipeline_id: str,
+    pipeline_version: int,
+    initial_state: PipelineState,
+    session_factory: sessionmaker[Session],
+    registry: RuntimeRegistry,
+) -> None:
+    """Run the pipeline in a fresh DB session and finalize the Run row."""
+    final_status = "failed"
+    try:
+        with session_factory() as bg_session:
+            pipeline_orm = bg_session.get(PipelineORM, pipeline_id)
+            version_orm = bg_session.scalar(
+                select(PipelineVersionORM)
+                .where(PipelineVersionORM.pipeline_id == pipeline_id)
+                .where(PipelineVersionORM.version == pipeline_version)
+            )
+            if pipeline_orm is None or version_orm is None:
+                logger.error(
+                    "background run %s: pipeline %s@v%s vanished",
+                    run_id,
+                    pipeline_id,
+                    pipeline_version,
+                )
+                repo.finalize_run(bg_session, run_id, final_status="failed")
+                bg_session.commit()
+                return
+
+            runner = PipelineRunner(session=bg_session, registry=registry)
+            try:
+                final_state = await runner.run(
+                    run_id=run_id,
+                    pipeline_orm=pipeline_orm,
+                    pipeline_version_orm=version_orm,
+                    initial_state=initial_state,
+                )
+            except RunnerError as exc:
+                logger.exception("run %s failed: %s", run_id, exc)
+                repo.finalize_run(bg_session, run_id, final_status="failed")
+                bg_session.commit()
+                return
+
+            final_status = final_state.final_status
+            if final_status not in {"success", "failed", "aborted"}:
+                final_status = "success"
+            repo.finalize_run(bg_session, run_id, final_status=final_status)
+            bg_session.commit()
+    except asyncio.CancelledError:
+        # Aborted via run_registry.abort() — finalize as aborted in a fresh session.
+        try:
+            with session_factory() as cancel_session:
+                repo.finalize_run(cancel_session, run_id, final_status="aborted")
+                cancel_session.commit()
+        except Exception:
+            logger.exception("failed to finalize aborted run %s", run_id)
+        raise  # propagate so the registry sees the cancellation
+    except Exception:
+        logger.exception("background run %s crashed", run_id)
+        try:
+            with session_factory() as crash_session:
+                repo.finalize_run(crash_session, run_id, final_status="failed")
+                crash_session.commit()
+        except Exception:
+            logger.exception("failed to finalize crashed run %s", run_id)
+
+
+@router.post("/{run_id}/abort", response_model=Run)
+async def abort_run(
+    run_id: str,
+    session: Session = Depends(get_session),
+    run_registry: RunRegistry = Depends(get_run_registry),
+) -> Run:
+    """Cancel a running pipeline.
+
+    409 if the run is already finalized (success/failed/aborted) or no
+    background task is registered for it.
+    """
+    try:
+        run = repo.get_run(session, run_id)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if run.final_status != "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run is not running (final_status={run.final_status})",
+        )
+
+    cancelled = await run_registry.abort(run_id)
+    if not cancelled:
+        # Background task already finished — race window between status
+        # check and abort. Mark the run as aborted defensively.
+        repo.finalize_run(session, run_id, final_status="aborted")
+
+    # Background task's CancelledError handler finalizes status; ensure
+    # we read the latest state after cancellation completes.
+    return repo.get_run(session, run_id)
 
 
 @router.get("")

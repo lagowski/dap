@@ -585,6 +585,34 @@ def finalize_run(
     session.flush()
 
 
+def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
+    """Find Run rows still in 'running' state and mark them as failed.
+
+    Called on engine startup to clean up orphans left by crashes / kills.
+    Returns the count of runs updated.
+    """
+    runs = session.scalars(
+        select(RunORM).where(RunORM.final_status == "running"),
+    ).all()
+    count = 0
+    now = _now()
+    for run in runs:
+        run.final_status = "failed"
+        run.ended_at = now
+        # Persist reason via a synthetic snapshot — simpler than schema change.
+        snapshot = StateSnapshotORM(
+            id=_new_id(),
+            run_id=run.id,
+            node_id="__shutdown__",
+            timestamp=now,
+            state={**run.initial_state, "final_status": "failed", "verification_reason": reason},
+        )
+        session.add(snapshot)
+        count += 1
+    session.flush()
+    return count
+
+
 def get_run_node_log(session: Session, run_id: str, node_id: str) -> NodeExecutionLog:
     run = session.get(RunORM, run_id)
     if run is None:
