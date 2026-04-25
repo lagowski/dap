@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_session
 from dap_engine.api.schemas import PipelineCreate, PipelineUpdate
+from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
@@ -42,6 +43,19 @@ def create_pipeline(
     session: Session = Depends(get_session),
 ) -> Pipeline:
     return repo.create_pipeline(session, payload)
+
+
+@router.post("/validate", response_model=ValidationResult)
+def validate_pipeline(
+    payload: PipelineCreate,
+    session: Session = Depends(get_session),
+) -> ValidationResult:
+    """Pre-save DAG validation — used by Pipeline Designer before submitting.
+
+    Returns 200 with `valid: false` and a list of errors when invalid;
+    422 only on Pydantic-level errors (malformed body).
+    """
+    return validate_pipeline_dag(payload, session)
 
 
 @router.get("/{pipeline_id}", response_model=Pipeline)
