@@ -137,7 +137,7 @@ export function useCreateAgent() {
   });
 }
 
-function useRunActionMutation(action: (id: string) => Promise<unknown>) {
+function useRunActionMutation<T>(action: (id: string) => Promise<T>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: action,
