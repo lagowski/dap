@@ -84,6 +84,25 @@ class PipelineUpdate(BaseModel):
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
 
 
+class RenderPreviewRequest(BaseModel):
+    """Body for POST /agents/{id}/render-preview."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class RenderPreviewResponse(BaseModel):
+    """Response from render-preview — XML output + validation outcome."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rendered_xml: str
+    valid: bool
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class PaginatedAgents(BaseModel):
     items: list[Any]  # dap_types.Agent — Any to avoid circular import in this layer
     total: int

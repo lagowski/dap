@@ -1,15 +1,21 @@
-"""REST CRUD for agents."""
+"""REST CRUD for agents + prompt render preview."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_types import Agent
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_session
-from dap_engine.api.schemas import AgentCreate, AgentUpdate
+from dap_engine.api.schemas import (
+    AgentCreate,
+    AgentUpdate,
+    RenderPreviewRequest,
+    RenderPreviewResponse,
+)
 from dap_engine.persistence import repository as repo
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -90,3 +96,36 @@ def get_agent_version(
         return repo.get_agent_version(session, agent_id, version)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/{agent_id}/render-preview", response_model=RenderPreviewResponse)
+def render_preview(
+    agent_id: str,
+    payload: RenderPreviewRequest,
+    version: int | None = Query(default=None, description="Agent version (default: current)"),
+    session: Session = Depends(get_session),
+) -> RenderPreviewResponse:
+    """Render the agent's prompt_template with the supplied context.
+
+    Returns the XML output even when invalid so callers can see the diagnostics.
+    Returns 422 only for hard rendering errors (Jinja syntax / undefined vars).
+    """
+    try:
+        template = repo.get_agent_template(session, agent_id, version)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    try:
+        result = build_prompt(template, payload.context)
+    except PromptBuildError as exc:
+        raise HTTPException(
+            status_code=422,  # Unprocessable Content
+            detail=str(exc),
+        ) from exc
+
+    return RenderPreviewResponse(
+        rendered_xml=result.xml,
+        valid=result.valid,
+        warnings=result.warnings,
+        errors=result.errors,
+    )
