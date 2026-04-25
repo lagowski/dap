@@ -1,0 +1,27 @@
+[project]
+name = "dap-engine"
+version = "0.0.1"
+description = "DAP engine — FastAPI + LangGraph + SQLAlchemy + SQLite"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dap-types",
+    "dap-runtimes",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.13.3",
+    "pydantic>=2.9.2",
+    "anyio>=4.6.0",
+    # langgraph dodajemy w F5 — nie potrzebny w F0
+]
+
+[project.scripts]
+dap-engine = "dap_engine.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dap_engine"]

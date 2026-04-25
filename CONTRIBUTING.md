@@ -75,9 +75,11 @@ PR template wypełni się automatycznie (patrz `.github/PULL_REQUEST_TEMPLATE.md
 
 **Definition of Done** dla PR do `develop`:
 - ✅ Wszystkie commity Conventional Commits
-- ✅ `pnpm build` passes
-- ✅ `pnpm typecheck` passes
-- ✅ `pnpm test` passes (jeśli są testy)
+- ✅ `uv run ruff check apps packages` clean
+- ✅ `uv run ruff format --check apps packages` clean
+- ✅ `uv run mypy apps packages` passes (od F1+)
+- ✅ `uv run pytest` passes (jeśli są testy)
+- ✅ Dashboard (gdy zmieniany): `pnpm --dir apps/dashboard build` passes
 - ✅ PR linkuje Issue (`Closes #42`)
 - ✅ Zaktualizowane relevantne docs (README, plan faz, etc.)
 
@@ -90,7 +92,7 @@ gh pr create --base main --head develop --title "release: vX.Y.Z"
 **Definition of Done** dla PR do `main`:
 - ✅ Wszystkie wymagania z PR do `develop`
 - ✅ CHANGELOG.md zaktualizowany
-- ✅ Wersje w package.json podbite zgodnie z semver
+- ✅ Wersje w `apps/*/pyproject.toml` i `packages/*/pyproject.toml` podbite zgodnie z semver
 - ✅ Tag release'u utworzony po merge (`git tag vX.Y.Z && git push --tags`)
 
 ## Lokalne zabezpieczenia
@@ -127,7 +129,8 @@ Komendy `gh` do konfiguracji dostępne w `docs/github-setup.md` (TBD).
 
 ## Konwencje dodatkowe
 
-- **Język kodu:** TypeScript strict
+- **Język kodu:** Python 3.13 (strict ruff/mypy); dashboard w TypeScript strict
 - **Język komentarzy i commitów:** angielski
 - **Język dokumentacji user-facing** (README, CONTRIBUTING): polski (zgodnie z preferencją projektu)
 - **Issue w repo:** polski OK, angielski też OK
+- **Imports:** ruff isort konfiguracja w `pyproject.toml` — używaj `uv run ruff format`

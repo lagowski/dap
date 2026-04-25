@@ -1,0 +1,18 @@
+[project]
+name = "dap-runtimes"
+version = "0.0.1"
+description = "Runtime adapters for DAP (claude-code, gemini-cli, codex, aider, api-call, bash, http)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dap-types",
+    "anyio>=4.6.0",
+    "httpx>=0.27.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dap_runtimes"]
