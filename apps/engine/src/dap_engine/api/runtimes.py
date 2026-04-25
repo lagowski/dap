@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+
+router = APIRouter(prefix="/runtimes")
+
+
+@router.get("")
+async def list_runtimes(request: Request) -> list[dict[str, Any]]:
+    registry = request.app.state.runtime_registry
+    return [{"id": a.id, "displayName": a.display_name, "kind": a.kind} for a in registry.list()]
+
+
+@router.get("/{runtime_id}/health")
+async def runtime_health(runtime_id: str, request: Request) -> dict[str, Any]:
+    registry = request.app.state.runtime_registry
+    if not registry.has(runtime_id):
+        raise HTTPException(status_code=404, detail=f"Runtime not found: {runtime_id}")
+    adapter = registry.get(runtime_id)
+    health = await adapter.healthcheck()
+    return health.model_dump(exclude_none=True)

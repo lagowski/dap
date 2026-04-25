@@ -1,49 +1,75 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build outputs
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
 dist/
 build/
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# uv
+.uv-cache/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.pytype/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# --- Node (dashboard) ---
+node_modules/
+.pnpm-store/
 .next/
 out/
 *.tsbuildinfo
-
-# Turbo
 .turbo/
 
-# Environment
+# --- Environment ---
 .env
 .env.local
 .env.*.local
 
-# DAP local state
+# --- DAP local state ---
 .dap/
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
 
-# Logs
+# --- Logs ---
 logs/
 *.log
 npm-debug.log*
 pnpm-debug.log*
 
-# IDE
+# --- IDE ---
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
+# --- OS ---
 .DS_Store
 Thumbs.db
 
-# Coverage
-coverage/
-.nyc_output/
-
-# Cache
+# --- Cache ---
 .cache/
 .eslintcache

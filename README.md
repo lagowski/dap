@@ -1,45 +1,47 @@
 # DAP — Deterministic Agent Pipeline
 
-Lokalna aplikacja do budowy i wykonywania deterministycznych pipeline'ów agentowych. Paperclip-like UX, DAP-owe zasady (state machine + XML prompts + runtime adapters).
+Lokalna aplikacja do budowy i wykonywania deterministycznych pipeline'ów agentowych. Paperclip-like UX (`uvx dap`), DAP-owe zasady (state machine + XML prompts + runtime adapters).
 
 Pełny plan architektoniczny: [`../LOCAL_APP_PLAN.md`](../LOCAL_APP_PLAN.md)
 Dokumentacja koncepcyjna: [`../DOCUMENTATION.md`](../DOCUMENTATION.md)
+Workflow: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ---
 
 ## Stan implementacji
 
-### ✅ F0 — Monorepo skeleton (ukończone 2026-04-23, zweryfikowane 2026-04-24)
+### ✅ F0 — Monorepo skeleton (Python + uv, ukończone 2026-04-25)
 
-Scaffolding wszystkich workspace'ów, tooling, baseline REST API, persystencja SQLite, placeholdery runtime adapters.
+Pivot z TS/Node na Python 3.13 + uv workspace. Scaffolding wszystkich workspace'ów, FastAPI + SQLAlchemy + SQLite engine, Typer CLI, 7 runtime adapter stubs.
 
 **Zweryfikowane end-to-end:**
-- `pnpm install` — 185 paczek, ~10s
-- `pnpm build` — Turbo 5/5 successful, ~4.5s
-- `dap --version` → `0.0.1`
+- `uv sync --all-packages` — workspace z 4 pakietami zbudowany
+- `uv run dap --version` → `0.0.1`
 - `dap init` → tworzy `.dap/` z pełną strukturą
-- `dap start` → engine na `127.0.0.1:7333`
-- `GET /health` → `{"status":"ok","service":"@dap/engine","version":"0.0.1",...}`
-- `GET /runtimes` → lista 7 adapterów (bash, http, api-call, claude-code, gemini-cli, codex, aider)
-- `GET /runtimes/:id/health` → healthcheck per runtime (bash ✓ available, cli agents ✗ missing binary)
-- SQLite `state.db` utworzony, WAL mode aktywny (`state.db-shm`, `state.db-wal`)
+- `dap start` → engine na `127.0.0.1:7333` (uvicorn + FastAPI)
+- `GET /health` → `{"status":"ok","service":"dap-engine","version":"0.0.1"}`
+- `GET /runtimes` → 7 adapterów (bash, http, api-call, claude-code, gemini-cli, codex, aider)
+- `GET /runtimes/:id/health` → healthcheck per runtime
+- SQLite `state.db` + WAL mode (`state.db-shm`, `state.db-wal`)
+- `ruff check + format` — clean
+- Wszystkie 5 tabel (agents, pipelines, runs, state_snapshots, node_execution_logs) tworzone automatycznie przy starcie
 
 ### Planowane
 
-| Faza  | Zakres                                                              |
-| ----- | ------------------------------------------------------------------- |
-| F1    | CLI process management, stop/status, port discovery                 |
-| F2    | Engine: REST CRUD dla agents/pipelines/runs                         |
-| F3    | Runtime adapters 1st wave — `api-call`, `bash`, `claude-code`       |
-| F4    | Prompt Builder (Nunjucks → XML, schema validator)                   |
-| F5    | Pipeline execution (LangGraph.js bootstrap, state diff, checkpointing) |
-| F6    | Dashboard viewer (Runs List, Run Detail, Node Drawer)               |
-| F7    | Dashboard Pipeline Designer                                         |
-| F8    | Agent & runtime registry UI                                         |
-| F9    | Runtime adapters 2nd wave — `gemini-cli`, `codex`, `aider`, `http`  |
-| F10   | New Run wizard + GitHub PAT integration                             |
-| F11   | Polish: keychain, export/import, dark mode                          |
-| F12   | Packaging, `npm publish`, cross-platform verification               |
+| Faza  | Zakres                                                                  |
+| ----- | ----------------------------------------------------------------------- |
+| F1    | CLI process management (PID file, `dap stop`, `dap status` runtime info) |
+| F2    | Engine: REST CRUD dla agents/pipelines/runs (FastAPI + Pydantic)        |
+| F3    | Runtime adapters 1st wave — `api-call`, `bash`, `claude-code`           |
+| F4    | Prompt Builder (Jinja2 → XML, schema validator)                          |
+| F5    | Pipeline execution (LangGraph integration, state diff, checkpointing)   |
+| F6    | Dashboard viewer (Next.js, Runs List, Run Detail, Node Drawer)          |
+| F7    | Dashboard Pipeline Designer (React Flow + designer)                     |
+| F8    | Agent & runtime registry UI                                             |
+| F9    | Runtime adapters 2nd wave — `gemini-cli`, `codex`, `aider`, `http`      |
+| F10   | New Run wizard + GitHub PAT integration                                 |
+| F11   | Polish: keychain (keyring lib), export/import, dark mode                |
+| F12   | Packaging, `uv tool install`, cross-platform verification               |
 
 ---
 
@@ -47,109 +49,116 @@ Scaffolding wszystkich workspace'ów, tooling, baseline REST API, persystencja S
 
 ```
 dap/
-├─ .gitignore, .nvmrc, README.md
-├─ package.json                    root (pnpm workspaces + Turbo)
-├─ pnpm-workspace.yaml
-├─ turbo.json
-├─ tsconfig.base.json              strict TS, ES2022, composite
+├─ pyproject.toml              root + uv workspace (members)
+├─ uv.lock
+├─ .python-version             3.13
+├─ .gitignore, README.md, CONTRIBUTING.md
+├─ .github/, .githooks/
 │
 ├─ apps/
-│  ├─ cli/                         @dap/cli — Node launcher (commander)
-│  │  └─ src/
-│  │     ├─ index.ts               (dap init|start|stop|status|--version)
-│  │     ├─ paths.ts               (.dap/, config.json, state.db)
-│  │     └─ commands/              (init, start, stop, status)
+│  ├─ cli/                     dap-cli — Typer launcher
+│  │  └─ src/dap_cli/
+│  │     ├─ __main__.py        Typer app (dap init|start|stop|status|--version)
+│  │     ├─ paths.py           .dap/, config.json, state.db
+│  │     └─ commands/          init, start, stop, status
 │  │
-│  ├─ engine/                      @dap/engine — Fastify + LangGraph.js + Drizzle
-│  │  └─ src/
-│  │     ├─ index.ts               createEngine factory
-│  │     ├─ bin.ts                 standalone entry
-│  │     ├─ api/                   (health, runtimes)
+│  ├─ engine/                  dap-engine — FastAPI + LangGraph + SQLAlchemy
+│  │  └─ src/dap_engine/
+│  │     ├─ app.py             create_app() factory + lifespan
+│  │     ├─ __main__.py        standalone entry (uv run dap-engine)
+│  │     ├─ api/               health, runtimes
 │  │     └─ persistence/
-│  │        ├─ schema.ts           agents, pipelines, runs, snapshots, logs
-│  │        └─ db.ts               better-sqlite3 + drizzle, WAL mode
+│  │        ├─ models.py       SQLAlchemy 2.0 ORM (5 tabel)
+│  │        └─ db.py           SQLite + WAL mode + session factory
 │  │
-│  └─ dashboard/                   @dap/dashboard — placeholder (F6)
+│  └─ dashboard/                Next.js — placeholder (F6)
 │
 └─ packages/
-   ├─ types/                       @dap/types — Agent, Pipeline, Run, State, Runtime
-   └─ runtimes/                    @dap/runtimes — RuntimeAdapter interface + registry
-      └─ src/adapters/             bash, http, api-call, claude-code,
-                                   gemini-cli, codex, aider  (stuby F0)
+   ├─ types/                    dap-types — Pydantic v2 models
+   │  └─ src/dap_types/
+   │     ├─ agent.py, pipeline.py, run.py, state.py, runtime.py
+   │
+   └─ runtimes/                 dap-runtimes — RuntimeAdapter Protocol + impls
+      └─ src/dap_runtimes/
+         ├─ registry.py         RuntimeRegistry + create_default_registry
+         └─ adapters/           base, bash, http, api_call,
+                                claude_code, gemini_cli, codex, aider
 ```
 
 ## Tech stack
 
-| Warstwa               | Wybór                                 |
-| --------------------- | ------------------------------------- |
-| Runtime               | Node.js 22 LTS                        |
-| Language              | TypeScript 5.6 (strict)               |
-| Monorepo              | pnpm 9 workspaces + Turborepo 2       |
-| CLI                   | commander.js 12                       |
-| Engine HTTP           | Fastify 5                             |
-| State machine         | @langchain/langgraph (F5+)            |
-| DB                    | better-sqlite3 + Drizzle ORM          |
-| Subprocess            | execa 9                               |
-| Schema validation     | Zod                                   |
-| Dashboard (F6)        | Next.js 15 + shadcn/ui + React Flow   |
+| Warstwa               | Wybór                                  |
+| --------------------- | -------------------------------------- |
+| Runtime               | Python 3.13                            |
+| Package manager       | uv 0.8                                 |
+| Monorepo              | uv workspaces                          |
+| CLI                   | Typer 0.12 + Rich                      |
+| Engine HTTP           | FastAPI 0.115 + uvicorn                |
+| State machine         | LangGraph (Python, F5+)                |
+| ORM                   | SQLAlchemy 2.0 + Alembic (migrations)  |
+| DB                    | SQLite (WAL mode)                      |
+| Schema validation     | Pydantic v2                            |
+| Subprocess            | anyio + asyncio.subprocess             |
+| HTTP client           | httpx                                  |
+| Lint/format           | ruff                                   |
+| Type checker          | mypy strict                            |
+| Tests                 | pytest + pytest-asyncio                |
+| Dashboard (F6)        | Next.js 15 + shadcn/ui + React Flow    |
 
 ---
 
 ## Quickstart
 
-Wymagania: Node 22+, pnpm 9+.
+Wymagania: Python 3.12+ i [uv](https://docs.astral.sh/uv/).
 
 ```bash
 cd /Users/rla/RLA02/PROJEKTY/Developer/dap
 
-pnpm install             # instaluje deps, linkuje workspace'y
-pnpm build               # Turbo buduje packages w kolejności zależności
+uv sync --all-packages       # zainstaluj cały workspace + deps
 
 # Test CLI
-node apps/cli/dist/index.js --version       # → 0.0.1
-node apps/cli/dist/index.js --help
+uv run dap --version          # → 0.0.1
+uv run dap --help
 
 # Test pełnego flow
 mkdir -p /tmp/dap-playground && cd /tmp/dap-playground
-node /Users/rla/RLA02/PROJEKTY/Developer/dap/apps/cli/dist/index.js init
-node /Users/rla/RLA02/PROJEKTY/Developer/dap/apps/cli/dist/index.js start
+$OLDPWD/.venv/bin/dap init
+$OLDPWD/.venv/bin/dap start
 # Ctrl+C żeby zatrzymać
 
-# Po F12 (packaging): npm install -g @dap/cli → `dap init`
+# Po F12 (packaging): uv tool install dap-cli → `dap init`
 ```
 
 ## Dostępne komendy CLI (F0)
 
-| Komenda       | Status   | Opis                                                   |
-| ------------- | -------- | ------------------------------------------------------ |
-| `dap --version` | ✅     | Wersja binarki                                         |
-| `dap --help`  | ✅       | Lista komend                                           |
-| `dap init`    | ✅       | Tworzy `./.dap/` z config.json i podkatalogami         |
-| `dap start`   | ✅ partial | Spawn engine na 127.0.0.1:7333 (dashboard: F6)       |
-| `dap stop`    | 🚧 stub  | Wymaga PID management (F1)                             |
-| `dap status`  | ✅ partial | Pokazuje czy projekt zainicjowany (runtime info: F1) |
+| Komenda          | Status      | Opis                                                 |
+| ---------------- | ----------- | ---------------------------------------------------- |
+| `dap --version`  | ✅          | Wersja binarki                                       |
+| `dap --help`     | ✅          | Lista komend                                         |
+| `dap init`       | ✅          | Tworzy `./.dap/` z config.json i podkatalogami       |
+| `dap start`      | ✅ partial  | Spawn engine na 127.0.0.1:7333 (dashboard: F6)       |
+| `dap stop`       | 🚧 stub     | Wymaga PID management (F1)                           |
+| `dap status`     | ✅ partial  | Pokazuje czy projekt zainicjowany (runtime info: F1) |
 
 ## Dostępne endpointy engine (F0)
 
-Po `dap start`:
-
 ```bash
 curl http://127.0.0.1:7333/health
-# → { "status": "ok", "service": "@dap/engine", "version": "0.0.1", ... }
+# → {"status":"ok","service":"dap-engine","version":"0.0.1","timestamp":"..."}
 
 curl http://127.0.0.1:7333/runtimes
-# → lista 7 zarejestrowanych adapterów z kind (cli/api/shell/http)
+# → lista 7 adapterów z displayName i kind (cli/api/shell/http)
 
 curl http://127.0.0.1:7333/runtimes/bash/health
-# → { "available": true, "version": "system" }
+# → {"available":true,"version":"system"}
 
 curl http://127.0.0.1:7333/runtimes/claude-code/health
-# → { "available": false, "missing": ["claude binary ..."] }
+# → {"available":false,"missing":["claude binary ..."]}
 ```
 
 ## Baza danych
 
-Drizzle schema w `apps/engine/src/persistence/schema.ts` definiuje 5 tabel:
+SQLAlchemy 2.0 ORM w `apps/engine/src/dap_engine/persistence/models.py` — 5 tabel:
 
 - `agents` — wersjonowane definicje agentów (runtime + config + prompt template)
 - `pipelines` — wersjonowane DAG-i (nodes, edges, conditions)
@@ -157,13 +166,9 @@ Drizzle schema w `apps/engine/src/persistence/schema.ts` definiuje 5 tabel:
 - `state_snapshots` — snapshoty stanu po każdym node (replay/audit)
 - `node_execution_logs` — stdout/stderr/prompt XML/output per node
 
-Generowanie migracji:
-```bash
-cd apps/engine
-pnpm db:generate
-```
+Tabele tworzone automatycznie przy starcie engine'u (dev mode). Alembic migrations dla produkcji.
 
-SQLite w WAL mode (`journal_mode = WAL`, `synchronous = NORMAL`, `foreign_keys = ON`).
+SQLite w WAL mode (`PRAGMA journal_mode = WAL`, `synchronous = NORMAL`, `foreign_keys = ON`).
 
 ## Runtime adapters
 
@@ -181,17 +186,21 @@ SQLite w WAL mode (`journal_mode = WAL`, `synchronous = NORMAL`, `foreign_keys =
 
 Rozszerzalność przez plugin API — drop-in do `~/.dap/plugins/` (F11).
 
-## Git
-
-Repo zainicjowane (`git init`), **brak initial commita** — czeka na zgodę użytkownika.
+## Linter / typechecker
 
 ```bash
-git status     # zobacz co zostanie dodane
+uv run ruff check apps packages
+uv run ruff format apps packages
+uv run mypy apps packages
+uv run pytest
 ```
 
-## Zasady niezmienne (strażnicy architektury)
+## Git
 
-Powtórzone tu dla implementatorów — patrz pełny opis w `../DOCUMENTATION.md`:
+Repo: https://github.com/rafeekpro/dap (private).
+Default branch: `develop`. Workflow: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Zasady niezmienne (strażnicy architektury)
 
 1. **LangGraph controls flow, Runtime executes steps.**
 2. **Prompt jest kodem.** Kompilowany z template + State projection. Wersjonowany.

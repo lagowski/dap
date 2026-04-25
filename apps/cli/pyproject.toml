@@ -1,0 +1,22 @@
+[project]
+name = "dap-cli"
+version = "0.0.1"
+description = "DAP CLI launcher (dap init / start / stop / status)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dap-engine",
+    "typer>=0.12.5",
+    "rich>=13.9.2",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[project.scripts]
+dap = "dap_cli.__main__:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dap_cli"]
