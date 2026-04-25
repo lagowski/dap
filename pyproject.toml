@@ -51,7 +51,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]   # unused imports OK in __init__
-"tests/**" = ["PLR2004"]       # magic values in tests OK
+"tests/**" = [
+    "PLR2004",                  # magic values in tests OK
+    "PLC0415",                  # local imports in tests are intentional (per-test isolation)
+]
 # Pydantic models need runtime access to types — TC* rules don't apply
 
 # --- mypy ---
@@ -74,6 +77,6 @@ ignore_missing_imports = true
 # --- pytest ---
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["apps", "packages"]
+testpaths = ["tests", "apps", "packages"]
 python_files = ["test_*.py", "*_test.py"]
 addopts = "-q"

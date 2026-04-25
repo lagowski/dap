@@ -1,5 +1,7 @@
 # DAP — Deterministic Agent Pipeline
 
+[![CI](https://github.com/rafeekpro/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rafeekpro/dap/actions/workflows/ci.yml)
+
 Lokalna aplikacja do budowy i wykonywania deterministycznych pipeline'ów agentowych. Paperclip-like UX (`uvx dap`), DAP-owe zasady (state machine + XML prompts + runtime adapters).
 
 Pełny plan architektoniczny: [`../LOCAL_APP_PLAN.md`](../LOCAL_APP_PLAN.md)
@@ -186,14 +188,26 @@ SQLite w WAL mode (`PRAGMA journal_mode = WAL`, `synchronous = NORMAL`, `foreign
 
 Rozszerzalność przez plugin API — drop-in do `~/.dap/plugins/` (F11).
 
-## Linter / typechecker
+## Linter / typechecker / testy
 
 ```bash
-uv run ruff check apps packages
-uv run ruff format apps packages
-uv run mypy apps packages
-uv run pytest
+uv run ruff check apps packages tests
+uv run ruff format apps packages tests
+uv run pytest                           # 9 smoke tests w tests/smoke/
+uv run mypy apps packages               # poza CI w F0 — sprzątamy w osobnym issue
 ```
+
+## CI
+
+Każdy PR do `develop` lub `main` jest automatycznie gateowany przez `.github/workflows/ci.yml`:
+
+- ✅ `uv run ruff check apps packages` — blocking
+- ✅ `uv run ruff format --check apps packages` — blocking
+- ✅ `uv run pytest -q` — blocking (smoke tests)
+
+Workflow używa `astral-sh/setup-uv@v3` z cache na `uv.lock`. Concurrency: nowy push do branch'a anuluje wcześniejszy bieg CI.
+
+mypy jest **out of scope** dla F0 CI — codebase ma niedociągnięcia typowe (Pydantic/SQLAlchemy generics) wymagające osobnego sprzątania (issue follow-up).
 
 ## Git
 
