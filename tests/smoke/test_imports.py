@@ -71,6 +71,26 @@ def test_dap_engine_importable() -> None:
     assert EngineConfig().port == 7333
 
 
+def test_dap_prompt_dsl_importable() -> None:
+    from dap_prompt_dsl import (
+        BuildResult,
+        PromptBuildError,
+        TestAuthorContext,
+        build_prompt,
+        validate_xml,
+    )
+
+    assert callable(build_prompt)
+    assert callable(validate_xml)
+    assert issubclass(PromptBuildError, Exception)
+    # Smoke: build a trivial prompt
+    result = build_prompt("<agent_prompt/>", {})
+    assert isinstance(result, BuildResult)
+    assert result.valid is True
+    # TestAuthorContext is a Pydantic model subclass
+    assert TestAuthorContext.model_fields["role"]
+
+
 def test_dap_cli_importable() -> None:
     from dap_cli import __version__
     from dap_cli.__main__ import app

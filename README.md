@@ -155,7 +155,7 @@ curl http://127.0.0.1:7333/runtimes/bash/health           # {"available":true,..
 curl http://127.0.0.1:7333/runtimes/claude-code/health    # {"available":false,...}
 ```
 
-### Agents (F2 — pełen CRUD z immutable versioning)
+### Agents (F2 + F4)
 
 ```bash
 POST   /agents                              # create v1
@@ -165,6 +165,10 @@ PUT    /agents/{id}                         # create new version (vN+1)
 DELETE /agents/{id}                         # archive (soft delete)
 GET    /agents/{id}/versions                # full history
 GET    /agents/{id}/versions/{v}            # specific version
+POST   /agents/{id}/render-preview          # F4: render Jinja2 template + validate XML
+                                            # body: {context: {...}}
+                                            # response: {rendered_xml, valid, warnings, errors}
+                                            # ?version=N (default: current)
 ```
 
 ### Pipelines (F2 — analogicznie)

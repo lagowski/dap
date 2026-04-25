@@ -235,6 +235,16 @@ def get_agent_version(session: Session, agent_id: str, version: int) -> Agent:
     return _agent_from_orm(agent, version_orm, is_current=version == agent.current_version)
 
 
+def get_agent_template(session: Session, agent_id: str, version: int | None = None) -> str:
+    """Fetch the prompt_template string for an agent (current or specific version)."""
+    agent = session.get(AgentORM, agent_id)
+    if agent is None:
+        raise NotFoundError(f"Agent not found: {agent_id}")
+    target_version = version if version is not None else agent.current_version
+    version_orm = _get_agent_version_orm(session, agent_id, target_version)
+    return version_orm.prompt_template
+
+
 def list_agent_versions(session: Session, agent_id: str) -> list[Agent]:
     agent = session.get(AgentORM, agent_id)
     if agent is None:
