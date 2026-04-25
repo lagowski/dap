@@ -1,0 +1,29 @@
+name: Enforce main source
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check-source:
+    name: Verify PR source is develop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check head ref
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "::error::PRs to main must come from 'develop' branch (got: '$HEAD_REF')."
+            echo ""
+            echo "Workflow:"
+            echo "  feature/issue branch  →  PR to develop  →  PR develop → main (release)"
+            echo ""
+            echo "If this is a release PR, ensure it originates from the local develop branch."
+            exit 1
+          fi
+          echo "✓ PR source branch is 'develop' — release PR allowed."
