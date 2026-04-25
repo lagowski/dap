@@ -131,16 +131,16 @@ $OLDPWD/.venv/bin/dap start
 # Po F12 (packaging): uv tool install dap-cli → `dap init`
 ```
 
-## Dostępne komendy CLI (F0)
+## Dostępne komendy CLI
 
-| Komenda          | Status      | Opis                                                 |
-| ---------------- | ----------- | ---------------------------------------------------- |
-| `dap --version`  | ✅          | Wersja binarki                                       |
-| `dap --help`     | ✅          | Lista komend                                         |
-| `dap init`       | ✅          | Tworzy `./.dap/` z config.json i podkatalogami       |
-| `dap start`      | ✅ partial  | Spawn engine na 127.0.0.1:7333 (dashboard: F6)       |
-| `dap stop`       | 🚧 stub     | Wymaga PID management (F1)                           |
-| `dap status`     | ✅ partial  | Pokazuje czy projekt zainicjowany (runtime info: F1) |
+| Komenda          | Status      | Opis                                                                    |
+| ---------------- | ----------- | ----------------------------------------------------------------------- |
+| `dap --version`  | ✅          | Wersja binarki                                                          |
+| `dap --help`     | ✅          | Lista komend                                                            |
+| `dap init`       | ✅          | Tworzy `./.dap/` z config.json i podkatalogami                          |
+| `dap start`      | ✅          | Spawn engine na 127.0.0.1:7333; PID file `./.dap/dap.pid`; refuse jeśli już działa; cleanup stale PID |
+| `dap stop`       | ✅          | SIGTERM → wait 5s → SIGKILL fallback; cleanup PID file                  |
+| `dap status`     | ✅          | Pokazuje stan engine (running/stopped/stale), PID + port + uptime, tabelę runtime adapterów z healthcheck |
 
 ## Dostępne endpointy engine (F0)
 
