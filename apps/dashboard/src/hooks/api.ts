@@ -136,3 +136,26 @@ export function useCreateAgent() {
     },
   });
 }
+
+function useRunActionMutation(action: (id: string) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: action,
+    onSuccess: (_data, runId) => {
+      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
+      qc.invalidateQueries({ queryKey: queryKeys.runs });
+    },
+  });
+}
+
+export function useAbortRun() {
+  return useRunActionMutation(api.abortRun);
+}
+
+export function usePauseRun() {
+  return useRunActionMutation(api.pauseRun);
+}
+
+export function useResumeRun() {
+  return useRunActionMutation(api.resumeRun);
+}
