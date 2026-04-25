@@ -50,7 +50,7 @@ def start_command(
         "[dim](not yet implemented — F6)[/dim]",
     )
     if not headless:
-        console.print("[dim]  (would open browser in --no-headless mode after F6)[/dim]")
+        console.print("[dim]  (would open browser in non-headless mode after F6)[/dim]")
     console.print()
     console.print("[dim]Press Ctrl+C to stop.[/dim]")
 

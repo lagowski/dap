@@ -1,6 +1,6 @@
 # dap-runtimes
 
-Runtime adapters dla DAP. Każdy adapter delegata zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
+Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
 
 W F0 wszystkie adaptery są stubami — implementacja w F3 (1st wave: bash, http, api_call, claude_code) i F9 (gemini_cli, codex, aider).
 

@@ -31,7 +31,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine_for_sqlite(cfg.db_path)
         session_factory = make_session_factory(engine)
-        registry = await create_default_registry()
+        registry = create_default_registry()
 
         app.state.config = cfg
         app.state.db_engine = engine
@@ -53,9 +53,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=[
+            "http://localhost:7332",
+            "http://127.0.0.1:7332",
+        ],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "Authorization"],
     )
 
     app.include_router(health_router)

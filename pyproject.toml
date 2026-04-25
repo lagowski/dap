@@ -32,7 +32,7 @@ dev-dependencies = [
 # --- Ruff ---
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 src = ["apps", "packages"]
 
 [tool.ruff.lint]
@@ -56,7 +56,7 @@ ignore = [
 
 # --- mypy ---
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

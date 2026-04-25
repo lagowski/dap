@@ -19,8 +19,10 @@ uv run dap-engine
 
 ## Migrations
 
-```bash
-cd apps/engine
-uv run alembic revision --autogenerate -m "msg"
-uv run alembic upgrade head
-```
+W F0 schema jest tworzona automatycznie przy starcie engine'u przez
+`Base.metadata.create_all(engine)` (dev mode).
+
+Pełne Alembic-based migrations są **planowane na późniejszą iterację**. Repo nie
+zawiera jeszcze scaffoldu Alembic (`alembic.ini`, `alembic/env.py`), więc
+komendy `alembic revision` / `alembic upgrade` nie będą działać dopóki ten
+config nie zostanie dodany.

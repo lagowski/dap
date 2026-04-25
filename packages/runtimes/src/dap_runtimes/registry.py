@@ -34,8 +34,12 @@ class RuntimeRegistry:
         return list(self._adapters.values())
 
 
-async def create_default_registry() -> RuntimeRegistry:
-    """Tworzy registry z 7 wbudowanymi adapterami (F0 = stuby)."""
+def create_default_registry() -> RuntimeRegistry:
+    """Tworzy registry z 7 wbudowanymi adapterami (F0 = stuby).
+
+    Sync — adapter constructors nie wykonują I/O. Jeśli w przyszłości dojdzie
+    plugin loading z dysku lub remote registry, zmieni się na async.
+    """
     registry = RuntimeRegistry()
     registry.register(BashAdapter())
     registry.register(HttpAdapter())

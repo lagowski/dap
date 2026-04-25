@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -28,8 +29,8 @@ class AgentORM(Base):
     constraints: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     budget_limit_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     timeout_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=60_000)
-    created_at: Mapped[str] = mapped_column(String, nullable=False)
-    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
@@ -46,8 +47,8 @@ class PipelineORM(Base):
     nodes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     edges: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     defaults: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[str] = mapped_column(String, nullable=False)
-    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
@@ -62,8 +63,8 @@ class RunORM(Base):
     current_node: Mapped[str | None] = mapped_column(String, nullable=True)
     node_statuses: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     final_status: Mapped[str] = mapped_column(String, nullable=False)
-    started_at: Mapped[str] = mapped_column(String, nullable=False)
-    ended_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
@@ -83,7 +84,7 @@ class StateSnapshotORM(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     run_id: Mapped[str] = mapped_column(String, ForeignKey("runs.id"), nullable=False)
     node_id: Mapped[str] = mapped_column(String, nullable=False)
-    timestamp: Mapped[str] = mapped_column(String, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
     run: Mapped[RunORM] = relationship(back_populates="state_snapshots")
@@ -97,8 +98,8 @@ class NodeExecutionLogORM(Base):
     node_id: Mapped[str] = mapped_column(String, nullable=False)
     agent_id: Mapped[str] = mapped_column(String, nullable=False)
     runtime_id: Mapped[str] = mapped_column(String, nullable=False)
-    started_at: Mapped[str] = mapped_column(String, nullable=False)
-    ended_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     prompt_xml: Mapped[str] = mapped_column(Text, nullable=False)
     stdout: Mapped[str] = mapped_column(Text, nullable=False, default="")
     stderr: Mapped[str] = mapped_column(Text, nullable=False, default="")
