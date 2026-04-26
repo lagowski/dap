@@ -61,7 +61,7 @@ importers:
         version: 3.24.1
     devDependencies:
       '@eslint/eslintrc':
-        specifier: ^3.3.5
+        specifier: 3.3.5
         version: 3.3.5
       '@types/node':
         specifier: 22.10.5
@@ -76,10 +76,10 @@ importers:
         specifier: 10.4.20
         version: 10.4.20(postcss@8.4.49)
       eslint:
-        specifier: ^9.39.4
+        specifier: 9.39.4
         version: 9.39.4(jiti@1.21.7)
       eslint-config-next:
-        specifier: ^15.5.15
+        specifier: 15.5.15
         version: 15.5.15(eslint@9.39.4(jiti@1.21.7))(typescript@5.7.3)
       openapi-typescript:
         specifier: 7.5.2
