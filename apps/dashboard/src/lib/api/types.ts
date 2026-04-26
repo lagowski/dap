@@ -46,6 +46,19 @@ export interface AgentCreate {
   timeout_ms?: number;
 }
 
+export interface AgentUpdate {
+  /** PUT /agents/{id} body — creates a new immutable version. */
+  name?: string;
+  runtime_id: string;
+  runtime_config?: Record<string, unknown>;
+  prompt_template: string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  constraints?: string[];
+  budget_limit_usd?: number | null;
+  timeout_ms?: number;
+}
+
 export type ComparisonOperator = "==" | "!=" | "<" | "<=" | ">" | ">=";
 
 export interface ComparisonCondition {
