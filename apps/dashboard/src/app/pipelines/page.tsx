@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Play, Plus } from "lucide-react";
 import { usePipelinesList } from "@/hooks/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { TriggerRunDialog } from "@/components/trigger-run-dialog";
 
 const ID_PREFIX = 8;
 
@@ -69,7 +70,19 @@ export default function PipelinesPage() {
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                     {pipeline.id.slice(0, ID_PREFIX)}…
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right space-x-2">
+                    <TriggerRunDialog
+                      pipelineId={pipeline.id}
+                      pipelineName={pipeline.name}
+                      currentVersion={pipeline.version}
+                    >
+                      {(open) => (
+                        <Button variant="outline" size="sm" onClick={open}>
+                          <Play className="h-3.5 w-3.5 mr-1" />
+                          Run
+                        </Button>
+                      )}
+                    </TriggerRunDialog>
                     <Button asChild variant="outline" size="sm">
                       <Link href={`/pipelines/${pipeline.id}/edit`}>Edit</Link>
                     </Button>

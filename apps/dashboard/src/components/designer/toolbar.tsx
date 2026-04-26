@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, AlertCircle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, AlertCircle, CheckCircle2, Play } from "lucide-react";
 import type { ValidationResult } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { TriggerRunDialog } from "@/components/trigger-run-dialog";
 
 interface DesignerToolbarProps {
   name: string;
@@ -18,6 +19,9 @@ interface DesignerToolbarProps {
   isValidating: boolean;
   isSaving: boolean;
   saveLabel: string;
+  /** Set when editing an existing saved pipeline — enables the "Run" button. */
+  pipelineId?: string;
+  pipelineVersion?: number;
 }
 
 export function DesignerToolbar({
@@ -31,8 +35,11 @@ export function DesignerToolbar({
   isValidating,
   isSaving,
   saveLabel,
+  pipelineId,
+  pipelineVersion,
 }: DesignerToolbarProps) {
   const canSave = !isSaving && name.length > 0 && validationResult?.valid !== false;
+  const canRun = pipelineId != null && pipelineVersion != null;
 
   return (
     <div className="border-b bg-background">
@@ -80,6 +87,20 @@ export function DesignerToolbar({
           >
             {isSaving ? "Saving…" : saveLabel}
           </Button>
+          {canRun ? (
+            <TriggerRunDialog
+              pipelineId={pipelineId}
+              pipelineName={name || "(unnamed)"}
+              currentVersion={pipelineVersion}
+            >
+              {(open) => (
+                <Button type="button" variant="secondary" size="sm" onClick={open}>
+                  <Play className="h-3.5 w-3.5 mr-1" />
+                  Run
+                </Button>
+              )}
+            </TriggerRunDialog>
+          ) : null}
         </div>
       </div>
 

@@ -281,6 +281,8 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         isValidating={validate.isPending}
         isSaving={isSaving}
         saveLabel={saveLabel}
+        pipelineId={initialPipeline?.id}
+        pipelineVersion={initialPipeline?.version}
       />
       <div className="flex flex-1 overflow-hidden">
         <AgentPalette onAddNode={handleAddNode} />

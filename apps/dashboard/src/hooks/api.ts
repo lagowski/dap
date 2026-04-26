@@ -2,7 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
-import type { AgentCreate, PipelineCreate, PipelineUpdate } from "@/lib/api/types";
+import type {
+  AgentCreate,
+  PipelineCreate,
+  PipelineUpdate,
+  RunCreateRequest,
+} from "@/lib/api/types";
 
 export const queryKeys = {
   runs: ["runs"] as const,
@@ -18,6 +23,7 @@ export const queryKeys = {
   pipelines: ["pipelines"] as const,
   pipelinesList: ["pipelines", "list"] as const,
   pipeline: (id: string) => ["pipelines", id] as const,
+  pipelineVersions: (id: string) => ["pipelines", id, "versions"] as const,
 };
 
 const RUNS_LIST_REFETCH_MS = 2_000;
@@ -158,4 +164,27 @@ export function usePauseRun() {
 
 export function useResumeRun() {
   return useRunActionMutation(api.resumeRun);
+}
+
+export function usePipelineVersions(
+  id: string | null,
+  options?: { enabled?: boolean },
+) {
+  const enabled = (options?.enabled ?? true) && id != null;
+  return useQuery({
+    queryKey: id ? queryKeys.pipelineVersions(id) : ["pipelines", "noop", "versions"],
+    queryFn: () =>
+      id ? api.listPipelineVersions(id) : Promise.reject(new Error("no id")),
+    enabled,
+  });
+}
+
+export function useTriggerRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: RunCreateRequest) => api.triggerRun(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.runs });
+    },
+  });
 }
