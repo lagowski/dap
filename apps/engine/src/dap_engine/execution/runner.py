@@ -32,9 +32,17 @@ logger = logging.getLogger("dap.engine.execution.runner")
 
 DEFAULT_RECURSION_LIMIT = 50
 
+# Mode for rewind_and_run() — see method docstring.
+REWIND_RETRY = "retry"
+REWIND_SKIP = "skip"
+
 
 class RunnerError(Exception):
     """Raised when pipeline cannot be built or executed."""
+
+
+class CheckpointNotFoundError(RunnerError):
+    """Raised when no checkpoint matches the requested rewind target."""
 
 
 class PipelineRunner:
@@ -99,6 +107,81 @@ class PipelineRunner:
             result = await graph.ainvoke(invoke_input, config=config)
         except Exception as exc:
             logger.exception("pipeline execution failed for run %s", run_id)
+            msg = f"Execution failed: {type(exc).__name__}: {exc}"
+            raise RunnerError(msg) from exc
+
+        return PipelineState.model_validate(result)
+
+    async def rewind_and_run(
+        self,
+        *,
+        run_id: str,
+        pipeline_orm: PipelineORM,
+        pipeline_version_orm: PipelineVersionORM,
+        target_node: str,
+        mode: str,
+    ) -> PipelineState:
+        """Rewind the graph to just before `target_node`, then resume.
+
+        - ``mode="retry"``: rewind so the next step is `target_node`; resume
+          re-executes that node.
+        - ``mode="skip"``: pretend `target_node` ran with no state changes;
+          resume proceeds to its downstream successors.
+
+        Both modes require a checkpointer and a prior execution that reached
+        the target node. Raises ``CheckpointNotFoundError`` when no historical
+        checkpoint has the target node staged as next.
+        """
+        if self.checkpointer is None:
+            msg = "Cannot rewind without a checkpointer"
+            raise RunnerError(msg)
+        if mode not in {REWIND_RETRY, REWIND_SKIP}:
+            msg = f"Unknown rewind mode: {mode}"
+            raise RunnerError(msg)
+
+        pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
+        agent_lookup = self._load_agents(pipeline)
+        graph = self._build_graph(
+            run_id=run_id,
+            pipeline=pipeline,
+            agent_lookup=agent_lookup,
+        )
+
+        base_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
+
+        # Find the most recent checkpoint where `target_node` is the next
+        # step to execute. aget_state_history yields newest-first.
+        target_config: dict[str, Any] | None = None
+        async for snapshot in graph.aget_state_history(base_config):
+            if target_node in (snapshot.next or ()):
+                target_config = snapshot.config
+                break
+
+        if target_config is None:
+            msg = (
+                f"No checkpoint found where '{target_node}' is staged as next. "
+                f"The node may not have been reached during prior execution."
+            )
+            raise CheckpointNotFoundError(msg)
+
+        # Branch from the historical checkpoint: aupdate_state writes a new
+        # checkpoint and returns its config; subsequent ainvoke runs from it.
+        if mode == REWIND_SKIP:
+            new_config = await graph.aupdate_state(
+                target_config, values={}, as_node=target_node
+            )
+        else:  # retry
+            # values=None + no as_node → no logical change, but we still get
+            # a new branch tip from which the target node will run again.
+            new_config = await graph.aupdate_state(target_config, values=None)
+
+        invoke_config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        invoke_config["configurable"] = new_config["configurable"]
+
+        try:
+            result = await graph.ainvoke(None, config=invoke_config)
+        except Exception as exc:
+            logger.exception("pipeline rewind/run failed for run %s", run_id)
             msg = f"Execution failed: {type(exc).__name__}: {exc}"
             raise RunnerError(msg) from exc
 
