@@ -6,6 +6,13 @@ command via `runtime_config.command` (preferred) or by emitting a `<command>`
 block in their prompt template — the latter lets a templated agent compute
 the command from PipelineState fields.
 
+Shell precedence: `runtime_config.shell` → `DAP_BASH_SHELL` env var → `/bin/bash`.
+
+Process lifecycle: subprocesses run in a new POSIX session/process group so a
+timeout or engine cancellation kills the entire group (background jobs and
+nested children) rather than only the shell. Falls back to single-process
+kill on platforms without `os.setsid`.
+
 Security model (v0.1): single-user, local-trust. The command runs with the
 engine's privileges in the configured working directory; there is NO
 sandbox, network restriction, or filesystem confinement. Multi-user setups
@@ -20,6 +27,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import time
 from typing import Any, Final
 
@@ -30,12 +38,20 @@ from dap_runtimes.adapters.base import BaseAdapter
 logger = logging.getLogger("dap.runtimes.bash")
 
 DEFAULT_SHELL: Final = "/bin/bash"
-DEFAULT_TIMEOUT_MS: Final = 60_000
+SHELL_ENV_VAR: Final = "DAP_BASH_SHELL"
 MS_PER_SECOND: Final = 1000
 COMMAND_TAG_PATTERN: Final = re.compile(
     r"<command>\s*(.*?)\s*</command>",
     re.DOTALL,
 )
+
+
+def _resolve_shell(config: dict[str, Any]) -> str | None:
+    """Pick the shell with documented precedence. Returns None if config invalid."""
+    explicit = config.get("shell")
+    if explicit is not None:
+        return explicit if isinstance(explicit, str) else None
+    return os.environ.get(SHELL_ENV_VAR, DEFAULT_SHELL)
 
 
 class BashAdapter(BaseAdapter):
@@ -46,12 +62,15 @@ class BashAdapter(BaseAdapter):
     kind: RuntimeKind = "shell"
 
     async def healthcheck(self) -> HealthStatus:
-        shell = os.environ.get("DAP_BASH_SHELL", DEFAULT_SHELL)
+        shell = _resolve_shell({}) or DEFAULT_SHELL
         if shutil.which(shell) is None:
             return HealthStatus(available=False, missing=[f"shell binary: {shell}"])
         return HealthStatus(available=True, version=shell)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+        # Many returns: each guard maps to a distinct precondition failure
+        # with its own error message; collapsing into a dispatch dict obscures
+        # the mapping (same rationale as ApiCallAdapter.execute).
         config = task.runtime_config
 
         command = _resolve_command(config, task.prompt_xml)
@@ -60,23 +79,34 @@ class BashAdapter(BaseAdapter):
                 "No command supplied. Set runtime_config.command or include "
                 "a <command>...</command> block in the agent's prompt_template.",
                 duration_ms=0,
+                command=None,
+                shell=None,
             )
 
-        shell = config.get("shell", DEFAULT_SHELL)
-        if not isinstance(shell, str):
-            return _failed("runtime_config.shell must be a string", duration_ms=0)
+        shell = _resolve_shell(config)
+        if shell is None:
+            return _failed(
+                "runtime_config.shell must be a string",
+                duration_ms=0,
+                command=command,
+                shell=None,
+            )
+
+        env = os.environ.copy()
+        env_error = _merge_extra_env(config, env)
+        if env_error is not None:
+            return _failed(env_error, duration_ms=0, command=command, shell=shell)
 
         cwd = task.working_directory or os.getcwd()
         timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
 
-        env = os.environ.copy()
-        extra_env = config.get("env", {})
-        if isinstance(extra_env, dict):
-            for key, value in extra_env.items():
-                if isinstance(key, str) and isinstance(value, str):
-                    env[key] = value
-
         start = time.monotonic()
+        # start_new_session=True puts the subprocess in its own POSIX
+        # session / process group so we can kill the entire tree (including
+        # background jobs the shell may have spawned) on timeout or cancel.
+        # Windows lacks setsid; we accept the single-process limitation there.
+        new_session = hasattr(os, "setsid")
+
         try:
             process = await asyncio.create_subprocess_exec(
                 shell,
@@ -86,6 +116,7 @@ class BashAdapter(BaseAdapter):
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=new_session,
             )
         except FileNotFoundError as exc:
             return _failed(
@@ -108,12 +139,7 @@ class BashAdapter(BaseAdapter):
                 timeout=timeout_seconds,
             )
         except TimeoutError:
-            process.kill()
-            # Reap so we don't leak zombies; ignore errors during cleanup.
-            try:
-                await process.wait()
-            except Exception:
-                logger.exception("error waiting for killed subprocess")
+            await _kill_process_tree(process, new_session)
             return _failed(
                 f"Command timed out after {task.timeout_ms}ms",
                 duration_ms=_elapsed_ms(start),
@@ -123,6 +149,12 @@ class BashAdapter(BaseAdapter):
                 stderr="",
                 timed_out=True,
             )
+        except asyncio.CancelledError:
+            # Engine-level abort/pause cancels the run task. Tear down the
+            # subprocess tree so we don't leak background processes, then
+            # re-raise so the caller's cancellation logic still runs.
+            await _kill_process_tree(process, new_session)
+            raise
 
         duration_ms = _elapsed_ms(start)
         stdout = stdout_bytes.decode("utf-8", errors="replace")
@@ -143,13 +175,13 @@ class BashAdapter(BaseAdapter):
             output=stdout,
             duration_ms=duration_ms,
             errors=errors,
-            structured={
-                "exit_code": exit_code,
-                "stderr": stderr,
-                "command": command,
-                "shell": shell,
-                "timed_out": False,
-            },
+            structured=_make_structured(
+                command=command,
+                shell=shell,
+                exit_code=exit_code,
+                stderr=stderr,
+                timed_out=False,
+            ),
         )
 
 
@@ -168,33 +200,93 @@ def _resolve_command(config: dict[str, Any], prompt_xml: str) -> str | None:
     return None
 
 
+def _merge_extra_env(config: dict[str, Any], env: dict[str, str]) -> str | None:
+    """Merge runtime_config.env into env in place. Returns error message on invalid input."""
+    extra_env = config.get("env")
+    if extra_env is None:
+        return None
+    if not isinstance(extra_env, dict):
+        return "runtime_config.env must be a dict[str, str]"
+    for key, value in extra_env.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            return (
+                "runtime_config.env must be a dict[str, str]; "
+                f"got entry with key type {type(key).__name__} "
+                f"and value type {type(value).__name__}"
+            )
+        env[key] = value
+    return None
+
+
+async def _kill_process_tree(
+    process: asyncio.subprocess.Process,
+    new_session: bool,
+) -> None:
+    """SIGKILL the process group (POSIX) or the single process (Windows). Reap zombies."""
+    if process.returncode is not None:
+        return  # already exited
+
+    try:
+        if new_session and hasattr(os, "killpg"):
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        else:
+            process.kill()
+    except (ProcessLookupError, PermissionError):
+        # Race: process exited between the check and signal — fine, just reap.
+        pass
+    except OSError:
+        logger.exception("failed to signal subprocess pid=%s", process.pid)
+        process.kill()  # best-effort fallback
+
+    # Shield the wait so cancellation propagating from above doesn't leave a zombie.
+    try:
+        await asyncio.shield(process.wait())
+    except (asyncio.CancelledError, Exception):
+        logger.exception("error waiting for killed subprocess")
+
+
 def _elapsed_ms(start: float) -> int:
     return int((time.monotonic() - start) * MS_PER_SECOND)
+
+
+def _make_structured(
+    *,
+    command: str | None,
+    shell: str | None,
+    exit_code: int | None,
+    stderr: str,
+    timed_out: bool,
+) -> dict[str, Any]:
+    """Always-consistent shape so downstream nodes can branch reliably."""
+    return {
+        "command": command,
+        "shell": shell,
+        "exit_code": exit_code,
+        "stderr": stderr,
+        "timed_out": timed_out,
+    }
 
 
 def _failed(
     message: str,
     *,
     duration_ms: int,
-    command: str | None = None,
-    shell: str | None = None,
+    command: str | None,
+    shell: str | None,
     exit_code: int | None = None,
     stderr: str = "",
     timed_out: bool = False,
 ) -> RuntimeResult:
-    structured: dict[str, Any] = {"timed_out": timed_out}
-    if command is not None:
-        structured["command"] = command
-    if shell is not None:
-        structured["shell"] = shell
-    if exit_code is not None:
-        structured["exit_code"] = exit_code
-    if stderr:
-        structured["stderr"] = stderr
     return RuntimeResult(
         success=False,
         output="",
         duration_ms=duration_ms,
         errors=[message],
-        structured=structured,
+        structured=_make_structured(
+            command=command,
+            shell=shell,
+            exit_code=exit_code,
+            stderr=stderr,
+            timed_out=timed_out,
+        ),
     )

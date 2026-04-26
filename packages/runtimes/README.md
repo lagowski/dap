@@ -5,11 +5,16 @@ Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executo
 Stan: `api-call` i `bash` są w pełni zaimplementowane; `http`, `claude_code`, `gemini_cli`, `codex`, `aider` — stuby (przyjdą później).
 
 ```python
+import asyncio
 from dap_runtimes import create_default_registry
 
-registry = create_default_registry()
-adapter = registry.get("bash")
-health = await adapter.healthcheck()
+async def main() -> None:
+    registry = create_default_registry()
+    adapter = registry.get("bash")
+    health = await adapter.healthcheck()
+    print(health)
+
+asyncio.run(main())
 ```
 
 ## bash

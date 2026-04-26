@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 from pathlib import Path
@@ -14,6 +15,12 @@ from dap_types import RuntimeTask
 @pytest.fixture
 def adapter() -> BashAdapter:
     return BashAdapter()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_shell_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip DAP_BASH_SHELL so tests don't depend on the developer's shell setup."""
+    monkeypatch.delenv("DAP_BASH_SHELL", raising=False)
 
 
 def _task(
@@ -39,11 +46,32 @@ def _task(
 
 
 @pytest.mark.asyncio
-async def test_healthcheck_reports_shell(adapter: BashAdapter) -> None:
+async def test_healthcheck_reports_default_shell(adapter: BashAdapter) -> None:
+    """With DAP_BASH_SHELL unset, healthcheck reports the compile-time default."""
     health = await adapter.healthcheck()
     assert health.available is True
-    assert health.version is not None
-    assert health.version.endswith("bash") or health.version.endswith("sh")
+    assert health.version == "/bin/bash"
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_honors_env_override(
+    adapter: BashAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAP_BASH_SHELL", "/bin/sh")
+    health = await adapter.healthcheck()
+    assert health.available is True
+    assert health.version == "/bin/sh"
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_missing_shell_reports_unavailable(
+    adapter: BashAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAP_BASH_SHELL", "/no/such/shell-binary")
+    health = await adapter.healthcheck()
+    assert health.available is False
+    assert health.missing is not None
+    assert any("/no/such/shell-binary" in m for m in health.missing)
 
 
 @pytest.mark.asyncio
@@ -138,3 +166,86 @@ async def test_pytest_invocation_is_a_realistic_use_case(
     result = await adapter.execute(_task(command="python -c 'print(2+2)'"))
     assert result.success is True
     assert result.output.strip() == "4"
+
+
+@pytest.mark.asyncio
+async def test_execute_uses_env_var_shell_when_runtime_config_omits_it(
+    adapter: BashAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAP_BASH_SHELL", "/bin/sh")
+    result = await adapter.execute(_task(command="echo via-env"))
+    assert result.success is True
+    assert result.structured is not None
+    assert result.structured["shell"] == "/bin/sh"
+
+
+@pytest.mark.asyncio
+async def test_runtime_config_shell_overrides_env_var(
+    adapter: BashAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAP_BASH_SHELL", "/bin/sh")
+    task = _task(command="echo from-config")
+    task.runtime_config["shell"] = "/bin/bash"
+    result = await adapter.execute(task)
+    assert result.success is True
+    assert result.structured is not None
+    assert result.structured["shell"] == "/bin/bash"
+
+
+@pytest.mark.asyncio
+async def test_invalid_env_dict_returns_descriptive_error(
+    adapter: BashAdapter,
+) -> None:
+    task = _task(command="echo hi")
+    task.runtime_config["env"] = "not-a-dict"
+    result = await adapter.execute(task)
+    assert result.success is False
+    assert any("env" in err for err in result.errors)
+
+
+@pytest.mark.asyncio
+async def test_invalid_env_entry_types_return_descriptive_error(
+    adapter: BashAdapter,
+) -> None:
+    task = _task(command="echo hi")
+    task.runtime_config["env"] = {"OK": 123}
+    result = await adapter.execute(task)
+    assert result.success is False
+    assert any("env" in err and "str" in err for err in result.errors)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(__import__("os"), "setsid"), reason="POSIX-only")
+async def test_cancellation_kills_subprocess(adapter: BashAdapter) -> None:
+    """Engine-level cancellation should not leak the subprocess."""
+    task = _task(command="sleep 30", timeout_ms=60_000)
+    exec_task = asyncio.create_task(adapter.execute(task))
+    await asyncio.sleep(0.1)
+    exec_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await exec_task
+
+
+@pytest.mark.asyncio
+async def test_structured_shape_is_consistent_across_outcomes(
+    adapter: BashAdapter,
+) -> None:
+    """Every result.structured carries the documented keys so downstream nodes can branch."""
+    expected_keys = {"command", "shell", "exit_code", "stderr", "timed_out"}
+
+    success = await adapter.execute(_task(command="echo x"))
+    assert success.structured is not None
+    assert set(success.structured.keys()) == expected_keys
+
+    failure = await adapter.execute(_task(command="false"))
+    assert failure.structured is not None
+    assert set(failure.structured.keys()) == expected_keys
+
+    timeout = await adapter.execute(_task(command="sleep 5", timeout_ms=200))
+    assert timeout.structured is not None
+    assert set(timeout.structured.keys()) == expected_keys
+    assert timeout.structured["timed_out"] is True
+
+    missing_cmd = await adapter.execute(_task())
+    assert missing_cmd.structured is not None
+    assert set(missing_cmd.structured.keys()) == expected_keys
