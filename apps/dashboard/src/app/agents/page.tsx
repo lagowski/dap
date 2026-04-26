@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Plus } from "lucide-react";
-import { useAgentsList } from "@/hooks/api";
+import { Archive, Pencil, Plus } from "lucide-react";
+import { useAgentsList, useArchiveAgent } from "@/hooks/api";
+import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +12,18 @@ const ID_PREFIX = 8;
 
 export default function AgentsPage() {
   const { data, isPending, isError, error } = useAgentsList();
+  const archive = useArchiveAgent();
+
+  const handleArchive = (id: string, name: string) => {
+    if (
+      !window.confirm(
+        `Archive agent "${name}"? Existing pipelines that reference it keep working, but it won't appear in pickers.`,
+      )
+    ) {
+      return;
+    }
+    archive.mutate(id);
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -24,11 +37,17 @@ export default function AgentsPage() {
         </Button>
       </div>
 
+      {archive.isError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {formatApiError(archive.error)}
+        </p>
+      ) : null}
+
       {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
       {isError && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">
-            {(error as Error).message}
+            {formatApiError(error)}
           </CardContent>
         </Card>
       )}
@@ -49,12 +68,17 @@ export default function AgentsPage() {
                 <th className="px-4 py-2 font-medium">Runtime</th>
                 <th className="px-4 py-2 font-medium">Version</th>
                 <th className="px-4 py-2 font-medium">ID</th>
+                <th className="px-4 py-2 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {data.items.map((agent) => (
                 <tr key={agent.id} className="border-b last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3 font-medium">{agent.name}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <Link href={`/agents/${agent.id}`} className="hover:underline">
+                      {agent.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3">
                     <Badge variant="secondary">{agent.role}</Badge>
                   </td>
@@ -62,6 +86,23 @@ export default function AgentsPage() {
                   <td className="px-4 py-3 tabular-nums">v{agent.version}</td>
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                     {agent.id.slice(0, ID_PREFIX)}…
+                  </td>
+                  <td className="px-4 py-3 text-right space-x-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={`/agents/${agent.id}/edit`}>
+                        <Pencil className="h-3.5 w-3.5 mr-1" />
+                        Edit
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={archive.isPending}
+                      onClick={() => handleArchive(agent.id, agent.name)}
+                    >
+                      <Archive className="h-3.5 w-3.5 mr-1" />
+                      Archive
+                    </Button>
                   </td>
                 </tr>
               ))}

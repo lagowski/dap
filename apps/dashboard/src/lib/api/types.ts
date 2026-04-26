@@ -46,6 +46,26 @@ export interface AgentCreate {
   timeout_ms?: number;
 }
 
+export interface AgentUpdate {
+  /**
+   * PUT /agents/{id} body — full-replacement payload that creates a new
+   * immutable version. The engine applies Pydantic defaults for omitted
+   * fields (runtime_config={}, input_schema={}, etc.), so partial payloads
+   * silently reset stored values. We require everything except `name`
+   * (which the engine defaults to the previous version's name) so callers
+   * must consciously forward each field.
+   */
+  name?: string;
+  runtime_id: string;
+  runtime_config: Record<string, unknown>;
+  prompt_template: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  constraints: string[];
+  budget_limit_usd: number | null;
+  timeout_ms: number;
+}
+
 export type ComparisonOperator = "==" | "!=" | "<" | "<=" | ">" | ">=";
 
 export interface ComparisonCondition {

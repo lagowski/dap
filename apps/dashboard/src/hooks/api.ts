@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import type {
   AgentCreate,
+  AgentUpdate,
   PipelineCreate,
   PipelineUpdate,
   RunCreateRequest,
@@ -20,6 +21,8 @@ export const queryKeys = {
     ["runs", runId, "nodes", nodeId] as const,
   agents: ["agents"] as const,
   agentsList: (filters?: { role?: string }) => ["agents", "list", filters ?? {}] as const,
+  agent: (id: string) => ["agents", id] as const,
+  agentVersions: (id: string) => ["agents", id, "versions"] as const,
   pipelines: ["pipelines"] as const,
   pipelinesList: ["pipelines", "list"] as const,
   pipeline: (id: string) => ["pipelines", id] as const,
@@ -139,6 +142,47 @@ export function useCreateAgent() {
     mutationFn: (payload: AgentCreate) => api.createAgent(payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.agents });
+    },
+  });
+}
+
+export function useAgent(id: string | null) {
+  return useQuery({
+    queryKey: id ? queryKeys.agent(id) : ["agents", "noop"],
+    queryFn: () => (id ? api.getAgent(id) : Promise.reject(new Error("no id"))),
+    enabled: id != null,
+  });
+}
+
+export function useAgentVersions(id: string | null) {
+  return useQuery({
+    queryKey: id ? queryKeys.agentVersions(id) : ["agents", "noop", "versions"],
+    queryFn: () =>
+      id ? api.listAgentVersions(id) : Promise.reject(new Error("no id")),
+    enabled: id != null,
+  });
+}
+
+export function useUpdateAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: AgentUpdate }) =>
+      api.updateAgent(id, payload),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
+      qc.invalidateQueries({ queryKey: queryKeys.agent(variables.id) });
+      qc.invalidateQueries({ queryKey: queryKeys.agentVersions(variables.id) });
+    },
+  });
+}
+
+export function useArchiveAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.archiveAgent(id),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
+      qc.invalidateQueries({ queryKey: queryKeys.agent(id) });
     },
   });
 }
