@@ -37,17 +37,26 @@ export class ApiError extends Error {
 /**
  * Extract a human-readable message from an arbitrary error.
  *
- * For ApiError, surfaces FastAPI's `detail` field (string for HTTPException,
- * array of `{msg}` objects for 422 validation errors). Falls back to the
- * generic Error.message otherwise.
+ * Handles ApiError shapes: FastAPI `{detail: string}` (HTTPException),
+ * FastAPI `{detail: [{msg}, ...]}` (422 validation), plain string `detail`
+ * (non-JSON response → status text), and generic `{message}` payloads
+ * (proxies / non-FastAPI servers). Falls back to Error.message otherwise.
  */
 export function formatApiError(error: unknown): string {
   if (error instanceof ApiError) {
-    const detail = (error.detail as { detail?: unknown } | null)?.detail;
+    if (typeof error.detail === "string") return error.detail;
+
+    const payload =
+      error.detail && typeof error.detail === "object"
+        ? (error.detail as { detail?: unknown; message?: unknown })
+        : null;
+    const detail = payload?.detail;
+
     if (typeof detail === "string") return detail;
     if (Array.isArray(detail) && detail.length > 0) {
       return detail.map((d) => (d as { msg?: string })?.msg ?? String(d)).join("; ");
     }
+    if (typeof payload?.message === "string") return payload.message;
     return error.message;
   }
   return error instanceof Error ? error.message : String(error);

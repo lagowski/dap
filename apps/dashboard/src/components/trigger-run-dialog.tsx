@@ -34,12 +34,24 @@ export function TriggerRunDialog({
 }: TriggerRunDialogProps) {
   const router = useRouter();
   const trigger = useTriggerRun();
-  const versions = usePipelineVersions(pipelineId);
 
   const [open, setOpen] = useState(false);
   const [versionStr, setVersionStr] = useState<string>("current");
   const [stateText, setStateText] = useState("");
   const [parseError, setParseError] = useState<string | null>(null);
+
+  // Defer the (potentially heavy) versions fetch until the user opens the
+  // dialog — the pipelines list page renders one TriggerRunDialog per row.
+  const versions = usePipelineVersions(pipelineId, { enabled: open });
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      // Clear transient state so a reopen doesn't show stale errors.
+      setParseError(null);
+      trigger.reset();
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,18 +70,22 @@ export function TriggerRunDialog({
       }
     }
 
-    const pipelineVersion =
+    const parsedVersion =
       versionStr === "current" ? undefined : Number(versionStr);
+    const pipelineVersion =
+      parsedVersion !== undefined && Number.isFinite(parsedVersion)
+        ? parsedVersion
+        : undefined;
 
     trigger.mutate(
       {
         pipeline_id: pipelineId,
-        ...(pipelineVersion != null ? { pipeline_version: pipelineVersion } : {}),
+        ...(pipelineVersion !== undefined ? { pipeline_version: pipelineVersion } : {}),
         initial_state: initialState,
       },
       {
         onSuccess: (run) => {
-          setOpen(false);
+          handleOpenChange(false);
           setStateText("");
           router.push(`/runs/${run.id}`);
         },
@@ -82,7 +98,7 @@ export function TriggerRunDialog({
   return (
     <>
       {children(() => setOpen(true))}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Run pipeline</DialogTitle>
@@ -144,7 +160,7 @@ export function TriggerRunDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setOpen(false)}
+                onClick={() => handleOpenChange(false)}
                 disabled={trigger.isPending}
               >
                 Cancel

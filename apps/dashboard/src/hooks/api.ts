@@ -166,12 +166,16 @@ export function useResumeRun() {
   return useRunActionMutation(api.resumeRun);
 }
 
-export function usePipelineVersions(id: string | null) {
+export function usePipelineVersions(
+  id: string | null,
+  options?: { enabled?: boolean },
+) {
+  const enabled = (options?.enabled ?? true) && id != null;
   return useQuery({
     queryKey: id ? queryKeys.pipelineVersions(id) : ["pipelines", "noop", "versions"],
     queryFn: () =>
       id ? api.listPipelineVersions(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
+    enabled,
   });
 }
 
