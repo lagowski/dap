@@ -285,6 +285,39 @@ async def test_runner_conditional_edge(
     assert final_state.tests_passed is True
 
 
+async def test_runner_parses_role_output_into_state(
+    app_session_factory: tuple[TestClient, sessionmaker[Session], RuntimeRegistry],
+) -> None:
+    """Per-role parser turns adapter text output into typed state diff."""
+    _client, factory, registry = app_session_factory
+
+    stub = StubAdapter(
+        adapter_id="role-parse-stub",
+        outputs=[
+            RuntimeResult(
+                success=True,
+                output='<output>{"selected_issue_ids": [101, 202]}</output>',
+                duration_ms=1,
+            ),
+        ],
+    )
+    registry.register(stub)
+
+    with factory() as session:
+        agent_id = _seed_agent(session, runtime_id="role-parse-stub")
+        pipeline, version = _seed_pipeline(
+            session,
+            nodes=[{"id": "n1", "agent_id": agent_id, "position": {"x": 0, "y": 0}}],
+            edges=[{"id": "e1", "source": "n1", "target": "__end__"}],
+            entry_point="n1",
+        )
+
+    final_state = await _run_pipeline(factory, registry, pipeline, version)
+
+    # task_selector role declares selected_issue_ids — parser writes it into state.
+    assert final_state.selected_issue_ids == [101, 202]
+
+
 async def test_runner_unknown_agent_raises(
     app_session_factory: tuple[TestClient, sessionmaker[Session], RuntimeRegistry],
 ) -> None:
