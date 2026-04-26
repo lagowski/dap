@@ -619,6 +619,24 @@ def resume_run(session: Session, run_id: str) -> None:
     session.flush()
 
 
+def revive_run(session: Session, run_id: str) -> None:
+    """Reset a paused or failed run back to running (for retry/skip-node).
+
+    Unlike resume_run, accepts `failed` as a starting state so a node-level
+    intervention can put a terminated run back into motion. Also clears the
+    diagnostic fields that may have been set by the previous failure.
+    """
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if run.final_status not in {"paused", "failed"}:
+        msg = f"Run is not paused or failed (final_status={run.final_status})"
+        raise ValueError(msg)
+    run.final_status = "running"
+    run.ended_at = None
+    session.flush()
+
+
 def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
     """Find Run rows still in 'running' state and mark them as failed.
 

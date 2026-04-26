@@ -3,11 +3,10 @@
 POST /runs (F5+) triggers asynchronous pipeline execution via LangGraph.
 Returns 201 with Run immediately; pipeline runs in a background asyncio.Task
 tracked by the engine's RunRegistry. Use POST /runs/{id}/abort to cancel,
-POST /runs/{id}/pause to suspend (LangGraph checkpoint preserved), and
-POST /runs/{id}/resume to continue from the last checkpoint.
-
-retry-node/skip-node endpoints are deferred (require manual graph traversal
-via aupdate_state).
+POST /runs/{id}/pause to suspend (LangGraph checkpoint preserved),
+POST /runs/{id}/resume to continue from the last checkpoint, and
+POST /runs/{id}/nodes/{node_id}/retry|skip to recover from a per-node
+failure on a paused or failed run.
 """
 
 from __future__ import annotations
@@ -32,7 +31,14 @@ from dap_engine.api.deps import (
     get_session_factory,
 )
 from dap_engine.api.schemas import RunCreateRequest
-from dap_engine.execution import PipelineRunner, RunnerError, RunRegistry
+from dap_engine.execution import (
+    REWIND_RETRY,
+    REWIND_SKIP,
+    CheckpointNotFoundError,
+    PipelineRunner,
+    RunnerError,
+    RunRegistry,
+)
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
 
@@ -327,6 +333,222 @@ async def resume_run_endpoint(
     run_registry.register(run_id, task)
 
     return repo.get_run(session, run_id)
+
+
+@router.post("/{run_id}/nodes/{node_id}/retry", response_model=Run)
+async def retry_node(
+    run_id: str,
+    node_id: str,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+    run_registry: RunRegistry = Depends(get_run_registry),
+    session_factory: sessionmaker[Session] = Depends(get_session_factory),
+    checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+) -> Run:
+    """Re-execute a single node and continue forward.
+
+    Rewinds to the LangGraph checkpoint where `node_id` was staged as next,
+    branches a new tip from there, and resumes — the named node runs again.
+    Useful when a transient failure (rate limit, flake) caused a node to
+    fail; the rest of the run can complete without re-running everything.
+    """
+    return await _do_node_intervention(
+        run_id=run_id,
+        node_id=node_id,
+        mode=REWIND_RETRY,
+        session=session,
+        registry=registry,
+        run_registry=run_registry,
+        session_factory=session_factory,
+        checkpointer=checkpointer,
+    )
+
+
+@router.post("/{run_id}/nodes/{node_id}/skip", response_model=Run)
+async def skip_node(
+    run_id: str,
+    node_id: str,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+    run_registry: RunRegistry = Depends(get_run_registry),
+    session_factory: sessionmaker[Session] = Depends(get_session_factory),
+    checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+) -> Run:
+    """Bypass a node and continue with its downstream successors.
+
+    Rewinds to the LangGraph checkpoint where `node_id` was staged as next,
+    fakes a no-op completion of that node, and resumes — downstream nodes
+    proceed using whatever state existed before the skipped node would have
+    run. Useful when a node is broken and the rest of the pipeline can
+    still produce a useful outcome.
+    """
+    return await _do_node_intervention(
+        run_id=run_id,
+        node_id=node_id,
+        mode=REWIND_SKIP,
+        session=session,
+        registry=registry,
+        run_registry=run_registry,
+        session_factory=session_factory,
+        checkpointer=checkpointer,
+    )
+
+
+async def _do_node_intervention(
+    *,
+    run_id: str,
+    node_id: str,
+    mode: str,
+    session: Session,
+    registry: RuntimeRegistry,
+    run_registry: RunRegistry,
+    session_factory: sessionmaker[Session],
+    checkpointer: BaseCheckpointSaver[Any],
+) -> Run:
+    """Shared validation + dispatch path for retry-node and skip-node."""
+    try:
+        run = repo.get_run(session, run_id)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if run.final_status not in {"paused", "failed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Run is not paused or failed (final_status={run.final_status}); "
+                "retry/skip require a stopped run."
+            ),
+        )
+
+    if run_registry.is_running(run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Run already has an active background task",
+        )
+
+    # Validate node exists in the pipeline version that produced this run.
+    version_orm = session.scalar(
+        select(PipelineVersionORM)
+        .where(PipelineVersionORM.pipeline_id == run.pipeline_id)
+        .where(PipelineVersionORM.version == run.pipeline_version)
+    )
+    if version_orm is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(f"Pipeline version not found: {run.pipeline_id}@v{run.pipeline_version}"),
+        )
+    node_ids = {n["id"] for n in version_orm.nodes}
+    if node_id not in node_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Node '{node_id}' not found in pipeline {run.pipeline_id}@v{run.pipeline_version}"
+            ),
+        )
+
+    repo.revive_run(session, run_id)
+    session.commit()
+
+    task = asyncio.create_task(
+        _execute_rewind_background(
+            run_id=run_id,
+            pipeline_id=run.pipeline_id,
+            pipeline_version=run.pipeline_version,
+            target_node=node_id,
+            mode=mode,
+            session_factory=session_factory,
+            registry=registry,
+            run_registry=run_registry,
+            checkpointer=checkpointer,
+        )
+    )
+    run_registry.register(run_id, task)
+
+    session.expire_all()
+    return repo.get_run(session, run_id)
+
+
+async def _execute_rewind_background(
+    *,
+    run_id: str,
+    pipeline_id: str,
+    pipeline_version: int,
+    target_node: str,
+    mode: str,
+    session_factory: sessionmaker[Session],
+    registry: RuntimeRegistry,
+    run_registry: RunRegistry,
+    checkpointer: BaseCheckpointSaver[Any],
+) -> None:
+    """Run a retry/skip rewind in a fresh DB session and finalize the Run row."""
+    try:
+        with session_factory() as bg_session:
+            pipeline_orm = bg_session.get(PipelineORM, pipeline_id)
+            version_orm = bg_session.scalar(
+                select(PipelineVersionORM)
+                .where(PipelineVersionORM.pipeline_id == pipeline_id)
+                .where(PipelineVersionORM.version == pipeline_version)
+            )
+            if pipeline_orm is None or version_orm is None:
+                logger.error(
+                    "rewind run %s: pipeline %s@v%s vanished",
+                    run_id,
+                    pipeline_id,
+                    pipeline_version,
+                )
+                repo.finalize_run(bg_session, run_id, final_status="failed")
+                bg_session.commit()
+                return
+
+            runner = PipelineRunner(
+                session=bg_session,
+                registry=registry,
+                checkpointer=checkpointer,
+            )
+            try:
+                final_state = await runner.rewind_and_run(
+                    run_id=run_id,
+                    pipeline_orm=pipeline_orm,
+                    pipeline_version_orm=version_orm,
+                    target_node=target_node,
+                    mode=mode,
+                )
+            except CheckpointNotFoundError as exc:
+                logger.warning("rewind run %s: %s", run_id, exc)
+                repo.finalize_run(bg_session, run_id, final_status="failed")
+                bg_session.commit()
+                return
+            except RunnerError as exc:
+                logger.exception("rewind run %s failed: %s", run_id, exc)
+                repo.finalize_run(bg_session, run_id, final_status="failed")
+                bg_session.commit()
+                return
+
+            final_status = final_state.final_status
+            if final_status not in {"success", "failed", "aborted"}:
+                final_status = "success"
+            repo.finalize_run(bg_session, run_id, final_status=final_status)
+            bg_session.commit()
+    except asyncio.CancelledError:
+        was_paused = run_registry.was_paused(run_id)
+        try:
+            with session_factory() as cancel_session:
+                if was_paused:
+                    repo.pause_run(cancel_session, run_id)
+                else:
+                    repo.finalize_run(cancel_session, run_id, final_status="aborted")
+                cancel_session.commit()
+        except Exception:
+            logger.exception("failed to finalize cancelled rewind run %s", run_id)
+        raise
+    except Exception:
+        logger.exception("background rewind run %s crashed", run_id)
+        try:
+            with session_factory() as crash_session:
+                repo.finalize_run(crash_session, run_id, final_status="failed")
+                crash_session.commit()
+        except Exception:
+            logger.exception("failed to finalize crashed rewind run %s", run_id)
 
 
 @router.get("")
