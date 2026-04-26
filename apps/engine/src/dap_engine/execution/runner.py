@@ -167,9 +167,7 @@ class PipelineRunner:
         # Branch from the historical checkpoint: aupdate_state writes a new
         # checkpoint and returns its config; subsequent ainvoke runs from it.
         if mode == REWIND_SKIP:
-            new_config = await graph.aupdate_state(
-                target_config, values={}, as_node=target_node
-            )
+            new_config = await graph.aupdate_state(target_config, values={}, as_node=target_node)
         else:  # retry
             # values=None + no as_node → no logical change, but we still get
             # a new branch tip from which the target node will run again.

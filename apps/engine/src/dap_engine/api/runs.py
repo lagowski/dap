@@ -435,18 +435,14 @@ async def _do_node_intervention(
     if version_orm is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Pipeline version not found: "
-                f"{run.pipeline_id}@v{run.pipeline_version}"
-            ),
+            detail=(f"Pipeline version not found: {run.pipeline_id}@v{run.pipeline_version}"),
         )
     node_ids = {n["id"] for n in version_orm.nodes}
     if node_id not in node_ids:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                f"Node '{node_id}' not found in pipeline "
-                f"{run.pipeline_id}@v{run.pipeline_version}"
+                f"Node '{node_id}' not found in pipeline {run.pipeline_id}@v{run.pipeline_version}"
             ),
         )
 
