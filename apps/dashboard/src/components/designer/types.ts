@@ -5,13 +5,11 @@
 
 import type { EdgeCondition, PipelineEdge, PipelineNode } from "@/lib/api/types";
 
-export interface DesignerNode extends PipelineNode {
-  // PipelineNode already has id, agent_id, position, overrides
-}
-
-export interface DesignerEdge extends PipelineEdge {
-  // PipelineEdge already has id, source, target, condition, label
-}
+// Today these are 1:1 with their API counterparts; the dedicated aliases
+// give us a single hook to attach designer-only fields (selected, dirty,
+// etc.) later without touching every call site.
+export type DesignerNode = PipelineNode;
+export type DesignerEdge = PipelineEdge;
 
 export interface DesignerState {
   name: string;
