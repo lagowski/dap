@@ -72,8 +72,8 @@ def parse_node_output(role: str, output: str) -> ParseResult:
         return ParseResult(
             success=False,
             errors=[
-                "No JSON payload found in output. Expected <output>{...}</output> "
-                "or a ```json fence."
+                "No JSON payload found in output. Expected <output>{...}</output>, "
+                "a ```json fence, or a bare {...} JSON object."
             ],
         )
 
