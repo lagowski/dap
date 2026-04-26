@@ -27,6 +27,7 @@ from dap_runtimes import RuntimeRegistry
 from dap_types import PipelineState, RuntimeResult, RuntimeTask
 from sqlalchemy.orm import Session
 
+from dap_engine.execution.output_parser import parse_node_output
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
@@ -142,9 +143,17 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
                 "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
             }
         else:
-            # Optional state merge: if adapter returned structured fields that
-            # match PipelineState fields, merge them. Unknown keys are ignored.
+            # Two paths into state, both safe to combine:
+            # 1. Adapter-supplied structured fields (e.g. bash exit_code,
+            #    api-call usage) — only keys that match PipelineState are
+            #    kept; the rest are stored on the execution log only.
+            # 2. Per-role parsing of result.output — turns raw LLM text
+            #    into a typed state diff for known roles. Wins over (1)
+            #    on conflicts since it reflects the agent's intentional
+            #    response, not adapter telemetry.
             state_diff = _merge_structured_into_state(result.structured)
+            parsed_diff = _parse_role_output(ctx, result.output)
+            state_diff.update(parsed_diff)
 
         # Save snapshot AFTER computing diff (snapshot reflects state going forward)
         merged_state = state.model_copy(update=state_diff)
@@ -240,9 +249,32 @@ def _merge_structured_into_state(structured: dict[str, Any] | None) -> dict[str,
     """Merge adapter's structured output into state diff.
 
     Only keys that exist in PipelineState are merged. Foreign keys are ignored.
-    For F5 MVP this is permissive — future issue may add type validation.
+    Permissive — strict per-role validation lives in `_parse_role_output`.
     """
     if not structured:
         return {}
     state_fields = set(PipelineState.model_fields.keys())
     return {k: v for k, v in structured.items() if k in state_fields}
+
+
+def _parse_role_output(ctx: NodeContext, output: str) -> dict[str, Any]:
+    """Apply per-role output parsing if this agent's role declares a schema.
+
+    Parse failures are logged but don't fail the run — the user can inspect
+    the node log and use retry-node / skip-node to recover (issue #33).
+    The resulting diff overrides adapter-supplied structured fields on
+    conflict so an agent's intentional response wins over telemetry.
+    """
+    role = ctx.agent.role
+    parse_result = parse_node_output(role, output)
+    if parse_result.skipped:
+        return {}
+    if not parse_result.success:
+        logger.warning(
+            "node %s (role=%s) output parse failed: %s",
+            ctx.node_id,
+            role,
+            "; ".join(parse_result.errors),
+        )
+        return {}
+    return parse_result.parsed
