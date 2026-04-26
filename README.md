@@ -2,306 +2,99 @@
 
 [![CI](https://github.com/rafeekpro/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rafeekpro/dap/actions/workflows/ci.yml)
 
-Lokalna aplikacja do budowy i wykonywania deterministycznych pipeline'ów agentowych. Paperclip-like UX (`uvx dap`), DAP-owe zasady (state machine + XML prompts + runtime adapters).
-
-Pełny plan architektoniczny: [`../LOCAL_APP_PLAN.md`](../LOCAL_APP_PLAN.md)
-Dokumentacja koncepcyjna: [`../DOCUMENTATION.md`](../DOCUMENTATION.md)
-Workflow: [`CONTRIBUTING.md`](CONTRIBUTING.md)
-
----
-
-## Stan implementacji
-
-### ✅ F0 — Monorepo skeleton (Python + uv, ukończone 2026-04-25)
-
-Pivot z TS/Node na Python 3.13 + uv workspace. Scaffolding wszystkich workspace'ów, FastAPI + SQLAlchemy + SQLite engine, Typer CLI, 7 runtime adapter stubs.
-
-**Zweryfikowane end-to-end:**
-- `uv sync --all-packages` — workspace z 4 pakietami zbudowany
-- `uv run dap --version` → `0.0.1`
-- `dap init` → tworzy `.dap/` z pełną strukturą
-- `dap start` → engine na `127.0.0.1:7333` (uvicorn + FastAPI)
-- `GET /health` → `{"status":"ok","service":"dap-engine","version":"0.0.1"}`
-- `GET /runtimes` → 7 adapterów (bash, http, api-call, claude-code, gemini-cli, codex, aider)
-- `GET /runtimes/:id/health` → healthcheck per runtime
-- SQLite `state.db` + WAL mode (`state.db-shm`, `state.db-wal`)
-- `ruff check + format` — clean
-- Wszystkie 5 tabel (agents, pipelines, runs, state_snapshots, node_execution_logs) tworzone automatycznie przy starcie
-
-### Planowane
-
-| Faza  | Zakres                                                                  |
-| ----- | ----------------------------------------------------------------------- |
-| F1    | CLI process management (PID file, `dap stop`, `dap status` runtime info) |
-| F2    | Engine: REST CRUD dla agents/pipelines/runs (FastAPI + Pydantic)        |
-| F3    | Runtime adapters 1st wave — `api-call`, `bash`, `claude-code`           |
-| F4    | Prompt Builder (Jinja2 → XML, schema validator)                          |
-| F5    | Pipeline execution (LangGraph integration, state diff, checkpointing)   |
-| **F6** ✅ **UKOŃCZONE (2026-04-25)** | Dashboard MVP — Next.js 15 + shadcn/ui + React Flow + TanStack Query (polling 2s). Widoki: `/runs`, `/runs/[id]` z graph + drawer, `/agents` + `/agents/new`. CI: nowy job `Dashboard (typecheck + build)`. |
-| **F7** ✅ **UKOŃCZONE (2026-04-25)** | Pipeline Designer — `/pipelines` list + `/pipelines/new` + `/pipelines/[id]/edit`. React Flow edit mode, agent palette, inspector dla node/edge, condition builder (form, AND/OR nested), Validate (POST /pipelines/validate) + Save z inline errors. |
-| F8    | Agent & runtime registry UI                                             |
-| F9    | Runtime adapters 2nd wave — `gemini-cli`, `codex`, `aider`, `http`      |
-| F10   | New Run wizard + GitHub PAT integration                                 |
-| F11   | Polish: keychain (keyring lib), export/import, dark mode                |
-| F12   | Packaging, `uv tool install`, cross-platform verification               |
-
----
-
-## Struktura monorepo
-
-```
-dap/
-├─ pyproject.toml              root + uv workspace (members)
-├─ uv.lock
-├─ .python-version             3.13
-├─ .gitignore, README.md, CONTRIBUTING.md
-├─ .github/, .githooks/
-│
-├─ apps/
-│  ├─ cli/                     dap-cli — Typer launcher
-│  │  └─ src/dap_cli/
-│  │     ├─ __main__.py        Typer app (dap init|start|stop|status|--version)
-│  │     ├─ paths.py           .dap/, config.json, state.db
-│  │     └─ commands/          init, start, stop, status
-│  │
-│  ├─ engine/                  dap-engine — FastAPI + LangGraph + SQLAlchemy
-│  │  └─ src/dap_engine/
-│  │     ├─ app.py             create_app() factory + lifespan
-│  │     ├─ __main__.py        standalone entry (uv run dap-engine)
-│  │     ├─ api/               health, runtimes
-│  │     └─ persistence/
-│  │        ├─ models.py       SQLAlchemy 2.0 ORM (5 tabel)
-│  │        └─ db.py           SQLite + WAL mode + session factory
-│  │
-│  └─ dashboard/                Next.js — placeholder (F6)
-│
-└─ packages/
-   ├─ types/                    dap-types — Pydantic v2 models
-   │  └─ src/dap_types/
-   │     ├─ agent.py, pipeline.py, run.py, state.py, runtime.py
-   │
-   └─ runtimes/                 dap-runtimes — RuntimeAdapter Protocol + impls
-      └─ src/dap_runtimes/
-         ├─ registry.py         RuntimeRegistry + create_default_registry
-         └─ adapters/           base, bash, http, api_call,
-                                claude_code, gemini_cli, codex, aider
-```
-
-## Tech stack
-
-| Warstwa               | Wybór                                  |
-| --------------------- | -------------------------------------- |
-| Runtime               | Python 3.13                            |
-| Package manager       | uv 0.8                                 |
-| Monorepo              | uv workspaces                          |
-| CLI                   | Typer 0.12 + Rich                      |
-| Engine HTTP           | FastAPI 0.115 + uvicorn                |
-| State machine         | LangGraph (Python, F5+)                |
-| ORM                   | SQLAlchemy 2.0 + Alembic (migrations)  |
-| DB                    | SQLite (WAL mode)                      |
-| Schema validation     | Pydantic v2                            |
-| Subprocess            | anyio + asyncio.subprocess             |
-| HTTP client           | httpx                                  |
-| Lint/format           | ruff                                   |
-| Type checker          | mypy strict                            |
-| Tests                 | pytest + pytest-asyncio                |
-| Dashboard (F6)        | Next.js 15 + shadcn/ui + React Flow    |
-
----
+DAP is a local, single-user system for building and executing **deterministic
+agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders
+a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic SDK,
+shell, etc.). Execution runs on LangGraph with full pause/resume/abort/
+retry/skip control. Anti-emergent by design: the state machine, not the
+model, decides what runs next.
 
 ## Quickstart
 
-Wymagania: Python 3.12+ i [uv](https://docs.astral.sh/uv/).
+Requires Python 3.13, `uv >= 0.8`, Node 22, and pnpm 9.
 
 ```bash
-cd /Users/rla/RLA02/PROJEKTY/Developer/dap
+git clone https://github.com/rafeekpro/dap && cd dap
 
-uv sync --all-packages       # zainstaluj cały workspace + deps
+# 1. Backend — engine + CLI + runtimes
+uv sync --all-packages
+uv run dap-engine start                  # binds 127.0.0.1:7333
 
-# Test CLI
-uv run dap --version          # → 0.0.1
-uv run dap --help
-
-# Test pełnego flow
-mkdir -p /tmp/dap-playground && cd /tmp/dap-playground
-$OLDPWD/.venv/bin/dap init
-$OLDPWD/.venv/bin/dap start
-# Ctrl+C żeby zatrzymać
-
-# Po F12 (packaging): uv tool install dap-cli → `dap init`
+# 2. Dashboard — in a second terminal
+cd apps/dashboard
+pnpm install
+pnpm dev                                  # http://localhost:3000
 ```
 
-## Dostępne komendy CLI
+Then in the dashboard:
 
-| Komenda          | Status      | Opis                                                                    |
-| ---------------- | ----------- | ----------------------------------------------------------------------- |
-| `dap --version`  | ✅          | Wersja binarki                                                          |
-| `dap --help`     | ✅          | Lista komend                                                            |
-| `dap init`       | ✅          | Tworzy `./.dap/` z config.json i podkatalogami                          |
-| `dap start`      | ✅          | Spawn engine na 127.0.0.1:7333; PID file `./.dap/dap.pid`; refuse jeśli już działa; cleanup stale PID |
-| `dap stop`       | ✅          | SIGTERM → wait 5s → SIGKILL fallback; cleanup PID file                  |
-| `dap status`     | ✅          | Pokazuje stan engine (running/stopped/stale), PID + port + uptime, tabelę runtime adapterów z healthcheck |
+1. **Agents → New** — pick a runtime (`api-call` for LLM, `bash` for shell),
+   set a role, paste a prompt template, save.
+2. **Pipelines → New** — drag agents onto the canvas, wire edges, save.
+3. **Pipelines** list → **Run** on a row — fill optional `initial_state` JSON,
+   submit; the page redirects to the live run view.
+4. Use **Pause / Resume / Abort** on the run page; on a stopped run, click any
+   node and **Retry** or **Skip** to recover without restarting from scratch.
 
-## Dostępne endpointy engine
+The `api-call` runtime needs `ANTHROPIC_API_KEY` in the environment of the
+process running `dap-engine start`. The `bash` runtime needs no extra setup
+but runs commands with the engine's privileges — see the security note in
+[`packages/runtimes/README.md`](packages/runtimes/README.md).
 
-### Health + runtimes
+## Documentation
+
+- [`docs/architecture.md`](docs/architecture.md) — components, state schema,
+  Run lifecycle, LangGraph checkpoint model.
+- [`docs/runtimes.md`](docs/runtimes.md) — how to add a new runtime adapter.
+- [`packages/runtimes/README.md`](packages/runtimes/README.md) — `bash`
+  runtime config + security model.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — branching, PR flow, commit style.
+- Engine API reference: `http://127.0.0.1:7333/docs` (FastAPI auto-docs while
+  the engine is running).
+
+## Repository layout
+
+```
+apps/
+  engine/      FastAPI + LangGraph + SQLAlchemy — runs pipelines, exposes REST
+  dashboard/   Next.js 15 + React Flow + TanStack Query — visual editor + run viewer
+  cli/         Typer-based dap CLI (init, start, stop, status)
+packages/
+  types/       Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
+  runtimes/    Runtime adapter implementations
+  prompt-dsl/  Jinja2 → XML prompt compiler with sandboxing + schema validation
+tests/smoke/   Cross-package end-to-end tests (FastAPI TestClient + real adapters)
+```
+
+## Common commands
 
 ```bash
-curl http://127.0.0.1:7333/health
-# → {"status":"ok","service":"dap-engine","version":"0.0.1","timestamp":"..."}
+# Backend
+uv run pytest                             # all smoke tests
+uv run ruff check apps packages           # lint
+uv run mypy apps packages tests           # type-check
+uv run dap-engine start                   # serve engine on :7333
+uv run dap --help                         # CLI
 
-curl http://127.0.0.1:7333/runtimes                       # lista 7 adapterów
-curl http://127.0.0.1:7333/runtimes/bash/health           # {"available":true,...}
-curl http://127.0.0.1:7333/runtimes/claude-code/health    # {"available":false,...}
+# Dashboard (run from apps/dashboard)
+pnpm dev / build / typecheck / lint
 ```
 
-### Agents (F2 + F4)
+## Architectural invariants
 
-```bash
-POST   /agents                              # create v1
-GET    /agents?role=test_author&limit=50    # list (filters: role, archived, offset, limit)
-GET    /agents/{id}                         # current version
-PUT    /agents/{id}                         # create new version (vN+1)
-DELETE /agents/{id}                         # archive (soft delete)
-GET    /agents/{id}/versions                # full history
-GET    /agents/{id}/versions/{v}            # specific version
-POST   /agents/{id}/render-preview          # F4: render Jinja2 template + validate XML
-                                            # body: {context: {...}}
-                                            # response: {rendered_xml, valid, warnings, errors}
-                                            # ?version=N (default: current)
-```
+1. **LangGraph controls flow, runtimes execute steps.** Edges and conditions
+   live in the pipeline definition, not in agents.
+2. **Prompts are code.** Compiled from a template + state projection,
+   validated against an XML schema, versioned per agent.
+3. **State is the single source of truth.** Adapter output is parsed into
+   a state diff; nothing outside `PipelineState` survives across nodes.
+4. **Autonomy is local, not global.** A runtime may use tools internally, but
+   never decides *what runs next* in the pipeline.
+5. **Runtimes are executors, not planners.** Even agentic runtimes
+   (claude-code, codex) receive compiled XML with an explicit task and an
+   output contract.
 
-### Pipelines (F2 — analogicznie)
+## Status
 
-```bash
-POST   /pipelines
-GET    /pipelines?archived=false
-GET    /pipelines/{id}
-PUT    /pipelines/{id}
-DELETE /pipelines/{id}
-GET    /pipelines/{id}/versions
-GET    /pipelines/{id}/versions/{v}
-```
-
-### Runs (F5 + background execution)
-
-```bash
-POST /runs                       # async — returns 201 immediately, runs in bg task
-                                 # body: {pipeline_id, pipeline_version?, initial_state}
-POST /runs/{id}/abort            # cancel a running task → final_status: aborted
-GET /runs?pipeline_id=...&final_status=...
-GET /runs/{id}
-GET /runs/{id}/state              # latest snapshot
-GET /runs/{id}/state/history      # all snapshots
-GET /runs/{id}/nodes/{node_id}    # execution log
-```
-
-**Architecture:**
-- LangGraph `StateGraph(PipelineState)` (Pydantic state)
-- Generic node executor: render prompt (F4) → call adapter (F3) → save snapshot + log
-- Conditional edges via `EdgeCondition` (`==/!=/<=/>=/etc.` + `and`/`or`)
-- **Background execution** via `asyncio.create_task` + in-memory `RunRegistry`
-- Graceful shutdown — engine stop aborts running tasks, marks as `aborted`
-- Stale-on-startup recovery — runs left in `running` from crashes → marked `failed`
-- `recursion_limit=50` safeguard against infinite retry loops
-- Pause/resume/retry-node/skip-node — separate issues (require LangGraph SqliteSaver checkpointing)
-
-## Baza danych
-
-SQLAlchemy 2.0 ORM w `apps/engine/src/dap_engine/persistence/models.py` — 5 tabel:
-
-- `agents` — wersjonowane definicje agentów (runtime + config + prompt template)
-- `pipelines` — wersjonowane DAG-i (nodes, edges, conditions)
-- `runs` — instancje wykonania (immutable FK do wersji pipeline'u)
-- `state_snapshots` — snapshoty stanu po każdym node (replay/audit)
-- `node_execution_logs` — stdout/stderr/prompt XML/output per node
-
-Tabele tworzone automatycznie przy starcie engine'u (dev mode). Alembic migrations dla produkcji.
-
-SQLite w WAL mode (`PRAGMA journal_mode = WAL`, `synchronous = NORMAL`, `foreign_keys = ON`).
-
-## Runtime adapters
-
-7 wbudowanych adapterów (F0 = szkielety, F3/F9 = implementacja):
-
-| Adapter       | Kind    | Status      | Uzasadnienie                                         |
-| ------------- | ------- | ----------- | ---------------------------------------------------- |
-| `bash`        | shell   | stub        | Deterministyczne pre/post steps (pytest, cov)        |
-| `http`        | http    | stub        | Wywołanie zewnętrznego endpointa                     |
-| `api-call`    | api     | ✅ **F3**    | Direct Anthropic SDK call — async, prompt caching, adaptive thinking, effort, cost calc per model |
-| `claude-code` | cli     | stub        | Coding agent — testy, complex refactor               |
-| `gemini-cli`  | cli     | stub        | Duży context window, szybkie operacje                |
-| `codex`       | cli     | stub        | "Make tests green" loops                             |
-| `aider`       | cli     | stub        | Self-directed git-aware coding                       |
-
-### `api-call` adapter (F3)
-
-```python
-from dap_runtimes import ApiCallAdapter
-from dap_types import RuntimeTask
-
-adapter = ApiCallAdapter()
-# requires ANTHROPIC_API_KEY env var
-
-task = RuntimeTask(
-    execution_id="exec-001",
-    prompt_xml="<agent_prompt>...</agent_prompt>",  # rendered by dap_prompt_dsl
-    working_directory="/tmp",
-    runtime_config={
-        "provider": "anthropic",
-        "model_id": "claude-haiku-4-5",     # or claude-sonnet-4-6, claude-opus-4-7
-        "max_tokens": 4096,
-        "system_prompt": None,               # optional, prepended before XML
-        "enable_thinking": False,            # adaptive thinking on Opus 4.7/4.6 + Sonnet 4.6
-        "effort": None,                      # null | low | medium | high | xhigh | max
-        "prompt_cache": False,               # 5-min ephemeral cache
-    },
-)
-result = await adapter.execute(task)
-# result.output: str (text response)
-# result.tokens_used: int (input + cache + output)
-# result.cost_usd: float (per-model pricing, includes cache 1.25x/0.1x multipliers)
-# result.structured: {model, stop_reason, usage}
-```
-
-**Pricing (USD/1M tokens):**
-- Opus 4.7 / 4.6 / 4.5: $5 input, $25 output
-- Sonnet 4.6 / 4.5: $3 input, $15 output
-- Haiku 4.5: $1 input, $5 output
-
-Rozszerzalność przez plugin API — drop-in do `~/.dap/plugins/` (F11).
-
-## Linter / typechecker / testy
-
-```bash
-uv run ruff check apps packages tests
-uv run ruff format apps packages tests
-uv run mypy apps packages tests
-uv run pytest                           # smoke tests w tests/smoke/
-```
-
-## CI
-
-Każdy PR do `develop` lub `main` jest automatycznie gateowany przez `.github/workflows/ci.yml`:
-
-- ✅ `uv run ruff check apps packages` — blocking
-- ✅ `uv run ruff format --check apps packages` — blocking
-- ✅ `uv run mypy apps packages tests` — blocking
-- ✅ `uv run pytest -q` — blocking (smoke tests)
-
-Dla PR-ów do `main` dodatkowo `.github/workflows/enforce-main-source.yml` weryfikuje, że źródłem PR jest `develop` (release-only flow).
-
-Workflow używa `astral-sh/setup-uv@v3` z cache na `uv.lock`. Concurrency: nowy push do brancha anuluje wcześniejszy bieg CI.
-
-## Git
-
-Repo: https://github.com/rafeekpro/dap (private).
-Default branch: `develop`. Workflow: [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-## Zasady niezmienne (strażnicy architektury)
-
-1. **LangGraph controls flow, Runtime executes steps.**
-2. **Prompt jest kodem.** Kompilowany z template + State projection. Wersjonowany.
-3. **State jest jedynym źródłem prawdy.** Runtime output parsowany do diff.
-4. **Autonomia lokalna, nie globalna.** Runtime może robić tool use — ale nie decyduje *co robić dalej* w pipeline.
-5. **Runtime to executor, nie planer.** Nawet claude-code dostaje skompilowany XML z konkretnym zadaniem + kontraktem wyjścia.
+Backend (engine, runtimes, prompt-dsl) and the dashboard MVP are functional.
+See open issues and the `v0.1` milestone on GitHub for what's next.
