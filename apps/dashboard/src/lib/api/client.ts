@@ -34,6 +34,25 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Extract a human-readable message from an arbitrary error.
+ *
+ * For ApiError, surfaces FastAPI's `detail` field (string for HTTPException,
+ * array of `{msg}` objects for 422 validation errors). Falls back to the
+ * generic Error.message otherwise.
+ */
+export function formatApiError(error: unknown): string {
+  if (error instanceof ApiError) {
+    const detail = (error.detail as { detail?: unknown } | null)?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail) && detail.length > 0) {
+      return detail.map((d) => (d as { msg?: string })?.msg ?? String(d)).join("; ");
+    }
+    return error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit & { json?: unknown },
@@ -113,6 +132,10 @@ export async function getRunNodeLog(
 
 export async function triggerRun(payload: RunCreateRequest): Promise<Run> {
   return request<Run>("/runs", { method: "POST", json: payload });
+}
+
+export async function listPipelineVersions(id: string): Promise<Pipeline[]> {
+  return request<Pipeline[]>(`/pipelines/${encodeURIComponent(id)}/versions`);
 }
 
 export async function abortRun(id: string): Promise<Run> {

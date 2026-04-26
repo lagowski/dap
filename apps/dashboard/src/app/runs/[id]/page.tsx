@@ -10,7 +10,7 @@ import {
   useRun,
   usePipeline,
 } from "@/hooks/api";
-import { ApiError } from "@/lib/api/client";
+import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RunStatusBadge } from "@/components/status-badge";
@@ -113,19 +113,6 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatActionError(error: unknown): string {
-  if (error instanceof ApiError) {
-    // FastAPI error bodies are { detail: "..." } or { detail: [...] for 422 }
-    const detail = (error.detail as { detail?: unknown } | null)?.detail;
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail) && detail.length > 0) {
-      return detail.map((d) => (d as { msg?: string })?.msg ?? String(d)).join("; ");
-    }
-    return error.message;
-  }
-  return error instanceof Error ? error.message : String(error);
-}
-
 function RunActions({ run }: { run: Run }) {
   const pause = usePauseRun();
   const resume = useResumeRun();
@@ -149,7 +136,7 @@ function RunActions({ run }: { run: Run }) {
     <>
       {lastError ? (
         <span className="text-xs text-destructive" role="alert">
-          {formatActionError(lastError)}
+          {formatApiError(lastError)}
         </span>
       ) : null}
       {status === "running" ? (
