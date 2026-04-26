@@ -95,7 +95,14 @@ export function AgentForm({
   });
 
   const handleSubmit = form.handleSubmit(async (values) => {
-    await onSubmit(values);
+    // Swallow the rejection here — the parent owns error display via
+    // `submitError` (driven by its mutation's error state). Letting it
+    // propagate would surface as an unhandled promise rejection.
+    try {
+      await onSubmit(values);
+    } catch {
+      // intentional: parent already shows the error
+    }
   });
 
   const isLocked = (field: "role" | "runtime_id") => lockedFields.includes(field);

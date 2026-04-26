@@ -121,7 +121,13 @@ export default function AgentDetailPage({
         </Card>
       )}
 
-      <VersionHistory currentVersion={agent.version} versions={versions.data ?? []} />
+      <VersionHistory
+        currentVersion={agent.version}
+        versions={versions.data}
+        isPending={versions.isPending}
+        isError={versions.isError}
+        error={versions.error}
+      />
     </div>
   );
 }
@@ -129,12 +135,37 @@ export default function AgentDetailPage({
 function VersionHistory({
   currentVersion,
   versions,
+  isPending,
+  isError,
+  error,
 }: {
   currentVersion: number;
-  versions: Agent[];
+  versions: Agent[] | undefined;
+  isPending: boolean;
+  isError: boolean;
+  error: unknown;
 }) {
+  if (isPending) {
+    return (
+      <Card>
+        <CardContent className="pt-6 text-sm text-muted-foreground">
+          Loading version history…
+        </CardContent>
+      </Card>
+    );
+  }
+  if (isError) {
+    return (
+      <Card className="border-destructive/50">
+        <CardContent className="pt-6 text-sm text-destructive">
+          Could not load version history: {formatApiError(error)}
+        </CardContent>
+      </Card>
+    );
+  }
+
   // Engine returns versions ascending; show newest first.
-  const sorted = [...versions].sort((a, b) => b.version - a.version);
+  const sorted = [...(versions ?? [])].sort((a, b) => b.version - a.version);
   const previous = sorted.filter((v) => v.version !== currentVersion);
 
   if (previous.length === 0) {
