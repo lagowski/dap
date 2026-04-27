@@ -2,7 +2,7 @@
 
 Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
 
-Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash` i `claude-code` są w pełni zaimplementowane; `http`, `gemini-cli`, `codex`, `aider` — stuby (przyjdą później).
+Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash`, `claude-code` i `gemini-cli` są w pełni zaimplementowane; `http`, `codex`, `aider` — stuby (przyjdą później).
 
 ```python
 import asyncio
@@ -142,3 +142,25 @@ Process lifecycle identyczny jak w `bash`: POSIX session group +
 `asyncio.shield(wait)` cleanup + obsługa `CancelledError`. Engine
 pause/abort zabija całą grupę procesów (CLI + jego subprocessy), bez
 zombie.
+
+## gemini-cli
+
+Wywołuje Google Gemini CLI z `-m {model_id} -o json`, prompt XML idzie
+przez stdin, wynik to structured JSON. Token usage wyciągamy z
+`usage_metadata` (snake_case z SDK lub camelCase z niektórych buildów —
+adapter próbuje obu). Cost zwracany jako `None` (CLI nie raportuje;
+jeśli chcesz pricing — użyj `api-call` z `provider="gemini"`).
+
+`runtime_config`:
+
+| key                | type   | required | description                                                              |
+| ------------------ | ------ | :------: | ------------------------------------------------------------------------ |
+| `model_id`         | `str`  |    tak   | Gemini model (np. `gemini-3.0-pro`, `gemini-3.0-flash`)                   |
+| `binary_path`      | `str`  |    no    | Domyślnie `gemini` na PATH                                                |
+| `thinking_budget`  | `int`  |    no    | Limit tokenów na reasoning (mappowany do `--thinking-budget`)             |
+
+Klucz API: `GEMINI_API_KEY` w env engine'a — albo `GOOGLE_API_KEY` jako
+fallback (Gemini CLI akceptuje oba). Adapter nie wstrzykuje, CLI czyta
+sam.
+
+Process lifecycle identyczny jak w `bash` / `claude-code`.
