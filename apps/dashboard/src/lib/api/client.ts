@@ -17,6 +17,7 @@ import type {
   PipelineUpdate,
   Run,
   RunCreateRequest,
+  SettingsView,
   StateSnapshot,
   ValidationResult,
 } from "./types";
@@ -240,4 +241,12 @@ export async function archiveAgent(id: string): Promise<void> {
 
 export async function listAgentVersions(id: string): Promise<Agent[]> {
   return request<Agent[]>(`/agents/${encodeURIComponent(id)}/versions`);
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export async function getSettings(): Promise<SettingsView> {
+  return request<SettingsView>("/settings");
 }
