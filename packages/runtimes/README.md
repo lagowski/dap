@@ -2,7 +2,7 @@
 
 Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
 
-Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash`, `claude-code`, `gemini-cli` i `http` są w pełni zaimplementowane; `codex`, `aider` — stuby (przyjdą później).
+Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash`, `claude-code`, `codex`, `gemini-cli` i `http` są w pełni zaimplementowane; `aider` — stub (przyjdzie później).
 
 ```python
 import asyncio
@@ -142,6 +142,39 @@ Process lifecycle identyczny jak w `bash`: POSIX session group +
 `asyncio.shield(wait)` cleanup + obsługa `CancelledError`. Engine
 pause/abort zabija całą grupę procesów (CLI + jego subprocessy), bez
 zombie.
+
+## codex
+
+Wywołuje OpenAI Codex CLI w trybie `exec --json --model {model_id}`.
+Prompt XML idzie przez stdin, wynik to structured JSON. Token usage
+wyciągamy z `usage` z fallbackami nazw (snake_case z OpenAI SDK,
+camelCase z niektórych buildów, oraz wariant `prompt_tokens` /
+`completion_tokens`). Tekst odpowiedzi szukamy kolejno w
+`output_text` → `result` → `response` → `text` → `output`. Cost
+zwracany jako `None` (CLI nie raportuje; jeśli chcesz pricing — użyj
+`api-call` z `provider="openai"`).
+
+Kiedy `codex` zamiast `api-call` (OpenAI):
+
+| Potrzeba                                              | Użyj                |
+| ----------------------------------------------------- | ------------------- |
+| Single-shot LLM, deterministycznie, bez tooli         | `api-call`          |
+| Agentic loop z file edits, bashem, MCP tools          | `codex`             |
+
+`runtime_config`:
+
+| key            | type        | required | description                                                              |
+| -------------- | ----------- | :------: | ------------------------------------------------------------------------ |
+| `model_id`     | `str`       |    tak   | OpenAI model (np. `gpt-5-codex`, `gpt-5`, `o3`)                          |
+| `binary_path`  | `str`       |    no    | Domyślnie `codex` na PATH. Override przy wielu instalacjach.            |
+| `extra_args`   | `list[str]` |    no    | Dopisane do CLI invocation, np. `["--sandbox","workspace-write"]`       |
+
+Klucz API: `OPENAI_API_KEY` w env engine'a — Codex CLI czyta go sam,
+adapter nie wstrzykuje.
+
+Process lifecycle identyczny jak w `bash` / `claude-code`. Cały payload
+JSON z CLI ląduje w `RuntimeResult.structured.payload` — pozwala
+debugować shape drift między releasami CLI bez zmian adaptera.
 
 ## gemini-cli
 
