@@ -1,6 +1,10 @@
-"""Tests for the api-call (Anthropic) runtime adapter.
+"""Tests for the api-call (multi-provider) runtime adapter.
 
-Mocks AsyncAnthropic — see DAP_E2E_ANTHROPIC=1 env var to opt into real API calls.
+Mocks the underlying SDKs — see DAP_E2E_LIVE_LLMS=1 to opt into real calls.
+
+Provider-specific tests live in their own files (test_provider_anthropic,
+_openai, _gemini); this file covers the dispatcher + the Anthropic happy
+path so the existing coverage carries over.
 """
 
 from __future__ import annotations
@@ -13,8 +17,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from dap_runtimes import ApiCallAdapter
-from dap_runtimes.adapters.api_call import _calculate_cost
+from dap_runtimes.adapters._providers._anthropic import _calculate_cost
 from dap_types import RuntimeTask
+
+_ANTHROPIC_CLIENT_PATH = "dap_runtimes.adapters._providers._anthropic.AsyncAnthropic"
 
 
 @pytest.fixture
@@ -32,15 +38,16 @@ def with_api_key() -> Iterator[None]:
 
 
 @pytest.fixture
-def without_api_key() -> Iterator[None]:
-    """Ensure ANTHROPIC_API_KEY is unset for the duration of the test."""
-    original = os.environ.get("ANTHROPIC_API_KEY")
-    os.environ.pop("ANTHROPIC_API_KEY", None)
+def without_any_api_key() -> Iterator[None]:
+    """Strip every provider env var so healthcheck reports unavailable."""
+    keys = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY")
+    saved = {k: os.environ.pop(k, None) for k in keys}
     try:
         yield
     finally:
-        if original is not None:
-            os.environ["ANTHROPIC_API_KEY"] = original
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
 
 
 def _task(**runtime_config_overrides: Any) -> RuntimeTask:
@@ -80,7 +87,9 @@ def _mock_message(text: str = "ok", **usage_overrides: int) -> SimpleNamespace:
 # ---------------------------------------------------------------------------
 
 
-async def test_healthcheck_without_api_key(without_api_key: None) -> None:
+async def test_healthcheck_without_any_provider_configured(
+    without_any_api_key: None,
+) -> None:
     adapter = ApiCallAdapter()
     health = await adapter.healthcheck()
     assert health.available is False
@@ -88,27 +97,75 @@ async def test_healthcheck_without_api_key(without_api_key: None) -> None:
     assert any("ANTHROPIC_API_KEY" in m for m in health.missing)
 
 
-async def test_healthcheck_with_api_key(with_api_key: None) -> None:
+async def test_healthcheck_with_anthropic_configured(with_api_key: None) -> None:
     adapter = ApiCallAdapter()
     health = await adapter.healthcheck()
     assert health.available is True
+    # `version` is the comma-separated list of providers whose env var
+    # is set — fast read straight from the registry, no SDK import.
     assert health.version is not None
-    assert "anthropic-sdk" in health.version
+    assert "anthropic" in health.version
 
 
 # ---------------------------------------------------------------------------
-# Config validation (no SDK call needed)
+# Dispatcher: provider selection
 # ---------------------------------------------------------------------------
 
 
-async def test_unsupported_provider_returns_error(with_api_key: None) -> None:
+def test_provider_registry_holds_only_metadata() -> None:
+    """Registry must store module *paths* (strings), not imported modules.
+
+    Storing imported modules would make ``import dap_runtimes`` pull every
+    SDK eagerly (anthropic + openai + google-genai). Verifying the data
+    shape is enough — the only way to dispatch lazily is via importlib,
+    which only happens inside ``get_provider()``. Avoids touching
+    ``sys.modules`` (which pollutes state for other tests).
+    """
+    from dap_runtimes.adapters._providers import (
+        PROVIDER_REGISTRY,
+        ProviderInfo,
+    )
+
+    assert len(PROVIDER_REGISTRY) >= 3
+    for info in PROVIDER_REGISTRY.values():
+        assert isinstance(info, ProviderInfo)
+        # module_path is the stringly-named module, not the imported module
+        assert isinstance(info.module_path, str)
+        assert info.module_path.startswith("dap_runtimes.adapters._providers._")
+
+
+async def test_unknown_provider_returns_error(with_api_key: None) -> None:
     adapter = ApiCallAdapter()
-    result = await adapter.execute(_task(provider="openai"))
+    result = await adapter.execute(_task(provider="not-a-provider"))
     assert result.success is False
-    assert any("openai" in e.lower() and "f3" in e.lower() for e in result.errors)
+    assert any("not-a-provider" in e.lower() for e in result.errors)
 
 
-async def test_missing_api_key_returns_error(without_api_key: None) -> None:
+async def test_default_provider_is_anthropic(with_api_key: None) -> None:
+    """Omitting `provider` falls back to anthropic for backward compat."""
+    adapter = ApiCallAdapter()
+    fake_message = _mock_message()
+
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(return_value=fake_message)
+        mock_client.close = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        # _task() defaults provider="anthropic"; remove to test the default
+        task = _task()
+        task.runtime_config.pop("provider")
+        result = await adapter.execute(task)
+
+    assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# Anthropic config validation
+# ---------------------------------------------------------------------------
+
+
+async def test_missing_api_key_returns_error(without_any_api_key: None) -> None:
     adapter = ApiCallAdapter()
     result = await adapter.execute(_task())
     assert result.success is False
@@ -137,7 +194,7 @@ async def test_invalid_effort_returns_error(with_api_key: None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Successful execute (mocked SDK)
+# Successful execute (mocked Anthropic SDK)
 # ---------------------------------------------------------------------------
 
 
@@ -145,7 +202,7 @@ async def test_execute_success_returns_text_and_tokens(with_api_key: None) -> No
     adapter = ApiCallAdapter()
     fake_message = _mock_message(text="Hello world")
 
-    with patch("dap_runtimes.adapters.api_call.AsyncAnthropic") as mock_cls:
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
         mock_client = MagicMock()
         mock_client.messages.create = AsyncMock(return_value=fake_message)
         mock_client.close = AsyncMock()
@@ -162,13 +219,14 @@ async def test_execute_success_returns_text_and_tokens(with_api_key: None) -> No
     assert abs(result.cost_usd - 0.00035) < 1e-9
     assert result.structured is not None
     assert result.structured["stop_reason"] == "end_turn"
+    assert result.structured["provider"] == "anthropic"
 
 
 async def test_execute_passes_xml_as_system(with_api_key: None) -> None:
     adapter = ApiCallAdapter()
     fake_message = _mock_message()
 
-    with patch("dap_runtimes.adapters.api_call.AsyncAnthropic") as mock_cls:
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
         mock_client = MagicMock()
         mock_client.messages.create = AsyncMock(return_value=fake_message)
         mock_client.close = AsyncMock()
@@ -194,7 +252,7 @@ async def test_execute_with_optional_features(with_api_key: None) -> None:
     adapter = ApiCallAdapter()
     fake_message = _mock_message()
 
-    with patch("dap_runtimes.adapters.api_call.AsyncAnthropic") as mock_cls:
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
         mock_client = MagicMock()
         mock_client.messages.create = AsyncMock(return_value=fake_message)
         mock_client.close = AsyncMock()
@@ -229,7 +287,7 @@ async def test_execute_with_prompt_caching_usage(with_api_key: None) -> None:
         output_tokens=100,
     )
 
-    with patch("dap_runtimes.adapters.api_call.AsyncAnthropic") as mock_cls:
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
         mock_client = MagicMock()
         mock_client.messages.create = AsyncMock(return_value=fake_message)
         mock_client.close = AsyncMock()
@@ -247,7 +305,7 @@ async def test_execute_with_prompt_caching_usage(with_api_key: None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Error path mapping
+# Anthropic error path mapping
 # ---------------------------------------------------------------------------
 
 
@@ -256,9 +314,8 @@ async def test_authentication_error(with_api_key: None) -> None:
 
     adapter = ApiCallAdapter()
 
-    with patch("dap_runtimes.adapters.api_call.AsyncAnthropic") as mock_cls:
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
         mock_client = MagicMock()
-        # Construct AuthenticationError with required args
         err = anthropic.AuthenticationError(
             message="Invalid API key",
             response=MagicMock(),
@@ -279,7 +336,7 @@ async def test_rate_limit_error(with_api_key: None) -> None:
 
     adapter = ApiCallAdapter()
 
-    with patch("dap_runtimes.adapters.api_call.AsyncAnthropic") as mock_cls:
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
         mock_client = MagicMock()
         err = anthropic.RateLimitError(
             message="Rate limit exceeded",
@@ -297,7 +354,7 @@ async def test_rate_limit_error(with_api_key: None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cost calculation unit tests
+# Cost calculation unit tests (Anthropic pricing)
 # ---------------------------------------------------------------------------
 
 
