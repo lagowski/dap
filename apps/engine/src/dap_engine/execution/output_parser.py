@@ -9,12 +9,12 @@ of ``PipelineState`` fields. The subset is resolved from
 This module:
 1. Pulls the JSON payload out of the LLM's text (XML wrapper or markdown
    fence — whichever the prompt template requested).
-2. Validates it against the agent's declared schema (``agent_output_model``).
+2. Resolves the validator via :func:`resolve_output_validator` — the
+   per-agent ``output_schema`` wins; falls back to
+   ``ROLE_FIELDS[role]``; returns ``None`` for custom roles with no
+   declared schema (caller falls back to permissive merging).
 3. Returns a ``ParseResult`` with the parsed fields and any errors so the
    caller can decide whether to log + continue, or fail the node.
-
-Custom-role agents with no declared schema are not parsed here — the
-runner falls back to permissive ``RuntimeResult.structured`` merging.
 """
 
 from __future__ import annotations

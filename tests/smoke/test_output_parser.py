@@ -196,3 +196,19 @@ def test_empty_schema_falls_back_to_role_fields() -> None:
     result = parse_node_output("task_selector", [], text)
     assert result.success is True
     assert result.parsed == {"selected_issue_ids": [1]}
+
+
+def test_stale_field_name_falls_back_to_skipped() -> None:
+    """A schema referencing a renamed/removed PipelineState field shouldn't crash.
+
+    Hand-edited or stale rows can carry a name that no longer exists.
+    The validator returns ``None`` and the parser reports skipped so
+    the run keeps moving via permissive structured-merge.
+    """
+    result = parse_node_output(
+        "custom-role",
+        ["this_field_does_not_exist"],
+        '<output>{"foo": "bar"}</output>',
+    )
+    assert result.success is True
+    assert result.skipped is True

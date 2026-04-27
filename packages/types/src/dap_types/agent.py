@@ -10,7 +10,7 @@ from dap_types.state import PipelineState
 AgentRole = str  # "task_selector" | "test_author" | "implementer" | "verifier" | ... | custom
 
 
-def _coerce_field_list(value: Any) -> list[str]:
+def coerce_legacy_field_list(value: Any) -> Any:
     """Normalise legacy dict-shaped schemas to ``list[str]``.
 
     Older Agent rows persisted ``input_schema`` / ``output_schema`` as
@@ -18,20 +18,20 @@ def _coerce_field_list(value: Any) -> list[str]:
     the contract to a list of PipelineState field names. We coerce
     ``dict``/``None`` to ``[]`` here so existing rows survive a read-back
     without a database migration. The shim is removed in v0.6.
+
+    Anything else (lists, primitives, …) is returned untouched so
+    Pydantic's ``list[str]`` annotation does its own type checking and
+    rejects non-string elements with the standard validation error
+    instead of a silent ``str(item)`` coercion.
     """
     if value is None or isinstance(value, dict):
         # ``{}`` and any non-empty placeholder dict (legacy JSON-Schema-ish
         # blob) collapse to ``[]`` — there's no real contract to recover.
         return []
-    if value == []:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    msg = f"input_schema/output_schema must be a list of field names, got {type(value).__name__}"
-    raise TypeError(msg)
+    return value
 
 
-def _validate_field_list(fields: list[str]) -> list[str]:
+def validate_field_list(fields: list[str]) -> list[str]:
     """Reject any name that doesn't exist in ``PipelineState.model_fields``."""
     if not fields:
         return fields
@@ -78,10 +78,10 @@ class Agent(BaseModel):
 
     @field_validator("input_schema", "output_schema", mode="before")
     @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> list[str]:
-        return _coerce_field_list(value)
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
 
     @field_validator("input_schema", "output_schema")
     @classmethod
     def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return _validate_field_list(value)
+        return validate_field_list(value)

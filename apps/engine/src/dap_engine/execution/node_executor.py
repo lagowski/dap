@@ -267,10 +267,19 @@ def _parse_agent_output(ctx: NodeContext, output: str) -> dict[str, Any]:
     and use retry-node / skip-node to recover (issue #33). The
     resulting diff overrides adapter-supplied structured fields on
     conflict so an agent's intentional response wins over telemetry.
+
+    Legacy DB rows may still hold a dict-shaped ``output_schema`` (the
+    pre-v0.5 placeholder format). Coerce those back to ``[]`` here so
+    ``list(dict)`` (= dict keys) doesn't accidentally land in the
+    parser as a per-agent contract.
     """
+    raw_schema = ctx.agent_version.output_schema
+    output_schema = (
+        list(raw_schema) if isinstance(raw_schema, list) else []
+    )  # legacy dict / None / anything else → fall back to ROLE_FIELDS
     parse_result = parse_node_output(
         ctx.agent.role,
-        list(ctx.agent_version.output_schema or []),
+        output_schema,
         output,
     )
     if parse_result.skipped:

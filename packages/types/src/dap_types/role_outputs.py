@@ -105,15 +105,18 @@ def resolve_output_validator(
     (``AgentORM`` + ``AgentVersionORM``) don't need to construct a
     Pydantic ``Agent`` just to parse output.
 
-    1. ``output_schema`` non-empty → per-agent validator (cached on the
-       sorted tuple of fields so two agents with the same subset reuse
-       one compiled class).
+    1. ``output_schema`` non-empty → per-agent validator. Fields are
+       sorted before lookup so two agents that declare the same set in
+       different orders share a single cached class.
     2. Otherwise falls back to ``ROLE_FIELDS[role]``.
-    3. Returns ``None`` for custom roles with no declared schema.
+    3. Returns ``None`` for custom roles with no declared schema, or
+       when the schema references a field that doesn't exist in
+       :class:`PipelineState` — caller falls back to permissive merging
+       rather than crashing on a stale or hand-edited DB row.
     """
     if output_schema:
-        fields = tuple(output_schema)
-        cache_name = f"FieldSubsetOutput[{','.join(sorted(fields))}]"
+        fields = tuple(sorted(output_schema))
+        cache_name = f"FieldSubsetOutput[{','.join(fields)}]"
         return _build_model_from_field_subset(fields, name=cache_name)
     return role_output_model(role)
 
@@ -123,7 +126,7 @@ def _build_model_from_field_subset(
     fields: tuple[str, ...] | frozenset[str],
     *,
     name: str,
-) -> type[BaseModel]:
+) -> type[BaseModel] | None:
     """Compile a Pydantic model exposing exactly ``fields`` from PipelineState.
 
     The resulting model:
@@ -133,13 +136,24 @@ def _build_model_from_field_subset(
     - makes every field optional (a node may write a subset),
     - rejects unknown keys via ``extra="forbid"``.
 
+    Returns ``None`` when ``fields`` references a name that doesn't
+    exist in :class:`PipelineState` — the validator API at
+    :func:`resolve_output_validator` rejects unknown fields up front,
+    so this guard only fires for stale or hand-edited DB rows.
+    Returning ``None`` makes the caller fall back to permissive merge
+    rather than crash a run on a ``KeyError``.
+
     Cached on ``(fields, name)`` — repeated lookups for the same agent /
     role return the same compiled class so equality checks behave.
     """
     pipeline_fields = PipelineState.model_fields
     model_fields: dict[str, Any] = {}
     for field_name in fields:
-        info = pipeline_fields[field_name]
+        info = pipeline_fields.get(field_name)
+        if info is None:
+            # Stale/hand-edited row referencing a renamed or removed
+            # PipelineState field. Fall back to permissive merge.
+            return None
         annotation = info.annotation
         if annotation is None:
             # Shouldn't happen — every PipelineState field is annotated —

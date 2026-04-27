@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from dap_types.agent import _coerce_field_list, _validate_field_list
+from dap_types.agent import coerce_legacy_field_list, validate_field_list
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -33,13 +33,13 @@ class AgentCreate(BaseModel):
 
     @field_validator("input_schema", "output_schema", mode="before")
     @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> list[str]:
-        return _coerce_field_list(value)
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
 
     @field_validator("input_schema", "output_schema")
     @classmethod
     def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return _validate_field_list(value)
+        return validate_field_list(value)
 
 
 class AgentUpdate(BaseModel):
@@ -62,13 +62,13 @@ class AgentUpdate(BaseModel):
 
     @field_validator("input_schema", "output_schema", mode="before")
     @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> list[str]:
-        return _coerce_field_list(value)
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
 
     @field_validator("input_schema", "output_schema")
     @classmethod
     def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return _validate_field_list(value)
+        return validate_field_list(value)
 
 
 class PipelineCreate(BaseModel):
