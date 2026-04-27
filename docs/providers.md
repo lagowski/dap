@@ -19,15 +19,15 @@ expensive CLI does the actual coding.
 
 ## Provider matrix
 
-| Provider              | API runtime                                  | CLI runtime    | Cost tracking          |
-| --------------------- | -------------------------------------------- | -------------- | ---------------------- |
-| **Anthropic**         | `api-call` (`provider="anthropic"`)          | `claude-code`  | Full (Claude 4.x + cache) |
-| **OpenAI**            | `api-call` (`provider="openai"`)             | `codex` (stub) | Full (gpt-5, o-series) |
-| **Google**            | `api-call` (`provider="gemini"`)             | `gemini-cli`   | Full (Gemini 2.x/3.x)  |
-| **GLM (z.ai)**        | `api-call` (`provider="openai-compat"`)      | —              | None (3rd-party)       |
-| **OpenRouter**        | `api-call` (`provider="openai-compat"`)      | —              | OR-reported            |
-| **Together / Groq**   | `api-call` (`provider="openai-compat"`)      | —              | None (3rd-party)       |
-| **Ollama / llama.cpp**| `http` adapter                               | `bash` (`ollama run`) | n/a (local)     |
+| Provider | API runtime | CLI runtime | Cost tracking |
+| --- | --- | --- | --- |
+| Anthropic | `api-call` (`provider="anthropic"`) | `claude-code` | Full (Claude 4.x + cache) |
+| OpenAI | `api-call` (`provider="openai"`) | `codex` (stub) | Full (gpt-5, o-series) |
+| Google | `api-call` (`provider="gemini"`) | `gemini-cli` | Full (Gemini 2.x/3.x) |
+| GLM (z.ai) | `api-call` (`provider="openai-compat"`) | — | None (3rd-party) |
+| OpenRouter | `api-call` (`provider="openai-compat"`) | — | None in DAP today (`http` adapter + explicit `cost_usd` extractor only) |
+| Together / Groq | `api-call` (`provider="openai-compat"`) | — | None (3rd-party) |
+| Ollama / llama.cpp | `http` adapter | `bash` (`ollama run`) | n/a (local) |
 
 `openai-compat` covers anything that speaks the OpenAI Chat Completions
 shape — see the per-provider sections for `base_url` + env var hints.
@@ -95,8 +95,11 @@ CLI mode: `codex` adapter is a stub. Use API mode until #53 lands.
 
 ### Google (Gemini)
 
-**Env vars:** `GEMINI_API_KEY` (or `GOOGLE_API_KEY` as fallback —
-both Gen AI SDK and CLI accept either).
+**Env vars:**
+
+- API mode (`provider="gemini"` via `api-call`): `GEMINI_API_KEY` only.
+- CLI mode (`gemini-cli` adapter): `GEMINI_API_KEY` *or* `GOOGLE_API_KEY`
+  — the CLI accepts either.
 
 **Models:** `gemini-3.0-pro`, `gemini-3.0-flash`, `gemini-2.5-pro`,
 `gemini-2.5-flash`, `gemini-2.0-flash`.
@@ -164,9 +167,13 @@ don't ship a table.
 }
 ```
 
-Model IDs follow OpenRouter's `provider/model` convention. Cost is
-reported by OpenRouter in the response — extracted via the standard
-OpenAI usage shape.
+Model IDs follow OpenRouter's `provider/model` convention. Responses
+use the standard OpenAI-compatible usage shape, but the
+`openai-compat` provider does **not** populate `RuntimeResult.cost_usd`
+today — pricing tables only cover native OpenAI models. If you need
+OpenRouter cost tracking, use the `http` adapter instead and pull the
+value from `$.usage.cost` (or whatever field your route returns) via
+`response_extractor`.
 
 ### Ollama (local)
 
@@ -223,7 +230,7 @@ dashboard via the New Agent form, or POST `/agents` directly.
     "api_key_env": "GLM_API_KEY",
     "max_tokens": 4096
   },
-  "prompt_template": "<agent_prompt><role>{{ role }}</role><task>Implement: {{ implementation_notes }}</task></agent_prompt>"
+  "prompt_template": "<agent_prompt><role>implementer</role><task>Implement: {{ implementation_notes }}</task></agent_prompt>"
 }
 ```
 
