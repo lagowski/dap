@@ -1,10 +1,18 @@
 /**
  * Per-runtime config field schemas for the AgentForm UI.
  *
- * Single source of truth for "what does this runtime expect in
- * runtime_config". The engine's per-adapter `validate_config` is the
- * authoritative validator — schemas here mirror its expectations so
- * the user gets a typed form before hitting the API.
+ * Two truth sources today:
+ *
+ * - **api-call** and **bash** are fully implemented in the engine. Their
+ *   schemas mirror the adapters' real `validate_config`. Required fields
+ *   here match what the adapter rejects.
+ * - **claude-code, gemini-cli, codex, http, aider** are F0 stubs whose
+ *   `execute()` raises `NotImplementedError`. Their schemas below are
+ *   *aspirational* — they document the shape the matching v0.4 issues
+ *   will implement (#51 / #52 / #53 / #54 / #55). To avoid blocking
+ *   agent creation in the UI before the engine accepts those configs,
+ *   stub-runtime fields are NOT marked `required`. Tighten them once
+ *   the corresponding adapter lands.
  *
  * Adding a runtime: drop a new entry below. The form picks it up
  * automatically and renders the right inputs.
@@ -200,6 +208,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
+  // STUB — claude-code adapter is F0-stub; #51 will implement and tighten.
   "claude-code": {
     runtime_id: "claude-code",
     fields: [
@@ -207,26 +216,28 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
-        required: true,
         placeholder: "claude-opus-4-7",
+        description:
+          "Aspirational schema — adapter is a stub until #51. Fields not enforced yet.",
       },
       {
         key: "binary_path",
         label: "Binary path",
         kind: "text",
         placeholder: "/opt/homebrew/bin/claude",
-        description: "Defaults to `claude` on PATH. Override if you have multiple installs.",
       },
       {
         key: "extra_args",
         label: "Extra CLI args",
         kind: "json",
-        description: 'JSON array of strings appended to the claude CLI invocation. Example: ["--allowed-tools","Read,Edit,Bash"]',
+        description:
+          'JSON array of strings appended to the claude CLI invocation. Example: ["--allowed-tools","Read,Edit,Bash"]',
         placeholder: '["--allowed-tools", "Read,Edit"]',
       },
     ],
   },
 
+  // STUB — gemini-cli adapter is F0-stub; #52 will implement and tighten.
   "gemini-cli": {
     runtime_id: "gemini-cli",
     fields: [
@@ -234,8 +245,9 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
-        required: true,
         placeholder: "gemini-3.0-pro",
+        description:
+          "Aspirational schema — adapter is a stub until #52. Fields not enforced yet.",
       },
       {
         key: "binary_path",
@@ -252,6 +264,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
+  // STUB — codex adapter is F0-stub; #53 will implement and tighten.
   codex: {
     runtime_id: "codex",
     fields: [
@@ -259,8 +272,9 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
-        required: true,
         placeholder: "gpt-5-codex",
+        description:
+          "Aspirational schema — adapter is a stub until #53. Fields not enforced yet.",
       },
       {
         key: "binary_path",
@@ -276,6 +290,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
+  // STUB — http adapter is F0-stub; #54 will implement and tighten.
   http: {
     runtime_id: "http",
     fields: [
@@ -283,8 +298,9 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "url",
         label: "URL",
         kind: "text",
-        required: true,
         placeholder: "http://localhost:11434/api/generate",
+        description:
+          "Aspirational schema — adapter is a stub until #54. Fields not enforced yet.",
       },
       {
         key: "method",
@@ -300,7 +316,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "request_template",
         label: "Request body template",
         kind: "json",
-        required: true,
         description:
           "JSON template rendered with prompt_xml in scope. Example: {\"model\": \"{{ runtime_config.model_id }}\", \"prompt\": \"{{ prompt_xml }}\", \"stream\": false}",
       },
@@ -308,7 +323,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "response_extractor",
         label: "Response extractor",
         kind: "json",
-        required: true,
         description:
           'JSONPath map. Example: {"output": "$.response", "tokens_used": "$.eval_count"}',
       },
@@ -322,6 +336,8 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
+  // STUB — aider adapter is F0-stub. No issue tracked yet — fields are
+  // a placeholder so users can still pick the runtime in the form.
   aider: {
     runtime_id: "aider",
     fields: [
@@ -329,7 +345,8 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
-        required: true,
+        description:
+          "Aspirational schema — adapter is a stub. Fields not enforced yet.",
       },
       {
         key: "binary_path",

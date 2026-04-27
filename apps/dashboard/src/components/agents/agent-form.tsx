@@ -117,6 +117,10 @@ export function AgentForm({
     () =>
       initialValues?.runtime_config ?? defaultRuntimeConfig(initialRuntimeId),
   );
+  // The editor reports false when JSON inputs (Advanced mode or per-field
+  // json) fail to parse. We block submit while invalid so the user can't
+  // ship a payload that doesn't match the textarea contents.
+  const [runtimeConfigJsonValid, setRuntimeConfigJsonValid] = useState(true);
 
   const watchedRuntimeId = form.watch("runtime_id");
 
@@ -127,15 +131,17 @@ export function AgentForm({
   useEffect(() => {
     if (watchedRuntimeId && watchedRuntimeId !== initialRuntimeId) {
       setRuntimeConfig(defaultRuntimeConfig(watchedRuntimeId));
+      setRuntimeConfigJsonValid(true);
     }
   }, [watchedRuntimeId, initialRuntimeId]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
-    // Block submit if the runtime config is missing required fields. The
-    // engine would reject with 422; we surface it inline first.
+    // Block submit if the runtime config is missing required fields or
+    // if any JSON input is unparseable. The engine would reject with 422;
+    // we surface it inline first.
     const runtimeErrors = validateRuntimeConfig(values.runtime_id, runtimeConfig);
-    if (runtimeErrors.length > 0) {
-      // Validation messages are rendered by the editor itself; just stop.
+    if (runtimeErrors.length > 0 || !runtimeConfigJsonValid) {
+      // Editor renders per-field messages; nothing more to do here.
       return;
     }
     try {
@@ -189,6 +195,7 @@ export function AgentForm({
           runtime_id={watchedRuntimeId}
           value={runtimeConfig}
           onChange={setRuntimeConfig}
+          onValidityChange={setRuntimeConfigJsonValid}
         />
       </Field>
 
@@ -210,12 +217,20 @@ export function AgentForm({
       ) : null}
 
       <div className="flex gap-2 pt-2">
-        <Button type="submit" disabled={isPending}>
+        <Button
+          type="submit"
+          disabled={isPending || !runtimeConfigJsonValid}
+        >
           {isPending ? "Saving…" : submitLabel}
         </Button>
         <Button type="button" variant="outline" asChild>
           <Link href={cancelHref}>Cancel</Link>
         </Button>
+        {!runtimeConfigJsonValid ? (
+          <span className="text-xs text-destructive self-center">
+            Fix runtime_config JSON to enable submit
+          </span>
+        ) : null}
       </div>
     </form>
   );
