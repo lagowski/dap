@@ -5,7 +5,7 @@ import { useSettings } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { ProviderStatus, RuntimeStatus } from "@/lib/api/types";
+import type { EngineInfo, ProviderStatus, RuntimeStatus } from "@/lib/api/types";
 
 export default function SettingsPage() {
   const { data, isPending, isError, error } = useSettings();
@@ -78,8 +78,8 @@ function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
                 <td className="px-4 py-3 text-xs text-muted-foreground">
                   {runtime.missing && runtime.missing.length > 0 ? (
                     <ul className="space-y-0.5">
-                      {runtime.missing.map((m, i) => (
-                        <li key={i}>{m}</li>
+                      {runtime.missing.map((m) => (
+                        <li key={m}>{m}</li>
                       ))}
                     </ul>
                   ) : (
@@ -146,11 +146,7 @@ function ProvidersSection({ providers }: { providers: ProviderStatus[] }) {
   );
 }
 
-function EngineSection({
-  engine,
-}: {
-  engine: { version: string; db_path: string; checkpoint_db_path: string; recursion_limit: number };
-}) {
+function EngineSection({ engine }: { engine: EngineInfo }) {
   return (
     <section className="space-y-2">
       <h2 className="text-lg font-medium">Engine</h2>

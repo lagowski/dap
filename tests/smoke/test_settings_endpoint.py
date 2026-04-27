@@ -96,3 +96,49 @@ def test_settings_engine_section_has_paths_and_version(client: TestClient) -> No
     assert engine["checkpoint_db_path"].endswith("state.checkpoints.db")
     assert isinstance(engine["recursion_limit"], int)
     assert engine["recursion_limit"] > 0
+
+
+def test_settings_engine_version_matches_fastapi_app_version(
+    client: TestClient,
+) -> None:
+    """Engine version comes from the FastAPI app — single source of truth."""
+    health_version = client.get("/health").json()["version"]
+    settings_version = client.get("/settings").json()["engine"]["version"]
+    assert health_version == settings_version
+
+
+def test_settings_isolates_per_adapter_healthcheck_failures(
+    client: TestClient,
+) -> None:
+    """A buggy adapter shouldn't take down the rest of the settings table."""
+    from dap_runtimes.adapters.base import BaseAdapter
+    from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+
+    class BrokenAdapter(BaseAdapter):
+        id = "broken-test"
+        display_name = "Broken Test Adapter"
+        kind: RuntimeKind = "api"
+
+        async def healthcheck(self) -> HealthStatus:
+            raise RuntimeError("simulated adapter failure")
+
+        async def execute(self, _task: RuntimeTask) -> RuntimeResult:
+            raise NotImplementedError
+
+    # Register the broken adapter alongside the defaults via the running
+    # app's runtime registry.
+    registry = client.app.state.runtime_registry  # type: ignore[attr-defined]
+    registry.register(BrokenAdapter())
+
+    body = client.get("/settings").json()
+
+    # Endpoint still returns 200 with all rows present.
+    runtime_ids = [r["id"] for r in body["runtimes"]]
+    assert "broken-test" in runtime_ids
+    assert "bash" in runtime_ids  # other adapters still work
+
+    # Broken row reports unavailable with a useful note.
+    broken = next(r for r in body["runtimes"] if r["id"] == "broken-test")
+    assert broken["available"] is False
+    assert broken["missing"] is not None
+    assert any("simulated adapter failure" in m for m in broken["missing"])
