@@ -39,10 +39,17 @@ DEFAULT_USER_MESSAGE: Final = "Execute the task as specified in the system instr
 
 
 def env_var_for(config: dict[str, Any]) -> str:
-    """For native OpenAI: OPENAI_API_KEY. For compat: configurable."""
-    custom = config.get("api_key_env")
-    if isinstance(custom, str) and custom:
-        return custom
+    """Native OpenAI always reads OPENAI_API_KEY. Compat respects api_key_env.
+
+    The split matters: ``_make_client`` only forwards ``api_key`` to the
+    SDK constructor for the compat path; honoring ``api_key_env`` for
+    native OpenAI here would let validation pass while the actual call
+    still relied on ``OPENAI_API_KEY`` — silently inconsistent.
+    """
+    if config.get("provider") == ID_COMPAT:
+        custom = config.get("api_key_env")
+        if isinstance(custom, str) and custom:
+            return custom
     return DEFAULT_ENV_VAR
 
 

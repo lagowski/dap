@@ -101,13 +101,37 @@ async def test_healthcheck_with_anthropic_configured(with_api_key: None) -> None
     adapter = ApiCallAdapter()
     health = await adapter.healthcheck()
     assert health.available is True
+    # `version` is the comma-separated list of providers whose env var
+    # is set — fast read straight from the registry, no SDK import.
     assert health.version is not None
-    assert "anthropic-sdk" in health.version
+    assert "anthropic" in health.version
 
 
 # ---------------------------------------------------------------------------
 # Dispatcher: provider selection
 # ---------------------------------------------------------------------------
+
+
+def test_provider_registry_holds_only_metadata() -> None:
+    """Registry must store module *paths* (strings), not imported modules.
+
+    Storing imported modules would make ``import dap_runtimes`` pull every
+    SDK eagerly (anthropic + openai + google-genai). Verifying the data
+    shape is enough — the only way to dispatch lazily is via importlib,
+    which only happens inside ``get_provider()``. Avoids touching
+    ``sys.modules`` (which pollutes state for other tests).
+    """
+    from dap_runtimes.adapters._providers import (
+        PROVIDER_REGISTRY,
+        ProviderInfo,
+    )
+
+    assert len(PROVIDER_REGISTRY) >= 3
+    for info in PROVIDER_REGISTRY.values():
+        assert isinstance(info, ProviderInfo)
+        # module_path is the stringly-named module, not the imported module
+        assert isinstance(info.module_path, str)
+        assert info.module_path.startswith("dap_runtimes.adapters._providers._")
 
 
 async def test_unknown_provider_returns_error(with_api_key: None) -> None:

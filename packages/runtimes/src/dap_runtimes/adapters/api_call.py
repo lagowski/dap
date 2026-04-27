@@ -18,12 +18,14 @@ Supported providers (v0.4):
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Final
 
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._providers import (
+    PROVIDER_REGISTRY,
     ProviderError,
     ProviderResult,
     get_provider,
@@ -49,36 +51,29 @@ class ApiCallAdapter(BaseAdapter):
     kind: RuntimeKind = "api"
 
     async def healthcheck(self) -> HealthStatus:
-        """Available if at least one provider is fully configured.
+        """Available if at least one provider's env var is set.
 
-        Per-provider state is reported as ``missing`` for each provider
-        that's not configured — gives the operator a clear list of
-        env vars to set.
+        Reads only the registry metadata — does NOT import any SDK,
+        so calling healthcheck stays fast and doesn't trigger lazy
+        loading of all providers' SDKs.
         """
         missing: list[str] = []
-        versions: list[str] = []
-        any_available = False
+        configured: list[str] = []
 
-        for provider_id in list_provider_ids():
-            provider = get_provider(provider_id)
-            if provider is None:
+        for info in PROVIDER_REGISTRY.values():
+            # openai-compat keys live per-agent; nothing to check here.
+            if info.default_env_var is None:
                 continue
-            # Avoid double-reporting openai/openai-compat (same module).
-            if provider_id == "openai-compat":
-                continue
-            available, version, provider_missing = provider.healthcheck()
-            if available:
-                any_available = True
-                if version is not None:
-                    versions.append(version)
-            elif provider_missing is not None:
-                missing.extend(provider_missing)
+            if os.environ.get(info.default_env_var):
+                configured.append(info.id)
+            else:
+                missing.append(f"{info.default_env_var} ({info.display_name})")
 
-        if not any_available:
+        if not configured:
             return HealthStatus(available=False, missing=missing)
         return HealthStatus(
             available=True,
-            version=", ".join(versions) if versions else None,
+            version=", ".join(configured),
             missing=missing if missing else None,
         )
 

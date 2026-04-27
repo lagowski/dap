@@ -104,10 +104,18 @@ def _build_request_kwargs(config: dict[str, Any], prompt_xml: str) -> dict[str, 
     """Map per-call config to the Gen AI SDK request shape.
 
     Prompt XML goes in as the system instruction; a small user message
-    triggers the actual completion. Mirrors the Anthropic / OpenAI shape.
+    triggers the actual completion. Mirrors the Anthropic / OpenAI shape,
+    including the optional ``runtime_config.system_prompt`` that gets
+    prepended to the XML so users can layer extra context.
     """
+    user_system_prompt = config.get("system_prompt")
+    if isinstance(user_system_prompt, str) and user_system_prompt:
+        system_instruction = f"{user_system_prompt}\n\n{prompt_xml}"
+    else:
+        system_instruction = prompt_xml
+
     config_block: dict[str, Any] = {
-        "system_instruction": prompt_xml,
+        "system_instruction": system_instruction,
         "max_output_tokens": config.get("max_tokens", 4096),
     }
     if config.get("temperature") is not None:
