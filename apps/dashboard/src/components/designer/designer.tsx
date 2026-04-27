@@ -215,21 +215,32 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
   const update = useUpdatePipeline();
 
   const handleValidate = useCallback(async () => {
-    const result = await validate.mutateAsync(buildPayload());
-    setValidationResult(result);
+    try {
+      const result = await validate.mutateAsync(buildPayload());
+      setValidationResult(result);
+    } catch {
+      // The mutation's error state already drives the UI; swallow the
+      // rejection so it doesn't surface as an unhandled rejection in the
+      // Next.js dev overlay.
+    }
   }, [buildPayload, validate]);
 
   const handleSave = useCallback(async () => {
     const payload = buildPayload();
-    if (initialPipeline) {
-      const updated = await update.mutateAsync({
-        id: initialPipeline.id,
-        payload,
-      });
-      router.push(`/pipelines/${updated.id}/edit`);
-    } else {
-      const created = await create.mutateAsync(payload);
-      router.push(`/pipelines/${created.id}/edit`);
+    try {
+      if (initialPipeline) {
+        const updated = await update.mutateAsync({
+          id: initialPipeline.id,
+          payload,
+        });
+        router.push(`/pipelines/${updated.id}/edit`);
+      } else {
+        const created = await create.mutateAsync(payload);
+        router.push(`/pipelines/${created.id}/edit`);
+      }
+    } catch {
+      // Save failure surfaces via create.error / update.error on the
+      // toolbar; swallow here to avoid the unhandled rejection.
     }
   }, [buildPayload, initialPipeline, create, update, router]);
 
@@ -267,6 +278,9 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
 
   const isSaving = create.isPending || update.isPending;
   const saveLabel = initialPipeline ? `Save v${initialPipeline.version + 1}` : "Save";
+  // Surface server-side errors (422 from validate / save) in the toolbar
+  // so the user sees the actual reason instead of just a dev-overlay flash.
+  const submitError = create.error ?? update.error ?? validate.error;
 
   return (
     <div className="flex flex-col h-full">
@@ -281,6 +295,7 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         isValidating={validate.isPending}
         isSaving={isSaving}
         saveLabel={saveLabel}
+        submitError={submitError}
         pipelineId={initialPipeline?.id}
         pipelineVersion={initialPipeline?.version}
       />
