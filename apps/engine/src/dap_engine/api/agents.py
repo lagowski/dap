@@ -111,12 +111,20 @@ def render_preview(
     Returns 422 only for hard rendering errors (Jinja syntax / undefined vars).
     """
     try:
-        template = repo.get_agent_template(session, agent_id, version)
+        agent = (
+            repo.get_agent_version(session, agent_id, version)
+            if version is not None
+            else repo.get_agent(session, agent_id)
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     try:
-        result = build_prompt(template, payload.context)
+        result = build_prompt(
+            agent.prompt_template,
+            payload.context,
+            input_schema=agent.input_schema or None,
+        )
     except PromptBuildError as exc:
         raise HTTPException(
             status_code=422,  # Unprocessable Content
