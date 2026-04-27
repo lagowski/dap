@@ -3,16 +3,16 @@
  *
  * Two truth sources today:
  *
- * - **api-call**, **bash**, **claude-code**, **gemini-cli**, **http**
- *   are fully implemented in the engine. Their schemas mirror the
- *   adapters' real `validate_config`. Required fields here match what
- *   the adapter rejects.
- * - **codex, aider** are F0 stubs whose `execute()` raises
- *   `NotImplementedError`. Their schemas below are *aspirational* —
- *   they document the shape #53 will implement. To avoid blocking
- *   agent creation in the UI before the engine accepts those configs,
- *   stub-runtime fields are NOT marked `required`. Tighten them once
- *   the corresponding adapter lands.
+ * - **api-call**, **bash**, **claude-code**, **codex**, **gemini-cli**,
+ *   **http** are fully implemented in the engine. Their schemas mirror
+ *   the adapters' real `validate_config`. Required fields here match
+ *   what the adapter rejects.
+ * - **aider** is an F0 stub whose `execute()` raises
+ *   `NotImplementedError`. Its schema below is *aspirational* —
+ *   it documents the shape a future PR will implement. To avoid
+ *   blocking agent creation in the UI before the engine accepts those
+ *   configs, stub-runtime fields are NOT marked `required`. Tighten
+ *   them once the corresponding adapter lands.
  *
  * Adding a runtime: drop a new entry below. The form picks it up
  * automatically and renders the right inputs.
@@ -266,7 +266,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
-  // STUB — codex adapter is F0-stub; #53 will implement and tighten.
   codex: {
     runtime_id: "codex",
     fields: [
@@ -274,20 +273,25 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
+        required: true,
         placeholder: "gpt-5-codex",
         description:
-          "Aspirational schema — adapter is a stub until #53. Fields not enforced yet.",
+          "Required. OpenAI model name. CLI reads OPENAI_API_KEY from the engine's environment.",
       },
       {
         key: "binary_path",
         label: "Binary path",
         kind: "text",
+        placeholder: "/opt/homebrew/bin/codex",
+        description: "Defaults to `codex` on PATH.",
       },
       {
         key: "extra_args",
         label: "Extra CLI args",
         kind: "json",
-        placeholder: "[]",
+        description:
+          'JSON array of strings appended to the codex CLI invocation. Example: ["--sandbox", "workspace-write"]',
+        placeholder: '["--sandbox", "workspace-write"]',
       },
     ],
   },
