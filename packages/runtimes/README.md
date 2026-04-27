@@ -2,7 +2,7 @@
 
 Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
 
-Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini) i `bash` są w pełni zaimplementowane; `http`, `claude_code`, `gemini_cli`, `codex`, `aider` — stuby (przyjdą później).
+Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash` i `claude-code` są w pełni zaimplementowane; `http`, `gemini-cli`, `codex`, `aider` — stuby (przyjdą później).
 
 ```python
 import asyncio
@@ -112,3 +112,33 @@ bez confinementu plików**. Każda definicja agenta używającego runtime'u `bas
 ma faktyczną kontrolę nad maszyną. Multi-user setup wymaga najpierw auth
 (#38) i dodatkowej warstwy izolacji (firejail / Docker / nsjail) zanim ten
 runtime można wystawić niezaufanym definicjom agentów.
+
+## claude-code
+
+Wywołuje Claude Code CLI w trybie `--print --output-format json`. Prompt
+XML idzie przez stdin, odpowiedź to structured JSON (`result`, `usage`,
+`total_cost_usd`, `session_id`, `num_turns`). Cost i token usage
+populują `RuntimeResult` automatycznie.
+
+Kiedy `claude-code` zamiast `api-call` (Anthropic):
+
+| Potrzeba                                              | Użyj                |
+| ----------------------------------------------------- | ------------------- |
+| Single-shot LLM, deterministycznie, bez tooli         | `api-call`          |
+| Agentic loop z file edits, bashem, MCP tools          | `claude-code`       |
+
+`runtime_config`:
+
+| key            | type        | required | description                                                              |
+| -------------- | ----------- | :------: | ------------------------------------------------------------------------ |
+| `model_id`     | `str`       |    tak   | Anthropic model (np. `claude-opus-4-7`, `claude-sonnet-4-6`)              |
+| `binary_path`  | `str`       |    no    | Domyślnie `claude` na PATH. Override przy wielu instalacjach.            |
+| `extra_args`   | `list[str]` |    no    | Dopisane do CLI invocation, np. `["--allowed-tools","Read,Edit,Bash"]`  |
+
+Klucz API: `ANTHROPIC_API_KEY` w env engine'a — Claude Code CLI czyta go
+sam, adapter nie wstrzykuje.
+
+Process lifecycle identyczny jak w `bash`: POSIX session group +
+`asyncio.shield(wait)` cleanup + obsługa `CancelledError`. Engine
+pause/abort zabija całą grupę procesów (CLI + jego subprocessy), bez
+zombie.
