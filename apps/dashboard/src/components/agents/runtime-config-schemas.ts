@@ -3,14 +3,15 @@
  *
  * Two truth sources today:
  *
- * - **api-call** and **bash** are fully implemented in the engine. Their
- *   schemas mirror the adapters' real `validate_config`. Required fields
- *   here match what the adapter rejects.
- * - **claude-code, gemini-cli, codex, http, aider** are F0 stubs whose
- *   `execute()` raises `NotImplementedError`. Their schemas below are
- *   *aspirational* — they document the shape the matching v0.4 issues
- *   will implement (#51 / #52 / #53 / #54 / #55). To avoid blocking
- *   agent creation in the UI before the engine accepts those configs,
+ * - **api-call**, **bash**, **claude-code** are fully implemented in
+ *   the engine. Their schemas mirror the adapters' real
+ *   `validate_config`. Required fields here match what the adapter
+ *   rejects.
+ * - **gemini-cli, codex, http, aider** are F0 stubs whose `execute()`
+ *   raises `NotImplementedError`. Their schemas below are
+ *   *aspirational* — they document the shape the matching v0.4
+ *   issues will implement (#52 / #53 / #54). To avoid blocking agent
+ *   creation in the UI before the engine accepts those configs,
  *   stub-runtime fields are NOT marked `required`. Tighten them once
  *   the corresponding adapter lands.
  *
@@ -208,7 +209,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
-  // STUB — claude-code adapter is F0-stub; #51 will implement and tighten.
   "claude-code": {
     runtime_id: "claude-code",
     fields: [
@@ -216,15 +216,17 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
+        required: true,
         placeholder: "claude-opus-4-7",
         description:
-          "Aspirational schema — adapter is a stub until #51. Fields not enforced yet.",
+          "Required. Anthropic model name. Reads ANTHROPIC_API_KEY from the engine's environment.",
       },
       {
         key: "binary_path",
         label: "Binary path",
         kind: "text",
         placeholder: "/opt/homebrew/bin/claude",
+        description: "Defaults to `claude` on PATH. Override if you have multiple installs.",
       },
       {
         key: "extra_args",
