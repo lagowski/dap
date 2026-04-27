@@ -58,20 +58,23 @@ export default function EditAgentPage({
               name: agent.name,
               role: agent.role,
               runtime_id: agent.runtime_id,
+              runtime_config: agent.runtime_config,
               prompt_template: agent.prompt_template,
             }}
             // Role is immutable on the server: a different role would be a
             // different agent. Lock it to avoid silent rejection.
             lockedFields={["role"]}
             onSubmit={async (values) => {
-              // role is locked on the form, but the engine ignores it on
-              // PUT — strip from payload anyway for shape clarity.
-              const { role: _role, ...rest } = values;
               await update.mutateAsync({
                 id,
                 payload: {
-                  ...rest,
-                  runtime_config: agent.runtime_config,
+                  name: values.name,
+                  runtime_id: values.runtime_id,
+                  // The form now owns runtime_config — user edits land in the
+                  // payload directly. (Pre-#57 we forwarded agent.runtime_config
+                  // unchanged because the form had no UI for it.)
+                  runtime_config: values.runtime_config,
+                  prompt_template: values.prompt_template,
                   input_schema: agent.input_schema,
                   output_schema: agent.output_schema,
                   constraints: agent.constraints,

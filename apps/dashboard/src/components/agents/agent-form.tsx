@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -9,6 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
+import { RuntimeConfigEditor } from "./runtime-config-editor";
+import {
+  defaultRuntimeConfig,
+  pruneRuntimeConfig,
+  validateRuntimeConfig,
+} from "./runtime-config-schemas";
 
 const RUNTIMES = [
   "api-call",
@@ -42,7 +49,15 @@ const formSchema = z.object({
     ),
 });
 
-export type AgentFormValues = z.infer<typeof formSchema>;
+type FormShape = z.infer<typeof formSchema>;
+
+/**
+ * Public form values include the typed runtime_config so callers can send
+ * a complete payload to AgentCreate / AgentUpdate without rebuilding it.
+ */
+export interface AgentFormValues extends FormShape {
+  runtime_config: Record<string, unknown>;
+}
 
 export const DEFAULT_PROMPT_TEMPLATE = `<agent_prompt version="1">
   <role>{{ role }}</role>
@@ -84,7 +99,7 @@ export function AgentForm({
   cancelHref = "/agents",
   lockedFields = [],
 }: AgentFormProps) {
-  const form = useForm<AgentFormValues>({
+  const form = useForm<FormShape>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: initialValues?.name ?? "",
@@ -94,14 +109,42 @@ export function AgentForm({
     },
   });
 
+  // runtime_config lives outside the Zod schema (free-form per runtime).
+  // Initialised from props or from the runtime's declared defaults so a
+  // fresh agent has the required fields populated.
+  const initialRuntimeId = initialValues?.runtime_id ?? "api-call";
+  const [runtimeConfig, setRuntimeConfig] = useState<Record<string, unknown>>(
+    () =>
+      initialValues?.runtime_config ?? defaultRuntimeConfig(initialRuntimeId),
+  );
+
+  const watchedRuntimeId = form.watch("runtime_id");
+
+  // When the user switches runtimes, swap to that runtime's defaults so
+  // required fields aren't left blank from the previous selection.
+  // Reset is only triggered by user-driven changes to runtime_id, not by
+  // the initial render.
+  useEffect(() => {
+    if (watchedRuntimeId && watchedRuntimeId !== initialRuntimeId) {
+      setRuntimeConfig(defaultRuntimeConfig(watchedRuntimeId));
+    }
+  }, [watchedRuntimeId, initialRuntimeId]);
+
   const handleSubmit = form.handleSubmit(async (values) => {
-    // Swallow the rejection here — the parent owns error display via
-    // `submitError` (driven by its mutation's error state). Letting it
-    // propagate would surface as an unhandled promise rejection.
+    // Block submit if the runtime config is missing required fields. The
+    // engine would reject with 422; we surface it inline first.
+    const runtimeErrors = validateRuntimeConfig(values.runtime_id, runtimeConfig);
+    if (runtimeErrors.length > 0) {
+      // Validation messages are rendered by the editor itself; just stop.
+      return;
+    }
     try {
-      await onSubmit(values);
+      await onSubmit({
+        ...values,
+        runtime_config: pruneRuntimeConfig(values.runtime_id, runtimeConfig),
+      });
     } catch {
-      // intentional: parent already shows the error
+      // intentional: parent already shows the error via submitError
     }
   });
 
@@ -139,6 +182,14 @@ export function AgentForm({
             </option>
           ))}
         </select>
+      </Field>
+
+      <Field label="Runtime configuration">
+        <RuntimeConfigEditor
+          runtime_id={watchedRuntimeId}
+          value={runtimeConfig}
+          onChange={setRuntimeConfig}
+        />
       </Field>
 
       <Field

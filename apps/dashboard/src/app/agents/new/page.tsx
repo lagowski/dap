@@ -27,7 +27,13 @@ export default function NewAgentPage() {
         <CardContent className="pt-6">
           <AgentForm
             onSubmit={async (values) => {
-              await create.mutateAsync(values);
+              await create.mutateAsync({
+                name: values.name,
+                role: values.role,
+                runtime_id: values.runtime_id,
+                runtime_config: values.runtime_config,
+                prompt_template: values.prompt_template,
+              });
               router.push("/agents");
             }}
             isPending={create.isPending}
