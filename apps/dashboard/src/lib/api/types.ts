@@ -46,6 +46,37 @@ export interface AgentCreate {
   timeout_ms?: number;
 }
 
+// ---- Settings (dashboard /settings page) ----
+
+export interface RuntimeStatus {
+  id: string;
+  display_name: string;
+  kind: string;
+  available: boolean;
+  version: string | null;
+  missing: string[] | null;
+}
+
+export interface ProviderStatus {
+  id: string;
+  display_name: string;
+  default_env_var: string | null;
+  configured: boolean;
+}
+
+export interface EngineInfo {
+  version: string;
+  db_path: string;
+  checkpoint_db_path: string;
+  recursion_limit: number;
+}
+
+export interface SettingsView {
+  runtimes: RuntimeStatus[];
+  providers: ProviderStatus[];
+  engine: EngineInfo;
+}
+
 export interface AgentUpdate {
   /**
    * PUT /agents/{id} body — full-replacement payload that creates a new

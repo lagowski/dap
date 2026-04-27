@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, GitBranch, Users, Workflow } from "lucide-react";
+import { Activity, GitBranch, Settings, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/runs", label: "Runs", icon: Activity },
   { href: "/pipelines", label: "Pipelines", icon: GitBranch },
   { href: "/agents", label: "Agents", icon: Users },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 export function Sidebar() {

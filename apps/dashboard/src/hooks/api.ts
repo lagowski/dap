@@ -27,6 +27,7 @@ export const queryKeys = {
   pipelinesList: ["pipelines", "list"] as const,
   pipeline: (id: string) => ["pipelines", id] as const,
   pipelineVersions: (id: string) => ["pipelines", id, "versions"] as const,
+  settings: ["settings"] as const,
 };
 
 const RUNS_LIST_REFETCH_MS = 2_000;
@@ -230,5 +231,12 @@ export function useTriggerRun() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.runs });
     },
+  });
+}
+
+export function useSettings() {
+  return useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: () => api.getSettings(),
   });
 }
