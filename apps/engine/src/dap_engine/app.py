@@ -102,7 +102,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
+        # Dashboard dev server (Next.js default :3000) and the legacy port
+        # the CLI scaffolds (:7332) are both allowed so either way of
+        # running the UI works without a CORS surprise.
         allow_origins=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
             "http://localhost:7332",
             "http://127.0.0.1:7332",
         ],

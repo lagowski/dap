@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowLeft, AlertCircle, CheckCircle2, Play } from "lucide-react";
 import type { ValidationResult } from "@/lib/api/types";
+import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +20,10 @@ interface DesignerToolbarProps {
   isValidating: boolean;
   isSaving: boolean;
   saveLabel: string;
+  /** Most recent server-side error from validate / save mutations.
+   *  Surfaced inline so users see the reason instead of just the
+   *  Next.js dev-mode unhandled-rejection overlay. */
+  submitError?: unknown;
   /** Set when editing an existing saved pipeline — enables the "Run" button. */
   pipelineId?: string;
   pipelineVersion?: number;
@@ -35,6 +40,7 @@ export function DesignerToolbar({
   isValidating,
   isSaving,
   saveLabel,
+  submitError,
   pipelineId,
   pipelineVersion,
 }: DesignerToolbarProps) {
@@ -103,6 +109,16 @@ export function DesignerToolbar({
           ) : null}
         </div>
       </div>
+
+      {submitError ? (
+        <div
+          className="px-3 py-2 border-t bg-destructive/10 text-xs flex items-start gap-1.5"
+          role="alert"
+        >
+          <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0 mt-0.5" />
+          <span className="text-destructive">{formatApiError(submitError)}</span>
+        </div>
+      ) : null}
 
       {validationResult && (
         <div
