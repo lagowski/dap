@@ -89,6 +89,11 @@ exclude = ["build/", "dist/", ".venv/"]
 
 # NB: dodaj override dla langgraph.* gdy zintegrujemy go w F5
 
+[[tool.mypy.overrides]]
+# jsonpath-ng has no py.typed marker. Used by the http runtime adapter.
+module = ["jsonpath_ng.*"]
+ignore_missing_imports = true
+
 # --- pytest ---
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

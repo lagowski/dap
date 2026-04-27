@@ -2,7 +2,7 @@
 
 Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
 
-Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash`, `claude-code` i `gemini-cli` są w pełni zaimplementowane; `http`, `codex`, `aider` — stuby (przyjdą później).
+Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash`, `claude-code`, `gemini-cli` i `http` są w pełni zaimplementowane; `codex`, `aider` — stuby (przyjdą później).
 
 ```python
 import asyncio
@@ -164,3 +164,45 @@ fallback (Gemini CLI akceptuje oba). Adapter nie wstrzykuje, CLI czyta
 sam.
 
 Process lifecycle identyczny jak w `bash` / `claude-code`.
+
+## http
+
+Generic POST do dowolnego JSON-speaking serwisu — Ollama, llama.cpp,
+custom gatewaye, OpenAI/Anthropic-compatible proxy, własne API teamu.
+Request body to Jinja2 template (sandboxed) renderowany ze scope'm
+`{prompt_xml, runtime_config}`; response parsowany przez JSONPath.
+
+`runtime_config`:
+
+| key                  | type            | required | description                                                                  |
+| -------------------- | --------------- | :------: | ---------------------------------------------------------------------------- |
+| `url`                | `str`           |    tak   | Endpoint (http:// lub https://)                                              |
+| `method`             | `str`           |    no    | `POST` (default) lub `PUT`                                                    |
+| `request_template`   | `dict`/`list`/`str` | tak | Template z Jinja2 placeholders. Stringi templatowane, inne typy as-is.       |
+| `response_extractor` | `dict[str, str]` |   tak   | Mapa nazw → JSONPath. **Musi zawierać `output`**. Np. `{"output":"$.response"}` |
+| `auth`               | `dict`          |    no    | `{"type":"bearer","env":"OLLAMA_API_KEY"}` / `{"type":"header","name":"...","env":"..."}` / `{"type":"basic","user_env":"...","pass_env":"..."}` |
+| `headers`            | `dict[str,str]` |    no    | Dodatkowe statyczne headery                                                  |
+
+Klucze API: zawsze przez env vary nazwane w `auth.env` / `auth.user_env`
+/ `auth.pass_env` — nigdy nie persystowane w bazie.
+
+Przykład Ollama:
+
+```json
+{
+  "url": "http://localhost:11434/api/generate",
+  "request_template": {
+    "model": "{{ runtime_config.model_id }}",
+    "prompt": "{{ prompt_xml }}",
+    "stream": false
+  },
+  "response_extractor": {
+    "output": "$.response",
+    "tokens_used": "$.eval_count"
+  },
+  "model_id": "llama3.2"
+}
+```
+
+Cancellation: httpx connection cancel'owane przez context manager
+(`async with`); engine pause/abort kończy request bez residue.

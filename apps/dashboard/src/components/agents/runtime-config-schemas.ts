@@ -3,17 +3,16 @@
  *
  * Two truth sources today:
  *
- * - **api-call**, **bash**, **claude-code**, **gemini-cli** are fully
- *   implemented in the engine. Their schemas mirror the adapters' real
- *   `validate_config`. Required fields here match what the adapter
- *   rejects.
- * - **codex, http, aider** are F0 stubs whose `execute()` raises
+ * - **api-call**, **bash**, **claude-code**, **gemini-cli**, **http**
+ *   are fully implemented in the engine. Their schemas mirror the
+ *   adapters' real `validate_config`. Required fields here match what
+ *   the adapter rejects.
+ * - **codex, aider** are F0 stubs whose `execute()` raises
  *   `NotImplementedError`. Their schemas below are *aspirational* —
- *   they document the shape the matching v0.4 issues will implement
- *   (#53 / #54). To avoid blocking agent creation in the UI before
- *   the engine accepts those configs, stub-runtime fields are NOT
- *   marked `required`. Tighten them once the corresponding adapter
- *   lands.
+ *   they document the shape #53 will implement. To avoid blocking
+ *   agent creation in the UI before the engine accepts those configs,
+ *   stub-runtime fields are NOT marked `required`. Tighten them once
+ *   the corresponding adapter lands.
  *
  * Adding a runtime: drop a new entry below. The form picks it up
  * automatically and renders the right inputs.
@@ -293,7 +292,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
-  // STUB — http adapter is F0-stub; #54 will implement and tighten.
   http: {
     runtime_id: "http",
     fields: [
@@ -301,9 +299,10 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "url",
         label: "URL",
         kind: "text",
+        required: true,
         placeholder: "http://localhost:11434/api/generate",
         description:
-          "Aspirational schema — adapter is a stub until #54. Fields not enforced yet.",
+          "Required. Endpoint URL. Must start with http:// or https://.",
       },
       {
         key: "method",
@@ -319,22 +318,30 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "request_template",
         label: "Request body template",
         kind: "json",
+        required: true,
         description:
-          "JSON template rendered with prompt_xml in scope. Example: {\"model\": \"{{ runtime_config.model_id }}\", \"prompt\": \"{{ prompt_xml }}\", \"stream\": false}",
+          'Required. JSON template rendered with prompt_xml in scope. Example: {"model": "{{ runtime_config.model_id }}", "prompt": "{{ prompt_xml }}", "stream": false}',
       },
       {
         key: "response_extractor",
         label: "Response extractor",
         kind: "json",
+        required: true,
         description:
-          'JSONPath map. Example: {"output": "$.response", "tokens_used": "$.eval_count"}',
+          'Required. JSONPath map; must include "output". Example: {"output": "$.response", "tokens_used": "$.eval_count"}',
       },
       {
         key: "auth",
         label: "Auth",
         kind: "json",
         description:
-          'Optional. Example: {"type": "bearer", "env": "OLLAMA_API_KEY"}',
+          'Optional. {"type": "bearer", "env": "OLLAMA_API_KEY"} | {"type": "header", "name": "X-API-Key", "env": "..."} | {"type": "basic", "user_env": "...", "pass_env": "..."}',
+      },
+      {
+        key: "headers",
+        label: "Static headers",
+        kind: "json",
+        description: "Optional dict of static headers sent with every request.",
       },
     ],
   },
