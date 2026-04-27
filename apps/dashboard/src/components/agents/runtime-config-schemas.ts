@@ -3,17 +3,17 @@
  *
  * Two truth sources today:
  *
- * - **api-call**, **bash**, **claude-code** are fully implemented in
- *   the engine. Their schemas mirror the adapters' real
+ * - **api-call**, **bash**, **claude-code**, **gemini-cli** are fully
+ *   implemented in the engine. Their schemas mirror the adapters' real
  *   `validate_config`. Required fields here match what the adapter
  *   rejects.
- * - **gemini-cli, codex, http, aider** are F0 stubs whose `execute()`
- *   raises `NotImplementedError`. Their schemas below are
- *   *aspirational* — they document the shape the matching v0.4
- *   issues will implement (#52 / #53 / #54). To avoid blocking agent
- *   creation in the UI before the engine accepts those configs,
- *   stub-runtime fields are NOT marked `required`. Tighten them once
- *   the corresponding adapter lands.
+ * - **codex, http, aider** are F0 stubs whose `execute()` raises
+ *   `NotImplementedError`. Their schemas below are *aspirational* —
+ *   they document the shape the matching v0.4 issues will implement
+ *   (#53 / #54). To avoid blocking agent creation in the UI before
+ *   the engine accepts those configs, stub-runtime fields are NOT
+ *   marked `required`. Tighten them once the corresponding adapter
+ *   lands.
  *
  * Adding a runtime: drop a new entry below. The form picks it up
  * automatically and renders the right inputs.
@@ -239,7 +239,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
-  // STUB — gemini-cli adapter is F0-stub; #52 will implement and tighten.
   "gemini-cli": {
     runtime_id: "gemini-cli",
     fields: [
@@ -247,15 +246,17 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
+        required: true,
         placeholder: "gemini-3.0-pro",
         description:
-          "Aspirational schema — adapter is a stub until #52. Fields not enforced yet.",
+          "Required. Gemini model name. CLI reads GEMINI_API_KEY (or GOOGLE_API_KEY) from the engine's environment.",
       },
       {
         key: "binary_path",
         label: "Binary path",
         kind: "text",
         placeholder: "/opt/homebrew/bin/gemini",
+        description: "Defaults to `gemini` on PATH.",
       },
       {
         key: "thinking_budget",
