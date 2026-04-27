@@ -45,10 +45,19 @@ def build_prompt(
     context: dict[str, Any],
     *,
     expected_root: str = DEFAULT_ROOT,
+    input_schema: list[str] | None = None,
 ) -> BuildResult:
     """Render template with context, validate XML output.
 
     Pure function: same input → same output, no side effects.
+
+    When ``input_schema`` is supplied and non-empty, the render context
+    is projected to that subset — only fields the agent has declared as
+    inputs are visible to the template. A reference to anything else
+    fails with a descriptive ``PromptBuildError`` pointing at the
+    schema as the fix. When ``input_schema`` is ``None`` or empty, the
+    context is passed through unchanged (backward compat with v0.4
+    agents that haven't declared a contract yet).
 
     Raises:
         PromptBuildError: when template fails to render (syntax error,
@@ -59,14 +68,17 @@ def build_prompt(
         even if invalid (so callers can show diagnostics), but `valid=False`.
     """
     env = _make_sandbox()
+    render_context = _project_context(context, input_schema)
 
     try:
         compiled = env.from_string(template)
-        rendered = compiled.render(**context)
+        rendered = compiled.render(**render_context)
     except TemplateSyntaxError as exc:
         raise PromptBuildError(f"Template syntax error: {exc.message}") from exc
     except UndefinedError as exc:
-        raise PromptBuildError(f"Template references undefined variable: {exc.message}") from exc
+        raise PromptBuildError(
+            _format_undefined_error(exc, input_schema),
+        ) from exc
     except TemplateError as exc:
         raise PromptBuildError(f"Template error: {exc}") from exc
 
@@ -78,3 +90,39 @@ def build_prompt(
         warnings=outcome.warnings,
         errors=outcome.errors,
     )
+
+
+def _project_context(
+    context: dict[str, Any],
+    input_schema: list[str] | None,
+) -> dict[str, Any]:
+    """Restrict render context to declared input fields when schema is set.
+
+    Empty or ``None`` schema → pass-through (backward compat with agents
+    that pre-date #58). Anything not in ``input_schema`` is dropped so a
+    template referencing it triggers the standard
+    :class:`jinja2.UndefinedError` from ``StrictUndefined``.
+    """
+    if not input_schema:
+        return context
+    return {name: context[name] for name in input_schema if name in context}
+
+
+def _format_undefined_error(
+    exc: UndefinedError,
+    input_schema: list[str] | None,
+) -> str:
+    """Build a descriptive message for ``UndefinedError`` in StrictUndefined mode.
+
+    When ``input_schema`` was supplied, the most likely cause is a
+    template referencing a field the agent didn't declare — surface
+    that hint in the error so the user knows where to look.
+    """
+    base = f"Template references undefined variable: {exc.message}"
+    if input_schema:
+        declared = ", ".join(input_schema) if input_schema else "(none)"
+        return (
+            f"{base}. Add the field to agent.input_schema or update the "
+            f"template. Currently declared inputs: {declared}."
+        )
+    return base

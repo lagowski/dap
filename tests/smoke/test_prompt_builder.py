@@ -98,6 +98,100 @@ def test_pure_function_idempotent() -> None:
     assert r1.valid == r2.valid
 
 
+# ---------------------------------------------------------------------------
+# input_schema scoping (#60, v0.5)
+# ---------------------------------------------------------------------------
+
+
+def test_input_schema_allows_declared_field() -> None:
+    """A field listed in input_schema renders normally."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    result = build_prompt(
+        template,
+        {"role": "verifier", "max_attempts": 3},
+        input_schema=["role"],
+    )
+    assert result.valid is True
+    assert "<role>verifier</role>" in result.xml
+
+
+def test_input_schema_blocks_undeclared_field() -> None:
+    """A field NOT in input_schema is invisible to the template even if context has it."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    with pytest.raises(PromptBuildError) as exc_info:
+        build_prompt(
+            template,
+            {"role": "verifier"},
+            input_schema=["max_attempts"],  # role intentionally not declared
+        )
+    msg = str(exc_info.value)
+    assert "role" in msg
+    assert "input_schema" in msg
+    assert "max_attempts" in msg  # surface the currently-declared inputs
+
+
+def test_input_schema_empty_passes_through() -> None:
+    """Empty list = backward compat — full state remains visible."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    result = build_prompt(
+        template,
+        {"role": "verifier", "anything_else": True},
+        input_schema=[],
+    )
+    assert result.valid is True
+
+
+def test_input_schema_none_passes_through() -> None:
+    """None = backward compat — full state remains visible."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    result = build_prompt(
+        template,
+        {"role": "verifier", "anything_else": True},
+        input_schema=None,
+    )
+    assert result.valid is True
+
+
+def test_input_schema_drops_extra_context_silently() -> None:
+    """Context fields outside the schema are dropped — they never reach the template."""
+    template = (
+        "<agent_prompt>"
+        "<role>{{ role }}</role>"
+        "<count>{{ max_attempts }}</count>"
+        "</agent_prompt>"
+    )
+    # Schema declares role + max_attempts; context also has 'sneaky' which
+    # the template doesn't reference. Build should succeed; sneaky's value
+    # never lands in the rendered XML.
+    result = build_prompt(
+        template,
+        {"role": "v", "max_attempts": 5, "sneaky": "do not leak"},
+        input_schema=["role", "max_attempts"],
+    )
+    assert result.valid is True
+    assert "do not leak" not in result.xml
+    assert "<count>5</count>" in result.xml
+
+
+def test_input_schema_field_missing_from_context_keeps_strict_undefined() -> None:
+    """Schema declares a field but context doesn't supply it → standard UndefinedError.
+
+    Two failure modes:
+    1. Template references a field not in input_schema (covered above).
+    2. Template references a field that IS declared but the caller forgot
+       to pass it. We surface the standard StrictUndefined error so the
+       caller still gets a useful diagnostic.
+    """
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    with pytest.raises(PromptBuildError) as exc_info:
+        build_prompt(
+            template,
+            {},  # role not supplied
+            input_schema=["role"],
+        )
+    assert "role" in str(exc_info.value)
+
+
 def test_complex_test_authoring_template() -> None:
     """End-to-end shape from DOCUMENTATION.md section 11.4."""
     template = """<agent_prompt version="1">

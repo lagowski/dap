@@ -84,11 +84,16 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
         started_at = datetime.now(UTC)
         execution_id = str(uuid.uuid4())
 
-        # 1. Render prompt
+        # 1. Render prompt — scoped to declared inputs when the agent
+        # version carries a contract (v0.5+); legacy dict-shaped or
+        # missing schemas pass through with full state visibility.
+        raw_input_schema = ctx.agent_version.input_schema
+        input_schema = list(raw_input_schema) if isinstance(raw_input_schema, list) else None
         try:
             build_result = build_prompt(
                 ctx.agent_version.prompt_template,
                 state.model_dump(),
+                input_schema=input_schema,
             )
         except PromptBuildError as exc:
             return _record_failure(

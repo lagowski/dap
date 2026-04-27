@@ -123,3 +123,57 @@ def test_render_preview_extra_field_rejected(client: TestClient) -> None:
         json={"context": {}, "unknown": "field"},
     )
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# input_schema scoping (#60, v0.5)
+# ---------------------------------------------------------------------------
+
+
+def test_render_preview_honours_input_schema_scope(client: TestClient) -> None:
+    """Preview must enforce the same scoping as runtime — referenced field must be declared."""
+    response = client.post(
+        "/agents",
+        json={
+            "name": "Scoped Author",
+            "role": "test_author",
+            "runtime_id": "claude-code",
+            "prompt_template": "<agent_prompt><x>{{ max_attempts }}</x></agent_prompt>",
+            "input_schema": ["available_issues"],  # max_attempts deliberately not declared
+        },
+    )
+    assert response.status_code == 201
+    agent_id = response.json()["id"]
+
+    # Even though context has max_attempts, the schema doesn't include it →
+    # template reference is undefined → 422 with the scoping hint.
+    response = client.post(
+        f"/agents/{agent_id}/render-preview",
+        json={"context": {"max_attempts": 5}},
+    )
+    assert response.status_code == 422
+    detail = str(response.json()["detail"])
+    assert "max_attempts" in detail
+    assert "input_schema" in detail
+
+
+def test_render_preview_passes_when_field_declared(client: TestClient) -> None:
+    response = client.post(
+        "/agents",
+        json={
+            "name": "Scoped Author",
+            "role": "test_author",
+            "runtime_id": "claude-code",
+            "prompt_template": "<agent_prompt><x>{{ max_attempts }}</x></agent_prompt>",
+            "input_schema": ["max_attempts"],
+        },
+    )
+    assert response.status_code == 201
+    agent_id = response.json()["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/render-preview",
+        json={"context": {"max_attempts": 7}},
+    )
+    assert response.status_code == 200
+    assert "<x>7</x>" in response.json()["rendered_xml"]
