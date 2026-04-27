@@ -2,10 +2,14 @@
 
 A runtime adapter is what actually executes a node. The pipeline runner
 hands it a `RuntimeTask` (rendered XML prompt + working directory + timeout
-+ runtime config) and expects a `RuntimeResult` back. DAP ships with two
-fully implemented adapters (`api-call`, `bash`) and several stubs
-(`claude-code`, `gemini-cli`, `codex`, `aider`, `http`) that follow the
-same shape.
++ runtime config) and expects a `RuntimeResult` back. DAP ships with five
+fully implemented adapters (`api-call`, `bash`, `claude-code`, `gemini-cli`,
+`http`) plus stubs (`codex`, `aider`) that follow the same shape.
+
+> Looking to **use** an existing provider (Claude / Gemini / GLM / Ollama
+> / …)? See [`providers.md`](providers.md) — that's the operator-facing
+> guide with config recipes. This doc is for **adding a new runtime**
+> (a new executor type, not a new LLM behind an existing one).
 
 The Protocol lives in `packages/types`, all adapters live in
 `packages/runtimes/src/dap_runtimes/adapters/`, and the registry is wired

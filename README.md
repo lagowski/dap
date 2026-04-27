@@ -45,9 +45,12 @@ but runs commands with the engine's privileges — see the security note in
 
 - [`docs/architecture.md`](docs/architecture.md) — components, state schema,
   Run lifecycle, LangGraph checkpoint model.
+- [`docs/providers.md`](docs/providers.md) — provider matrix (Anthropic /
+  OpenAI / Gemini / GLM / OpenRouter / Ollama), per-provider setup, agent
+  recipes for the common patterns.
 - [`docs/runtimes.md`](docs/runtimes.md) — how to add a new runtime adapter.
-- [`packages/runtimes/README.md`](packages/runtimes/README.md) — `bash`
-  runtime config + security model.
+- [`packages/runtimes/README.md`](packages/runtimes/README.md) — per-runtime
+  config reference (api-call, bash, claude-code, gemini-cli, http).
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — branching, PR flow, commit style.
 - Engine API reference: `http://127.0.0.1:7333/docs` (FastAPI auto-docs while
   the engine is running).
