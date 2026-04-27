@@ -1,225 +1,143 @@
-"""Direct LLM API adapter — calls Anthropic SDK with rendered XML prompt.
+"""Direct LLM API adapter — multi-provider dispatcher.
 
-In F3 only `provider: "anthropic"` is supported. OpenAI / Google providers
-arrive in F9 alongside CLI adapters.
+Selects the SDK call path via ``runtime_config.provider`` (defaults to
+``anthropic`` for backward compatibility). Each provider lives in its own
+module under ``_providers/`` with a small, identical interface — adding
+a new provider doesn't require any change here.
 
-The rendered XML (output of dap_prompt_dsl) is sent as the `system` message —
-it contains role/task/constraints/output-spec which are instructions. The
-single user message is "Execute the task as specified."
+Supported providers (v0.4):
+
+- ``anthropic`` — Anthropic SDK (Claude 4.x family).
+- ``openai`` — OpenAI SDK with default base URL (GPT-5, o-series).
+- ``openai-compat`` — OpenAI SDK with a custom ``base_url`` and
+  ``api_key_env``. Covers GLM (z.ai), Together, OpenRouter, llama.cpp
+  servers and any other Chat Completions-compatible endpoint.
+- ``gemini`` — Google Gen AI SDK (Gemini 2.x / 3.x).
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import time
-from typing import Any, Final
+from typing import Final
 
-import anthropic
-from anthropic import AsyncAnthropic
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 
+from dap_runtimes.adapters._providers import (
+    ProviderError,
+    ProviderResult,
+    get_provider,
+    list_provider_ids,
+)
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.api_call")
 
-ANTHROPIC_API_KEY_ENV: Final = "ANTHROPIC_API_KEY"
-ANTHROPIC_PROVIDER: Final = "anthropic"
-
-# USD per 1M tokens (input, output). Pricing as of 2026-04-25 (cached from
-# claude-api skill). Cache writes cost 1.25x of input rate; cache reads 0.1x.
-ANTHROPIC_PRICING: Final[dict[str, tuple[float, float]]] = {
-    "claude-opus-4-7": (5.0, 25.0),
-    "claude-opus-4-6": (5.0, 25.0),
-    "claude-opus-4-5": (5.0, 25.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-sonnet-4-5": (3.0, 15.0),
-    "claude-haiku-4-5": (1.0, 5.0),
-}
-
-CACHE_WRITE_MULTIPLIER: Final = 1.25
-CACHE_READ_MULTIPLIER: Final = 0.10
-TOKENS_PER_MILLION: Final = 1_000_000
-
-DEFAULT_USER_MESSAGE: Final = "Execute the task as specified in the system instructions."
-
-VALID_EFFORT: Final = frozenset({"low", "medium", "high", "xhigh", "max"})
-
-
-def _calculate_cost(
-    model_id: str,
-    input_tokens: int,
-    cache_creation_tokens: int,
-    cache_read_tokens: int,
-    output_tokens: int,
-) -> float | None:
-    """Compute USD cost from token counts. Returns None for unknown models."""
-    pricing = ANTHROPIC_PRICING.get(model_id)
-    if pricing is None:
-        return None
-    input_rate, output_rate = pricing
-
-    input_cost = input_tokens * input_rate
-    cache_creation_cost = cache_creation_tokens * input_rate * CACHE_WRITE_MULTIPLIER
-    cache_read_cost = cache_read_tokens * input_rate * CACHE_READ_MULTIPLIER
-    output_cost = output_tokens * output_rate
-
-    total_micro = input_cost + cache_creation_cost + cache_read_cost + output_cost
-    return total_micro / TOKENS_PER_MILLION
+DEFAULT_PROVIDER: Final = "anthropic"
 
 
 class ApiCallAdapter(BaseAdapter):
-    """Direct Anthropic API adapter — single-shot, no tools, no streaming."""
+    """Direct LLM API adapter — single-shot, no tools, no streaming.
+
+    The agent's ``runtime_config.provider`` selects the SDK call path.
+    Each provider module owns its own pricing table + token extraction;
+    this adapter only stitches things together for the engine.
+    """
 
     id = "api-call"
     display_name = "Direct LLM API call (SDK)"
     kind: RuntimeKind = "api"
 
     async def healthcheck(self) -> HealthStatus:
-        if not os.environ.get(ANTHROPIC_API_KEY_ENV):
-            return HealthStatus(
-                available=False,
-                missing=[f"{ANTHROPIC_API_KEY_ENV} env var (Anthropic SDK)"],
+        """Available if at least one provider is fully configured.
+
+        Per-provider state is reported as ``missing`` for each provider
+        that's not configured — gives the operator a clear list of
+        env vars to set.
+        """
+        missing: list[str] = []
+        versions: list[str] = []
+        any_available = False
+
+        for provider_id in list_provider_ids():
+            provider = get_provider(provider_id)
+            if provider is None:
+                continue
+            # Avoid double-reporting openai/openai-compat (same module).
+            if provider_id == "openai-compat":
+                continue
+            available, version, provider_missing = provider.healthcheck()
+            if available:
+                any_available = True
+                if version is not None:
+                    versions.append(version)
+            elif provider_missing is not None:
+                missing.extend(provider_missing)
+
+        if not any_available:
+            return HealthStatus(available=False, missing=missing)
+        return HealthStatus(
+            available=True,
+            version=", ".join(versions) if versions else None,
+            missing=missing if missing else None,
+        )
+
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+        config = task.runtime_config
+        provider_id = config.get("provider", DEFAULT_PROVIDER)
+
+        provider = get_provider(provider_id)
+        if provider is None:
+            return _failed(
+                start=time.monotonic(),
+                message=(
+                    f"Unknown provider '{provider_id}'. Supported: {sorted(list_provider_ids())}"
+                ),
             )
-        return HealthStatus(available=True, version=f"anthropic-sdk {anthropic.__version__}")
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
-        # Many returns: each anthropic exception class maps to a distinct
-        # error message; collapsing into a dispatch dict obscures the mapping.
-        validation_error = _validate_config(task.runtime_config)
+        validation_error = provider.validate_config(config)
         if validation_error is not None:
-            return validation_error
+            return _failed(start=time.monotonic(), message=validation_error)
 
-        request_kwargs = _build_request_kwargs(task)
-
-        # --- Invoke SDK ---
         start = time.monotonic()
-        client = AsyncAnthropic()
         try:
-            response = await client.messages.create(**request_kwargs)
-        except anthropic.AuthenticationError as exc:
-            return _error_result(start, f"Authentication failed: {exc.message}")
-        except anthropic.PermissionDeniedError as exc:
-            return _error_result(start, f"Permission denied: {exc.message}")
-        except anthropic.NotFoundError as exc:
-            return _error_result(start, f"Model not found: {exc.message}")
-        except anthropic.BadRequestError as exc:
-            return _error_result(start, f"Bad request: {exc.message}")
-        except anthropic.RateLimitError as exc:
-            return _error_result(start, f"Rate limited: {exc.message}")
-        except anthropic.APITimeoutError as exc:
-            return _error_result(start, f"API timeout: {exc}")
-        except anthropic.APIConnectionError as exc:
-            return _error_result(start, f"Connection error: {exc}")
-        except anthropic.APIStatusError as exc:
-            return _error_result(start, f"API error {exc.status_code}: {exc.message}")
-        finally:
-            await client.close()
+            result: ProviderResult = await provider.call(provider_id, config, task.prompt_xml)
+        except ProviderError as exc:
+            logger.warning("api-call provider=%s failed: %s", provider_id, exc)
+            return _failed(start=start, message=str(exc))
 
         duration_ms = int((time.monotonic() - start) * 1000)
-
-        # --- Extract text from response ---
-        text_parts: list[str] = []
-        for block in response.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-        output_text = "".join(text_parts)
-
-        # --- Token usage + cost ---
-        usage = response.usage
-        input_tokens = usage.input_tokens
-        output_tokens = usage.output_tokens
-        cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-        total_tokens = input_tokens + cache_creation + cache_read + output_tokens
-
-        cost_usd = _calculate_cost(
-            model_id=task.runtime_config["model_id"],
-            input_tokens=input_tokens,
-            cache_creation_tokens=cache_creation,
-            cache_read_tokens=cache_read,
-            output_tokens=output_tokens,
+        total_tokens = (
+            result.input_tokens
+            + result.output_tokens
+            + result.cache_creation_tokens
+            + result.cache_read_tokens
         )
 
         return RuntimeResult(
             success=True,
-            output=output_text,
+            output=result.output_text,
             tokens_used=total_tokens,
-            cost_usd=cost_usd,
+            cost_usd=result.cost_usd,
             duration_ms=duration_ms,
             errors=[],
             structured={
-                "model": response.model,
-                "stop_reason": response.stop_reason,
-                "usage": {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cache_creation_input_tokens": cache_creation,
-                    "cache_read_input_tokens": cache_read,
-                },
+                "provider": provider_id,
+                "model": result.model,
+                "stop_reason": result.stop_reason,
+                **result.raw_metadata,
             },
         )
 
 
-def _validate_config(config: dict[str, Any]) -> RuntimeResult | None:
-    """Return a failed RuntimeResult on invalid config, or None when OK."""
-
-    def fail(msg: str) -> RuntimeResult:
-        return RuntimeResult(success=False, output="", duration_ms=0, errors=[msg])
-
-    provider = config.get("provider", ANTHROPIC_PROVIDER)
-    if provider != ANTHROPIC_PROVIDER:
-        return fail(
-            f"Provider '{provider}' not supported in F3. "
-            f"Only '{ANTHROPIC_PROVIDER}' is supported; openai/google arrive in F9."
-        )
-
-    if not os.environ.get(ANTHROPIC_API_KEY_ENV):
-        return fail(f"{ANTHROPIC_API_KEY_ENV} env var not set")
-
-    model_id = config.get("model_id")
-    if not isinstance(model_id, str) or not model_id:
-        return fail("runtime_config.model_id is required (e.g. 'claude-haiku-4-5')")
-
-    max_tokens_value = config.get("max_tokens", 4096)
-    if not isinstance(max_tokens_value, int) or max_tokens_value <= 0:
-        return fail("runtime_config.max_tokens must be a positive int")
-
-    effort = config.get("effort")
-    if effort is not None and effort not in VALID_EFFORT:
-        return fail(f"runtime_config.effort must be one of {sorted(VALID_EFFORT)}, got '{effort}'")
-
-    return None
-
-
-def _build_request_kwargs(task: RuntimeTask) -> dict[str, Any]:
-    config = task.runtime_config
-
-    user_system_prompt = config.get("system_prompt")
-    if isinstance(user_system_prompt, str) and user_system_prompt:
-        system_text = f"{user_system_prompt}\n\n{task.prompt_xml}"
-    else:
-        system_text = task.prompt_xml
-
-    kwargs: dict[str, Any] = {
-        "model": config["model_id"],
-        "max_tokens": config.get("max_tokens", 4096),
-        "system": system_text,
-        "messages": [{"role": "user", "content": DEFAULT_USER_MESSAGE}],
-    }
-    if config.get("prompt_cache"):
-        kwargs["cache_control"] = {"type": "ephemeral"}
-    if config.get("enable_thinking"):
-        kwargs["thinking"] = {"type": "adaptive"}
-    if config.get("effort") is not None:
-        kwargs["output_config"] = {"effort": config["effort"]}
-    return kwargs
-
-
-def _error_result(start: float, message: str) -> RuntimeResult:
+def _failed(*, start: float, message: str) -> RuntimeResult:
+    """Build a failed RuntimeResult with elapsed-since-start duration."""
     return RuntimeResult(
         success=False,
         output="",
         duration_ms=int((time.monotonic() - start) * 1000),
         errors=[message],
     )
+
+
+__all__ = ["ApiCallAdapter"]

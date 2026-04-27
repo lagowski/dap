@@ -2,7 +2,7 @@
 
 Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
 
-Stan: `api-call` i `bash` są w pełni zaimplementowane; `http`, `claude_code`, `gemini_cli`, `codex`, `aider` — stuby (przyjdą później).
+Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini) i `bash` są w pełni zaimplementowane; `http`, `claude_code`, `gemini_cli`, `codex`, `aider` — stuby (przyjdą później).
 
 ```python
 import asyncio
@@ -15,6 +15,75 @@ async def main() -> None:
     print(health)
 
 asyncio.run(main())
+```
+
+## api-call
+
+Wywołanie LLM przez SDK — single-shot, bez tool use, bez streamowania.
+Provider wybierany przez `runtime_config.provider`; każdy provider ma
+własne pricing + token extraction w module pod `_providers/`.
+
+| `provider`        | SDK                                | Wymagany env                                    | Pricing                                                  |
+| ----------------- | ---------------------------------- | ----------------------------------------------- | -------------------------------------------------------- |
+| `anthropic` (default) | `anthropic.AsyncAnthropic`     | `ANTHROPIC_API_KEY`                             | Pełne (Claude 4.x rodzina + cache mnożniki)              |
+| `openai`          | `openai.AsyncOpenAI`               | `OPENAI_API_KEY`                                | Pełne (gpt-5, o-series)                                  |
+| `openai-compat`   | `openai.AsyncOpenAI(base_url=…)`   | env nazwany w `runtime_config.api_key_env`      | None (nie znamy cen third-party)                         |
+| `gemini`          | `google.genai.Client`              | `GEMINI_API_KEY`                                | Pełne (Gemini 2.x / 3.x)                                 |
+
+`runtime_config` (wspólne):
+
+| key                | type           | description                                                                  |
+| ------------------ | -------------- | ---------------------------------------------------------------------------- |
+| `provider`         | `str`          | `anthropic` (domyślnie) / `openai` / `openai-compat` / `gemini`              |
+| `model_id`         | `str`          | ID modelu (np. `claude-haiku-4-5`, `gpt-5-mini`, `gemini-3.0-flash`)          |
+| `max_tokens`       | `int`          | Domyślnie 4096                                                               |
+| `system_prompt`    | `str?`         | Prepend przed `prompt_xml` w roli system                                      |
+
+Specyficzne dla `anthropic`:
+
+| key               | type                                                | description                              |
+| ----------------- | --------------------------------------------------- | ---------------------------------------- |
+| `prompt_cache`    | `bool`                                              | Włącza ephemeral cache control           |
+| `enable_thinking` | `bool`                                              | Adaptive thinking                        |
+| `effort`          | `low`/`medium`/`high`/`xhigh`/`max`                 | Reasoning effort                          |
+
+Specyficzne dla `openai-compat`:
+
+| key            | type   | required | description                                                          |
+| -------------- | ------ | :------: | -------------------------------------------------------------------- |
+| `base_url`     | `str`  |   tak    | OpenAI-compat endpoint (np. `https://api.z.ai/api/coding/paas/v4`)   |
+| `api_key_env`  | `str`  |   tak    | Nazwa env var trzymającej klucz (np. `GLM_API_KEY`)                  |
+
+Specyficzne dla `gemini`:
+
+| key                | type   | description                                       |
+| ------------------ | ------ | ------------------------------------------------- |
+| `temperature`      | `float`| Domyślnie SDK default                             |
+| `thinking_budget`  | `int`  | Limit tokenów na reasoning                        |
+
+### Przykłady
+
+**DeveloperJr (GLM przez OpenAI-compat):**
+
+```json
+{
+  "provider": "openai-compat",
+  "model_id": "glm-5-flash",
+  "base_url": "https://api.z.ai/api/coding/paas/v4",
+  "api_key_env": "GLM_API_KEY",
+  "max_tokens": 4096
+}
+```
+
+**DeveloperFrontend (Gemini API):**
+
+```json
+{
+  "provider": "gemini",
+  "model_id": "gemini-3.0-pro",
+  "max_tokens": 8192,
+  "temperature": 0.2
+}
 ```
 
 ## bash
