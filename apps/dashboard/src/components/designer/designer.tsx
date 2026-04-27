@@ -215,13 +215,16 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
   const update = useUpdatePipeline();
 
   const handleValidate = useCallback(async () => {
+    // Clear any previous result first — otherwise a stale "valid" sticks
+    // around if the next validation attempt fails (and the Save button
+    // would stay enabled based on the old success state).
+    setValidationResult(null);
     try {
       const result = await validate.mutateAsync(buildPayload());
       setValidationResult(result);
     } catch {
-      // The mutation's error state already drives the UI; swallow the
-      // rejection so it doesn't surface as an unhandled rejection in the
-      // Next.js dev overlay.
+      // The mutation's error state already drives the UI via submitError;
+      // swallow here to avoid an unhandled rejection in the dev overlay.
     }
   }, [buildPayload, validate]);
 
