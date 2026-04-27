@@ -444,6 +444,72 @@ async def test_connection_error_returns_failure() -> None:
     assert any("HTTP request failed" in e for e in result.errors)
 
 
+async def test_headers_must_be_dict_of_strings() -> None:
+    """Validation rejects non-string entries at config time, not silently."""
+    adapter = HttpAdapter()
+    result = await adapter.execute(_task(headers={"X-Trace-ID": 123}))
+    assert result.success is False
+    assert any("headers entries" in e for e in result.errors)
+
+
+async def test_template_strict_undefined_fails_on_missing_var() -> None:
+    """StrictUndefined: a typo'd template variable fails fast, not as ''."""
+    adapter = HttpAdapter()
+    response = _mock_response(json_payload={"response": "ok"})
+    client = _mock_client(response)
+
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(
+                request_template={
+                    "model": "{{ runtime_config.does_not_exist }}",
+                    "prompt": "{{ prompt_xml }}",
+                },
+            )
+        )
+
+    assert result.success is False
+    assert any("render request_template" in e.lower() for e in result.errors)
+
+
+async def test_full_payload_not_persisted_in_structured() -> None:
+    """The full response is intentionally not stored — only `extracted` is."""
+    adapter = HttpAdapter()
+    response = _mock_response(
+        json_payload={"response": "ok", "secret": "should-not-be-saved", "huge": "x" * 100_000}
+    )
+    client = _mock_client(response)
+
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(_task())
+
+    assert result.success is True
+    assert result.structured is not None
+    assert "payload" not in result.structured
+    # The named extractions land in `extracted` so the user keeps what
+    # they cared about; the unrequested fields are dropped.
+    assert "extracted" in result.structured
+
+
+async def test_user_can_opt_into_full_raw_response_via_extractor() -> None:
+    """For debugging, an explicit JSONPath `$` in the extractor pulls the raw."""
+    adapter = HttpAdapter()
+    payload = {"response": "ok", "metadata": {"trace": "abc"}}
+    response = _mock_response(json_payload=payload)
+    client = _mock_client(response)
+
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(
+                response_extractor={"output": "$.response", "_raw": "$"},
+            )
+        )
+
+    assert result.success is True
+    assert result.structured is not None
+    assert result.structured["extracted"]["_raw"] == payload
+
+
 async def test_jsonpath_no_match_yields_empty_output() -> None:
     """No-match extractor returns None → output coerced to empty string."""
     adapter = HttpAdapter()

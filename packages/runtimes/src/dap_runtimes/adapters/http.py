@@ -44,7 +44,7 @@ from typing import Any, Final
 
 import httpx
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
-from jinja2 import TemplateError
+from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 from jsonpath_ng.ext import parse as jsonpath_parse
 
@@ -172,14 +172,19 @@ class HttpAdapter(BaseAdapter):
                 "url": url,
                 "method": method,
                 "status_code": response.status_code,
+                # Only the named extractions are persisted (saved into
+                # NodeExecutionLog.output_json). The full response payload
+                # is intentionally NOT stored to avoid bloating the DB and
+                # creating an unintended data-retention surface for large
+                # or sensitive responses. To capture the raw response,
+                # add a JSONPath like `"_raw": "$"` to response_extractor.
                 "extracted": {k: v for k, v in extracted.items() if k != "output"},
-                "payload": payload,
                 "timed_out": False,
             },
         )
 
 
-def _validate_config(config: dict[str, Any]) -> str | None:  # noqa: PLR0911
+def _validate_config(config: dict[str, Any]) -> str | None:  # noqa: PLR0911,PLR0912
     """Per-call validation. Returns an error message or None when OK."""
     url = config.get("url")
     if not isinstance(url, str) or not url:
@@ -222,8 +227,12 @@ def _validate_config(config: dict[str, Any]) -> str | None:  # noqa: PLR0911
         )
 
     headers = config.get("headers")
-    if headers is not None and not isinstance(headers, dict):
-        return "runtime_config.headers must be a dict"
+    if headers is not None:
+        if not isinstance(headers, dict):
+            return "runtime_config.headers must be a dict"
+        for key, value in headers.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                return "runtime_config.headers entries must be {string: string}; one of them isn't"
 
     auth = config.get("auth")
     if auth is not None:
@@ -259,8 +268,13 @@ def _validate_auth(auth: Any) -> str | None:  # noqa: PLR0911
 
 
 def _build_template_env() -> SandboxedEnvironment:
-    """Sandboxed Jinja2 — same defence-in-depth as prompt-dsl."""
-    return SandboxedEnvironment(autoescape=False)
+    """Sandboxed Jinja2 — same defence-in-depth as prompt-dsl.
+
+    ``StrictUndefined`` mirrors prompt-dsl: a typo or missing variable
+    fails fast with a descriptive ``UndefinedError`` instead of silently
+    rendering as an empty string and shipping a malformed request.
+    """
+    return SandboxedEnvironment(autoescape=False, undefined=StrictUndefined)
 
 
 def _render_template(template: Any, env: SandboxedEnvironment, ctx: dict[str, Any]) -> Any:
@@ -280,13 +294,22 @@ def _build_headers(
 ) -> dict[str, str]:
     """Resolve auth header from env vars, merge with any static extras.
 
-    Raises ``ValueError`` when an env var named in ``auth`` isn't set.
+    Raises ``ValueError`` when an env var named in ``auth`` isn't set, or
+    when ``extra_headers`` contains a non-string header name or value.
+    Validation has already accepted dict[str, str] at config time, but a
+    second guard here surfaces post-validation drift (e.g. someone hand-
+    edited the row in the DB) instead of silently dropping headers.
     """
     headers: dict[str, str] = {}
     if isinstance(extra_headers, dict):
         for key, value in extra_headers.items():
-            if isinstance(key, str) and isinstance(value, str):
-                headers[key] = value
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ValueError(
+                    "runtime_config.headers must contain only string names "
+                    f"and values; got {type(key).__name__}={key!r}, "
+                    f"{type(value).__name__}={value!r}"
+                )
+            headers[key] = value
 
     if not isinstance(auth, dict):
         return headers
@@ -323,16 +346,22 @@ def _apply_extractors(
     extractors: dict[str, str],
     payload: Any,
 ) -> dict[str, Any]:
-    """Run each JSONPath against the payload, collect the first match per key."""
+    """Run each JSONPath against the payload, collect the first match per key.
+
+    Iterates lazily — broad JSONPaths over large payloads stop after the
+    first match instead of materialising the full result list.
+    """
     out: dict[str, Any] = {}
     for key, expr_str in extractors.items():
+        match_value: Any = None
         try:
             expr = jsonpath_parse(expr_str)
-            matches = [m.value for m in expr.find(payload)]
+            for match in expr.find(payload):
+                match_value = match.value
+                break
         except Exception:
             logger.exception("JSONPath '%s' failed against payload", expr_str)
-            matches = []
-        out[key] = matches[0] if matches else None
+        out[key] = match_value
     return out
 
 
