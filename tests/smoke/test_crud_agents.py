@@ -28,8 +28,8 @@ def _create_payload(**overrides: Any) -> dict[str, Any]:
         "runtime_id": "claude-code",
         "runtime_config": {"model": "claude-sonnet-4-6", "max_turns": 10},
         "prompt_template": "<agent_prompt><role>test_author</role></agent_prompt>",
-        "input_schema": {"type": "object"},
-        "output_schema": {"type": "object"},
+        "input_schema": ["available_issues"],
+        "output_schema": ["test_files", "tests_generated"],
         "constraints": ["no_implementation"],
         "budget_limit_usd": 2.0,
         "timeout_ms": 30000,
@@ -196,3 +196,84 @@ def test_pagination_validation(client: TestClient) -> None:
     assert response.status_code == 422
     response = client.get("/agents?offset=-1")
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Per-agent input/output schemas (#58, v0.5)
+# ---------------------------------------------------------------------------
+
+
+def test_create_agent_persists_field_list_schemas(client: TestClient) -> None:
+    """Schemas round-trip as ``list[str]`` with the field names intact."""
+    payload = _create_payload(
+        input_schema=["available_issues", "max_attempts"],
+        output_schema=["test_files", "tests_generated", "test_generation_errors"],
+    )
+    body = client.post("/agents", json=payload).json()
+    assert body["input_schema"] == ["available_issues", "max_attempts"]
+    assert body["output_schema"] == [
+        "test_files",
+        "tests_generated",
+        "test_generation_errors",
+    ]
+
+
+def test_create_agent_rejects_unknown_field_in_input_schema(client: TestClient) -> None:
+    payload = _create_payload(input_schema=["selected_issue_ids", "definitely_not_a_field"])
+    response = client.post("/agents", json=payload)
+    assert response.status_code == 422
+    body = response.json()
+    detail = str(body["detail"])
+    assert "definitely_not_a_field" in detail
+
+
+def test_create_agent_rejects_unknown_field_in_output_schema(client: TestClient) -> None:
+    payload = _create_payload(output_schema=["nope_not_a_field"])
+    response = client.post("/agents", json=payload)
+    assert response.status_code == 422
+    assert "nope_not_a_field" in str(response.json()["detail"])
+
+
+def test_create_agent_rejects_duplicate_field_names(client: TestClient) -> None:
+    payload = _create_payload(output_schema=["test_files", "test_files"])
+    response = client.post("/agents", json=payload)
+    assert response.status_code == 422
+    assert "duplicate" in str(response.json()["detail"]).lower()
+
+
+def test_update_agent_rejects_unknown_field(client: TestClient) -> None:
+    created = client.post("/agents", json=_create_payload()).json()
+    agent_id = created["id"]
+    response = client.put(
+        f"/agents/{agent_id}",
+        json=_update_payload(output_schema=["bogus_field"]),
+    )
+    assert response.status_code == 422
+    assert "bogus_field" in str(response.json()["detail"])
+
+
+def test_create_agent_coerces_legacy_dict_schema_to_empty_list(
+    client: TestClient,
+) -> None:
+    """Older clients still sending ``{}`` get a silent coercion to ``[]``.
+
+    We don't accept a *non-empty* dict — those carried no real contract
+    (placeholder JSON-Schema-ish blobs), so emptying them on the way in
+    is the safe migration. Removed in v0.6 once clients are updated.
+    """
+    payload = _create_payload(input_schema={}, output_schema={})
+    response = client.post("/agents", json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["input_schema"] == []
+    assert body["output_schema"] == []
+
+
+def test_default_schemas_are_empty_lists(client: TestClient) -> None:
+    """Omitting the fields entirely also gives ``[]`` (not ``{}``)."""
+    payload = _create_payload()
+    payload.pop("input_schema", None)
+    payload.pop("output_schema", None)
+    body = client.post("/agents", json=payload).json()
+    assert body["input_schema"] == []
+    assert body["output_schema"] == []

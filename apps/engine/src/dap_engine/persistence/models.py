@@ -75,8 +75,11 @@ class AgentVersionORM(Base):
     runtime_id: Mapped[str] = mapped_column(String, nullable=False)
     runtime_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
-    input_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    output_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # JSON column stores ``list[str]`` (PipelineState field names) as of
+    # v0.5; older rows may still hold a dict — the Pydantic Agent model
+    # coerces those at read-time. See packages/types/.../agent.py.
+    input_schema: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    output_schema: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     constraints: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     budget_limit_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     timeout_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=60_000)
