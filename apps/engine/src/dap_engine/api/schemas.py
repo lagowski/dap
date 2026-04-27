@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from dap_types.agent import coerce_legacy_field_list, validate_field_list
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AgentCreate(BaseModel):
@@ -23,12 +24,22 @@ class AgentCreate(BaseModel):
     runtime_config: dict[str, Any] = Field(default_factory=dict)
     prompt_template: str
 
-    input_schema: dict[str, Any] = Field(default_factory=dict)
-    output_schema: dict[str, Any] = Field(default_factory=dict)
+    input_schema: list[str] = Field(default_factory=list)
+    output_schema: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
 
     budget_limit_usd: float | None = None
     timeout_ms: int = Field(default=60_000, gt=0)
+
+    @field_validator("input_schema", "output_schema", mode="before")
+    @classmethod
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def _check_known_fields(cls, value: list[str]) -> list[str]:
+        return validate_field_list(value)
 
 
 class AgentUpdate(BaseModel):
@@ -42,12 +53,22 @@ class AgentUpdate(BaseModel):
     runtime_config: dict[str, Any] = Field(default_factory=dict)
     prompt_template: str
 
-    input_schema: dict[str, Any] = Field(default_factory=dict)
-    output_schema: dict[str, Any] = Field(default_factory=dict)
+    input_schema: list[str] = Field(default_factory=list)
+    output_schema: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
 
     budget_limit_usd: float | None = None
     timeout_ms: int = Field(default=60_000, gt=0)
+
+    @field_validator("input_schema", "output_schema", mode="before")
+    @classmethod
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def _check_known_fields(cls, value: list[str]) -> list[str]:
+        return validate_field_list(value)
 
 
 class PipelineCreate(BaseModel):

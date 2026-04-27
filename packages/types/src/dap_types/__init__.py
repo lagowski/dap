@@ -7,7 +7,12 @@ from dap_types.pipeline import (
     PipelineEdge,
     PipelineNode,
 )
-from dap_types.role_outputs import ROLE_FIELDS, role_output_model
+from dap_types.role_outputs import (
+    ROLE_FIELDS,
+    agent_output_model,
+    resolve_output_validator,
+    role_output_model,
+)
 from dap_types.run import NodeExecutionLog, NodeStatus, Run
 from dap_types.runtime import (
     HealthStatus,
@@ -40,5 +45,7 @@ __all__ = [
     "RuntimeTask",
     "StateSnapshot",
     "VerificationStatus",
+    "agent_output_model",
+    "resolve_output_validator",
     "role_output_model",
 ]

@@ -152,7 +152,7 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             #    on conflicts since it reflects the agent's intentional
             #    response, not adapter telemetry.
             state_diff = _merge_structured_into_state(result.structured)
-            parsed_diff = _parse_role_output(ctx, result.output)
+            parsed_diff = _parse_agent_output(ctx, result.output)
             state_diff.update(parsed_diff)
 
         # Save snapshot AFTER computing diff (snapshot reflects state going forward)
@@ -249,7 +249,7 @@ def _merge_structured_into_state(structured: dict[str, Any] | None) -> dict[str,
     """Merge adapter's structured output into state diff.
 
     Only keys that exist in PipelineState are merged. Foreign keys are ignored.
-    Permissive — strict per-role validation lives in `_parse_role_output`.
+    Permissive — strict per-agent validation lives in `_parse_agent_output`.
     """
     if not structured:
         return {}
@@ -257,23 +257,38 @@ def _merge_structured_into_state(structured: dict[str, Any] | None) -> dict[str,
     return {k: v for k, v in structured.items() if k in state_fields}
 
 
-def _parse_role_output(ctx: NodeContext, output: str) -> dict[str, Any]:
-    """Apply per-role output parsing if this agent's role declares a schema.
+def _parse_agent_output(ctx: NodeContext, output: str) -> dict[str, Any]:
+    """Apply per-agent output parsing when the agent declares a schema.
 
-    Parse failures are logged but don't fail the run — the user can inspect
-    the node log and use retry-node / skip-node to recover (issue #33).
-    The resulting diff overrides adapter-supplied structured fields on
+    Resolves via :func:`parse_node_output`: the version's
+    ``output_schema`` wins; falls back to ``ROLE_FIELDS[agent.role]``
+    for legacy agents with no declared schema. Parse failures are
+    logged but don't fail the run — the user can inspect the node log
+    and use retry-node / skip-node to recover (issue #33). The
+    resulting diff overrides adapter-supplied structured fields on
     conflict so an agent's intentional response wins over telemetry.
+
+    Legacy DB rows may still hold a dict-shaped ``output_schema`` (the
+    pre-v0.5 placeholder format). Coerce those back to ``[]`` here so
+    ``list(dict)`` (= dict keys) doesn't accidentally land in the
+    parser as a per-agent contract.
     """
-    role = ctx.agent.role
-    parse_result = parse_node_output(role, output)
+    raw_schema = ctx.agent_version.output_schema
+    output_schema = (
+        list(raw_schema) if isinstance(raw_schema, list) else []
+    )  # legacy dict / None / anything else → fall back to ROLE_FIELDS
+    parse_result = parse_node_output(
+        ctx.agent.role,
+        output_schema,
+        output,
+    )
     if parse_result.skipped:
         return {}
     if not parse_result.success:
         logger.warning(
             "node %s (role=%s) output parse failed: %s",
             ctx.node_id,
-            role,
+            ctx.agent.role,
             "; ".join(parse_result.errors),
         )
         return {}

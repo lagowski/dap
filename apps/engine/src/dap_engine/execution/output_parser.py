@@ -1,19 +1,20 @@
-"""Per-role output parsing — turns raw adapter text into a state diff.
+"""Per-agent output parsing — turns raw adapter text into a state diff.
 
 The api-call adapter returns raw LLM text in ``RuntimeResult.output``.
-For deterministic pipelines we want each agent role to write a *known
-subset* of ``PipelineState`` fields — task_selector writes
-``selected_issue_ids``, test_author writes ``test_files``, etc.
+For deterministic pipelines we want each agent to write a *known subset*
+of ``PipelineState`` fields. The subset is resolved from
+``Agent.output_schema`` (preferred) or ``ROLE_FIELDS[agent.role]``
+(legacy fallback) — see :mod:`dap_types.role_outputs`.
 
 This module:
 1. Pulls the JSON payload out of the LLM's text (XML wrapper or markdown
    fence — whichever the prompt template requested).
-2. Validates it against the role's declared schema (``role_output_model``).
+2. Resolves the validator via :func:`resolve_output_validator` — the
+   per-agent ``output_schema`` wins; falls back to
+   ``ROLE_FIELDS[role]``; returns ``None`` for custom roles with no
+   declared schema (caller falls back to permissive merging).
 3. Returns a ``ParseResult`` with the parsed fields and any errors so the
    caller can decide whether to log + continue, or fail the node.
-
-Roles without a declared schema are not parsed here — the runner falls
-back to permissive ``RuntimeResult.structured`` merging for those.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from dap_types import role_output_model
+from dap_types.role_outputs import resolve_output_validator
 from pydantic import ValidationError
 
 logger = logging.getLogger("dap.engine.execution.output_parser")
@@ -57,15 +58,30 @@ class ParseResult:
     skipped: bool = False
 
 
-def parse_node_output(role: str, output: str) -> ParseResult:
-    """Extract a state-diff dict from ``output`` according to ``role``'s schema.
+def parse_node_output(
+    role: str,
+    output_schema: list[str],
+    output: str,
+) -> ParseResult:
+    """Extract a state-diff dict from ``output`` according to the contract.
 
-    Returns ``ParseResult(skipped=True)`` for roles without a declared
-    schema — the caller should fall back to permissive merging.
+    Resolution order (delegated to :func:`resolve_output_validator`):
+
+    1. ``output_schema`` (per-agent declared subset) wins when non-empty.
+    2. Otherwise falls back to ``ROLE_FIELDS[role]`` for legacy
+       hardcoded contracts.
+    3. Returns ``ParseResult(skipped=True)`` for custom roles with no
+       declared schema — caller should fall back to permissive merging.
+
+    Takes the contract as two scalars rather than an ``Agent`` instance
+    so callers holding an ORM split (logical agent + version row) don't
+    need to construct a Pydantic Agent just to parse output.
     """
-    validator = role_output_model(role)
+    validator = resolve_output_validator(role, output_schema)
     if validator is None:
         return ParseResult(success=True, skipped=True)
+
+    label = role  # for error messages — role is more user-meaningful than id
 
     raw = _extract_json_block(output)
     if raw is None:
@@ -96,7 +112,7 @@ def parse_node_output(role: str, output: str) -> ParseResult:
     except ValidationError as exc:
         return ParseResult(
             success=False,
-            errors=[_format_validation_error(role, e) for e in exc.errors()],
+            errors=[_format_validation_error(label, e) for e in exc.errors()],
         )
 
     # Drop the None defaults so we only carry fields the agent actually
@@ -131,14 +147,16 @@ def _extract_json_block(text: str) -> str | None:
     return None
 
 
-def _format_validation_error(role: str, error: Any) -> str:
-    """Pretty-print a single Pydantic validation error for the role schema.
+def _format_validation_error(label: str, error: Any) -> str:
+    """Pretty-print a single Pydantic validation error for the agent schema.
 
     `error` is a Pydantic v2 ErrorDetails (TypedDict-ish); typed as Any to
-    avoid coupling to a private import.
+    avoid coupling to a private import. ``label`` is the agent's role —
+    surfaced in messages because it's the most user-meaningful identifier
+    when reading a stack of validation errors from a run log.
     """
     loc = ".".join(str(p) for p in error.get("loc", ())) or "<root>"
     msg = error.get("msg", "validation error")
     err_type = error.get("type", "")
     suffix = f" [{err_type}]" if err_type else ""
-    return f"{role}.{loc}: {msg}{suffix}"
+    return f"{label}.{loc}: {msg}{suffix}"
