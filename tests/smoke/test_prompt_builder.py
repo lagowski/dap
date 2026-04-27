@@ -173,14 +173,18 @@ def test_input_schema_drops_extra_context_silently() -> None:
     assert "<count>5</count>" in result.xml
 
 
-def test_input_schema_field_missing_from_context_keeps_strict_undefined() -> None:
-    """Schema declares a field but context doesn't supply it → standard UndefinedError.
+def test_input_schema_field_declared_but_missing_in_context_distinct_hint() -> None:
+    """Field declared in schema but not in context → tailored hint, not the schema-fix one.
 
-    Two failure modes:
-    1. Template references a field not in input_schema (covered above).
-    2. Template references a field that IS declared but the caller forgot
-       to pass it. We surface the standard StrictUndefined error so the
-       caller still gets a useful diagnostic.
+    Two failure modes deserve different hints:
+
+    1. Field NOT in input_schema → the fix is to extend the schema
+       (or remove the reference).
+    2. Field IS in input_schema but caller forgot to supply it → the
+       fix is to pass it in the context, NOT to touch the schema.
+
+    The error must point the user at the right fix or it sends them
+    on a wild goose chase.
     """
     template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
     with pytest.raises(PromptBuildError) as exc_info:
@@ -189,7 +193,12 @@ def test_input_schema_field_missing_from_context_keeps_strict_undefined() -> Non
             {},  # role not supplied
             input_schema=["role"],
         )
-    assert "role" in str(exc_info.value)
+    msg = str(exc_info.value)
+    assert "role" in msg
+    assert "declared" in msg
+    assert "render context" in msg
+    # And the misleading "Add the field to agent.input_schema" hint must NOT appear.
+    assert "Add the field to agent.input_schema" not in msg
 
 
 def test_complex_test_authoring_template() -> None:

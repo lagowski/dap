@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from jinja2 import StrictUndefined, TemplateSyntaxError, UndefinedError
@@ -10,6 +11,11 @@ from jinja2.sandbox import SandboxedEnvironment
 from pydantic import BaseModel, ConfigDict
 
 from dap_prompt_dsl.validator import DEFAULT_ROOT, validate_xml
+
+# StrictUndefined formats its message as ``'<name>' is undefined`` for
+# the simple top-level case we're trying to surface. Anything more
+# exotic (attribute access, etc.) keeps the generic hint.
+_UNDEFINED_NAME_PATTERN = re.compile(r"'([^']+)' is undefined")
 
 
 class PromptBuildError(Exception):
@@ -77,7 +83,7 @@ def build_prompt(
         raise PromptBuildError(f"Template syntax error: {exc.message}") from exc
     except UndefinedError as exc:
         raise PromptBuildError(
-            _format_undefined_error(exc, input_schema),
+            _format_undefined_error(exc, input_schema, render_context),
         ) from exc
     except TemplateError as exc:
         raise PromptBuildError(f"Template error: {exc}") from exc
@@ -111,18 +117,48 @@ def _project_context(
 def _format_undefined_error(
     exc: UndefinedError,
     input_schema: list[str] | None,
+    render_context: dict[str, Any],
 ) -> str:
     """Build a descriptive message for ``UndefinedError`` in StrictUndefined mode.
 
-    When ``input_schema`` was supplied, the most likely cause is a
-    template referencing a field the agent didn't declare — surface
-    that hint in the error so the user knows where to look.
+    Two distinct failure modes when ``input_schema`` is set:
+
+    1. Template references a field the agent didn't declare → fix is
+       to extend ``input_schema`` (or remove the reference).
+    2. Field IS declared but the caller didn't supply it in the
+       context → fix is to add it to the runtime/preview payload, not
+       to touch ``input_schema``.
+
+    We extract the offending name from the Jinja message and pick the
+    right hint. Falls back to the generic schema reminder when the
+    name can't be parsed (exotic message shapes from attribute access,
+    etc.).
     """
     base = f"Template references undefined variable: {exc.message}"
-    if input_schema:
-        declared = ", ".join(input_schema) if input_schema else "(none)"
+    if not input_schema:
+        return base
+
+    declared = ", ".join(input_schema)
+    name = _extract_undefined_name(exc.message)
+
+    if name is not None and name in input_schema and name not in render_context:
+        # Declared, but caller didn't supply it.
         return (
-            f"{base}. Add the field to agent.input_schema or update the "
-            f"template. Currently declared inputs: {declared}."
+            f"{base}. The field is declared in agent.input_schema but no "
+            f"value was supplied — pass it in the render context."
         )
-    return base
+
+    # Either the name isn't in the schema, or we couldn't parse the
+    # message — both point at the schema as the place to edit.
+    return (
+        f"{base}. Add the field to agent.input_schema or update the "
+        f"template. Currently declared inputs: {declared}."
+    )
+
+
+def _extract_undefined_name(message: str | None) -> str | None:
+    """Pull the offending name out of a StrictUndefined error message."""
+    if not message:
+        return None
+    match = _UNDEFINED_NAME_PATTERN.search(message)
+    return match.group(1) if match else None
