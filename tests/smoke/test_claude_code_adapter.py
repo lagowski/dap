@@ -324,6 +324,65 @@ async def test_unparseable_json_returns_descriptive_error(
     assert any("not parse" in e.lower() for e in result.errors)
 
 
+async def test_non_object_payload_returns_descriptive_error(
+    with_api_key: None,
+) -> None:
+    """Valid JSON that isn't an object (e.g. an array) shouldn't crash the adapter."""
+    adapter = ClaudeCodeAdapter()
+    proc = _build_subprocess_mock(stdout=b"[1, 2, 3]")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task())
+
+    assert result.success is False
+    assert any("expected object" in e for e in result.errors)
+
+
+async def test_non_dict_usage_returns_descriptive_error(
+    with_api_key: None,
+) -> None:
+    """A valid result dict with `usage` of the wrong shape — graceful failure."""
+    adapter = ClaudeCodeAdapter()
+    payload = json.dumps(
+        {"type": "result", "is_error": False, "result": "ok", "usage": "nope"}
+    ).encode("utf-8")
+    proc = _build_subprocess_mock(stdout=payload)
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task())
+
+    assert result.success is False
+    assert any("usage" in e for e in result.errors)
+
+
+async def test_non_numeric_token_count_returns_descriptive_error(
+    with_api_key: None,
+) -> None:
+    """`usage.input_tokens` returning a non-numeric — graceful failure."""
+    adapter = ClaudeCodeAdapter()
+    payload = json.dumps(
+        {
+            "type": "result",
+            "is_error": False,
+            "result": "ok",
+            "usage": {"input_tokens": "not-a-number", "output_tokens": 50},
+        }
+    ).encode("utf-8")
+    proc = _build_subprocess_mock(stdout=payload)
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task())
+
+    assert result.success is False
+    assert any("token metadata" in e for e in result.errors)
+
+
 async def test_is_error_flag_marks_failure(with_api_key: None) -> None:
     adapter = ClaudeCodeAdapter()
     payload = json.dumps(

@@ -70,10 +70,10 @@ class ClaudeCodeAdapter(BaseAdapter):
         version = await _read_cli_version(binary)
         return HealthStatus(available=True, version=version)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
-        # Many returns: each guard maps to a distinct precondition failure
-        # with its own error message; collapsing into a dispatch obscures
-        # the mapping (same rationale as ApiCallAdapter / BashAdapter).
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912
+        # Many branches/returns: each guard maps to a distinct precondition
+        # failure with its own error message; collapsing into a dispatch
+        # obscures the mapping (same rationale as ApiCallAdapter / BashAdapter).
         config = task.runtime_config
 
         validation_error = _validate_config(config)
@@ -176,6 +176,16 @@ class ClaudeCodeAdapter(BaseAdapter):
                 stderr=stderr,
             )
 
+        if not isinstance(payload, dict):
+            return _failed(
+                "Claude CLI returned unexpected JSON shape: "
+                f"expected object, got {type(payload).__name__}",
+                duration_ms=duration_ms,
+                model_id=config["model_id"],
+                exit_code=exit_code,
+                stderr=stderr,
+            )
+
         if payload.get("is_error") is True:
             return _failed(
                 f"Claude CLI reported an error: {payload.get('result') or 'unknown'}",
@@ -186,11 +196,30 @@ class ClaudeCodeAdapter(BaseAdapter):
             )
 
         output_text = payload.get("result") or ""
+
         usage = payload.get("usage") or {}
-        input_tokens = int(usage.get("input_tokens", 0) or 0)
-        output_tokens = int(usage.get("output_tokens", 0) or 0)
-        cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
-        cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
+        if not isinstance(usage, dict):
+            return _failed(
+                "Claude CLI returned invalid token metadata: 'usage' must be an object",
+                duration_ms=duration_ms,
+                model_id=config["model_id"],
+                exit_code=exit_code,
+                stderr=stderr,
+            )
+
+        try:
+            input_tokens = int(usage.get("input_tokens", 0) or 0)
+            output_tokens = int(usage.get("output_tokens", 0) or 0)
+            cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
+            cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            return _failed(
+                f"Claude CLI returned invalid token metadata: {exc}",
+                duration_ms=duration_ms,
+                model_id=config["model_id"],
+                exit_code=exit_code,
+                stderr=stderr,
+            )
         total_tokens = input_tokens + output_tokens + cache_creation + cache_read
 
         cost_raw = payload.get("total_cost_usd")
@@ -264,7 +293,11 @@ def _normalise_extra_args(value: Any) -> tuple[list[str], str | None]:
 
 
 async def _read_cli_version(binary: str) -> str | None:
-    """Best-effort `claude --version` for the healthcheck display string."""
+    """Best-effort ``claude --version`` for the healthcheck display string.
+
+    Kills + reaps the subprocess on timeout so a hanging CLI doesn't leak
+    a child process every time the operator runs a healthcheck.
+    """
     try:
         process = await asyncio.create_subprocess_exec(
             binary,
@@ -272,9 +305,24 @@ async def _read_cli_version(binary: str) -> str | None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
-    except (OSError, TimeoutError):
+    except OSError:
         return None
+
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
+    except TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        except OSError:
+            logger.exception("failed to kill timed-out version check pid=%s", process.pid)
+        try:
+            await asyncio.shield(process.wait())
+        except (asyncio.CancelledError, Exception):
+            logger.exception("error waiting for timed-out version check pid=%s", process.pid)
+        return None
+
     line = stdout.decode("utf-8", errors="replace").strip().splitlines()
     return line[0] if line else None
 
