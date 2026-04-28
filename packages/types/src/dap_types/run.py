@@ -18,6 +18,12 @@ class Run(BaseModel):
 
     id: str
 
+    # Owning project (v0.6). ``None`` for ad-hoc / legacy runs that
+    # were triggered directly via ``POST /runs`` without a project
+    # association. Populated automatically by
+    # ``POST /projects/{id}/run/{kind}`` (#66).
+    project_id: str | None = None
+
     pipeline_id: str
     pipeline_version: int
 

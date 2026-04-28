@@ -102,6 +102,7 @@ def _pipeline_from_orm(
 def _run_from_orm(run: RunORM) -> Run:
     return Run(
         id=run.id,
+        project_id=run.project_id,
         pipeline_id=run.pipeline_id,
         pipeline_version=run.pipeline_version,
         trigger_source=run.trigger_source,  # type: ignore[arg-type]
@@ -624,9 +625,18 @@ def list_runs(
     *,
     pipeline_id: str | None = None,
     final_status: str | None = None,
+    project_id: str | None = None,
+    only_unscoped: bool = False,
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Run], int]:
+    """List runs with optional filters.
+
+    ``project_id``: filter to a specific project's runs.
+    ``only_unscoped``: when True, return only runs without a project
+    (ad-hoc / legacy). Mutually exclusive with ``project_id``; the
+    router enforces the mapping from query string to one of these.
+    """
     base = select(RunORM)
     count_q = select(func.count()).select_from(RunORM)
 
@@ -636,6 +646,12 @@ def list_runs(
     if final_status is not None:
         base = base.where(RunORM.final_status == final_status)
         count_q = count_q.where(RunORM.final_status == final_status)
+    if only_unscoped:
+        base = base.where(RunORM.project_id.is_(None))
+        count_q = count_q.where(RunORM.project_id.is_(None))
+    elif project_id is not None:
+        base = base.where(RunORM.project_id == project_id)
+        count_q = count_q.where(RunORM.project_id == project_id)
 
     total = session.scalar(count_q) or 0
 
@@ -688,11 +704,13 @@ def create_run(
     pipeline_version: int,
     trigger_source: str,
     initial_state: PipelineState,
+    project_id: str | None = None,
 ) -> RunORM:
     """Insert a Run row in 'running' state. Caller commits."""
     now = _now()
     run = RunORM(
         id=_new_id(),
+        project_id=project_id,
         pipeline_id=pipeline_id,
         pipeline_version=pipeline_version,
         trigger_source=trigger_source,

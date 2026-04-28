@@ -192,6 +192,12 @@ class RunORM(Base):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Owning project (v0.6, #64). FK with NO cascade — archiving a
+    # project leaves its runs intact for historical inspection.
+    # Nullable for ad-hoc / legacy runs triggered without a project.
+    project_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("projects.id"), nullable=True, default=None
+    )
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False)
     pipeline_version: Mapped[int] = mapped_column(Integer, nullable=False)
 

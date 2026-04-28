@@ -179,6 +179,11 @@ export interface PipelineState {
 
 export interface Run {
   id: string;
+  /**
+   * Owning project (#64). `null` for ad-hoc runs triggered directly
+   * via POST /runs without a project association.
+   */
+  project_id: string | null;
   pipeline_id: string;
   pipeline_version: number;
   trigger_source: "dashboard" | "cli" | "api";
@@ -229,6 +234,12 @@ export interface PaginatedList<T> {
 export interface RunCreateRequest {
   pipeline_id: string;
   pipeline_version?: number | null;
+  /**
+   * Stamp the run with this project (#64). Omit for ad-hoc runs.
+   * Engine validates the project exists and is not archived
+   * (otherwise 422).
+   */
+  project_id?: string | null;
   initial_state?: Partial<PipelineState>;
 }
 
