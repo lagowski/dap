@@ -37,6 +37,7 @@ from typing import Any, Final
 
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 
+from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.gemini_cli")
@@ -88,7 +89,7 @@ class GeminiCliAdapter(BaseAdapter):
         version = await _read_cli_version(binary)
         return HealthStatus(available=True, version=version)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch obscures
         # the mapping (same rationale as ApiCallAdapter / BashAdapter).
@@ -120,10 +121,17 @@ class GeminiCliAdapter(BaseAdapter):
         cwd = task.working_directory or os.getcwd()
         timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
         new_session = hasattr(os, "setsid")
-        # Engine env (with GEMINI_API_KEY / GOOGLE_API_KEY) is the base;
-        # project env_vars overlay on top (#65). The Gemini CLI reads
-        # the env itself.
-        env = _merge_project_env(task.project_env_vars)
+        # Three-layer env (#65): engine env (with GEMINI_API_KEY /
+        # GOOGLE_API_KEY) → project env_vars → per-agent
+        # runtime_config.env (highest). The Gemini CLI reads the env
+        # itself; we just propagate the documented overlays.
+        env, env_error = merge_subprocess_env(task.project_env_vars, config)
+        if env_error is not None:
+            return _failed(
+                env_error,
+                duration_ms=0,
+                model_id=config["model_id"],
+            )
 
         start = time.monotonic()
         try:
@@ -383,14 +391,6 @@ async def _kill_process_tree(
 
 def _elapsed_ms(start: float) -> int:
     return int((time.monotonic() - start) * MS_PER_SECOND)
-
-
-def _merge_project_env(project_env_vars: dict[str, str]) -> dict[str, str]:
-    """Build the subprocess env: engine env (base) + project overlay (#65)."""
-    env = os.environ.copy()
-    if project_env_vars:
-        env.update(project_env_vars)
-    return env
 
 
 def _failed(

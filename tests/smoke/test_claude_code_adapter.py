@@ -41,18 +41,23 @@ def _task(
     binary_path: str | None = None,
     extra_args: Any = None,
     timeout_ms: int = 60_000,
+    env: dict[str, str] | None = None,
+    project_env_vars: dict[str, str] | None = None,
 ) -> RuntimeTask:
     runtime_config: dict[str, Any] = {"model_id": model_id}
     if binary_path is not None:
         runtime_config["binary_path"] = binary_path
     if extra_args is not None:
         runtime_config["extra_args"] = extra_args
+    if env is not None:
+        runtime_config["env"] = env
     return RuntimeTask(
         execution_id="exec-1",
         prompt_xml="<agent_prompt><role>impl</role><task>do it</task></agent_prompt>",
         working_directory="/tmp",
         timeout_ms=timeout_ms,
         runtime_config=runtime_config,
+        project_env_vars=project_env_vars or {},
     )
 
 
@@ -259,6 +264,56 @@ async def test_execute_with_extra_args(with_api_key: None) -> None:
     argv = create_mock.call_args.args
     assert "--allowed-tools" in argv
     assert "Read,Edit,Bash" in argv
+
+
+async def test_per_agent_env_overrides_project_env(
+    with_api_key: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three-layer env (#65): per-agent runtime_config.env wins over project, project wins over engine."""
+    monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
+    adapter = ClaudeCodeAdapter()
+    proc = _build_subprocess_mock(stdout=_success_payload())
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        await adapter.execute(
+            _task(
+                project_env_vars={"DAP_LAYER_PROBE": "project"},
+                env={"DAP_LAYER_PROBE": "agent"},
+            )
+        )
+
+    sent_env = create_mock.call_args.kwargs["env"]
+    assert sent_env["DAP_LAYER_PROBE"] == "agent"
+
+
+async def test_project_env_overrides_engine_env(
+    with_api_key: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Project env_vars must beat the engine process env (#65 layer 2 vs 1)."""
+    monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
+    adapter = ClaudeCodeAdapter()
+    proc = _build_subprocess_mock(stdout=_success_payload())
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        await adapter.execute(_task(project_env_vars={"DAP_LAYER_PROBE": "project"}))
+
+    sent_env = create_mock.call_args.kwargs["env"]
+    assert sent_env["DAP_LAYER_PROBE"] == "project"
+
+
+async def test_invalid_runtime_config_env_returns_failed(
+    with_api_key: None,
+) -> None:
+    """``runtime_config.env`` must be a dict[str, str] — anything else fails the call."""
+    adapter = ClaudeCodeAdapter()
+    with patch(_WHICH_PATH, return_value="/usr/local/bin/claude"):
+        result = await adapter.execute(_task(env={"OK": 123}))  # type: ignore[dict-item]
+    assert result.success is False
+    assert any("runtime_config.env" in e for e in result.errors)
 
 
 async def test_execute_with_cache_tokens(with_api_key: None) -> None:
