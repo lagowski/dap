@@ -7,6 +7,7 @@ from dap_types.pipeline import (
     PipelineEdge,
     PipelineNode,
 )
+from dap_types.project import RECOMMENDED_PIPELINE_KINDS, Project
 from dap_types.role_outputs import (
     ROLE_FIELDS,
     agent_output_model,
@@ -24,6 +25,7 @@ from dap_types.runtime import (
 from dap_types.state import FinalStatus, PipelineState, StateSnapshot, VerificationStatus
 
 __all__ = [
+    "RECOMMENDED_PIPELINE_KINDS",
     "ROLE_FIELDS",
     "Agent",
     "AgentRole",
@@ -38,6 +40,7 @@ __all__ = [
     "PipelineEdge",
     "PipelineNode",
     "PipelineState",
+    "Project",
     "Run",
     "RuntimeAdapter",
     "RuntimeKind",

@@ -150,6 +150,38 @@ class PipelineVersionORM(Base):
 
 
 # ---------------------------------------------------------------------------
+# Projects (v0.6) — workspace + workflow bindings
+# ---------------------------------------------------------------------------
+
+
+class ProjectORM(Base):
+    """A project: working directory + binding of workflow kinds to pipelines.
+
+    Single unversioned table — each project has one current-state row that
+    is updated in place (only agents and pipelines are versioned). Bindings
+    live in the JSON ``pipelines`` column; layered env vars in ``env_vars``.
+    Both validated at write time by ``repo.create_project`` / ``update_project``.
+    """
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    working_directory: Mapped[str | None] = mapped_column(String, nullable=True)
+    repo_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    default_branch: Mapped[str] = mapped_column(String, nullable=False, default="main")
+
+    pipelines: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    env_vars: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ---------------------------------------------------------------------------
 # Runs (no schema change in F2)
 # ---------------------------------------------------------------------------
 

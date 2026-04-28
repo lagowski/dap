@@ -12,6 +12,30 @@ from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _validate_pipeline_bindings_dict(value: dict[str, str]) -> dict[str, str]:
+    """Reject blank workflow kinds and blank pipeline ids in a binding dict.
+
+    Empty/whitespace strings on either side of the binding lead to
+    invalid project state that fails later when triggering a run —
+    fail fast at request time with a clear 422 instead.
+    """
+    blank_kinds = sorted({k for k in value if not k.strip()})
+    if blank_kinds:
+        msg = (
+            "pipelines: workflow kind keys must be non-blank "
+            f"(got {len(blank_kinds)} blank entries)"
+        )
+        raise ValueError(msg)
+    blank_ids = sorted({k for k, v in value.items() if not v.strip()})
+    if blank_ids:
+        msg = (
+            "pipelines: pipeline ids must be non-blank — blank values "
+            f"for kind(s): {', '.join(blank_ids)}"
+        )
+        raise ValueError(msg)
+    return value
+
+
 class AgentCreate(BaseModel):
     """POST /agents body — server generates id, version=1, timestamps."""
 
@@ -69,6 +93,55 @@ class AgentUpdate(BaseModel):
     @classmethod
     def _check_known_fields(cls, value: list[str]) -> list[str]:
         return validate_field_list(value)
+
+
+class ProjectCreate(BaseModel):
+    """POST /projects body — server generates id + timestamps.
+
+    ``pipelines`` values must reference existing non-archived pipelines;
+    repository validates and raises ``ValueError`` (mapped to 422) if not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+
+    working_directory: str | None = None
+    repo_url: str | None = None
+    default_branch: str = Field(default="main", min_length=1, max_length=200)
+
+    pipelines: dict[str, str] = Field(default_factory=dict)
+    env_vars: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("pipelines")
+    @classmethod
+    def _check_pipeline_bindings(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_pipeline_bindings_dict(value)
+
+
+class ProjectUpdate(BaseModel):
+    """PUT /projects/{id} body — full replacement (no versioning for projects).
+
+    Same shape as ``ProjectCreate`` minus the auto fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+
+    working_directory: str | None = None
+    repo_url: str | None = None
+    default_branch: str = Field(default="main", min_length=1, max_length=200)
+
+    pipelines: dict[str, str] = Field(default_factory=dict)
+    env_vars: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("pipelines")
+    @classmethod
+    def _check_pipeline_bindings(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_pipeline_bindings_dict(value)
 
 
 class PipelineCreate(BaseModel):
