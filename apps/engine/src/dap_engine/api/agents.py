@@ -27,6 +27,38 @@ from dap_engine.persistence import repository as repo
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
+_SECRET_KEY_PATTERNS = (
+    "api_key",
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "credential",
+)
+_REDACTED_PLACEHOLDER = "<redacted>"
+
+
+def _scrub_secret_like_keys(value: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort redaction of keys whose name suggests a credential.
+
+    Secrets are *supposed* to live in environment variables — adapters
+    read API keys from ``os.environ``, not from ``runtime_config``. But
+    nothing in the schema enforces that, so old or hand-edited agents
+    may have a literal key sitting in ``runtime_config``. Exports are
+    portable artifacts (checked into git, shared between machines), so
+    we redact known-suspect keys before serialising.
+    """
+    redacted: dict[str, Any] = {}
+    for key, val in value.items():
+        if any(pattern in key.lower() for pattern in _SECRET_KEY_PATTERNS):
+            redacted[key] = _REDACTED_PLACEHOLDER
+        elif isinstance(val, dict):
+            redacted[key] = _scrub_secret_like_keys(val)
+        else:
+            redacted[key] = val
+    return redacted
+
+
 @router.get("")
 def list_agents(
     session: Session = Depends(get_session),
@@ -82,18 +114,16 @@ def import_agent(
             ),
         )
 
-    create_payload = AgentCreate(
-        name=payload.agent.name,
-        role=payload.agent.role,
-        runtime_id=payload.agent.runtime_id,
-        runtime_config=payload.agent.runtime_config,
-        prompt_template=payload.agent.prompt_template,
-        input_schema=payload.agent.input_schema,
-        output_schema=payload.agent.output_schema,
-        constraints=payload.agent.constraints,
-        budget_limit_usd=payload.agent.budget_limit_usd,
-        timeout_ms=payload.agent.timeout_ms,
-    )
+    # Round-trip through model_dump → model_validate so that any future
+    # field added to AgentExportPayload/AgentCreate flows automatically,
+    # rather than relying on this function to be edited in lockstep.
+    try:
+        create_payload = AgentCreate.model_validate(payload.agent.model_dump())
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(),
+        ) from exc
     return repo.create_agent(session, create_payload)
 
 
@@ -156,7 +186,11 @@ def export_agent(
     Strips per-installation fields (id, version, timestamps,
     archived_at) so the result can move between DAP installations
     or be checked into git. Secrets stay in env — adapters read API
-    keys from process env, not from the exported JSON.
+    keys from process env, not from the exported JSON. As a
+    belt-and-suspenders defence, ``runtime_config`` is also walked
+    for keys that look like credentials (``api_key``, ``token``,
+    ``secret``, ``password``, ``credential``) and their values are
+    replaced with ``<redacted>`` before serialisation.
     """
     try:
         agent = repo.get_agent(session, agent_id)
@@ -168,7 +202,7 @@ def export_agent(
             name=agent.name,
             role=agent.role,
             runtime_id=agent.runtime_id,
-            runtime_config=agent.runtime_config,
+            runtime_config=_scrub_secret_like_keys(agent.runtime_config),
             prompt_template=agent.prompt_template,
             input_schema=list(agent.input_schema),
             output_schema=list(agent.output_schema),

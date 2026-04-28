@@ -191,12 +191,17 @@ export default function AgentsPage() {
  * still authoritative for content (runtime_id, schema fields, etc.).
  */
 function isAgentExportShape(value: unknown): value is AgentExport {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "schema_version" in value &&
-    "agent" in value &&
-    typeof (value as { schema_version: unknown }).schema_version === "string" &&
-    typeof (value as { agent: unknown }).agent === "object"
-  );
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as { schema_version?: unknown; agent?: unknown };
+  if (typeof candidate.schema_version !== "string") return false;
+  if (
+    typeof candidate.agent !== "object" ||
+    candidate.agent === null ||
+    Array.isArray(candidate.agent)
+  ) {
+    return false;
+  }
+  return true;
 }

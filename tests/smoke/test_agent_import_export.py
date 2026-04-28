@@ -19,11 +19,11 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-agent-export-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
+    with tempfile.TemporaryDirectory(prefix="dap-agent-export-") as tmp:
+        config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+        app = create_app(config)
+        with TestClient(app) as c:
+            yield c
 
 
 def _agent_payload(**overrides: Any) -> dict[str, Any]:
@@ -81,6 +81,33 @@ def test_export_returns_portable_shape(client: TestClient) -> None:
 def test_export_404_unknown_agent(client: TestClient) -> None:
     response = client.get("/agents/missing-id/export")
     assert response.status_code == 404
+
+
+def test_export_redacts_secret_like_keys(client: TestClient) -> None:
+    """Belt-and-suspenders: literal credentials in runtime_config get scrubbed.
+
+    Secrets are supposed to come from env at runtime, but nothing in the
+    schema enforces it — guard against the foot-gun where someone exports
+    an agent that has a literal API key sitting in runtime_config.
+    """
+    payload = _agent_payload(
+        runtime_config={
+            "provider": "anthropic",
+            "model_id": "claude-haiku-4-5",
+            "api_key": "sk-ant-live-secret-XYZ",
+            "auth_token": "bearer-XYZ",
+            "nested": {"openai_api_key": "sk-live-secret"},
+        }
+    )
+    created = client.post("/agents", json=payload).json()
+
+    body = client.get(f"/agents/{created['id']}/export").json()
+    runtime = body["agent"]["runtime_config"]
+    assert runtime["provider"] == "anthropic"
+    assert runtime["model_id"] == "claude-haiku-4-5"
+    assert runtime["api_key"] == "<redacted>"
+    assert runtime["auth_token"] == "<redacted>"
+    assert runtime["nested"]["openai_api_key"] == "<redacted>"
 
 
 # ---------------------------------------------------------------------------
