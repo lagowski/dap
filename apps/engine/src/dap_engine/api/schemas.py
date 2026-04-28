@@ -66,6 +66,79 @@ class AgentCreate(BaseModel):
         return validate_field_list(value)
 
 
+AGENT_EXPORT_SCHEMA_VERSION = "agent-export/1"
+
+
+class AgentExportPayload(BaseModel):
+    """The portable subset of an agent — no per-installation fields.
+
+    Mirrors :class:`AgentCreate` field-by-field minus the fields the
+    server fills in (id, version, timestamps, archived_at). Reuses the
+    same ``input_schema`` / ``output_schema`` validators so an
+    exported agent that's importable here is also creatable directly
+    via ``POST /agents``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    role: str = Field(min_length=1, max_length=100)
+
+    runtime_id: str
+    runtime_config: dict[str, Any] = Field(default_factory=dict)
+    prompt_template: str
+
+    input_schema: list[str] = Field(default_factory=list)
+    output_schema: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+
+    budget_limit_usd: float | None = None
+    timeout_ms: int = Field(default=60_000, gt=0)
+
+    @field_validator("input_schema", "output_schema", mode="before")
+    @classmethod
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def _check_known_fields(cls, value: list[str]) -> list[str]:
+        return validate_field_list(value)
+
+
+class AgentExport(BaseModel):
+    """Response shape of ``GET /agents/{id}/export``.
+
+    Versioned so future format changes can be detected at import time
+    rather than silently producing odd state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = AGENT_EXPORT_SCHEMA_VERSION
+    agent: AgentExportPayload
+
+
+class AgentImportRequest(BaseModel):
+    """Body of ``POST /agents/import`` — same shape as :class:`AgentExport`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    agent: AgentExportPayload
+
+    @field_validator("schema_version")
+    @classmethod
+    def _check_schema_version(cls, value: str) -> str:
+        if value != AGENT_EXPORT_SCHEMA_VERSION:
+            msg = (
+                f"Unsupported schema_version '{value}'. This engine accepts "
+                f"'{AGENT_EXPORT_SCHEMA_VERSION}'."
+            )
+            raise ValueError(msg)
+        return value
+
+
 class AgentUpdate(BaseModel):
     """PUT /agents/{id} body — creates a new immutable version."""
 

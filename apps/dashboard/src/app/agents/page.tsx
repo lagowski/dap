@@ -1,18 +1,25 @@
 "use client";
 
+import { useRef, useState } from "react";
 import Link from "next/link";
-import { Archive, Pencil, Plus } from "lucide-react";
-import { useAgentsList, useArchiveAgent } from "@/hooks/api";
+import { useRouter } from "next/navigation";
+import { Archive, Pencil, Plus, Upload } from "lucide-react";
+import { useAgentsList, useArchiveAgent, useImportAgent } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
 
 export default function AgentsPage() {
+  const router = useRouter();
   const { data, isPending, isError, error } = useAgentsList();
   const archive = useArchiveAgent();
+  const importAgent = useImportAgent();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const handleArchive = (id: string, name: string) => {
     if (
@@ -25,21 +32,84 @@ export default function AgentsPage() {
     archive.mutate(id);
   };
 
+  const handleImportClick = () => {
+    setImportError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset the input value so picking the same file twice in a row
+    // still triggers ``change`` (otherwise the browser ignores it).
+    event.target.value = "";
+    if (!file) return;
+
+    let parsed: unknown;
+    try {
+      const text = await file.text();
+      parsed = JSON.parse(text);
+    } catch (err) {
+      setImportError(
+        `Could not read ${file.name} as JSON: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    if (!isAgentExportShape(parsed)) {
+      setImportError(
+        `${file.name} doesn't look like an agent export (expected schema_version + agent at the top level).`,
+      );
+      return;
+    }
+
+    try {
+      const created = await importAgent.mutateAsync(parsed);
+      router.push(`/agents/${created.id}`);
+    } catch (err) {
+      setImportError(formatApiError(err));
+    }
+  };
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Agents</h1>
-        <Button asChild size="sm">
-          <Link href="/agents/new">
-            <Plus className="h-4 w-4 mr-1" />
-            New agent
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleFileChange}
+            aria-hidden="true"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleImportClick}
+            disabled={importAgent.isPending}
+          >
+            <Upload className="h-4 w-4 mr-1" />
+            {importAgent.isPending ? "Importing…" : "Import JSON"}
+          </Button>
+          <Button asChild size="sm">
+            <Link href="/agents/new">
+              <Plus className="h-4 w-4 mr-1" />
+              New agent
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {archive.isError ? (
         <p className="text-sm text-destructive" role="alert">
           {formatApiError(archive.error)}
+        </p>
+      ) : null}
+
+      {importError ? (
+        <p className="text-sm text-destructive" role="alert">
+          Import failed: {importError}
         </p>
       ) : null}
 
@@ -112,4 +182,26 @@ export default function AgentsPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Cheap structural check before POSTing — keeps the engine from
+ * having to reject malformed payloads with a noisy 422 when the user
+ * picked a non-export JSON by accident. Server-side validation is
+ * still authoritative for content (runtime_id, schema fields, etc.).
+ */
+function isAgentExportShape(value: unknown): value is AgentExport {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as { schema_version?: unknown; agent?: unknown };
+  if (typeof candidate.schema_version !== "string") return false;
+  if (
+    typeof candidate.agent !== "object" ||
+    candidate.agent === null ||
+    Array.isArray(candidate.agent)
+  ) {
+    return false;
+  }
+  return true;
 }
