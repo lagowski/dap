@@ -177,6 +177,8 @@ function QuickSetup() {
 interface RuntimeInstallHint {
   install: string;
   docs?: string;
+  /** Optional caveat shown under the snippet (e.g. \"adapter is a stub\"). */
+  note?: string;
 }
 
 const RUNTIME_INSTALL: Record<string, RuntimeInstallHint | undefined> = {
@@ -192,24 +194,12 @@ const RUNTIME_INSTALL: Record<string, RuntimeInstallHint | undefined> = {
     install: "npm install -g @google/gemini-cli",
     docs: "https://github.com/google-gemini/gemini-cli",
   },
-  // ``aider`` adapter is an F0 stub — installing the binary alone
-  // doesn't make DAP usable. Add an entry here once a real adapter
-  // ships (tracked separately, no issue yet).
+  aider: {
+    install: "pip install aider-install && aider-install",
+    docs: "https://aider.chat/docs/install.html",
+    note: "Adapter is currently an F0 stub — install command works, but the runtime can't execute pipelines yet.",
+  },
 };
-
-/**
- * Heuristic: did the engine flag a *binary* as missing, or only an
- * env var? CLI adapters can land in ``available=false`` for either
- * reason; we only show the install hint when the binary itself is
- * missing — otherwise the operator just needs an API key, and the
- * existing ``missing`` list already says so.
- */
-function needsBinaryInstall(missing: string[] | null | undefined): boolean {
-  if (!missing) return false;
-  return missing.some(
-    (m) => m.toLowerCase().includes("binary") || m.includes("PATH"),
-  );
-}
 
 function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
   return (
@@ -252,13 +242,18 @@ function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
                       ))}
                     </ul>
                   ) : null}
-                  {!runtime.available &&
-                  RUNTIME_INSTALL[runtime.id] &&
-                  needsBinaryInstall(runtime.missing) ? (
+                  {/* Install hint is always shown for known CLI runtimes —
+                      it serves as a reference even when the runtime is
+                      already available, and surfaces the right command
+                      front-and-centre when it isn't. The runtime row's
+                      status icon already conveys whether install is
+                      currently required. */}
+                  {RUNTIME_INSTALL[runtime.id] ? (
                     <RuntimeInstallHint hint={RUNTIME_INSTALL[runtime.id]!} />
                   ) : null}
                   {runtime.available &&
-                  !runtime.missing?.length ? (
+                  !runtime.missing?.length &&
+                  !RUNTIME_INSTALL[runtime.id] ? (
                     <span>—</span>
                   ) : null}
                 </td>
@@ -272,19 +267,28 @@ function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
 }
 
 function RuntimeInstallHint({ hint }: { hint: RuntimeInstallHint }) {
+  // Neutral muted styling rather than amber alarm — the hint is now
+  // shown for every known CLI runtime, including ones that are
+  // already available. It's a reference, not a "you must do this"
+  // callout; the runtime's status icon conveys urgency separately.
   return (
-    <div className="rounded border border-amber-200 bg-amber-50 p-2 dark:border-amber-900/50 dark:bg-amber-950/30">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:text-amber-200">
+    <div className="rounded border bg-muted/30 p-2">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         <Terminal className="h-3 w-3" aria-hidden="true" />
-        Install
+        Install command
       </div>
       <CodeBlock code={hint.install} />
+      {hint.note ? (
+        <p className="mt-1 text-[11px] text-muted-foreground italic">
+          {hint.note}
+        </p>
+      ) : null}
       {hint.docs ? (
         <a
           href={hint.docs}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-1 inline-flex items-center gap-1 text-[11px] text-amber-800 hover:underline dark:text-amber-200"
+          className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground hover:underline"
         >
           <ExternalLink className="h-3 w-3" aria-hidden="true" />
           Docs
