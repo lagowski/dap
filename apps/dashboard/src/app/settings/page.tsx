@@ -72,7 +72,11 @@ set -a; source .env.local; set +a
 uv run dap-engine start`;
 
 function QuickSetup() {
-  const [open, setOpen] = useState(false);
+  // Default to open so the configuration help is visible on first
+  // visit — operators were missing it because the collapsed header
+  // looked like just another section title rather than a disclosure
+  // with content underneath.
+  const [open, setOpen] = useState(true);
   const contentId = useId();
   return (
     <section className="space-y-2">
