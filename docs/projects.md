@@ -43,7 +43,7 @@ A run created via `POST /projects/{id}/run/{kind}`:
    `gemini-cli`) run in the right cwd.
 5. Layers `project.env_vars` between engine env (base) and per-agent
    `runtime_config.env` (highest) — see
-   [`packages/runtimes/README.md#env-layering-v06`](../packages/runtimes/README.md).
+   [`packages/runtimes/README.md#env-layering-v06`](../packages/runtimes/README.md#env-layering-v06).
 
 ## Recommended workflow kinds
 
@@ -72,8 +72,8 @@ Minimal flow: create one pipeline, bind it to `develop`, trigger from
 the dashboard.
 
 ```bash
-# 1. Create a stub pipeline (assume agent_id and pipeline_id env vars
-#    are already set from earlier `dap` walkthroughs).
+# 1. Create a stub pipeline (assume the AGENT_ID env var is already
+#    set from earlier `dap` walkthroughs).
 PIPELINE_ID=$(curl -s -X POST http://127.0.0.1:7333/pipelines \
   -H 'Content-Type: application/json' \
   -d '{
@@ -202,14 +202,17 @@ without touching the agent definitions.
 - **Archive** (`DELETE /projects/{id}`) is soft. Existing runs keep
   their `project_id` for historical inspection. New triggers via
   `POST /projects/{id}/run/{kind}` return **409 Conflict** with
-  `Project is archived`.
+  `Project is archived: {project_id}`.
 - **Pipeline binding** is validated at write time. If you try to bind
   a non-existent or archived pipeline, the engine returns 422 with the
   offending ids listed (one for `unknown` and one for `archived`).
-- **Editing a project** (`PUT /projects/{id}`) is full-replacement —
-  every field is required. The dashboard form preserves
-  bindings + env_vars when you only edit metadata; the API does not
-  apply that courtesy automatically.
+- **Editing a project** (`PUT /projects/{id}`) should be treated as a
+  full replacement. The request schema supplies defaults for most
+  fields, so omitted values are not rejected; they may be reset to
+  defaults and overwrite the existing project state. The dashboard
+  form preserves bindings + env_vars when you only edit metadata; the
+  API does not apply that courtesy automatically, so clients should
+  send the complete project object.
 
 ## See also
 
