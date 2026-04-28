@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy } from "lucide-react";
@@ -9,6 +9,8 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm } from "@/components/agents/agent-form";
+import { TemplatePicker } from "@/components/agents/template-picker";
+import type { AgentTemplate } from "@/lib/agent-templates";
 
 export default function NewAgentPage() {
   return (
@@ -34,6 +36,27 @@ function NewAgentPageContent() {
   // and we render the empty form straight away.
   const sourceQuery = useAgent(fromId);
 
+  // Template picker state (#93). Only meaningful when not cloning —
+  // cloning + template would be confusing UX. Picker stays hidden in
+  // the clone flow.
+  const [template, setTemplate] = useState<AgentTemplate | null>(null);
+
+  // initialValues precedence: clone source > template > undefined.
+  // The form is keyed so switching template force-remounts it,
+  // letting react-hook-form pick up the new ``defaultValues``.
+  const initialValues =
+    sourceQuery.data !== undefined
+      ? cloneInitialValuesFrom(sourceQuery.data)
+      : template !== null
+        ? templateInitialValuesFrom(template)
+        : undefined;
+
+  const formKey = sourceQuery.data
+    ? `clone:${sourceQuery.data.id}`
+    : template !== null
+      ? `template:${template.id}`
+      : "scratch";
+
   return (
     <div className="p-6 space-y-4 max-w-3xl">
       <div className="flex items-center gap-2">
@@ -53,6 +76,17 @@ function NewAgentPageContent() {
         ) : null}
       </div>
 
+      {!isCloning ? (
+        <Card>
+          <CardContent className="pt-6">
+            <TemplatePicker
+              value={template?.id ?? null}
+              onChange={setTemplate}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardContent className="pt-6">
           {isCloning && sourceQuery.isPending ? (
@@ -63,11 +97,8 @@ function NewAgentPageContent() {
             <SourceArchivedError />
           ) : (
             <AgentForm
-              initialValues={
-                sourceQuery.data
-                  ? cloneInitialValuesFrom(sourceQuery.data)
-                  : undefined
-              }
+              key={formKey}
+              initialValues={initialValues}
               onSubmit={async (values) => {
                 await create.mutateAsync({
                   name: values.name,
@@ -92,7 +123,13 @@ function NewAgentPageContent() {
               }}
               isPending={create.isPending}
               submitError={create.error}
-              submitLabel={isCloning ? "Create cloned agent" : "Create agent"}
+              submitLabel={
+                isCloning
+                  ? "Create cloned agent"
+                  : template !== null
+                    ? `Create from ${template.name.split(" — ")[0]}`
+                    : "Create agent"
+              }
             />
           )}
         </CardContent>
@@ -148,5 +185,25 @@ function cloneInitialValuesFrom(source: {
     prompt_template: source.prompt_template,
     input_schema: source.input_schema,
     output_schema: source.output_schema,
+  };
+}
+
+/**
+ * Map a static template into the form's ``initialValues`` shape.
+ * The template's display name (e.g. "DeveloperJr — GLM via …")
+ * collapses to its short prefix so the agent's saved name is
+ * something the user actually wants to read in the agents list.
+ */
+function templateInitialValuesFrom(template: AgentTemplate) {
+  // "DeveloperJr — GLM via OpenAI-compat" → "DeveloperJr"
+  const displayPrefix = template.name.split(" — ")[0] ?? template.name;
+  return {
+    name: displayPrefix,
+    role: template.role,
+    runtime_id: template.runtime_id,
+    runtime_config: template.runtime_config,
+    prompt_template: template.prompt_template,
+    input_schema: [...template.input_schema],
+    output_schema: [...template.output_schema],
   };
 }
