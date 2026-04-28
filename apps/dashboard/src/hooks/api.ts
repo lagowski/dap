@@ -15,8 +15,11 @@ import type {
 
 export const queryKeys = {
   runs: ["runs"] as const,
-  runsList: (filters?: { pipelineId?: string; finalStatus?: string }) =>
-    ["runs", "list", filters ?? {}] as const,
+  runsList: (filters?: {
+    pipelineId?: string;
+    finalStatus?: string;
+    projectId?: string;
+  }) => ["runs", "list", filters ?? {}] as const,
   run: (id: string) => ["runs", id] as const,
   runState: (id: string) => ["runs", id, "state"] as const,
   runHistory: (id: string) => ["runs", id, "history"] as const,
@@ -43,6 +46,7 @@ const RUN_DETAIL_REFETCH_MS = 2_000;
 export function useRunsList(filters?: {
   pipelineId?: string;
   finalStatus?: string;
+  projectId?: string;
 }) {
   return useQuery({
     queryKey: queryKeys.runsList(filters),

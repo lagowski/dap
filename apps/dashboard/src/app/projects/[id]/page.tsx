@@ -145,18 +145,11 @@ export default function ProjectDetailPage({
 }
 
 function RecentRuns({ projectId }: { projectId: string }) {
-  const { data, isPending, isError, error } = useRunsList({
-    pipelineId: undefined,
-    finalStatus: undefined,
-  });
-  // ``useRunsList`` doesn't expose a ``project_id`` filter yet, so we
-  // filter client-side on the loaded page. Acceptable for v0.6 since
-  // the list is paginated and we only show the top N; #68 will wire
-  // server-side scoping in via #64's ``project_id`` query param.
-  const runs =
-    data?.items
-      .filter((r) => r.project_id === projectId)
-      .slice(0, RUNS_TO_SHOW) ?? [];
+  // Server-side scoped via #64's ``project_id`` query param (wired
+  // through ``useRunsList`` in #68). Caches separately from the
+  // org-wide list because the queryKey carries ``projectId``.
+  const { data, isPending, isError, error } = useRunsList({ projectId });
+  const runs = data?.items.slice(0, RUNS_TO_SHOW) ?? [];
 
   return (
     <Card>

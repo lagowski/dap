@@ -112,12 +112,19 @@ async function request<T>(
 export async function listRuns(params: {
   pipelineId?: string;
   finalStatus?: string;
+  /**
+   * Project scope (#64 / #68). Pass a project id to scope the list,
+   * the literal string ``"null"`` for ad-hoc-only (runs without
+   * project_id), or omit for org-wide.
+   */
+  projectId?: string;
   offset?: number;
   limit?: number;
 } = {}): Promise<PaginatedList<Run>> {
   const search = new URLSearchParams();
   if (params.pipelineId) search.set("pipeline_id", params.pipelineId);
   if (params.finalStatus) search.set("final_status", params.finalStatus);
+  if (params.projectId) search.set("project_id", params.projectId);
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   const qs = search.toString();

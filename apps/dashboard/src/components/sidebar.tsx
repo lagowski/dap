@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Activity, FolderKanban, GitBranch, Settings, Users, Workflow } from "lucide-react";
+import { ProjectPicker } from "@/components/project-picker";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -21,6 +22,7 @@ export function Sidebar() {
         <Workflow className="h-5 w-5" aria-hidden />
         <span className="font-semibold">DAP</span>
       </div>
+      <ProjectPicker />
       <nav className="flex-1 p-2 space-y-1">
         {NAV.map(({ href, label, icon: Icon }) => {
           const active = pathname.startsWith(href);
