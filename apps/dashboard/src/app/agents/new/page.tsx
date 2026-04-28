@@ -8,9 +8,11 @@ import { useAgent, useCreateAgent } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { AgentForm } from "@/components/agents/agent-form";
+import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
+import { AgentTestPanel } from "@/components/agents/agent-test-panel";
 import { TemplatePicker } from "@/components/agents/template-picker";
 import type { AgentTemplate } from "@/lib/agent-templates";
+import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function NewAgentPage() {
   return (
@@ -40,6 +42,11 @@ function NewAgentPageContent() {
   // cloning + template would be confusing UX. Picker stays hidden in
   // the clone flow.
   const [template, setTemplate] = useState<AgentTemplate | null>(null);
+  const [tab, setTab] = useState<"form" | "test">("form");
+  const [snapshot, setSnapshot] = useState<{
+    values: AgentFormValues;
+    valid: boolean;
+  } | null>(null);
 
   // initialValues precedence: clone source > template > undefined.
   // The form is keyed so switching template force-remounts it,
@@ -87,6 +94,35 @@ function NewAgentPageContent() {
         </Card>
       ) : null}
 
+      {!isCloning || (sourceQuery.data && sourceQuery.data.is_active) ? (
+        <div className="border-b">
+          <nav className="-mb-px flex gap-4" aria-label="Tabs">
+            <button
+              type="button"
+              onClick={() => setTab("form")}
+              className={
+                tab === "form"
+                  ? "border-b-2 border-primary px-1 pb-2 text-sm font-medium text-foreground"
+                  : "border-b-2 border-transparent px-1 pb-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+              }
+            >
+              Form
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("test")}
+              className={
+                tab === "test"
+                  ? "border-b-2 border-primary px-1 pb-2 text-sm font-medium text-foreground"
+                  : "border-b-2 border-transparent px-1 pb-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+              }
+            >
+              Test
+            </button>
+          </nav>
+        </div>
+      ) : null}
+
       <Card>
         <CardContent className="pt-6">
           {isCloning && sourceQuery.isPending ? (
@@ -96,41 +132,62 @@ function NewAgentPageContent() {
           ) : isCloning && sourceQuery.data && !sourceQuery.data.is_active ? (
             <SourceArchivedError />
           ) : (
-            <AgentForm
-              key={formKey}
-              initialValues={initialValues}
-              onSubmit={async (values) => {
-                await create.mutateAsync({
-                  name: values.name,
-                  role: values.role,
-                  runtime_id: values.runtime_id,
-                  runtime_config: values.runtime_config,
-                  prompt_template: values.prompt_template,
-                  input_schema: values.input_schema,
-                  output_schema: values.output_schema,
-                  // Carry through the fields the form doesn't surface
-                  // when cloning so the duplicate matches the source's
-                  // full config (matches user intent of "duplicate me").
-                  ...(sourceQuery.data
-                    ? {
-                        constraints: sourceQuery.data.constraints,
-                        budget_limit_usd: sourceQuery.data.budget_limit_usd,
-                        timeout_ms: sourceQuery.data.timeout_ms,
-                      }
-                    : {}),
-                });
-                router.push("/agents");
-              }}
-              isPending={create.isPending}
-              submitError={create.error}
-              submitLabel={
-                isCloning
-                  ? "Create cloned agent"
-                  : template !== null
-                    ? `Create from ${template.name.split(" — ")[0]}`
-                    : "Create agent"
-              }
-            />
+            <>
+              <div className={tab === "form" ? "block" : "hidden"}>
+                <AgentForm
+                  key={formKey}
+                  initialValues={initialValues}
+                  onValuesChange={setSnapshot}
+                  onSubmit={async (values) => {
+                    await create.mutateAsync({
+                      name: values.name,
+                      role: values.role,
+                      runtime_id: values.runtime_id,
+                      runtime_config: values.runtime_config,
+                      prompt_template: values.prompt_template,
+                      input_schema: values.input_schema,
+                      output_schema: values.output_schema,
+                      // Carry through the fields the form doesn't surface
+                      // when cloning so the duplicate matches the source's
+                      // full config (matches user intent of "duplicate me").
+                      ...(sourceQuery.data
+                        ? {
+                            constraints: sourceQuery.data.constraints,
+                            budget_limit_usd: sourceQuery.data.budget_limit_usd,
+                            timeout_ms: sourceQuery.data.timeout_ms,
+                          }
+                        : {}),
+                    });
+                    router.push("/agents");
+                  }}
+                  isPending={create.isPending}
+                  submitError={create.error}
+                  submitLabel={
+                    isCloning
+                      ? "Create cloned agent"
+                      : template !== null
+                        ? `Create from ${template.name.split(" — ")[0]}`
+                        : "Create agent"
+                  }
+                />
+              </div>
+              <div className={tab === "test" ? "block" : "hidden"}>
+                <AgentTestPanel
+                  draft={
+                    snapshot && snapshot.valid
+                      ? toNewAgentDraft(snapshot.values, sourceQuery.data ?? null)
+                      : null
+                  }
+                  draftBlockedReason={
+                    snapshot === null
+                      ? "Open the Form tab to fill in the agent first."
+                      : !snapshot.valid
+                        ? "Fix form errors before running a test."
+                        : null
+                  }
+                />
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -194,6 +251,33 @@ function cloneInitialValuesFrom(source: {
  * collapses to its short prefix so the agent's saved name is
  * something the user actually wants to read in the agents list.
  */
+/**
+ * Build the dry-run draft from live form values + the carry-through
+ * fields (constraints, budget_limit_usd, timeout_ms) that the New form
+ * doesn't surface. ``cloneSource`` supplies them when cloning; for a
+ * scratch / template-based agent we fall back to ``AgentDryRunDraft``
+ * defaults that match what AgentCreate accepts (empty constraints,
+ * no budget cap on the agent itself — engine cap still applies, see
+ * #103).
+ */
+function toNewAgentDraft(
+  values: AgentFormValues,
+  cloneSource: Agent | null,
+): AgentDryRunDraft {
+  return {
+    name: values.name,
+    role: values.role,
+    runtime_id: values.runtime_id,
+    runtime_config: values.runtime_config,
+    prompt_template: values.prompt_template,
+    input_schema: values.input_schema,
+    output_schema: values.output_schema,
+    constraints: cloneSource ? cloneSource.constraints : [],
+    budget_limit_usd: cloneSource ? cloneSource.budget_limit_usd : null,
+    timeout_ms: cloneSource ? cloneSource.timeout_ms : 60_000,
+  };
+}
+
 function templateInitialValuesFrom(template: AgentTemplate) {
   // "DeveloperJr — GLM via OpenAI-compat" → "DeveloperJr"
   const displayPrefix = template.name.split(" — ")[0] ?? template.name;

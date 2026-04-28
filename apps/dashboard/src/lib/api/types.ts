@@ -46,6 +46,74 @@ export interface AgentCreate {
   timeout_ms?: number;
 }
 
+// ---- Agent dry-run (#103 / #104) ----
+
+/**
+ * Inline agent definition used by ``POST /agents/dry-run`` when the
+ * caller hasn't persisted the agent yet (the New / dirty Edit form).
+ * Mirrors the server's ``AgentDryRunDraft`` field-by-field.
+ */
+export interface AgentDryRunDraft {
+  name: string;
+  role: string;
+  runtime_id: string;
+  runtime_config: Record<string, unknown>;
+  prompt_template: string;
+  input_schema: string[];
+  output_schema: string[];
+  constraints: string[];
+  budget_limit_usd: number | null;
+  timeout_ms: number;
+}
+
+/**
+ * Body of ``POST /agents/dry-run`` — exactly one of ``agent_id`` (saved)
+ * or ``draft`` (inline) must be set. ``context`` is the sample state
+ * the prompt template renders against.
+ */
+export interface AgentDryRunRequest {
+  agent_id?: string;
+  agent_version?: number;
+  draft?: AgentDryRunDraft;
+  context: Record<string, unknown>;
+}
+
+/**
+ * Soft check of the runtime's structured payload against the agent's
+ * declared ``output_schema``. ``checked=false`` means we couldn't run
+ * the check (no schema declared, or runtime returned plain text); a
+ * missing-fields list with ``valid=false`` is informational, not fatal.
+ */
+export interface OutputSchemaValidation {
+  valid: boolean;
+  checked: boolean;
+  missing_fields: string[];
+  extra_fields: string[];
+  note?: string | null;
+}
+
+/**
+ * Response from ``POST /agents/dry-run``. ``runtime_result`` mirrors
+ * the engine's ``RuntimeResult`` shape — kept as ``Record<string, unknown>``
+ * here because the structured payload varies per runtime.
+ */
+export interface AgentDryRunResponse {
+  rendered_xml: string;
+  prompt_warnings: string[];
+  prompt_errors: string[];
+  runtime_result: {
+    success: boolean;
+    output: string;
+    structured: Record<string, unknown> | null;
+    files_changed: string[];
+    tokens_used: number | null;
+    cost_usd: number | null;
+    duration_ms: number;
+    errors: string[];
+  };
+  output_schema_validation: OutputSchemaValidation;
+}
+
 // ---- Agent import / export (#94) ----
 
 /** Stable export schema version. Bump only when the shape changes incompatibly. */
