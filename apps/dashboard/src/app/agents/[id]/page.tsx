@@ -121,6 +121,18 @@ export default function AgentDetailPage({
         </Card>
       )}
 
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <h2 className="text-sm font-medium">Contracts</h2>
+          <FieldList label="Inputs" fields={agent.input_schema} legacyHint="legacy mode — template sees full PipelineState" />
+          <FieldList
+            label="Outputs"
+            fields={agent.output_schema}
+            legacyHint="legacy mode — engine falls back to ROLE_FIELDS for known roles"
+          />
+        </CardContent>
+      </Card>
+
       <VersionHistory
         currentVersion={agent.version}
         versions={versions.data}
@@ -222,10 +234,39 @@ function VersionRow({ version }: { version: Agent }) {
               block
             />
           )}
+          <FieldList label="Inputs" fields={version.input_schema} legacyHint="—" />
+          <FieldList label="Outputs" fields={version.output_schema} legacyHint="—" />
           <Detail label="Prompt template" value={version.prompt_template} block />
         </div>
       )}
     </li>
+  );
+}
+
+function FieldList({
+  label,
+  fields,
+  legacyHint,
+}: {
+  label: string;
+  fields: readonly string[];
+  legacyHint: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      {fields.length === 0 ? (
+        <p className="text-xs italic text-muted-foreground">{legacyHint}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {fields.map((f) => (
+            <Badge key={f} variant="outline" className="font-mono text-xs">
+              {f}
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

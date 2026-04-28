@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
+import { ROLE_DEFAULT_OUTPUT_SCHEMA } from "@/lib/pipeline-state-fields";
+import { PipelineStateFieldPicker } from "./pipeline-state-field-picker";
 import { RuntimeConfigEditor } from "./runtime-config-editor";
 import {
   defaultRuntimeConfig,
@@ -52,11 +54,14 @@ const formSchema = z.object({
 type FormShape = z.infer<typeof formSchema>;
 
 /**
- * Public form values include the typed runtime_config so callers can send
- * a complete payload to AgentCreate / AgentUpdate without rebuilding it.
+ * Public form values include the typed runtime_config + per-agent
+ * input/output contracts so callers can send a complete payload to
+ * AgentCreate / AgentUpdate without rebuilding it.
  */
 export interface AgentFormValues extends FormShape {
   runtime_config: Record<string, unknown>;
+  input_schema: string[];
+  output_schema: string[];
 }
 
 export const DEFAULT_PROMPT_TEMPLATE = `<agent_prompt version="1">
@@ -122,7 +127,33 @@ export function AgentForm({
   // ship a payload that doesn't match the textarea contents.
   const [runtimeConfigJsonValid, setRuntimeConfigJsonValid] = useState(true);
 
+  // input_schema / output_schema also sit outside the Zod schema. For new
+  // agents we seed output_schema from ROLE_DEFAULT_OUTPUT_SCHEMA — saves
+  // the user a round of clicking when the role's contract is conventional.
+  // Edit-mode pre-fills from server values; if the user changes the role
+  // we leave the picker alone (don't clobber their work).
+  const initialRole = initialValues?.role ?? ROLES[0];
+  const [inputSchema, setInputSchema] = useState<string[]>(
+    () => [...(initialValues?.input_schema ?? [])],
+  );
+  const [outputSchema, setOutputSchema] = useState<string[]>(() => {
+    if (initialValues?.output_schema !== undefined) {
+      return [...initialValues.output_schema];
+    }
+    return [...(ROLE_DEFAULT_OUTPUT_SCHEMA[initialRole] ?? [])];
+  });
+
+  // Track whether the user has ever touched the output_schema picker.
+  // If not, switching roles updates the seed; once they edit, we stop
+  // overriding their selection on role change.
+  const outputSchemaTouched = useRef(initialValues?.output_schema !== undefined);
+  const handleOutputSchemaChange = (next: string[]) => {
+    outputSchemaTouched.current = true;
+    setOutputSchema(next);
+  };
+
   const watchedRuntimeId = form.watch("runtime_id");
+  const watchedRole = form.watch("role");
 
   // When the user switches runtimes, swap to that runtime's defaults so
   // required fields aren't left blank from the previous selection.
@@ -134,6 +165,15 @@ export function AgentForm({
       setRuntimeConfigJsonValid(true);
     }
   }, [watchedRuntimeId, initialRuntimeId]);
+
+  // Mirror role → output_schema seed *until* the user edits the picker.
+  // After that, switching roles never silently overwrites their work.
+  useEffect(() => {
+    if (outputSchemaTouched.current) return;
+    if (!watchedRole) return;
+    const seed = ROLE_DEFAULT_OUTPUT_SCHEMA[watchedRole] ?? [];
+    setOutputSchema([...seed]);
+  }, [watchedRole]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     // Block submit if the runtime config is missing required fields or
@@ -148,6 +188,8 @@ export function AgentForm({
       await onSubmit({
         ...values,
         runtime_config: pruneRuntimeConfig(values.runtime_id, runtimeConfig),
+        input_schema: inputSchema,
+        output_schema: outputSchema,
       });
     } catch {
       // intentional: parent already shows the error via submitError
@@ -196,6 +238,22 @@ export function AgentForm({
           value={runtimeConfig}
           onChange={setRuntimeConfig}
           onValidityChange={setRuntimeConfigJsonValid}
+        />
+      </Field>
+
+      <Field label="Inputs">
+        <PipelineStateFieldPicker
+          value={inputSchema}
+          onChange={setInputSchema}
+          description="Fields the agent's prompt template can reference. Empty = legacy mode (template sees the full PipelineState)."
+        />
+      </Field>
+
+      <Field label="Outputs">
+        <PipelineStateFieldPicker
+          value={outputSchema}
+          onChange={handleOutputSchemaChange}
+          description="Fields the agent's response is allowed to write. Empty = legacy mode (engine falls back to ROLE_FIELDS for known roles)."
         />
       </Field>
 
