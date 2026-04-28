@@ -351,8 +351,11 @@ class AgentDryRunRequest(BaseModel):
 
     Exactly one of ``agent_id`` (saved) or ``draft`` (unsaved form) must
     be set. ``context`` is the sample state the prompt template renders
-    against — keys outside ``input_schema`` are dropped before render
-    (same projection rule as a real run).
+    against — same projection rule as a real run: when ``input_schema``
+    is non-empty, keys outside it are dropped before render so the
+    template only sees declared inputs; when ``input_schema`` is empty
+    (legacy / contract-less agents), the context is passed through
+    unchanged.
     """
 
     model_config = ConfigDict(extra="forbid")

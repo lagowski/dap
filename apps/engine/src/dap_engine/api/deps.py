@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dap_runtimes import RuntimeRegistry
 from fastapi import Request
@@ -11,6 +11,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.execution import RunRegistry
+
+if TYPE_CHECKING:
+    # Runtime cycle: dap_engine.app imports the api routers (which
+    # import this module). TYPE_CHECKING keeps the type information
+    # without the import-time edge.
+    from dap_engine.app import EngineConfig
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -48,6 +54,7 @@ def get_checkpointer(request: Request) -> BaseCheckpointSaver[Any]:
     return checkpointer
 
 
-def get_engine_config(request: Request) -> Any:
+def get_engine_config(request: Request) -> EngineConfig:
     """Return the active ``EngineConfig`` for endpoints that need its values."""
-    return request.app.state.config
+    config: EngineConfig = request.app.state.config
+    return config

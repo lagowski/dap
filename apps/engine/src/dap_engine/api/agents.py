@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
@@ -14,6 +14,12 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
+
+if TYPE_CHECKING:
+    # Runtime cycle: dap_engine.app imports this router module, so we
+    # can't import EngineConfig at runtime. The type is needed only
+    # for the dry_run endpoint signature; behaviour is unchanged.
+    from dap_engine.app import EngineConfig
 from dap_engine.api.schemas import (
     AGENT_EXPORT_SCHEMA_VERSION,
     AgentCreate,
@@ -354,7 +360,7 @@ async def dry_run_agent(
     payload: AgentDryRunRequest,
     session: Session = Depends(get_session),
     registry: RuntimeRegistry = Depends(get_registry),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
 ) -> AgentDryRunResponse:
     """Execute one agent end-to-end without persisting anything (#103).
 
@@ -389,7 +395,7 @@ async def dry_run_agent(
     # Budget cap. The lower of agent's own ``budget_limit_usd`` and the
     # engine-wide ``dry_run_budget_usd`` wins; if either declares a
     # value above the engine cap, refuse before invocation.
-    cap = float(getattr(config, "dry_run_budget_usd", 0.50))
+    cap = config.dry_run_budget_usd
     if agent_budget is not None and agent_budget > cap:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
