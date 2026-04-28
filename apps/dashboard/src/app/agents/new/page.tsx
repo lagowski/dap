@@ -33,6 +33,8 @@ export default function NewAgentPage() {
                 runtime_id: values.runtime_id,
                 runtime_config: values.runtime_config,
                 prompt_template: values.prompt_template,
+                input_schema: values.input_schema,
+                output_schema: values.output_schema,
               });
               router.push("/agents");
             }}

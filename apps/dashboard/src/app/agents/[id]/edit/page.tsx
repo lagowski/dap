@@ -60,6 +60,8 @@ export default function EditAgentPage({
               runtime_id: agent.runtime_id,
               runtime_config: agent.runtime_config,
               prompt_template: agent.prompt_template,
+              input_schema: agent.input_schema,
+              output_schema: agent.output_schema,
             }}
             // Role is immutable on the server: a different role would be a
             // different agent. Lock it to avoid silent rejection.
@@ -75,8 +77,8 @@ export default function EditAgentPage({
                   // unchanged because the form had no UI for it.)
                   runtime_config: values.runtime_config,
                   prompt_template: values.prompt_template,
-                  input_schema: agent.input_schema,
-                  output_schema: agent.output_schema,
+                  input_schema: values.input_schema,
+                  output_schema: values.output_schema,
                   constraints: agent.constraints,
                   budget_limit_usd: agent.budget_limit_usd,
                   timeout_ms: agent.timeout_ms,
