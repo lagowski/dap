@@ -255,7 +255,13 @@ export async function listProjects(params?: {
   archived?: boolean;
 }): Promise<PaginatedList<Project>> {
   const qs = new URLSearchParams();
-  if (params?.archived) qs.set("archived", "true");
+  // Always forward ``archived`` when supplied so the request matches
+  // the React Query key ``projectsList(filters)`` exactly. Skipping
+  // it when ``archived === false`` produced two cache entries (default
+  // call vs. ``{ archived: false }``) for the same server response.
+  if (params?.archived !== undefined) {
+    qs.set("archived", String(params.archived));
+  }
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return request<PaginatedList<Project>>(`/projects${suffix}`);
 }

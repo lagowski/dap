@@ -145,16 +145,14 @@ export default function ProjectDetailPage({
 }
 
 function RecentRuns({ projectId }: { projectId: string }) {
-  // Filtering is server-side via #64's project_id query param so the
-  // dashboard never has to materialise unrelated runs.
   const { data, isPending, isError, error } = useRunsList({
     pipelineId: undefined,
     finalStatus: undefined,
   });
-  // We don't have a project_id filter on useRunsList yet — falling
-  // back to client-side filter on the loaded page. Acceptable for v0.6
-  // since the list is paginated/short-circuited; #68 wires this up as
-  // the canonical scope.
+  // ``useRunsList`` doesn't expose a ``project_id`` filter yet, so we
+  // filter client-side on the loaded page. Acceptable for v0.6 since
+  // the list is paginated and we only show the top N; #68 will wire
+  // server-side scoping in via #64's ``project_id`` query param.
   const runs =
     data?.items
       .filter((r) => r.project_id === projectId)

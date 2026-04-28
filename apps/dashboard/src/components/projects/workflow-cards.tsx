@@ -161,6 +161,7 @@ function WorkflowCard({
           value={boundId}
           onChange={(e) => onBind(e.target.value || null)}
           disabled={isUpdating}
+          aria-label={`Pipeline for ${kind}`}
           className="flex h-9 rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50 min-w-[16rem]"
         >
           <option value="">— Not bound —</option>

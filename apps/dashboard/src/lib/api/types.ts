@@ -81,13 +81,21 @@ export interface ProjectCreate {
 }
 
 export interface ProjectUpdate {
+  /**
+   * PUT /projects/{id} body — full-replacement payload. The engine
+   * applies Pydantic defaults for omitted fields (description="",
+   * default_branch="main", pipelines/env_vars={}), so partial payloads
+   * silently reset stored values. Mirroring ``AgentUpdate``'s rationale:
+   * we require everything (except the path-bound id) so callers must
+   * consciously forward each field.
+   */
   name: string;
-  description?: string;
-  working_directory?: string | null;
-  repo_url?: string | null;
-  default_branch?: string;
-  pipelines?: Record<string, string>;
-  env_vars?: Record<string, string>;
+  description: string;
+  working_directory: string | null;
+  repo_url: string | null;
+  default_branch: string;
+  pipelines: Record<string, string>;
+  env_vars: Record<string, string>;
 }
 
 export interface ProjectRunRequest {
