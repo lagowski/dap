@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Check, CheckCircle2, ChevronDown, ChevronRight, Copy, ExternalLink, Terminal, XCircle } from "lucide-react";
 import { useSettings } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
@@ -8,6 +8,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { EngineInfo, ProviderStatus, RuntimeStatus } from "@/lib/api/types";
+
+/**
+ * Base URL for repo-hosted docs links. Defaults to the canonical
+ * upstream repo on ``develop``; forks and pinned-branch deployments
+ * can override via ``NEXT_PUBLIC_DAP_DOCS_URL`` so the links land
+ * on the right files for that deployment.
+ */
+const DOCS_BASE_URL =
+  process.env.NEXT_PUBLIC_DAP_DOCS_URL ??
+  "https://github.com/rafeekpro/dap/blob/develop";
 
 export default function SettingsPage() {
   const { data, isPending, isError, error } = useSettings();
@@ -63,22 +73,25 @@ uv run dap-engine start`;
 
 function QuickSetup() {
   const [open, setOpen] = useState(false);
+  const contentId = useId();
   return (
     <section className="space-y-2">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={contentId}
         className="flex w-full items-center gap-2 text-lg font-medium hover:text-foreground/80"
       >
         {open ? (
-          <ChevronDown className="h-4 w-4" />
+          <ChevronDown className="h-4 w-4" aria-hidden="true" />
         ) : (
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
         )}
         Quick setup
       </button>
       {open ? (
-        <Card>
+        <Card id={contentId}>
           <CardContent className="pt-6 space-y-4 text-sm">
             <ol className="list-decimal list-inside space-y-3">
               <li>
@@ -115,7 +128,7 @@ function QuickSetup() {
                 See{" "}
                 <a
                   className="underline hover:text-foreground"
-                  href="https://github.com/rafeekpro/dap/blob/develop/docs/projects.md"
+                  href={`${DOCS_BASE_URL}/docs/projects.md`}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -128,7 +141,7 @@ function QuickSetup() {
               Full reference:{" "}
               <a
                 className="underline hover:text-foreground"
-                href="https://github.com/rafeekpro/dap/blob/develop/docs/providers.md"
+                href={`${DOCS_BASE_URL}/docs/providers.md`}
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -137,7 +150,7 @@ function QuickSetup() {
               (per-provider setup) ·{" "}
               <a
                 className="underline hover:text-foreground"
-                href="https://github.com/rafeekpro/dap/blob/develop/packages/runtimes/README.md"
+                href={`${DOCS_BASE_URL}/packages/runtimes/README.md`}
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -175,11 +188,24 @@ const RUNTIME_INSTALL: Record<string, RuntimeInstallHint | undefined> = {
     install: "npm install -g @google/gemini-cli",
     docs: "https://github.com/google-gemini/gemini-cli",
   },
-  aider: {
-    install: "pip install aider-install && aider-install",
-    docs: "https://aider.chat/docs/install.html",
-  },
+  // ``aider`` adapter is an F0 stub — installing the binary alone
+  // doesn't make DAP usable. Add an entry here once a real adapter
+  // ships (tracked separately, no issue yet).
 };
+
+/**
+ * Heuristic: did the engine flag a *binary* as missing, or only an
+ * env var? CLI adapters can land in ``available=false`` for either
+ * reason; we only show the install hint when the binary itself is
+ * missing — otherwise the operator just needs an API key, and the
+ * existing ``missing`` list already says so.
+ */
+function needsBinaryInstall(missing: string[] | null | undefined): boolean {
+  if (!missing) return false;
+  return missing.some(
+    (m) => m.toLowerCase().includes("binary") || m.includes("PATH"),
+  );
+}
 
 function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
   return (
@@ -222,7 +248,9 @@ function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
                       ))}
                     </ul>
                   ) : null}
-                  {!runtime.available && RUNTIME_INSTALL[runtime.id] ? (
+                  {!runtime.available &&
+                  RUNTIME_INSTALL[runtime.id] &&
+                  needsBinaryInstall(runtime.missing) ? (
                     <RuntimeInstallHint hint={RUNTIME_INSTALL[runtime.id]!} />
                   ) : null}
                   {runtime.available &&
@@ -418,12 +446,33 @@ function StatusIndicator({
 
 function CodeBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
+  // Track the active "reset to Copy icon" timer so it can be cleared
+  // both when the user copies again rapidly and when the component
+  // unmounts mid-flight — avoids state-update-after-unmount warnings
+  // and the small timer leak that comes with it.
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    },
+    [],
+  );
+
   const onCopy = async () => {
     if (typeof navigator === "undefined" || !navigator.clipboard) return;
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = window.setTimeout(() => {
+        setCopied(false);
+        timeoutRef.current = null;
+      }, 1500);
     } catch {
       // Clipboard blocked — silently fail; the code is selectable anyway.
     }
