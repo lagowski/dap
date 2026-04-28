@@ -183,12 +183,16 @@ class RunCreateRequest(BaseModel):
 
     `initial_state` is a partial PipelineState dict; missing fields use defaults.
     `pipeline_version` is optional — defaults to current_version when omitted.
+    `project_id` is optional (#64) — when set, the engine validates the
+    project exists and stamps it on ``Run.project_id``. ``None`` keeps
+    the run ad-hoc, matching pre-v0.6 behaviour.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     pipeline_id: str = Field(min_length=1)
     pipeline_version: int | None = None
+    project_id: str | None = None
     initial_state: dict[str, Any] = Field(default_factory=dict)
 
 

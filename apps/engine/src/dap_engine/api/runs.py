@@ -40,7 +40,7 @@ from dap_engine.execution import (
     RunRegistry,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
+from dap_engine.persistence.models import PipelineORM, PipelineVersionORM, ProjectORM
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -68,6 +68,22 @@ async def trigger_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pipeline not found: {payload.pipeline_id}",
         )
+
+    # When a project is bound, it must exist and be active. Archived
+    # projects fail loudly here so users notice instead of getting a
+    # half-stamped run that the dashboard can't group cleanly.
+    if payload.project_id is not None:
+        project = session.get(ProjectORM, payload.project_id)
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Project not found: {payload.project_id}",
+            )
+        if project.archived_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Project is archived: {payload.project_id}",
+            )
 
     target_version = payload.pipeline_version or pipeline.current_version
     pipeline_version = session.scalar(
@@ -102,6 +118,7 @@ async def trigger_run(
         pipeline_version=target_version,
         trigger_source="api",
         initial_state=initial_state,
+        project_id=payload.project_id,
     )
     # Commit so the background task can see the row in its own session.
     session.commit()
@@ -556,13 +573,25 @@ def list_runs(
     session: Session = Depends(get_session),
     pipeline_id: str | None = Query(default=None),
     final_status: str | None = Query(default=None),
+    project_id: str | None = Query(
+        default=None,
+        description=(
+            "Filter by project: omit for all runs, supply a project id "
+            'for that project only, or pass the literal "null" to return '
+            "only ad-hoc / legacy runs without a project."
+        ),
+    ),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict[str, Any]:
+    only_unscoped = project_id == "null"
+    effective_project_id = None if only_unscoped else project_id
     items, total = repo.list_runs(
         session,
         pipeline_id=pipeline_id,
         final_status=final_status,
+        project_id=effective_project_id,
+        only_unscoped=only_unscoped,
         offset=offset,
         limit=limit,
     )

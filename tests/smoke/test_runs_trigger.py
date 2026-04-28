@@ -206,3 +206,157 @@ def test_trigger_run_specific_version(
     )
     assert response.status_code == 201
     assert response.json()["pipeline_version"] == 2
+
+
+# ---------------------------------------------------------------------------
+# project_id wiring (#64)
+# ---------------------------------------------------------------------------
+
+
+def _create_project(client: TestClient, **overrides: Any) -> str:
+    payload: dict[str, Any] = {
+        "name": "Project for run tests",
+        "working_directory": "/tmp/p",
+    }
+    payload.update(overrides)
+    response = client.post("/projects", json=payload)
+    assert response.status_code == 201
+    return str(response.json()["id"])
+
+
+def test_trigger_run_without_project_keeps_id_null(
+    client_with_stub: tuple[TestClient, RuntimeRegistry],
+) -> None:
+    client, _ = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    response = client.post(
+        "/runs",
+        json={"pipeline_id": pipeline_id, "initial_state": {}},
+    )
+    assert response.status_code == 201
+    assert response.json()["project_id"] is None
+
+
+def test_trigger_run_stamps_project_id(
+    client_with_stub: tuple[TestClient, RuntimeRegistry],
+) -> None:
+    client, _ = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(client)
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["project_id"] == project_id
+
+    # Round-trips via GET /runs/{id} too.
+    fetched = client.get(f"/runs/{body['id']}").json()
+    assert fetched["project_id"] == project_id
+
+
+def test_trigger_run_unknown_project_returns_422(
+    client_with_stub: tuple[TestClient, RuntimeRegistry],
+) -> None:
+    client, _ = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": "ghost-project",
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 422
+    assert "Project not found" in str(response.json()["detail"])
+
+
+def test_trigger_run_archived_project_returns_422(
+    client_with_stub: tuple[TestClient, RuntimeRegistry],
+) -> None:
+    client, _ = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(client)
+    archive = client.delete(f"/projects/{project_id}")
+    assert archive.status_code == 204
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 422
+    assert "archived" in str(response.json()["detail"])
+
+
+def test_list_runs_filter_by_project(
+    client_with_stub: tuple[TestClient, RuntimeRegistry],
+) -> None:
+    """Three runs across two projects + one ad-hoc; filter must scope correctly."""
+    client, _ = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+
+    project_a = _create_project(client, name="A")
+    project_b = _create_project(client, name="B")
+
+    def _fire(project_id: str | None) -> str:
+        body: dict[str, Any] = {"pipeline_id": pipeline_id, "initial_state": {}}
+        if project_id is not None:
+            body["project_id"] = project_id
+        run_id = str(client.post("/runs", json=body).json()["id"])
+        # Wait for completion before firing the next run — SQLite locks
+        # if multiple background tasks finalise concurrently with the
+        # test thread's writes.
+        _wait_for_completion(client, run_id)
+        return run_id
+
+    run_a1 = _fire(project_a)
+    run_a2 = _fire(project_a)
+    run_b1 = _fire(project_b)
+    run_adhoc = _fire(None)
+
+    # No filter → all four
+    listing = client.get("/runs").json()
+    ids = {r["id"] for r in listing["items"]}
+    assert {run_a1, run_a2, run_b1, run_adhoc}.issubset(ids)
+
+    # Specific project A → only its runs
+    listing_a = client.get(f"/runs?project_id={project_a}").json()
+    ids_a = {r["id"] for r in listing_a["items"]}
+    assert ids_a == {run_a1, run_a2}
+    assert listing_a["total"] == 2
+
+    # Specific project B → only its runs
+    listing_b = client.get(f"/runs?project_id={project_b}").json()
+    ids_b = {r["id"] for r in listing_b["items"]}
+    assert ids_b == {run_b1}
+
+    # Literal "null" → only ad-hoc runs
+    listing_null = client.get("/runs?project_id=null").json()
+    ids_null = {r["id"] for r in listing_null["items"]}
+    assert ids_null == {run_adhoc}
+    assert listing_null["total"] == 1
+
+
+def test_list_runs_unknown_project_returns_empty(
+    client_with_stub: tuple[TestClient, RuntimeRegistry],
+) -> None:
+    """Filtering by an unknown project_id is harmless — returns empty page."""
+    client, _ = client_with_stub
+    listing = client.get("/runs?project_id=does-not-exist").json()
+    assert listing["items"] == []
+    assert listing["total"] == 0
