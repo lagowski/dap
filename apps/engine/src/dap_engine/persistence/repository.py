@@ -501,16 +501,24 @@ def _validate_pipeline_bindings(
     session: Session,
     bindings: dict[str, str],
 ) -> None:
-    """Reject bindings that reference unknown or archived pipelines.
+    """Reject bindings that reference unknown / archived / blank pipelines.
 
     Caller maps the resulting ``ValueError`` to a 422 — this is a
     user-fixable input problem, not a programmer error.
+
+    Blank pipeline ids should already be rejected by the API request
+    schema (``ProjectCreate`` / ``ProjectUpdate``); we re-check here so
+    internal callers (or future schemas that bypass the validator)
+    still fail loudly instead of silently persisting an invalid state.
     """
     if not bindings:
         return
-    bound_ids = sorted({pid for pid in bindings.values() if pid})
-    if not bound_ids:
-        return
+    blank_kinds = sorted({k for k, v in bindings.items() if not v or not v.strip()})
+    if blank_kinds:
+        msg = f"blank pipeline id for kind(s): {', '.join(blank_kinds)}"
+        raise ValueError(msg)
+
+    bound_ids = sorted(set(bindings.values()))
     found = session.scalars(
         select(PipelineORM).where(PipelineORM.id.in_(bound_ids)),
     ).all()

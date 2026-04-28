@@ -157,10 +157,10 @@ class PipelineVersionORM(Base):
 class ProjectORM(Base):
     """A project: working directory + binding of workflow kinds to pipelines.
 
-    Single immutable table — projects aren't versioned (only agents and
-    pipelines are). Bindings live in the JSON ``pipelines`` column;
-    layered env vars in ``env_vars``. Both validated at write time by
-    ``repo.create_project`` / ``update_project``.
+    Single unversioned table — each project has one current-state row that
+    is updated in place (only agents and pipelines are versioned). Bindings
+    live in the JSON ``pipelines`` column; layered env vars in ``env_vars``.
+    Both validated at write time by ``repo.create_project`` / ``update_project``.
     """
 
     __tablename__ = "projects"

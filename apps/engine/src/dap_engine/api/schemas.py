@@ -12,6 +12,30 @@ from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _validate_pipeline_bindings_dict(value: dict[str, str]) -> dict[str, str]:
+    """Reject blank workflow kinds and blank pipeline ids in a binding dict.
+
+    Empty/whitespace strings on either side of the binding lead to
+    invalid project state that fails later when triggering a run —
+    fail fast at request time with a clear 422 instead.
+    """
+    blank_kinds = sorted({k for k in value if not k.strip()})
+    if blank_kinds:
+        msg = (
+            "pipelines: workflow kind keys must be non-blank "
+            f"(got {len(blank_kinds)} blank entries)"
+        )
+        raise ValueError(msg)
+    blank_ids = sorted({k for k, v in value.items() if not v.strip()})
+    if blank_ids:
+        msg = (
+            "pipelines: pipeline ids must be non-blank — blank values "
+            f"for kind(s): {', '.join(blank_ids)}"
+        )
+        raise ValueError(msg)
+    return value
+
+
 class AgentCreate(BaseModel):
     """POST /agents body — server generates id, version=1, timestamps."""
 
@@ -90,6 +114,11 @@ class ProjectCreate(BaseModel):
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("pipelines")
+    @classmethod
+    def _check_pipeline_bindings(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_pipeline_bindings_dict(value)
+
 
 class ProjectUpdate(BaseModel):
     """PUT /projects/{id} body — full replacement (no versioning for projects).
@@ -108,6 +137,11 @@ class ProjectUpdate(BaseModel):
 
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("pipelines")
+    @classmethod
+    def _check_pipeline_bindings(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_pipeline_bindings_dict(value)
 
 
 class PipelineCreate(BaseModel):

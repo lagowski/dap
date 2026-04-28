@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 RECOMMENDED_PIPELINE_KINDS: Final = (
     "configure",
@@ -52,17 +52,23 @@ class Project(BaseModel):
     pipelines: dict[str, str] = Field(default_factory=dict)
 
     # Project-scoped env vars layered onto subprocess environments via
-    # the bash / cli runtimes. Per-agent ``runtime_config.env`` still
-    # wins; engine process env still wins over both. Secrets should
-    # stay in engine env — these are convenience for non-sensitive
-    # values like ``WORKSPACE_NAME`` or feature flags.
+    # the bash / cli runtimes. Engine process env provides the base
+    # layer, project ``env_vars`` override that, and per-agent
+    # ``runtime_config.env`` wins over both. Secrets should stay in
+    # engine env — these are convenience for non-sensitive values
+    # like ``WORKSPACE_NAME`` or feature flags.
     env_vars: dict[str, str] = Field(default_factory=dict)
 
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_active(self) -> bool:
-        """Convenience for the dashboard — soft-delete via ``archived_at``."""
+        """Soft-delete flag — ``archived_at is None``.
+
+        Exposed as a ``computed_field`` so it round-trips through
+        ``model_dump`` / FastAPI responses for the dashboard.
+        """
         return self.archived_at is None

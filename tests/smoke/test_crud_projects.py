@@ -90,6 +90,8 @@ def test_create_project_returns_201(client: TestClient) -> None:
     assert body["env_vars"] == {"WORKSPACE_NAME": "demo"}
     assert body.get("id")
     assert body["archived_at"] is None
+    # is_active is a computed field — must round-trip through the API.
+    assert body["is_active"] is True
     assert "created_at" in body
     assert "updated_at" in body
 
@@ -154,6 +156,28 @@ def test_create_project_rejects_extra_field(client: TestClient) -> None:
 def test_create_project_rejects_blank_name(client: TestClient) -> None:
     response = client.post("/projects", json=_project_payload(name=""))
     assert response.status_code == 422
+
+
+def test_create_project_rejects_blank_pipeline_id(client: TestClient) -> None:
+    """Empty/whitespace pipeline id → 422 at request validation."""
+    for bad in ("", "   "):
+        response = client.post(
+            "/projects",
+            json=_project_payload(pipelines={"develop": bad}),
+        )
+        assert response.status_code == 422
+        detail = str(response.json()["detail"])
+        assert "develop" in detail
+        assert "non-blank" in detail
+
+
+def test_create_project_rejects_blank_kind(client: TestClient) -> None:
+    response = client.post(
+        "/projects",
+        json=_project_payload(pipelines={"   ": "anything"}),
+    )
+    assert response.status_code == 422
+    assert "non-blank" in str(response.json()["detail"])
 
 
 # --------------------------------------------------------------------------
@@ -254,11 +278,13 @@ def test_archive_project_returns_204_and_hides_from_default_list(
     listing = client.get("/projects").json()
     assert all(p["id"] != project_id for p in listing["items"])
 
-    # archived=true includes it, with archived_at populated
+    # archived=true includes it, with archived_at populated and
+    # is_active=False (computed field round-trips through serialization)
     archived_listing = client.get("/projects?archived=true").json()
     matched = [p for p in archived_listing["items"] if p["id"] == project_id]
     assert len(matched) == 1
     assert matched[0]["archived_at"] is not None
+    assert matched[0]["is_active"] is False
 
 
 def test_archive_project_404(client: TestClient) -> None:
