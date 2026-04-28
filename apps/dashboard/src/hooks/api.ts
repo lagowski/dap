@@ -15,8 +15,11 @@ import type {
 
 export const queryKeys = {
   runs: ["runs"] as const,
-  runsList: (filters?: { pipelineId?: string; finalStatus?: string }) =>
-    ["runs", "list", filters ?? {}] as const,
+  runsList: (filters?: {
+    pipelineId?: string;
+    finalStatus?: string;
+    projectId?: string;
+  }) => ["runs", "list", filters ?? {}] as const,
   run: (id: string) => ["runs", id] as const,
   runState: (id: string) => ["runs", id, "state"] as const,
   runHistory: (id: string) => ["runs", id, "history"] as const,
@@ -40,13 +43,18 @@ export const queryKeys = {
 const RUNS_LIST_REFETCH_MS = 2_000;
 const RUN_DETAIL_REFETCH_MS = 2_000;
 
-export function useRunsList(filters?: {
-  pipelineId?: string;
-  finalStatus?: string;
-}) {
+export function useRunsList(
+  filters?: {
+    pipelineId?: string;
+    finalStatus?: string;
+    projectId?: string;
+  },
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: queryKeys.runsList(filters),
     queryFn: () => api.listRuns(filters),
+    enabled: options?.enabled ?? true,
     refetchInterval: (query) => {
       // Stop polling when there are no running runs
       const data = query.state.data;

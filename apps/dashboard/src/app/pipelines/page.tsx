@@ -1,8 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { Play, Plus } from "lucide-react";
-import { usePipelinesList } from "@/hooks/api";
+import { usePipelinesList, useProject } from "@/hooks/api";
+import { useActiveProject } from "@/lib/active-project";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,11 +14,36 @@ const ID_PREFIX = 8;
 
 export default function PipelinesPage() {
   const { data, isPending, isError, error } = usePipelinesList();
+  const { activeProjectId } = useActiveProject();
+  const { data: activeProject } = useProject(activeProjectId);
+
+  // Map pipeline_id → list of workflow kinds it's bound to in the
+  // active project. List, not single value, because the same pipeline
+  // could legitimately be bound to multiple kinds (e.g. the same
+  // tests pipeline for both ``verify`` and ``release``).
+  const boundKindsByPipeline = useMemo<Map<string, string[]>>(() => {
+    const out = new Map<string, string[]>();
+    if (activeProject) {
+      for (const [kind, pipelineId] of Object.entries(activeProject.pipelines)) {
+        const existing = out.get(pipelineId) ?? [];
+        existing.push(kind);
+        out.set(pipelineId, existing);
+      }
+    }
+    return out;
+  }, [activeProject]);
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Pipelines</h1>
+        <div className="flex items-baseline gap-2">
+          <h1 className="text-2xl font-semibold">Pipelines</h1>
+          {activeProjectId !== null && activeProject ? (
+            <span className="text-xs text-muted-foreground">
+              highlighting bindings in <strong>{activeProject.name}</strong>
+            </span>
+          ) : null}
+        </div>
         <Button asChild size="sm">
           <Link href="/pipelines/new">
             <Plus className="h-4 w-4 mr-1" />
@@ -54,12 +81,27 @@ export default function PipelinesPage() {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((pipeline) => (
+              {data.items.map((pipeline) => {
+                const boundKinds = boundKindsByPipeline.get(pipeline.id) ?? [];
+                return (
                 <tr
                   key={pipeline.id}
                   className="border-b last:border-0 hover:bg-muted/30"
                 >
-                  <td className="px-4 py-3 font-medium">{pipeline.name}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>{pipeline.name}</span>
+                      {boundKinds.map((kind) => (
+                        <Badge
+                          key={kind}
+                          variant="info"
+                          className="font-mono text-[10px]"
+                        >
+                          {kind}
+                        </Badge>
+                      ))}
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground text-xs max-w-md truncate">
                     {pipeline.description || "—"}
                   </td>
@@ -88,7 +130,8 @@ export default function PipelinesPage() {
                     </Button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </Card>

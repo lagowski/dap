@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRunsList } from "@/hooks/api";
+import { useProject, useRunsList } from "@/hooks/api";
+import { useActiveProject } from "@/lib/active-project";
 import { RunStatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import type { Run } from "@/lib/api/types";
@@ -10,12 +12,28 @@ import type { Run } from "@/lib/api/types";
 const RUN_ID_PREFIX_LENGTH = 8;
 
 export default function RunsPage() {
-  const { data, isPending, isError, error, isFetching } = useRunsList();
+  const { activeProjectId, isHydrated } = useActiveProject();
+  const { data: activeProject } = useProject(activeProjectId);
+  // Gate the request on hydration so we don't fire an org-wide query
+  // first and then immediately re-fire a scoped one when the
+  // persisted activeProjectId comes in. Until hydration ``isPending``
+  // stays true and the page renders the existing "Loading…" state.
+  const { data, isPending, isError, error, isFetching } = useRunsList(
+    activeProjectId !== null ? { projectId: activeProjectId } : undefined,
+    { enabled: isHydrated },
+  );
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Runs</h1>
+        <div className="flex items-baseline gap-2">
+          <h1 className="text-2xl font-semibold">Runs</h1>
+          {activeProjectId !== null ? (
+            <Badge variant="secondary" className="font-normal">
+              {activeProject?.name ?? "scoped"}
+            </Badge>
+          ) : null}
+        </div>
         <p className="text-sm text-muted-foreground">
           {isFetching ? "Refreshing…" : data ? `${data.total} total` : null}
         </p>
