@@ -6,11 +6,12 @@
  * matches the source — group headings track the section comments in the
  * Pydantic model.
  *
- * Kept in sync with the engine manually until #50 lands a catalogue
- * endpoint that exposes the schema at runtime. If the backend gains or
- * renames a field, update this file too — the engine's
- * `validate_field_list` validator is the source of truth and will reject
- * an outdated picker selection with a 422.
+ * Kept in sync with the engine manually for now — there's no catalogue
+ * endpoint exposing the schema at runtime yet. If the backend gains or
+ * renames a field, update this file too. The engine's `validate_field_list`
+ * validator is the source of truth and will reject an outdated picker
+ * selection with a 422 — see ``<PipelineStateFieldPicker>`` for the
+ * stale-mirror fallback that keeps existing selections editable.
  */
 
 export type PipelineStateGroup =
@@ -45,7 +46,7 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     name: "run_id",
     type: "str",
     group: "Metadata / control",
-    description: "Unique id for this run. Required — supplied via initial_state.",
+    description: "Unique id for this run. Engine-assigned during run creation.",
     required: true,
   },
   {
@@ -114,7 +115,7 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     name: "attempt",
     type: "int",
     group: "Execution loop",
-    description: "Current retry counter (1-based at first attempt).",
+    description: "Current retry counter (0-based; defaults to 0 before the first retry attempt).",
   },
   {
     name: "tests_passed",

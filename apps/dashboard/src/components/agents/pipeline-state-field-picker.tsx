@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import {
   PIPELINE_STATE_FIELDS,
   PIPELINE_STATE_GROUPS,
+  isPipelineStateField,
   type PipelineStateField,
   type PipelineStateGroup,
 } from "@/lib/pipeline-state-fields";
@@ -42,7 +43,21 @@ export function PipelineStateFieldPicker({
   const selected = useMemo(() => new Set(value), [value]);
 
   const grouped = useMemo(() => groupAndFilter(query), [query]);
-  const visibleCount = grouped.reduce((n, g) => n + g.fields.length, 0);
+  // Selected field names that aren't in the static mirror — typically
+  // means the backend has been updated with new PipelineState fields and
+  // an existing agent uses one we don't know about yet. Surface them so
+  // the user can still see + un-select them; they wouldn't show up in
+  // the regular groups otherwise (and "Clear" is the wrong tool — it
+  // wipes everything).
+  const unknownSelected = useMemo(
+    () =>
+      value
+        .filter((name) => !isPipelineStateField(name))
+        .filter((name) => matchesQuery(name, query)),
+    [value, query],
+  );
+  const visibleCount =
+    grouped.reduce((n, g) => n + g.fields.length, 0) + unknownSelected.length;
 
   const toggle = (name: string) => {
     if (disabled) return;
@@ -94,24 +109,46 @@ export function PipelineStateFieldPicker({
               No fields match &quot;{query}&quot;.
             </div>
           ) : (
-            grouped.map((group) => (
-              <div key={group.group} className="border-b last:border-b-0">
-                <div className="bg-muted/40 px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {group.group}
+            <>
+              {unknownSelected.length > 0 ? (
+                <div className="border-b last:border-b-0">
+                  <div className="flex items-baseline justify-between bg-amber-50 px-3 py-1 text-xs font-medium uppercase tracking-wide text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                    <span>Unknown / not in current schema</span>
+                    <span className="text-[10px] normal-case">
+                      possibly a newer engine field — frontend may be out of date
+                    </span>
+                  </div>
+                  <ul>
+                    {unknownSelected.map((name) => (
+                      <UnknownFieldRow
+                        key={name}
+                        name={name}
+                        onRemove={() => toggle(name)}
+                        disabled={disabled}
+                      />
+                    ))}
+                  </ul>
                 </div>
-                <ul>
-                  {group.fields.map((field) => (
-                    <FieldRow
-                      key={field.name}
-                      field={field}
-                      checked={selected.has(field.name)}
-                      onToggle={() => toggle(field.name)}
-                      disabled={disabled}
-                    />
-                  ))}
-                </ul>
-              </div>
-            ))
+              ) : null}
+              {grouped.map((group) => (
+                <div key={group.group} className="border-b last:border-b-0">
+                  <div className="bg-muted/40 px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {group.group}
+                  </div>
+                  <ul>
+                    {group.fields.map((field) => (
+                      <FieldRow
+                        key={field.name}
+                        field={field}
+                        checked={selected.has(field.name)}
+                        onToggle={() => toggle(field.name)}
+                        disabled={disabled}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </>
           )}
         </div>
       </div>
@@ -161,9 +198,55 @@ function FieldRow({ field, checked, onToggle, disabled }: FieldRowProps) {
   );
 }
 
+function UnknownFieldRow({
+  name,
+  onRemove,
+  disabled,
+}: {
+  name: string;
+  onRemove: () => void;
+  disabled: boolean;
+}) {
+  const id = useId();
+  return (
+    <li className="border-b last:border-b-0">
+      <label
+        htmlFor={id}
+        className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-accent/30 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+      >
+        <input
+          id={id}
+          type="checkbox"
+          checked
+          onChange={onRemove}
+          disabled={disabled}
+          className="mt-1 h-4 w-4 rounded border-input"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="font-mono text-sm">{name}</span>
+            <span className="text-[10px] font-medium uppercase text-amber-700 dark:text-amber-400">
+              unknown
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Selected but not in this dashboard&apos;s field list. Untick to
+            remove from the agent&apos;s schema.
+          </p>
+        </div>
+      </label>
+    </li>
+  );
+}
+
 interface GroupedFields {
   group: PipelineStateGroup;
   fields: PipelineStateField[];
+}
+
+function matchesQuery(haystack: string, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  return needle === "" || haystack.toLowerCase().includes(needle);
 }
 
 function groupAndFilter(query: string): GroupedFields[] {
