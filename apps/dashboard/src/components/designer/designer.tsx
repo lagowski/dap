@@ -19,7 +19,13 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { useAgentsList, useCreatePipeline, useUpdatePipeline, useValidatePipeline } from "@/hooks/api";
+import {
+  annotationTooltip,
+  computeEdgeAnnotation,
+  formatEdgeLabel,
+} from "@/lib/edge-annotations";
 import type {
+  Agent,
   EdgeCondition,
   Pipeline,
   PipelineEdge,
@@ -37,6 +43,10 @@ import {
   type PipelineFormPayload,
 } from "./types";
 
+const EDGE_WARNING_STROKE = "#dc2626"; // red-600
+const EDGE_CONDITION_STROKE = "#3b82f6"; // blue-500
+const EDGE_DEFAULT_STROKE = "#94a3b8"; // slate-400
+
 interface PipelineDesignerProps {
   initialPipeline: Pipeline | null;
 }
@@ -46,7 +56,12 @@ const NEW_NODE_OFFSET = 80;
 export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
   const router = useRouter();
   const { data: agentsData } = useAgentsList();
-  const agents = agentsData?.items ?? [];
+  // Stable reference so memos that depend on `agents` don't re-run when
+  // useAgentsList re-renders without a real data change.
+  const agents = useMemo<Agent[]>(
+    () => agentsData?.items ?? [],
+    [agentsData?.items],
+  );
 
   const [name, setName] = useState(initialPipeline?.name ?? "");
   const [description, setDescription] = useState(initialPipeline?.description ?? "");
@@ -247,10 +262,62 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
     }
   }, [buildPayload, initialPipeline, create, update, router]);
 
+  // Decorate React Flow edges with field annotations (#62). Memoised on
+  // every shape that affects what the chip should say — node→agent
+  // mapping, the agents list itself (legacy schemas → empty chip), and
+  // the per-edge condition state. Original ``edges`` stays the source
+  // of truth; we only rewrite cosmetic props (label / style / data).
+  const annotatedEdges = useMemo<Edge[]>(() => {
+    const agentsById = new Map<string, Agent>(agents.map((a) => [a.id, a]));
+    const agentForReactFlowNode = (nodeId: string): Agent | undefined => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node === undefined) return undefined;
+      const agentId = String((node.data as { agentId?: string })?.agentId ?? "");
+      return agentsById.get(agentId);
+    };
+    return edges.map((e) => {
+      const annotation = computeEdgeAnnotation(
+        agentForReactFlowNode(e.source),
+        agentForReactFlowNode(e.target),
+      );
+      const meta = edgeMeta[e.id];
+      const hasCondition = meta?.condition != null;
+      const userLabel = meta?.label?.trim() ?? "";
+      const annotationLabel = formatEdgeLabel(annotation, hasCondition);
+      // User-set edge label takes priority — they wrote it deliberately.
+      // When unset we fall back to the auto annotation chip.
+      const label = userLabel.length > 0 ? userLabel : annotationLabel;
+      const stroke = annotation.warning
+        ? EDGE_WARNING_STROKE
+        : hasCondition
+          ? EDGE_CONDITION_STROKE
+          : EDGE_DEFAULT_STROKE;
+      return {
+        ...e,
+        label,
+        labelStyle: annotation.warning
+          ? { fill: EDGE_WARNING_STROKE, fontWeight: 600 }
+          : undefined,
+        labelBgStyle: annotation.warning ? { fill: "#fee2e2" } : undefined,
+        animated: hasCondition,
+        style: { stroke, strokeWidth: annotation.warning ? 2 : 1 },
+        data: {
+          ...(e.data as object | undefined),
+          tooltip: annotationTooltip(annotation),
+          annotation,
+        },
+      };
+    });
+  }, [edges, nodes, agents, edgeMeta]);
+
   // Compute current selection details for inspector
   const selectionDetail = useMemo<
     | { kind: "node"; node: DesignerNode }
-    | { kind: "edge"; edge: DesignerEdge }
+    | {
+        kind: "edge";
+        edge: DesignerEdge;
+        annotation: ReturnType<typeof computeEdgeAnnotation>;
+      }
     | { kind: "none" }
   >(() => {
     if (selection.kind === "node") {
@@ -274,10 +341,24 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         condition: meta?.condition ?? null,
         label: meta?.label ?? null,
       };
-      return { kind: "edge", edge };
+      // Re-derive the annotation here so the inspector can show the
+      // full field list (the chip on the edge collapses to "{n fields}"
+      // when there are more than 2).
+      const agentsById = new Map<string, Agent>(agents.map((a) => [a.id, a]));
+      const agentForId = (nodeId: string): Agent | undefined => {
+        const node = nodes.find((x) => x.id === nodeId);
+        if (node === undefined) return undefined;
+        const aid = String((node.data as { agentId?: string })?.agentId ?? "");
+        return agentsById.get(aid);
+      };
+      const annotation = computeEdgeAnnotation(
+        agentForId(e.source),
+        agentForId(e.target),
+      );
+      return { kind: "edge", edge, annotation };
     }
     return { kind: "none" };
-  }, [selection, nodes, edges, edgeMeta]);
+  }, [selection, nodes, edges, edgeMeta, agents]);
 
   const isSaving = create.isPending || update.isPending;
   const saveLabel = initialPipeline ? `Save v${initialPipeline.version + 1}` : "Save";
@@ -307,7 +388,7 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         <div className="flex-1 bg-muted/30">
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={annotatedEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

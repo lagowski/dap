@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Pause, Play, Square } from "lucide-react";
 import {
   useAbortRun,
+  useAgentsList,
   usePauseRun,
   useResumeRun,
   useRun,
@@ -27,6 +28,9 @@ export default function RunDetailPage({
   const { id } = use(params);
   const { data: run, isPending, isError, error } = useRun(id);
   const { data: pipeline } = usePipeline(run?.pipeline_id ?? null);
+  // Agents drive the per-edge field-flow chips on the graph (#62).
+  // We don't gate the page on it — graph still renders without chips.
+  const { data: agentsData } = useAgentsList();
 
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
@@ -83,6 +87,7 @@ export default function RunDetailPage({
       {pipeline ? (
         <PipelineGraph
           pipeline={pipeline}
+          agents={agentsData?.items}
           nodeStatuses={run.node_statuses}
           currentNode={run.current_node}
           onNodeClick={(nodeId) => setSelectedNode(nodeId)}
