@@ -242,18 +242,15 @@ function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
                       ))}
                     </ul>
                   ) : null}
-                  {/* Install hint is always shown for known CLI runtimes —
-                      it serves as a reference even when the runtime is
-                      already available, and surfaces the right command
-                      front-and-centre when it isn't. The runtime row's
-                      status icon already conveys whether install is
-                      currently required. */}
-                  {RUNTIME_INSTALL[runtime.id] ? (
+                  {/* Install hint only when the runtime isn't already
+                      available — for installed/working runtimes the
+                      command is noise. Status icon + missing list
+                      cover the unavailable case; this is the
+                      reference for "what do I run to fix it". */}
+                  {!runtime.available && RUNTIME_INSTALL[runtime.id] ? (
                     <RuntimeInstallHint hint={RUNTIME_INSTALL[runtime.id]!} />
                   ) : null}
-                  {runtime.available &&
-                  !runtime.missing?.length &&
-                  !RUNTIME_INSTALL[runtime.id] ? (
+                  {runtime.available && !runtime.missing?.length ? (
                     <span>—</span>
                   ) : null}
                 </td>
@@ -267,10 +264,9 @@ function RuntimesSection({ runtimes }: { runtimes: RuntimeStatus[] }) {
 }
 
 function RuntimeInstallHint({ hint }: { hint: RuntimeInstallHint }) {
-  // Neutral muted styling rather than amber alarm — the hint is now
-  // shown for every known CLI runtime, including ones that are
-  // already available. It's a reference, not a "you must do this"
-  // callout; the runtime's status icon conveys urgency separately.
+  // Neutral muted styling rather than amber alarm — the row's status
+  // icon already says "unavailable" (callers gate render on that), so
+  // this block is just the reference command, not a fresh callout.
   return (
     <div className="rounded border bg-muted/30 p-2">
       <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
