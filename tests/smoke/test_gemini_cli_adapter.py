@@ -39,23 +39,6 @@ def with_api_key() -> Iterator[None]:
             os.environ["GOOGLE_API_KEY"] = saved_google
 
 
-@pytest.fixture
-def with_google_api_key() -> Iterator[None]:
-    """Set GOOGLE_API_KEY only — verify the fallback env var works."""
-    saved_gemini = os.environ.pop("GEMINI_API_KEY", None)
-    saved_google = os.environ.get("GOOGLE_API_KEY")
-    os.environ["GOOGLE_API_KEY"] = "google-test-fake"
-    try:
-        yield
-    finally:
-        if saved_gemini is not None:
-            os.environ["GEMINI_API_KEY"] = saved_gemini
-        if saved_google is None:
-            os.environ.pop("GOOGLE_API_KEY", None)
-        else:
-            os.environ["GOOGLE_API_KEY"] = saved_google
-
-
 def _task(
     *,
     model_id: str = "gemini-3.0-pro",
@@ -135,34 +118,26 @@ async def test_healthcheck_missing_binary(with_api_key: None) -> None:
     assert any("gemini" in m for m in (health.missing or []))
 
 
-async def test_healthcheck_missing_api_keys() -> None:
+async def test_healthcheck_available_without_api_keys() -> None:
+    """Probe must succeed when the binary exists but no env key is set —
+    Gemini CLI can use a stored OAuth session (Gemini Advanced)."""
     saved_gemini = os.environ.pop("GEMINI_API_KEY", None)
     saved_google = os.environ.pop("GOOGLE_API_KEY", None)
     try:
         adapter = GeminiCliAdapter()
-        with patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"):
+        proc = _build_subprocess_mock(stdout=b"gemini 0.10.0\n")
+        with (
+            patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
+            patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+        ):
             health = await adapter.healthcheck()
-        assert health.available is False
-        assert health.missing is not None
-        assert any("GEMINI_API_KEY" in m for m in health.missing)
+        assert health.available is True
+        assert health.version is not None
     finally:
         if saved_gemini is not None:
             os.environ["GEMINI_API_KEY"] = saved_gemini
         if saved_google is not None:
             os.environ["GOOGLE_API_KEY"] = saved_google
-
-
-async def test_healthcheck_accepts_google_api_key_fallback(
-    with_google_api_key: None,
-) -> None:
-    adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=b"gemini 0.10.0\n")
-    with (
-        patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
-        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
-    ):
-        health = await adapter.healthcheck()
-    assert health.available is True
 
 
 async def test_healthcheck_available(with_api_key: None) -> None:
@@ -189,21 +164,6 @@ async def test_missing_model_id_returns_error(with_api_key: None) -> None:
     result = await adapter.execute(task)
     assert result.success is False
     assert any("model_id" in e for e in result.errors)
-
-
-async def test_missing_api_key_returns_error() -> None:
-    saved_gemini = os.environ.pop("GEMINI_API_KEY", None)
-    saved_google = os.environ.pop("GOOGLE_API_KEY", None)
-    try:
-        adapter = GeminiCliAdapter()
-        result = await adapter.execute(_task())
-        assert result.success is False
-        assert any("GEMINI_API_KEY" in e for e in result.errors)
-    finally:
-        if saved_gemini is not None:
-            os.environ["GEMINI_API_KEY"] = saved_gemini
-        if saved_google is not None:
-            os.environ["GOOGLE_API_KEY"] = saved_google
 
 
 async def test_invalid_thinking_budget_returns_error(with_api_key: None) -> None:

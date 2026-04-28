@@ -128,15 +128,20 @@ async def test_healthcheck_missing_binary(with_api_key: None) -> None:
     assert any("claude" in m for m in health.missing)
 
 
-async def test_healthcheck_missing_api_key() -> None:
+async def test_healthcheck_available_without_api_key() -> None:
+    """Probe must succeed when the binary exists but no env key is set —
+    Claude Code can use a stored OAuth session (Pro/Max plans)."""
     saved = os.environ.pop("ANTHROPIC_API_KEY", None)
     try:
         adapter = ClaudeCodeAdapter()
-        with patch(_WHICH_PATH, return_value="/usr/local/bin/claude"):
+        proc = _build_subprocess_mock(stdout=b"claude 1.0.45\n")
+        with (
+            patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+            patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+        ):
             health = await adapter.healthcheck()
-        assert health.available is False
-        assert health.missing is not None
-        assert any("ANTHROPIC_API_KEY" in m for m in health.missing)
+        assert health.available is True
+        assert health.version is not None
     finally:
         if saved is not None:
             os.environ["ANTHROPIC_API_KEY"] = saved
@@ -167,18 +172,6 @@ async def test_missing_model_id_returns_error(with_api_key: None) -> None:
     result = await adapter.execute(task)
     assert result.success is False
     assert any("model_id" in e for e in result.errors)
-
-
-async def test_missing_api_key_returns_error() -> None:
-    saved = os.environ.pop("ANTHROPIC_API_KEY", None)
-    try:
-        adapter = ClaudeCodeAdapter()
-        result = await adapter.execute(_task())
-        assert result.success is False
-        assert any("ANTHROPIC_API_KEY" in e for e in result.errors)
-    finally:
-        if saved is not None:
-            os.environ["ANTHROPIC_API_KEY"] = saved
 
 
 async def test_binary_not_found_returns_error(with_api_key: None) -> None:

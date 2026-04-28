@@ -43,8 +43,6 @@ from dap_runtimes.adapters.base import BaseAdapter
 logger = logging.getLogger("dap.runtimes.gemini_cli")
 
 DEFAULT_BINARY: Final = "gemini"
-ENV_API_KEY: Final = "GEMINI_API_KEY"
-ENV_API_KEY_FALLBACK: Final = "GOOGLE_API_KEY"
 MS_PER_SECOND: Final = 1000
 
 # Field-name fallbacks for token counts — gemini-cli has shifted the
@@ -72,19 +70,17 @@ class GeminiCliAdapter(BaseAdapter):
     kind: RuntimeKind = "cli"
 
     async def healthcheck(self) -> HealthStatus:
+        # Auth deliberately not probed — gemini-cli accepts either
+        # GEMINI_API_KEY/GOOGLE_API_KEY in env *or* a stored OAuth
+        # session from ``gemini auth login``. The env var is one of
+        # two valid paths, so its absence isn't a hard failure. If
+        # the user is unauthenticated, ``execute()`` surfaces the
+        # CLI's own error.
         binary = _resolve_binary({})
         if shutil.which(binary) is None:
             return HealthStatus(
                 available=False,
                 missing=[f"{binary} binary on PATH (install Google Gemini CLI)"],
-            )
-        if not _api_key_in_env():
-            return HealthStatus(
-                available=False,
-                missing=[
-                    f"{ENV_API_KEY} (or {ENV_API_KEY_FALLBACK}) env var "
-                    "(Gemini CLI reads it directly)"
-                ],
             )
         version = await _read_cli_version(binary)
         return HealthStatus(available=True, version=version)
@@ -273,11 +269,6 @@ def _resolve_binary(config: dict[str, Any]) -> str:
     return DEFAULT_BINARY
 
 
-def _api_key_in_env() -> bool:
-    """Either GEMINI_API_KEY or GOOGLE_API_KEY counts — the CLI accepts both."""
-    return bool(os.environ.get(ENV_API_KEY) or os.environ.get(ENV_API_KEY_FALLBACK))
-
-
 def _validate_config(config: dict[str, Any]) -> str | None:
     """Per-call validation. Returns an error message or None when OK."""
     model_id = config.get("model_id")
@@ -294,12 +285,11 @@ def _validate_config(config: dict[str, Any]) -> str | None:
     ):
         return "runtime_config.thinking_budget must be a non-negative int"
 
-    if not _api_key_in_env():
-        return (
-            f"{ENV_API_KEY} (or {ENV_API_KEY_FALLBACK}) env var not set "
-            "(Gemini CLI reads it directly)"
-        )
-
+    # Auth not validated here — gemini-cli accepts GEMINI_API_KEY/
+    # GOOGLE_API_KEY *or* a stored OAuth session (``gemini auth login``).
+    # Letting the CLI fail with its own ``not authenticated`` message
+    # keeps the two auth modes symmetric and avoids false negatives
+    # for Gemini Advanced users.
     return None
 
 

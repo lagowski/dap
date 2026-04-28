@@ -45,7 +45,6 @@ from dap_runtimes.adapters.base import BaseAdapter
 logger = logging.getLogger("dap.runtimes.claude_code")
 
 DEFAULT_BINARY: Final = "claude"
-ENV_API_KEY: Final = "ANTHROPIC_API_KEY"
 MS_PER_SECOND: Final = 1000
 
 
@@ -57,16 +56,17 @@ class ClaudeCodeAdapter(BaseAdapter):
     kind: RuntimeKind = "cli"
 
     async def healthcheck(self) -> HealthStatus:
+        # Auth deliberately not probed — Claude Code accepts either
+        # ANTHROPIC_API_KEY in env *or* a stored OAuth session from
+        # ``claude login`` (Pro/Max plans). The env var is one of two
+        # valid paths, so its absence isn't a hard failure. If the
+        # user is unauthenticated, ``execute()`` surfaces the CLI's
+        # own error.
         binary = _resolve_binary({})
         if shutil.which(binary) is None:
             return HealthStatus(
                 available=False,
                 missing=[f"{binary} binary on PATH (install: https://docs.claude.com/claude-code)"],
-            )
-        if not os.environ.get(ENV_API_KEY):
-            return HealthStatus(
-                available=False,
-                missing=[f"{ENV_API_KEY} env var (Claude Code reads it directly)"],
             )
         version = await _read_cli_version(binary)
         return HealthStatus(available=True, version=version)
@@ -281,9 +281,10 @@ def _validate_config(config: dict[str, Any]) -> str | None:
     if binary_path is not None and not isinstance(binary_path, str):
         return "runtime_config.binary_path must be a string"
 
-    if not os.environ.get(ENV_API_KEY):
-        return f"{ENV_API_KEY} env var not set (Claude Code reads it directly)"
-
+    # Auth not validated here — Claude Code accepts ANTHROPIC_API_KEY
+    # *or* a stored OAuth session (``claude login``). Letting the CLI
+    # fail with its own ``not authenticated`` message keeps the two
+    # auth modes symmetric and avoids false negatives for Pro users.
     return None
 
 
