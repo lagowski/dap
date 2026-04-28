@@ -54,6 +54,8 @@ class NodeContext:
         session: Session,
         runtime_overrides: dict[str, Any] | None = None,
         timeout_override_ms: int | None = None,
+        project_working_directory: str | None = None,
+        project_env_vars: dict[str, str] | None = None,
     ) -> None:
         self.run_id = run_id
         self.node_id = node_id
@@ -63,6 +65,11 @@ class NodeContext:
         self.session = session
         self.runtime_overrides = runtime_overrides or {}
         self.timeout_override_ms = timeout_override_ms
+        # Project context (#65) — propagated into RuntimeTask so adapters
+        # can run subprocesses in the right cwd with the right env.
+        # ``None`` / ``{}`` for ad-hoc runs without a project.
+        self.project_working_directory = project_working_directory
+        self.project_env_vars = project_env_vars or {}
 
     @property
     def merged_runtime_config(self) -> dict[str, Any]:
@@ -117,13 +124,16 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
 
         prompt_xml = build_result.xml
 
-        # 2. Build RuntimeTask
+        # 2. Build RuntimeTask. ``working_directory`` defaults to the
+        # project's ``working_directory`` when bound (#65), falling back
+        # to the legacy ``"."`` for ad-hoc runs.
         task = RuntimeTask(
             execution_id=execution_id,
             prompt_xml=prompt_xml,
-            working_directory=".",
+            working_directory=ctx.project_working_directory or ".",
             timeout_ms=ctx.timeout_ms,
             runtime_config=ctx.merged_runtime_config,
+            project_env_vars=ctx.project_env_vars,
         )
 
         # 3. Call adapter

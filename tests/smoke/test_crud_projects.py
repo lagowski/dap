@@ -59,9 +59,7 @@ def _seed_pipeline(client: TestClient, name: str = "Demo Pipeline") -> str:
             "schema_version": "langgraph/1.0",
             "state_schema_ref": "PipelineState.v1",
             "entry_point": "n1",
-            "nodes": [
-                {"id": "n1", "agent_id": agent["id"], "position": {"x": 0, "y": 0}}
-            ],
+            "nodes": [{"id": "n1", "agent_id": agent["id"], "position": {"x": 0, "y": 0}}],
             "edges": [{"id": "e1", "source": "n1", "target": "__end__"}],
             "defaults": {
                 "max_attempts": 3,

@@ -6,6 +6,7 @@ pause/resume. When supplied, `run_id` doubles as the LangGraph thread_id.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,8 @@ from dap_engine.persistence.models import (
     AgentVersionORM,
     PipelineORM,
     PipelineVersionORM,
+    ProjectORM,
+    RunORM,
 )
 
 if TYPE_CHECKING:
@@ -43,6 +46,19 @@ class RunnerError(Exception):
 
 class CheckpointNotFoundError(RunnerError):
     """Raised when no checkpoint matches the requested rewind target."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _ProjectContext:
+    """Project context propagated into NodeContext (#65).
+
+    Captured once at run start so the same values flow through every
+    node — avoids re-querying the project for each node and keeps
+    behaviour stable if the project is edited mid-run.
+    """
+
+    working_directory: str | None
+    env_vars: dict[str, str]
 
 
 class PipelineRunner:
@@ -91,10 +107,17 @@ class PipelineRunner:
         # Pre-load agents referenced by the pipeline + verify they exist.
         agent_lookup = self._load_agents(pipeline)
 
+        # Project context (#65) — working_directory + env_vars overlay.
+        # Bails out with a descriptive RunnerError when the bound project
+        # has been archived between trigger and execution (e.g. resumed
+        # paused run after the user archived the project).
+        project_context = self._load_project_context(run_id)
+
         graph = self._build_graph(
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
+            project_context=project_context,
         )
 
         config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
@@ -141,10 +164,12 @@ class PipelineRunner:
 
         pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
         agent_lookup = self._load_agents(pipeline)
+        project_context = self._load_project_context(run_id)
         graph = self._build_graph(
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
+            project_context=project_context,
         )
 
         base_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
@@ -195,6 +220,7 @@ class PipelineRunner:
         run_id: str,
         pipeline: Pipeline,
         agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
+        project_context: _ProjectContext | None = None,
     ) -> Any:
         builder = StateGraph(PipelineState)
 
@@ -209,6 +235,10 @@ class PipelineRunner:
                 session=self.session,
                 runtime_overrides=(node.overrides.runtime_config if node.overrides else None),
                 timeout_override_ms=(node.overrides.timeout_ms if node.overrides else None),
+                project_working_directory=(
+                    project_context.working_directory if project_context else None
+                ),
+                project_env_vars=(dict(project_context.env_vars) if project_context else None),
             )
             builder.add_node(node.id, make_node_fn(ctx))  # type: ignore[call-overload]
 
@@ -235,6 +265,33 @@ class PipelineRunner:
                 _add_conditional_edges(builder, source, edges)
 
         return builder.compile(checkpointer=self.checkpointer)
+
+    def _load_project_context(self, run_id: str) -> _ProjectContext | None:
+        """Resolve the run's project, if any, into a ``_ProjectContext``.
+
+        - Returns ``None`` for ad-hoc runs (no ``project_id``) — keeps
+          legacy behaviour with ``working_directory="."`` and no env
+          overlay.
+        - Raises ``RunnerError`` if the bound project has been
+          archived between trigger and execution. The trigger
+          endpoint already 422s archived projects (#64), but a paused
+          run resumed after the project was archived would still
+          land here.
+        """
+        run = self.session.get(RunORM, run_id)
+        if run is None or run.project_id is None:
+            return None
+        project = self.session.get(ProjectORM, run.project_id)
+        if project is None:
+            msg = f"Project not found: {run.project_id}"
+            raise RunnerError(msg)
+        if project.archived_at is not None:
+            msg = f"Project is archived: {run.project_id}"
+            raise RunnerError(msg)
+        return _ProjectContext(
+            working_directory=project.working_directory,
+            env_vars=dict(project.env_vars),
+        )
 
     # -----------------------------------------------------------------------
     # ORM helpers

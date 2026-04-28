@@ -30,6 +30,7 @@ def _task(
     cwd: str | None = None,
     timeout_ms: int = 5000,
     env: dict[str, str] | None = None,
+    project_env_vars: dict[str, str] | None = None,
 ) -> RuntimeTask:
     config: dict[str, object] = {}
     if command is not None:
@@ -42,6 +43,7 @@ def _task(
         working_directory=cwd or "/tmp",
         timeout_ms=timeout_ms,
         runtime_config=config,
+        project_env_vars=project_env_vars or {},
     )
 
 
@@ -96,9 +98,7 @@ async def test_execute_nonzero_exit_marks_failure(adapter: BashAdapter) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_captures_stderr(adapter: BashAdapter) -> None:
-    result = await adapter.execute(
-        _task(command="echo stdout-line; echo stderr-line >&2; exit 7")
-    )
+    result = await adapter.execute(_task(command="echo stdout-line; echo stderr-line >&2; exit 7"))
     assert result.success is False
     assert "stdout-line" in result.output
     assert result.structured is not None
@@ -155,6 +155,51 @@ async def test_extra_env_is_passed_to_command(adapter: BashAdapter) -> None:
     )
     assert result.success is True
     assert result.output.strip() == "injected"
+
+
+@pytest.mark.asyncio
+async def test_project_env_overlay_visible_in_subprocess(
+    adapter: BashAdapter,
+) -> None:
+    """Project env_vars (#65) must reach the subprocess on top of engine env."""
+    result = await adapter.execute(
+        _task(
+            command="echo $DAP_PROJECT_VAR",
+            project_env_vars={"DAP_PROJECT_VAR": "from-project"},
+        )
+    )
+    assert result.success is True
+    assert result.output.strip() == "from-project"
+
+
+@pytest.mark.asyncio
+async def test_project_env_overrides_engine_env(
+    adapter: BashAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Engine env is the base layer — project env_vars must win on conflict."""
+    monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
+    result = await adapter.execute(
+        _task(
+            command="echo $DAP_LAYER_PROBE",
+            project_env_vars={"DAP_LAYER_PROBE": "project"},
+        )
+    )
+    assert result.success is True
+    assert result.output.strip() == "project"
+
+
+@pytest.mark.asyncio
+async def test_per_agent_env_beats_project_env(adapter: BashAdapter) -> None:
+    """Per-agent runtime_config.env is the highest layer — must override project env."""
+    result = await adapter.execute(
+        _task(
+            command="echo $DAP_LAYER_PROBE",
+            project_env_vars={"DAP_LAYER_PROBE": "project"},
+            env={"DAP_LAYER_PROBE": "agent"},
+        )
+    )
+    assert result.success is True
+    assert result.output.strip() == "agent"
 
 
 @pytest.mark.asyncio

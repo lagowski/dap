@@ -40,9 +40,7 @@ def test_task_selector_extracts_from_markdown_fence() -> None:
 
 def test_task_selector_extracts_from_bare_json() -> None:
     """Whole-output-is-JSON works as a last-resort fallback."""
-    result = parse_node_output(
-        "task_selector", [], '{"selected_issue_ids": [1]}'
-    )
+    result = parse_node_output("task_selector", [], '{"selected_issue_ids": [1]}')
     assert result.success is True
     assert result.parsed == {"selected_issue_ids": [1]}
 
@@ -112,9 +110,7 @@ def test_invalid_literal_is_rejected() -> None:
 
 
 def test_missing_payload_is_descriptive_error() -> None:
-    result = parse_node_output(
-        "task_selector", [], "I have no idea what to pick."
-    )
+    result = parse_node_output("task_selector", [], "I have no idea what to pick.")
     assert result.success is False
     assert any("No JSON payload" in err for err in result.errors)
 

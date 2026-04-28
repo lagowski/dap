@@ -62,18 +62,23 @@ def _task(
     binary_path: str | None = None,
     thinking_budget: Any = None,
     timeout_ms: int = 60_000,
+    env: dict[str, str] | None = None,
+    project_env_vars: dict[str, str] | None = None,
 ) -> RuntimeTask:
     runtime_config: dict[str, Any] = {"model_id": model_id}
     if binary_path is not None:
         runtime_config["binary_path"] = binary_path
     if thinking_budget is not None:
         runtime_config["thinking_budget"] = thinking_budget
+    if env is not None:
+        runtime_config["env"] = env
     return RuntimeTask(
         execution_id="exec-1",
         prompt_xml="<agent_prompt><role>r</role><task>t</task></agent_prompt>",
         working_directory="/tmp",
         timeout_ms=timeout_ms,
         runtime_config=runtime_config,
+        project_env_vars=project_env_vars or {},
     )
 
 
@@ -277,6 +282,54 @@ async def test_execute_with_thinking_budget(with_api_key: None) -> None:
     argv = create_mock.call_args.args
     assert "--thinking-budget" in argv
     assert "8192" in argv
+
+
+async def test_per_agent_env_overrides_project_env(
+    with_api_key: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#65 layering: runtime_config.env (highest) > project_env_vars > engine env."""
+    monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
+    adapter = GeminiCliAdapter()
+    proc = _build_subprocess_mock(stdout=_success_payload())
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        await adapter.execute(
+            _task(
+                project_env_vars={"DAP_LAYER_PROBE": "project"},
+                env={"DAP_LAYER_PROBE": "agent"},
+            )
+        )
+
+    sent_env = create_mock.call_args.kwargs["env"]
+    assert sent_env["DAP_LAYER_PROBE"] == "agent"
+
+
+async def test_project_env_overrides_engine_env(
+    with_api_key: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
+    adapter = GeminiCliAdapter()
+    proc = _build_subprocess_mock(stdout=_success_payload())
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        await adapter.execute(_task(project_env_vars={"DAP_LAYER_PROBE": "project"}))
+
+    sent_env = create_mock.call_args.kwargs["env"]
+    assert sent_env["DAP_LAYER_PROBE"] == "project"
+
+
+async def test_invalid_runtime_config_env_returns_failed(
+    with_api_key: None,
+) -> None:
+    adapter = GeminiCliAdapter()
+    with patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"):
+        result = await adapter.execute(_task(env={"OK": 123}))  # type: ignore[dict-item]
+    assert result.success is False
+    assert any("runtime_config.env" in e for e in result.errors)
 
 
 async def test_camelcase_token_keys_are_supported(with_api_key: None) -> None:

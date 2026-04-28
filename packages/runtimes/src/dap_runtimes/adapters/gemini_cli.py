@@ -37,6 +37,7 @@ from typing import Any, Final
 
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 
+from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.gemini_cli")
@@ -88,7 +89,7 @@ class GeminiCliAdapter(BaseAdapter):
         version = await _read_cli_version(binary)
         return HealthStatus(available=True, version=version)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch obscures
         # the mapping (same rationale as ApiCallAdapter / BashAdapter).
@@ -120,12 +121,24 @@ class GeminiCliAdapter(BaseAdapter):
         cwd = task.working_directory or os.getcwd()
         timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
         new_session = hasattr(os, "setsid")
+        # Three-layer env (#65): engine env (with GEMINI_API_KEY /
+        # GOOGLE_API_KEY) → project env_vars → per-agent
+        # runtime_config.env (highest). The Gemini CLI reads the env
+        # itself; we just propagate the documented overlays.
+        env, env_error = merge_subprocess_env(task.project_env_vars, config)
+        if env_error is not None:
+            return _failed(
+                env_error,
+                duration_ms=0,
+                model_id=config["model_id"],
+            )
 
         start = time.monotonic()
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=cwd,
+                env=env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

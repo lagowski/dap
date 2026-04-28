@@ -159,18 +159,14 @@ async def test_missing_response_extractor_returns_error() -> None:
 
 async def test_response_extractor_must_have_output_key() -> None:
     adapter = HttpAdapter()
-    result = await adapter.execute(
-        _task(response_extractor={"tokens": "$.count"})
-    )
+    result = await adapter.execute(_task(response_extractor={"tokens": "$.count"}))
     assert result.success is False
     assert any("'output'" in e for e in result.errors)
 
 
 async def test_invalid_jsonpath_in_extractor_returns_error() -> None:
     adapter = HttpAdapter()
-    result = await adapter.execute(
-        _task(response_extractor={"output": "$..[bad jsonpath"})
-    )
+    result = await adapter.execute(_task(response_extractor={"output": "$..[bad jsonpath"}))
     assert result.success is False
     assert any("Invalid JSONPath" in e for e in result.errors)
 
@@ -239,9 +235,7 @@ async def test_string_template_passes_through_as_content() -> None:
     client = _mock_client(response)
 
     with patch(_PATCH_PATH, return_value=client):
-        await adapter.execute(
-            _task(request_template="raw body with {{ prompt_xml }}")
-        )
+        await adapter.execute(_task(request_template="raw body with {{ prompt_xml }}"))
 
     call_kwargs = client.request.call_args.kwargs
     assert call_kwargs["content"].startswith("raw body with <agent_prompt>")
@@ -254,9 +248,7 @@ async def test_bearer_auth_attaches_token(with_ollama_key: None) -> None:
     client = _mock_client(response)
 
     with patch(_PATCH_PATH, return_value=client):
-        await adapter.execute(
-            _task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"})
-        )
+        await adapter.execute(_task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"}))
 
     headers = client.request.call_args.kwargs["headers"]
     assert headers["Authorization"] == "Bearer test-token"
@@ -326,9 +318,7 @@ async def test_static_extra_headers_merged() -> None:
     client = _mock_client(response)
 
     with patch(_PATCH_PATH, return_value=client):
-        await adapter.execute(
-            _task(headers={"X-Trace-ID": "abc-123", "X-Project": "dap"})
-        )
+        await adapter.execute(_task(headers={"X-Trace-ID": "abc-123", "X-Project": "dap"}))
 
     headers = client.request.call_args.kwargs["headers"]
     assert headers["X-Trace-ID"] == "abc-123"
@@ -367,9 +357,7 @@ async def test_non_string_output_match_is_json_stringified() -> None:
     client = _mock_client(response)
 
     with patch(_PATCH_PATH, return_value=client):
-        result = await adapter.execute(
-            _task(response_extractor={"output": "$.data"})
-        )
+        result = await adapter.execute(_task(response_extractor={"output": "$.data"}))
 
     assert result.success is True
     assert result.output == "[1, 2, 3]"
@@ -384,9 +372,7 @@ async def test_missing_bearer_env_returns_error() -> None:
     saved = os.environ.pop("MISSING_KEY", None)
     try:
         adapter = HttpAdapter()
-        result = await adapter.execute(
-            _task(auth={"type": "bearer", "env": "MISSING_KEY"})
-        )
+        result = await adapter.execute(_task(auth={"type": "bearer", "env": "MISSING_KEY"}))
         assert result.success is False
         assert any("MISSING_KEY" in e for e in result.errors)
     finally:
@@ -433,9 +419,7 @@ async def test_timeout_marked_and_returns_failure() -> None:
 
 async def test_connection_error_returns_failure() -> None:
     adapter = HttpAdapter()
-    client = _mock_client(
-        request_side_effect=httpx.ConnectError("connection refused")
-    )
+    client = _mock_client(request_side_effect=httpx.ConnectError("connection refused"))
 
     with patch(_PATCH_PATH, return_value=client):
         result = await adapter.execute(_task())
@@ -517,9 +501,7 @@ async def test_jsonpath_no_match_yields_empty_output() -> None:
     client = _mock_client(response)
 
     with patch(_PATCH_PATH, return_value=client):
-        result = await adapter.execute(
-            _task(response_extractor={"output": "$.missing_field"})
-        )
+        result = await adapter.execute(_task(response_extractor={"output": "$.missing_field"}))
 
     assert result.success is True
     assert result.output == ""

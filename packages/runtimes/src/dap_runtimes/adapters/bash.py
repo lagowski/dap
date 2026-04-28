@@ -92,7 +92,11 @@ class BashAdapter(BaseAdapter):
                 shell=None,
             )
 
+        # Env layering: engine env (base) → project env_vars (overlay,
+        # #65) → per-agent runtime_config.env (highest wins).
         env = os.environ.copy()
+        if task.project_env_vars:
+            env.update(task.project_env_vars)
         env_error = _merge_extra_env(config, env)
         if env_error is not None:
             return _failed(env_error, duration_ms=0, command=command, shell=shell)

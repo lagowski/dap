@@ -378,9 +378,7 @@ def _two_node_payload(
 
 def test_cohesion_linear_chain_writer_satisfies_reader(client: TestClient) -> None:
     """A → B where A writes selected_issue_ids and B reads it: valid, no warning."""
-    a = _create_agent_with_contract(
-        client, name="Selector", output_schema=["selected_issue_ids"]
-    )
+    a = _create_agent_with_contract(client, name="Selector", output_schema=["selected_issue_ids"])
     b = _create_agent_with_contract(
         client, name="Author", role="test_author", input_schema=["selected_issue_ids"]
     )
@@ -400,16 +398,13 @@ def test_cohesion_missing_writer_fails(client: TestClient) -> None:
     body = client.post("/pipelines/validate", json=_two_node_payload(a_id=a, b_id=b)).json()
     assert body["valid"] is False
     assert any(
-        "selected_issue_ids" in e and "no upstream node writes it" in e
-        for e in body["errors"]
+        "selected_issue_ids" in e and "no upstream node writes it" in e for e in body["errors"]
     )
 
 
 def test_cohesion_born_satisfied_by_non_trivial_default(client: TestClient) -> None:
     """``max_attempts: int = 3`` is born satisfied — no upstream writer needed."""
-    a = _create_agent_with_contract(
-        client, name="Reader", input_schema=["max_attempts"]
-    )
+    a = _create_agent_with_contract(client, name="Reader", input_schema=["max_attempts"])
     payload = {
         "name": "P",
         "description": "",
@@ -457,9 +452,7 @@ def test_cohesion_trivial_default_does_not_satisfy(client: TestClient) -> None:
     An agent that reads it without an upstream writer fails — empty list
     is "not yet populated", not a meaningful initial value.
     """
-    a = _create_agent_with_contract(
-        client, name="Reader", input_schema=["selected_issue_ids"]
-    )
+    a = _create_agent_with_contract(client, name="Reader", input_schema=["selected_issue_ids"])
     payload = {
         "name": "P",
         "description": "",
@@ -477,8 +470,7 @@ def test_cohesion_trivial_default_does_not_satisfy(client: TestClient) -> None:
     body = client.post("/pipelines/validate", json=payload).json()
     assert body["valid"] is False
     assert any(
-        "selected_issue_ids" in e and "no upstream node writes it" in e
-        for e in body["errors"]
+        "selected_issue_ids" in e and "no upstream node writes it" in e for e in body["errors"]
     )
 
 
@@ -559,17 +551,12 @@ def test_cohesion_conditional_branch_only_one_writer_fails(client: TestClient) -
 
 def test_cohesion_unused_output_warns(client: TestClient) -> None:
     """A writes selected_issue_ids but no downstream node reads it → warning."""
-    a = _create_agent_with_contract(
-        client, name="Writer", output_schema=["selected_issue_ids"]
-    )
+    a = _create_agent_with_contract(client, name="Writer", output_schema=["selected_issue_ids"])
     b = _create_agent_with_contract(client, name="Bystander", role="test_author")
-    body = client.post(
-        "/pipelines/validate", json=_two_node_payload(a_id=a, b_id=b)
-    ).json()
+    body = client.post("/pipelines/validate", json=_two_node_payload(a_id=a, b_id=b)).json()
     assert body["valid"] is True
     assert any(
-        "selected_issue_ids" in w and "no downstream node reads it" in w
-        for w in body["warnings"]
+        "selected_issue_ids" in w and "no downstream node reads it" in w for w in body["warnings"]
     )
 
 
@@ -584,12 +571,8 @@ def test_cohesion_conflicting_writers_warns(client: TestClient) -> None:
     Neither A dominates B nor vice versa — runtime merge order is undefined.
     """
     entry = _create_agent_with_contract(client, name="Entry")
-    writer1 = _create_agent_with_contract(
-        client, name="W1", output_schema=["selected_issue_ids"]
-    )
-    writer2 = _create_agent_with_contract(
-        client, name="W2", output_schema=["selected_issue_ids"]
-    )
+    writer1 = _create_agent_with_contract(client, name="W1", output_schema=["selected_issue_ids"])
+    writer2 = _create_agent_with_contract(client, name="W2", output_schema=["selected_issue_ids"])
     reader = _create_agent_with_contract(
         client,
         name="Reader",
@@ -645,9 +628,7 @@ def test_cohesion_conflicting_writers_warns(client: TestClient) -> None:
     # Reader is satisfied (both branches write it) — but writers conflict.
     assert body["valid"] is True
     assert any(
-        "selected_issue_ids" in w
-        and "parallel branches" in w
-        and "merge order is undefined" in w
+        "selected_issue_ids" in w and "parallel branches" in w and "merge order is undefined" in w
         for w in body["warnings"]
     )
 
