@@ -21,6 +21,7 @@ def main() -> None:
         db_path=os.environ.get("DAP_DB_PATH", "./.dap/state.db"),
         host=os.environ.get("DAP_ENGINE_HOST", "127.0.0.1"),
         port=int(os.environ.get("DAP_ENGINE_PORT", "7333")),
+        dry_run_budget_usd=float(os.environ.get("DAP_DRY_RUN_BUDGET_USD", "0.50")),
     )
 
     app = create_app(config)

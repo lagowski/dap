@@ -5,11 +5,11 @@ Response models reuse `dap_types.{Agent, Pipeline, Run, ...}` directly.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from dap_types.agent import coerce_legacy_field_list, validate_field_list
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _validate_pipeline_bindings_dict(value: dict[str, str]) -> dict[str, str]:
@@ -300,6 +300,103 @@ class RenderPreviewResponse(BaseModel):
     valid: bool
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Agent dry-run (#103) — execute one agent against sample context without
+# creating an Agent version, a Run row, or a NodeExecutionLog. Used by the
+# agent create/edit Test panel to validate prompt + runtime behaviour
+# before saving.
+# ---------------------------------------------------------------------------
+
+
+class AgentDryRunDraft(BaseModel):
+    """Inline agent definition for dry-runs from an unsaved form (``/agents/new``).
+
+    Mirrors :class:`AgentCreate` field-by-field — same constraints, same
+    field validators — so a draft that dry-runs cleanly is also creatable
+    via ``POST /agents``. We don't reuse ``AgentCreate`` directly only to
+    keep the type independent of any future create-only fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    role: str = Field(min_length=1, max_length=100)
+
+    runtime_id: str
+    runtime_config: dict[str, Any] = Field(default_factory=dict)
+    prompt_template: str
+
+    input_schema: list[str] = Field(default_factory=list)
+    output_schema: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+
+    budget_limit_usd: float | None = None
+    timeout_ms: int = Field(default=60_000, gt=0)
+
+    @field_validator("input_schema", "output_schema", mode="before")
+    @classmethod
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def _check_known_fields(cls, value: list[str]) -> list[str]:
+        return validate_field_list(value)
+
+
+class AgentDryRunRequest(BaseModel):
+    """Body of ``POST /agents/dry-run``.
+
+    Exactly one of ``agent_id`` (saved) or ``draft`` (unsaved form) must
+    be set. ``context`` is the sample state the prompt template renders
+    against — keys outside ``input_schema`` are dropped before render
+    (same projection rule as a real run).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str | None = None
+    agent_version: int | None = None
+    draft: AgentDryRunDraft | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_exactly_one_source(self) -> Self:
+        if (self.agent_id is None) == (self.draft is None):
+            msg = "exactly one of 'agent_id' or 'draft' must be set (got both or neither)"
+            raise ValueError(msg)
+        return self
+
+
+class OutputSchemaValidation(BaseModel):
+    """Soft check of the runtime's structured output against ``output_schema``.
+
+    Not fatal — a missing field is a warning, not a 422. The point is to
+    surface it in the Test panel so the operator can adjust either the
+    prompt or the schema.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool
+    checked: bool
+    missing_fields: list[str] = Field(default_factory=list)
+    extra_fields: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+class AgentDryRunResponse(BaseModel):
+    """Response from ``POST /agents/dry-run``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rendered_xml: str
+    prompt_warnings: list[str] = Field(default_factory=list)
+    prompt_errors: list[str] = Field(default_factory=list)
+    runtime_result: dict[str, Any]
+    output_schema_validation: OutputSchemaValidation
 
 
 class PaginatedAgents(BaseModel):

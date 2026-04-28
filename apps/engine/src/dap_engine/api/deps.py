@@ -46,3 +46,8 @@ def get_run_registry(request: Request) -> RunRegistry:
 def get_checkpointer(request: Request) -> BaseCheckpointSaver[Any]:
     checkpointer: BaseCheckpointSaver[Any] = request.app.state.checkpointer
     return checkpointer
+
+
+def get_engine_config(request: Request) -> Any:
+    """Return the active ``EngineConfig`` for endpoints that need its values."""
+    return request.app.state.config

@@ -31,6 +31,11 @@ class EngineConfig:
     db_path: str = "./.dap/state.db"
     host: str = "127.0.0.1"
     port: int = 7333
+    # Hard cap for ``POST /agents/dry-run`` (#103). Each invocation pays
+    # real LLM tokens, so we refuse calls whose ``runtime_config.budget_limit_usd``
+    # (or the engine cap, whichever is lower) exceeds this. Belt-and-suspenders
+    # against a runaway form value or a forgotten zero default in the UI.
+    dry_run_budget_usd: float = 0.50
 
 
 def create_app(config: EngineConfig | None = None) -> FastAPI:
