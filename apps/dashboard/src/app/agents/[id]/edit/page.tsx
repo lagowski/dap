@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, use } from "react";
+import { useId, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -9,6 +9,7 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
+import { AgentTabs, type AgentTab } from "@/components/agents/agent-tabs";
 import { AgentTestPanel } from "@/components/agents/agent-test-panel";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
@@ -21,11 +22,13 @@ export default function EditAgentPage({
   const router = useRouter();
   const { data: agent, isPending, isError, error } = useAgent(id);
   const update = useUpdateAgent();
-  const [tab, setTab] = useState<"form" | "test">("form");
+  const [tab, setTab] = useState<AgentTab>("form");
   const [snapshot, setSnapshot] = useState<{
     values: AgentFormValues;
     valid: boolean;
   } | null>(null);
+  const formPanelId = useId();
+  const testPanelId = useId();
 
   if (isPending) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
@@ -65,14 +68,24 @@ export default function EditAgentPage({
         </span>
       </div>
 
-      <TabBar tab={tab} onTabChange={setTab} />
+      <AgentTabs
+        tab={tab}
+        onTabChange={setTab}
+        formPanelId={formPanelId}
+        testPanelId={testPanelId}
+      />
 
       <Card>
         <CardContent className="pt-6">
           {/* Both panels stay mounted so the form's onValuesChange keeps
               firing while the user is on the Test tab — switching back
               shouldn't reset their inputs. We just hide the inactive one. */}
-          <div className={tab === "form" ? "block" : "hidden"}>
+          <div
+            id={formPanelId}
+            role="tabpanel"
+            hidden={tab !== "form"}
+            className={tab === "form" ? "block" : "hidden"}
+          >
             <AgentForm
               initialValues={{
                 name: agent.name,
@@ -109,7 +122,12 @@ export default function EditAgentPage({
             />
           </div>
 
-          <div className={tab === "test" ? "block" : "hidden"}>
+          <div
+            id={testPanelId}
+            role="tabpanel"
+            hidden={tab !== "test"}
+            className={tab === "test" ? "block" : "hidden"}
+          >
             <AgentTestPanel
               draft={draft}
               draftBlockedReason={draftBlockedReason}
@@ -118,51 +136,6 @@ export default function EditAgentPage({
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function TabBar({
-  tab,
-  onTabChange,
-}: {
-  tab: "form" | "test";
-  onTabChange: (next: "form" | "test") => void;
-}) {
-  return (
-    <div className="border-b">
-      <nav className="-mb-px flex gap-4" aria-label="Tabs">
-        <TabButton active={tab === "form"} onClick={() => onTabChange("form")}>
-          Form
-        </TabButton>
-        <TabButton active={tab === "test"} onClick={() => onTabChange("test")}>
-          Test
-        </TabButton>
-      </nav>
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        active
-          ? "border-b-2 border-primary px-1 pb-2 text-sm font-medium text-foreground"
-          : "border-b-2 border-transparent px-1 pb-2 text-sm font-medium text-muted-foreground hover:text-foreground"
-      }
-    >
-      {children}
-    </button>
   );
 }
 

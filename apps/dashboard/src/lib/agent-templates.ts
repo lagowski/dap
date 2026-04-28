@@ -16,6 +16,7 @@
  */
 
 export type AgentTemplateCategory =
+  | "Examples"
   | "Implementation"
   | "Test authoring"
   | "Verification"
@@ -85,7 +86,29 @@ const PROMPT_BASH_RUNNER = `<agent_prompt version="1">
   <command>{{ command | default('echo configure your command here') }}</command>
 </agent_prompt>`;
 
+const PROMPT_HELLO_WORLD = `<agent_prompt version="1">
+  <role>greeter</role>
+  <task>Print a greeting.</task>
+</agent_prompt>`;
+
 export const AGENT_TEMPLATES: readonly AgentTemplate[] = [
+  // -- Examples -----------------------------------------------------------
+  {
+    id: "hello-world-bash",
+    name: "Hello world — bash echo",
+    description:
+      "Zero-cost smoke test for the dry-run Test panel. Uses the bash adapter (always available, no API key) to echo a greeting. Pick this if you just want to see the form → engine → adapter → result loop work end-to-end before wiring a real LLM agent.",
+    category: "Examples",
+    role: "post_check",
+    runtime_id: "bash",
+    runtime_config: {
+      shell: "/bin/bash",
+      command: "echo 'hello from dap dry-run'",
+    },
+    prompt_template: PROMPT_HELLO_WORLD,
+    input_schema: [],
+    output_schema: [],
+  },
   // -- Implementation -----------------------------------------------------
   {
     id: "developer-jr-glm",
@@ -231,6 +254,7 @@ export const AGENT_TEMPLATES: readonly AgentTemplate[] = [
 ] as const;
 
 export const AGENT_TEMPLATE_CATEGORIES: readonly AgentTemplateCategory[] = [
+  "Examples",
   "Implementation",
   "Test authoring",
   "Verification",

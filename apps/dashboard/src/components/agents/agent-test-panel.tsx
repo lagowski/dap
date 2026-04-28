@@ -10,10 +10,21 @@ import type { AgentDryRunDraft, AgentDryRunResponse } from "@/lib/api/types";
 
 interface AgentTestPanelProps {
   /**
-   * Current form values. Always sent as ``draft`` (rather than
-   * ``agent_id``) so the test reflects in-progress edits — for a
-   * pristine Edit form the ``initialValues`` already mirror the
-   * persisted agent, so the result is identical.
+   * Current form values, sent verbatim as ``draft``. Two reasons we
+   * never branch into the ``agent_id`` path even on a pristine Edit
+   * form:
+   *
+   *  - For a pristine form the draft mirrors the persisted agent
+   *    field-by-field (``initialValues`` come from the same Agent
+   *    object), so the engine produces the identical RuntimeTask
+   *    either way.
+   *  - We'd otherwise need an "is dirty" check — react-hook-form's
+   *    ``formState.isDirty`` doesn't see the runtime_config /
+   *    input_schema / output_schema state we manage outside the
+   *    Zod schema, and a partial dirty check is worse than always
+   *    sending the full snapshot.
+   *
+   * The payload size cost is negligible for one agent (~few KB).
    */
   draft: AgentDryRunDraft | null;
   /**
@@ -328,7 +339,9 @@ function CollapsibleBlock({
   return (
     <details
       open={open}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      onToggle={(e: React.SyntheticEvent<HTMLDetailsElement>) =>
+        setOpen(e.currentTarget.open)
+      }
       className={`rounded border ${toneClass}`}
     >
       <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">

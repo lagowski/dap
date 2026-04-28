@@ -116,6 +116,11 @@ export function AgentForm({
 }: AgentFormProps) {
   const form = useForm<FormShape>({
     resolver: zodResolver(formSchema),
+    // ``onChange`` so ``formState.isValid`` reflects the live form state.
+    // The default ``onSubmit`` mode keeps ``isValid`` stuck at ``false``
+    // until the user clicks Submit at least once — which would leave the
+    // dry-run Test panel disabled even on a perfectly valid form.
+    mode: "onChange",
     defaultValues: {
       name: initialValues?.name ?? "",
       role: initialValues?.role ?? ROLES[0],

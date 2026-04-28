@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useId, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy } from "lucide-react";
@@ -9,6 +9,7 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
+import { AgentTabs, type AgentTab } from "@/components/agents/agent-tabs";
 import { AgentTestPanel } from "@/components/agents/agent-test-panel";
 import { TemplatePicker } from "@/components/agents/template-picker";
 import type { AgentTemplate } from "@/lib/agent-templates";
@@ -42,11 +43,13 @@ function NewAgentPageContent() {
   // cloning + template would be confusing UX. Picker stays hidden in
   // the clone flow.
   const [template, setTemplate] = useState<AgentTemplate | null>(null);
-  const [tab, setTab] = useState<"form" | "test">("form");
+  const [tab, setTab] = useState<AgentTab>("form");
   const [snapshot, setSnapshot] = useState<{
     values: AgentFormValues;
     valid: boolean;
   } | null>(null);
+  const formPanelId = useId();
+  const testPanelId = useId();
 
   // initialValues precedence: clone source > template > undefined.
   // The form is keyed so switching template force-remounts it,
@@ -95,32 +98,12 @@ function NewAgentPageContent() {
       ) : null}
 
       {!isCloning || (sourceQuery.data && sourceQuery.data.is_active) ? (
-        <div className="border-b">
-          <nav className="-mb-px flex gap-4" aria-label="Tabs">
-            <button
-              type="button"
-              onClick={() => setTab("form")}
-              className={
-                tab === "form"
-                  ? "border-b-2 border-primary px-1 pb-2 text-sm font-medium text-foreground"
-                  : "border-b-2 border-transparent px-1 pb-2 text-sm font-medium text-muted-foreground hover:text-foreground"
-              }
-            >
-              Form
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("test")}
-              className={
-                tab === "test"
-                  ? "border-b-2 border-primary px-1 pb-2 text-sm font-medium text-foreground"
-                  : "border-b-2 border-transparent px-1 pb-2 text-sm font-medium text-muted-foreground hover:text-foreground"
-              }
-            >
-              Test
-            </button>
-          </nav>
-        </div>
+        <AgentTabs
+          tab={tab}
+          onTabChange={setTab}
+          formPanelId={formPanelId}
+          testPanelId={testPanelId}
+        />
       ) : null}
 
       <Card>
@@ -133,7 +116,12 @@ function NewAgentPageContent() {
             <SourceArchivedError />
           ) : (
             <>
-              <div className={tab === "form" ? "block" : "hidden"}>
+              <div
+                id={formPanelId}
+                role="tabpanel"
+                hidden={tab !== "form"}
+                className={tab === "form" ? "block" : "hidden"}
+              >
                 <AgentForm
                   key={formKey}
                   initialValues={initialValues}
@@ -171,7 +159,12 @@ function NewAgentPageContent() {
                   }
                 />
               </div>
-              <div className={tab === "test" ? "block" : "hidden"}>
+              <div
+                id={testPanelId}
+                role="tabpanel"
+                hidden={tab !== "test"}
+                className={tab === "test" ? "block" : "hidden"}
+              >
                 <AgentTestPanel
                   draft={
                     snapshot && snapshot.valid
