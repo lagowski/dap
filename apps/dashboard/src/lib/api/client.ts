@@ -15,6 +15,10 @@ import type {
   PipelineCreate,
   PipelineState,
   PipelineUpdate,
+  Project,
+  ProjectCreate,
+  ProjectRunRequest,
+  ProjectUpdate,
   Run,
   RunCreateRequest,
   SettingsView,
@@ -241,6 +245,58 @@ export async function archiveAgent(id: string): Promise<void> {
 
 export async function listAgentVersions(id: string): Promise<Agent[]> {
   return request<Agent[]>(`/agents/${encodeURIComponent(id)}/versions`);
+}
+
+// ---------------------------------------------------------------------------
+// Projects (v0.6)
+// ---------------------------------------------------------------------------
+
+export async function listProjects(params?: {
+  archived?: boolean;
+}): Promise<PaginatedList<Project>> {
+  const qs = new URLSearchParams();
+  // Always forward ``archived`` when supplied so the request matches
+  // the React Query key ``projectsList(filters)`` exactly. Skipping
+  // it when ``archived === false`` produced two cache entries (default
+  // call vs. ``{ archived: false }``) for the same server response.
+  if (params?.archived !== undefined) {
+    qs.set("archived", String(params.archived));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<PaginatedList<Project>>(`/projects${suffix}`);
+}
+
+export async function getProject(id: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(id)}`);
+}
+
+export async function createProject(payload: ProjectCreate): Promise<Project> {
+  return request<Project>("/projects", { method: "POST", json: payload });
+}
+
+export async function updateProject(
+  id: string,
+  payload: ProjectUpdate,
+): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    json: payload,
+  });
+}
+
+export async function archiveProject(id: string): Promise<void> {
+  await request<void>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function triggerProjectRun(
+  id: string,
+  kind: string,
+  payload?: ProjectRunRequest,
+): Promise<Run> {
+  return request<Run>(
+    `/projects/${encodeURIComponent(id)}/run/${encodeURIComponent(kind)}`,
+    { method: "POST", json: payload ?? {} },
+  );
 }
 
 // ---------------------------------------------------------------------------

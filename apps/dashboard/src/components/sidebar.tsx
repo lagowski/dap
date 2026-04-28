@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, GitBranch, Settings, Users, Workflow } from "lucide-react";
+import { Activity, FolderKanban, GitBranch, Settings, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
+  { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/runs", label: "Runs", icon: Activity },
   { href: "/pipelines", label: "Pipelines", icon: GitBranch },
   { href: "/agents", label: "Agents", icon: Users },
