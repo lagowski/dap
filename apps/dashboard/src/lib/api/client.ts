@@ -15,6 +15,10 @@ import type {
   PipelineCreate,
   PipelineState,
   PipelineUpdate,
+  Project,
+  ProjectCreate,
+  ProjectRunRequest,
+  ProjectUpdate,
   Run,
   RunCreateRequest,
   SettingsView,
@@ -241,6 +245,52 @@ export async function archiveAgent(id: string): Promise<void> {
 
 export async function listAgentVersions(id: string): Promise<Agent[]> {
   return request<Agent[]>(`/agents/${encodeURIComponent(id)}/versions`);
+}
+
+// ---------------------------------------------------------------------------
+// Projects (v0.6)
+// ---------------------------------------------------------------------------
+
+export async function listProjects(params?: {
+  archived?: boolean;
+}): Promise<PaginatedList<Project>> {
+  const qs = new URLSearchParams();
+  if (params?.archived) qs.set("archived", "true");
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<PaginatedList<Project>>(`/projects${suffix}`);
+}
+
+export async function getProject(id: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(id)}`);
+}
+
+export async function createProject(payload: ProjectCreate): Promise<Project> {
+  return request<Project>("/projects", { method: "POST", json: payload });
+}
+
+export async function updateProject(
+  id: string,
+  payload: ProjectUpdate,
+): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    json: payload,
+  });
+}
+
+export async function archiveProject(id: string): Promise<void> {
+  await request<void>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function triggerProjectRun(
+  id: string,
+  kind: string,
+  payload?: ProjectRunRequest,
+): Promise<Run> {
+  return request<Run>(
+    `/projects/${encodeURIComponent(id)}/run/${encodeURIComponent(kind)}`,
+    { method: "POST", json: payload ?? {} },
+  );
 }
 
 // ---------------------------------------------------------------------------

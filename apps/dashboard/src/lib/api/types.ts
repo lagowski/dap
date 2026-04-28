@@ -46,6 +46,70 @@ export interface AgentCreate {
   timeout_ms?: number;
 }
 
+// ---- Projects (#63 / #67) ----
+
+/**
+ * Project = workspace abstraction. Owns a working directory or remote
+ * repo, default branch, project-scoped env vars, and a free-form
+ * mapping of workflow kinds → pipeline ids.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  working_directory: string | null;
+  repo_url: string | null;
+  default_branch: string;
+  /** Workflow kind → pipeline_id. Recommended kinds get first-class UI. */
+  pipelines: Record<string, string>;
+  /** Project-scoped env (#65). Layered onto subprocess env. */
+  env_vars: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+  is_active: boolean;
+}
+
+export interface ProjectCreate {
+  name: string;
+  description?: string;
+  working_directory?: string | null;
+  repo_url?: string | null;
+  default_branch?: string;
+  pipelines?: Record<string, string>;
+  env_vars?: Record<string, string>;
+}
+
+export interface ProjectUpdate {
+  name: string;
+  description?: string;
+  working_directory?: string | null;
+  repo_url?: string | null;
+  default_branch?: string;
+  pipelines?: Record<string, string>;
+  env_vars?: Record<string, string>;
+}
+
+export interface ProjectRunRequest {
+  pipeline_version?: number | null;
+  initial_state?: Partial<PipelineState>;
+}
+
+/**
+ * Recommended workflow kinds — UX hint for which slots to surface
+ * first-class on the project detail page. Not enforced by the engine;
+ * users can declare custom kinds.
+ */
+export const RECOMMENDED_PIPELINE_KINDS = [
+  "configure",
+  "plan",
+  "develop",
+  "verify",
+  "release",
+] as const;
+
+export type RecommendedPipelineKind = (typeof RECOMMENDED_PIPELINE_KINDS)[number];
+
 // ---- Settings (dashboard /settings page) ----
 
 export interface RuntimeStatus {

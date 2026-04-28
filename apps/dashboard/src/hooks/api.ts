@@ -7,6 +7,9 @@ import type {
   AgentUpdate,
   PipelineCreate,
   PipelineUpdate,
+  ProjectCreate,
+  ProjectRunRequest,
+  ProjectUpdate,
   RunCreateRequest,
 } from "@/lib/api/types";
 
@@ -27,6 +30,10 @@ export const queryKeys = {
   pipelinesList: ["pipelines", "list"] as const,
   pipeline: (id: string) => ["pipelines", id] as const,
   pipelineVersions: (id: string) => ["pipelines", id, "versions"] as const,
+  projects: ["projects"] as const,
+  projectsList: (filters?: { archived?: boolean }) =>
+    ["projects", "list", filters ?? {}] as const,
+  project: (id: string) => ["projects", id] as const,
   settings: ["settings"] as const,
 };
 
@@ -228,6 +235,72 @@ export function useTriggerRun() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: RunCreateRequest) => api.triggerRun(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.runs });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Projects (v0.6 / #67)
+// ---------------------------------------------------------------------------
+
+export function useProjectsList(filters?: { archived?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.projectsList(filters),
+    queryFn: () => api.listProjects(filters),
+  });
+}
+
+export function useProject(id: string | null) {
+  return useQuery({
+    queryKey: id ? queryKeys.project(id) : ["projects", "noop"],
+    queryFn: () => (id ? api.getProject(id) : Promise.reject(new Error("no id"))),
+    enabled: id != null,
+  });
+}
+
+export function useCreateProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ProjectCreate) => api.createProject(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.projects });
+    },
+  });
+}
+
+export function useUpdateProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: ProjectUpdate }) =>
+      api.updateProject(id, payload),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: queryKeys.projects });
+      qc.invalidateQueries({ queryKey: queryKeys.project(variables.id) });
+    },
+  });
+}
+
+export function useArchiveProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.archiveProject(id),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: queryKeys.projects });
+      qc.invalidateQueries({ queryKey: queryKeys.project(id) });
+    },
+  });
+}
+
+export function useTriggerProjectRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      id: string;
+      kind: string;
+      payload?: ProjectRunRequest;
+    }) => api.triggerProjectRun(params.id, params.kind, params.payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.runs });
     },
