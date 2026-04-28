@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Pause, Play, Square } from "lucide-react";
 import {
@@ -18,7 +18,7 @@ import { RunStatusBadge } from "@/components/status-badge";
 import { PipelineGraph } from "@/components/pipeline-graph";
 import { NodeDrawer } from "@/components/node-drawer";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
-import type { Run } from "@/lib/api/types";
+import type { Agent, Run } from "@/lib/api/types";
 
 export default function RunDetailPage({
   params,
@@ -30,7 +30,13 @@ export default function RunDetailPage({
   const { data: pipeline } = usePipeline(run?.pipeline_id ?? null);
   // Agents drive the per-edge field-flow chips on the graph (#62).
   // We don't gate the page on it — graph still renders without chips.
+  // Memoised so a refetch returning the same data doesn't churn the
+  // graph's annotation memo via a fresh array reference.
   const { data: agentsData } = useAgentsList();
+  const agents = useMemo<Agent[]>(
+    () => agentsData?.items ?? [],
+    [agentsData?.items],
+  );
 
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
@@ -87,7 +93,7 @@ export default function RunDetailPage({
       {pipeline ? (
         <PipelineGraph
           pipeline={pipeline}
-          agents={agentsData?.items}
+          agents={agents}
           nodeStatuses={run.node_statuses}
           currentNode={run.current_node}
           onNodeClick={(nodeId) => setSelectedNode(nodeId)}

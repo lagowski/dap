@@ -11,7 +11,10 @@
  * (read-only) — same render path, same chip data.
  */
 
-import type { Agent, PipelineEdge, PipelineNode } from "@/lib/api/types";
+import type { Agent, Pipeline, PipelineNode } from "@/lib/api/types";
+
+export const START_SENTINEL = "__start__";
+export const END_SENTINEL = "__end__";
 
 export interface EdgeAnnotation {
   /** Fields flowing through this edge — intersection of source outputs and target inputs. */
@@ -22,11 +25,31 @@ export interface EdgeAnnotation {
    * target with stale state instead of fresh upstream output.
    */
   warning: boolean;
+  /**
+   * Either source or target agent couldn't be resolved — the agents
+   * list is still loading, or one of the referenced agents has been
+   * deleted/archived. Lets callers distinguish "no contract because
+   * legacy mode" from "no contract because we don't know yet".
+   */
+  unknown: boolean;
+}
+
+const EMPTY_ANNOTATION: EdgeAnnotation = {
+  fields: [],
+  warning: false,
+  unknown: false,
+};
+
+function isSentinelNodeId(id: string): boolean {
+  return id === START_SENTINEL || id === END_SENTINEL;
 }
 
 /**
  * Compute the annotation for a single edge.
  *
+ * - Either agent missing (loading or deleted) → ``unknown: true``,
+ *   empty fields, no warning. Caller should reflect this distinct
+ *   state in any user-facing message.
  * - Both endpoints in legacy mode (empty schemas) → empty annotation,
  *   no warning. Falls back to v0.4 behaviour where the chip just
  *   doesn't render anything.
@@ -41,7 +64,7 @@ export function computeEdgeAnnotation(
   target: Agent | undefined,
 ): EdgeAnnotation {
   if (source === undefined || target === undefined) {
-    return { fields: [], warning: false };
+    return { fields: [], warning: false, unknown: true };
   }
   const targetInputs = target.input_schema ?? [];
   const sourceOutputs = new Set(source.output_schema ?? []);
@@ -50,7 +73,7 @@ export function computeEdgeAnnotation(
     targetInputs.length > 0 &&
     sourceOutputs.size > 0 &&
     fields.length === 0;
-  return { fields, warning };
+  return { fields, warning, unknown: false };
 }
 
 /**
@@ -66,6 +89,22 @@ export function agentForNode(
   const node = nodes.find((n) => n.id === nodeId);
   if (node === undefined) return undefined;
   return agentsById.get(node.agent_id);
+}
+
+/**
+ * Resolve the agent for an edge endpoint, normalising the
+ * ``__start__`` sentinel to the pipeline's entry point. ``__end__``
+ * is treated as terminal — no agent is ever resolved for it.
+ */
+function agentForEndpoint(
+  endpointId: string,
+  pipeline: Pick<Pipeline, "nodes" | "entry_point">,
+  agentsById: ReadonlyMap<string, Agent>,
+): Agent | undefined {
+  if (endpointId === END_SENTINEL) return undefined;
+  const lookupId =
+    endpointId === START_SENTINEL ? pipeline.entry_point : endpointId;
+  return agentForNode(lookupId, pipeline.nodes, agentsById);
 }
 
 /**
@@ -121,21 +160,32 @@ export function annotationTooltip(annotation: EdgeAnnotation): string | undefine
 }
 
 /**
- * Convenience: compute annotation for every edge given the pipeline's
- * nodes, edges, and an agents map. Used by both the designer
- * (re-computed on every edit) and the run viewer (computed once when
- * the run loads).
+ * Convenience: compute annotation for every edge given the pipeline
+ * and an agents list. Used by both the designer (re-computed on every
+ * edit) and the run viewer (computed once when the run loads).
+ *
+ * Sentinel handling lives here so callers don't have to duplicate it:
+ *
+ * - ``__start__`` source is normalised to the pipeline's entry point
+ *   for agent lookup. The implicit START → entry_point edge therefore
+ *   shows the entry node's "what it reads" picture (or empty if the
+ *   entry has no input_schema).
+ * - ``__end__`` target → terminal edge, no contract to evaluate.
+ *   Returns the empty annotation with no warning + no unknown flag.
  */
 export function annotateEdges(
-  nodes: readonly PipelineNode[],
-  edges: readonly PipelineEdge[],
+  pipeline: Pick<Pipeline, "nodes" | "edges" | "entry_point">,
   agents: readonly Agent[],
 ): Map<string, EdgeAnnotation> {
   const agentsById = new Map(agents.map((a) => [a.id, a]));
   const out = new Map<string, EdgeAnnotation>();
-  for (const edge of edges) {
-    const source = agentForNode(edge.source, nodes, agentsById);
-    const target = agentForNode(edge.target, nodes, agentsById);
+  for (const edge of pipeline.edges) {
+    if (isSentinelNodeId(edge.target)) {
+      out.set(edge.id, EMPTY_ANNOTATION);
+      continue;
+    }
+    const source = agentForEndpoint(edge.source, pipeline, agentsById);
+    const target = agentForEndpoint(edge.target, pipeline, agentsById);
     out.set(edge.id, computeEdgeAnnotation(source, target));
   }
   return out;

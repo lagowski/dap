@@ -22,7 +22,10 @@ import { useAgentsList, useCreatePipeline, useUpdatePipeline, useValidatePipelin
 import {
   annotationTooltip,
   computeEdgeAnnotation,
+  END_SENTINEL,
   formatEdgeLabel,
+  START_SENTINEL,
+  type EdgeAnnotation,
 } from "@/lib/edge-annotations";
 import type {
   Agent,
@@ -262,24 +265,47 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
     }
   }, [buildPayload, initialPipeline, create, update, router]);
 
-  // Decorate React Flow edges with field annotations (#62). Memoised on
-  // every shape that affects what the chip should say — node→agent
-  // mapping, the agents list itself (legacy schemas → empty chip), and
-  // the per-edge condition state. Original ``edges`` stays the source
-  // of truth; we only rewrite cosmetic props (label / style / data).
-  const annotatedEdges = useMemo<Edge[]>(() => {
+  // Single source-of-truth map: edge_id → EdgeAnnotation. Both the
+  // rendered edges and the inspector read from this so the chip on
+  // the canvas and the field list in the side panel can never drift.
+  const annotations = useMemo<Map<string, EdgeAnnotation>>(() => {
     const agentsById = new Map<string, Agent>(agents.map((a) => [a.id, a]));
     const agentForReactFlowNode = (nodeId: string): Agent | undefined => {
+      // Sentinels never resolve to an agent — return undefined so the
+      // empty-annotation branch below kicks in (no chip, no warning).
+      if (nodeId === START_SENTINEL || nodeId === END_SENTINEL) {
+        return undefined;
+      }
       const node = nodes.find((n) => n.id === nodeId);
       if (node === undefined) return undefined;
       const agentId = String((node.data as { agentId?: string })?.agentId ?? "");
       return agentsById.get(agentId);
     };
-    return edges.map((e) => {
-      const annotation = computeEdgeAnnotation(
-        agentForReactFlowNode(e.source),
-        agentForReactFlowNode(e.target),
+    const out = new Map<string, EdgeAnnotation>();
+    for (const e of edges) {
+      // Sentinel-touching edges have no contract to evaluate.
+      if (e.target === END_SENTINEL || e.source === START_SENTINEL) {
+        out.set(e.id, { fields: [], warning: false, unknown: false });
+        continue;
+      }
+      out.set(
+        e.id,
+        computeEdgeAnnotation(
+          agentForReactFlowNode(e.source),
+          agentForReactFlowNode(e.target),
+        ),
       );
+    }
+    return out;
+  }, [edges, nodes, agents]);
+
+  // Decorate React Flow edges with field annotations (#62). Original
+  // ``edges`` stays the source of truth; we only rewrite cosmetic
+  // props (label / style / data) using the precomputed map above.
+  const annotatedEdges = useMemo<Edge[]>(() => {
+    return edges.map((e) => {
+      const annotation =
+        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
       const meta = edgeMeta[e.id];
       const hasCondition = meta?.condition != null;
       const userLabel = meta?.label?.trim() ?? "";
@@ -308,16 +334,14 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         },
       };
     });
-  }, [edges, nodes, agents, edgeMeta]);
+  }, [edges, edgeMeta, annotations]);
 
-  // Compute current selection details for inspector
+  // Compute current selection details for inspector. Pulls the
+  // edge's annotation from the shared ``annotations`` map so the
+  // inspector view never disagrees with the chip on the canvas.
   const selectionDetail = useMemo<
     | { kind: "node"; node: DesignerNode }
-    | {
-        kind: "edge";
-        edge: DesignerEdge;
-        annotation: ReturnType<typeof computeEdgeAnnotation>;
-      }
+    | { kind: "edge"; edge: DesignerEdge; annotation: EdgeAnnotation }
     | { kind: "none" }
   >(() => {
     if (selection.kind === "node") {
@@ -341,24 +365,12 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         condition: meta?.condition ?? null,
         label: meta?.label ?? null,
       };
-      // Re-derive the annotation here so the inspector can show the
-      // full field list (the chip on the edge collapses to "{n fields}"
-      // when there are more than 2).
-      const agentsById = new Map<string, Agent>(agents.map((a) => [a.id, a]));
-      const agentForId = (nodeId: string): Agent | undefined => {
-        const node = nodes.find((x) => x.id === nodeId);
-        if (node === undefined) return undefined;
-        const aid = String((node.data as { agentId?: string })?.agentId ?? "");
-        return agentsById.get(aid);
-      };
-      const annotation = computeEdgeAnnotation(
-        agentForId(e.source),
-        agentForId(e.target),
-      );
+      const annotation =
+        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
       return { kind: "edge", edge, annotation };
     }
     return { kind: "none" };
-  }, [selection, nodes, edges, edgeMeta, agents]);
+  }, [selection, nodes, edges, edgeMeta, annotations]);
 
   const isSaving = create.isPending || update.isPending;
   const saveLabel = initialPipeline ? `Save v${initialPipeline.version + 1}` : "Save";

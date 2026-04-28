@@ -77,17 +77,20 @@ export function PipelineGraph({
   }, [pipeline.nodes, nodeStatuses, currentNode]);
 
   // Per-edge annotation: which fields flow through, and whether the
-  // contract is broken (target declares inputs the source can't produce).
+  // contract is broken (target declares inputs the source can't
+  // produce). Sentinel handling (``__start__`` source / ``__end__``
+  // target) is encapsulated by ``annotateEdges`` itself.
   const annotations = useMemo<Map<string, EdgeAnnotation>>(
-    () => annotateEdges(pipeline.nodes, pipeline.edges, agents ?? []),
-    [pipeline.nodes, pipeline.edges, agents],
+    () => annotateEdges(pipeline, agents ?? []),
+    [pipeline, agents],
   );
 
   const edges = useMemo<Edge[]>(() => {
     return pipeline.edges.map((e) => {
-      const annotation = annotations.get(e.id) ?? {
+      const annotation: EdgeAnnotation = annotations.get(e.id) ?? {
         fields: [],
         warning: false,
+        unknown: false,
       };
       const hasCondition = e.condition != null;
       const label = formatEdgeLabel(annotation, hasCondition);

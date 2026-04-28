@@ -194,6 +194,11 @@ function EdgePanel({
             outputs. Either widen the source&apos;s output_schema or narrow
             the target&apos;s input_schema.
           </p>
+        ) : annotation.unknown ? (
+          <p className="text-xs italic text-muted-foreground">
+            Agent lookup failed — the agents list may still be loading,
+            or one of the referenced agents has been archived/deleted.
+          </p>
         ) : annotation.fields.length === 0 ? (
           <p className="text-xs italic text-muted-foreground">
             No declared field flow — at least one endpoint is in legacy
