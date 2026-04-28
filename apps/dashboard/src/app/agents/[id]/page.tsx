@@ -3,7 +3,7 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ArrowLeft, ChevronDown, ChevronRight, Pencil } from "lucide-react";
+import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Pencil } from "lucide-react";
 import { useAgent, useAgentVersions, useArchiveAgent } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,12 @@ export default function AgentDetailPage({
                 <Link href={`/agents/${agent.id}/edit`}>
                   <Pencil className="h-3.5 w-3.5 mr-1" />
                   Edit
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/agents/new?from=${agent.id}`}>
+                  <Copy className="h-3.5 w-3.5 mr-1" />
+                  Clone
                 </Link>
               </Button>
               <Button
