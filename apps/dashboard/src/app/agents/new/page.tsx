@@ -10,7 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
 import { AgentTabs, type AgentTab } from "@/components/agents/agent-tabs";
-import { AgentTestPanel } from "@/components/agents/agent-test-panel";
+import {
+  AgentTestPanel,
+  type VariantBOverrides,
+} from "@/components/agents/agent-test-panel";
 import { TemplatePicker } from "@/components/agents/template-picker";
 import type { AgentTemplate } from "@/lib/agent-templates";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
@@ -48,24 +51,38 @@ function NewAgentPageContent() {
     values: AgentFormValues;
     valid: boolean;
   } | null>(null);
+  // Variant B overrides promoted from the Test panel (#105). When set,
+  // bumped onto the form via ``promoteIteration`` in the form key so
+  // AgentForm remounts with the diverged runtime/prompt.
+  const [promoted, setPromoted] = useState<VariantBOverrides | null>(null);
+  const [promoteIteration, setPromoteIteration] = useState(0);
   const formPanelId = useId();
   const testPanelId = useId();
 
-  // initialValues precedence: clone source > template > undefined.
-  // The form is keyed so switching template force-remounts it,
-  // letting react-hook-form pick up the new ``defaultValues``.
-  const initialValues =
+  // initialValues precedence: promoted > snapshot > clone source >
+  // template > undefined. ``promoted`` overrides come from the Test
+  // panel and need to win so the user actually sees the promotion.
+  // ``snapshot`` (last form values) preserves edits between remounts —
+  // promoting then editing the form shouldn't reset to clone/template
+  // defaults. Clone/template are first-mount seeds.
+  const baseInitialValues =
     sourceQuery.data !== undefined
       ? cloneInitialValuesFrom(sourceQuery.data)
       : template !== null
         ? templateInitialValuesFrom(template)
         : undefined;
+  const initialValues = applyPromoted(
+    snapshot?.values ?? baseInitialValues,
+    promoted,
+  );
 
-  const formKey = sourceQuery.data
-    ? `clone:${sourceQuery.data.id}`
-    : template !== null
-      ? `template:${template.id}`
-      : "scratch";
+  const formKey = `${
+    sourceQuery.data
+      ? `clone:${sourceQuery.data.id}`
+      : template !== null
+        ? `template:${template.id}`
+        : "scratch"
+  }:${promoteIteration}`;
 
   return (
     <div className="p-6 space-y-4 max-w-3xl">
@@ -178,6 +195,11 @@ function NewAgentPageContent() {
                         ? "Fix form errors before running a test."
                         : null
                   }
+                  onPromoteVariantB={(overrides) => {
+                    setPromoted(overrides);
+                    setPromoteIteration((n) => n + 1);
+                    setTab("form");
+                  }}
                 />
               </div>
             </>
@@ -244,6 +266,24 @@ function cloneInitialValuesFrom(source: {
  * collapses to its short prefix so the agent's saved name is
  * something the user actually wants to read in the agents list.
  */
+/**
+ * Layer Variant B overrides (#105) on top of the form's initial values
+ * so a Promote click actually changes what the next form mount shows.
+ * Returns the input untouched when nothing was promoted yet.
+ */
+function applyPromoted(
+  base: Partial<AgentFormValues> | undefined,
+  promoted: VariantBOverrides | null,
+): Partial<AgentFormValues> | undefined {
+  if (!promoted) return base;
+  return {
+    ...(base ?? {}),
+    runtime_id: promoted.runtime_id,
+    runtime_config: promoted.runtime_config,
+    prompt_template: promoted.prompt_template,
+  };
+}
+
 /**
  * Build the dry-run draft from live form values + the carry-through
  * fields (constraints, budget_limit_usd, timeout_ms) that the New form
