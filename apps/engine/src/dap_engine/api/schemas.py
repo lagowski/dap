@@ -71,6 +71,45 @@ class AgentUpdate(BaseModel):
         return validate_field_list(value)
 
 
+class ProjectCreate(BaseModel):
+    """POST /projects body — server generates id + timestamps.
+
+    ``pipelines`` values must reference existing non-archived pipelines;
+    repository validates and raises ``ValueError`` (mapped to 422) if not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+
+    working_directory: str | None = None
+    repo_url: str | None = None
+    default_branch: str = Field(default="main", min_length=1, max_length=200)
+
+    pipelines: dict[str, str] = Field(default_factory=dict)
+    env_vars: dict[str, str] = Field(default_factory=dict)
+
+
+class ProjectUpdate(BaseModel):
+    """PUT /projects/{id} body — full replacement (no versioning for projects).
+
+    Same shape as ``ProjectCreate`` minus the auto fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+
+    working_directory: str | None = None
+    repo_url: str | None = None
+    default_branch: str = Field(default="main", min_length=1, max_length=200)
+
+    pipelines: dict[str, str] = Field(default_factory=dict)
+    env_vars: dict[str, str] = Field(default_factory=dict)
+
+
 class PipelineCreate(BaseModel):
     """POST /pipelines body."""
 

@@ -1,0 +1,68 @@
+"""Project — workspace abstraction owning a working directory + workflow bindings.
+
+A Project composes existing Pipelines into a workflow: it carries the
+context (working directory or remote repo, default branch, env vars)
+and binds *workflow kinds* (configure / plan / develop / ...) to
+specific pipeline IDs. Pipelines stay reusable; the project glues
+context onto them.
+
+The list ``RECOMMENDED_PIPELINE_KINDS`` is a UX hint, not an enforced
+enum — the dashboard surfaces these slots first-class, but custom
+keys are accepted at the API layer. That keeps users free to invent
+new workflow phases (``release``, ``hotfix``, ``backfill``, …) without
+a code change.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Final
+
+from pydantic import BaseModel, ConfigDict, Field
+
+RECOMMENDED_PIPELINE_KINDS: Final = (
+    "configure",
+    "plan",
+    "develop",
+    "verify",
+    "release",
+)
+
+
+class Project(BaseModel):
+    """A workspace + a binding of workflow kinds to pipelines."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    description: str = ""
+
+    # Either a local path the engine should run subprocesses in, or a
+    # remote repo URL that the user clones manually before running. The
+    # engine treats both as opaque strings — no validation, no auth — so
+    # a single-user local-trust setup works without auth plumbing.
+    working_directory: str | None = None
+    repo_url: str | None = None
+    default_branch: str = "main"
+
+    # Workflow bindings. Keys are kinds (recommended or custom),
+    # values are pipeline ids. The engine validates that every value
+    # is an existing non-archived pipeline at write time.
+    pipelines: dict[str, str] = Field(default_factory=dict)
+
+    # Project-scoped env vars layered onto subprocess environments via
+    # the bash / cli runtimes. Per-agent ``runtime_config.env`` still
+    # wins; engine process env still wins over both. Secrets should
+    # stay in engine env — these are convenience for non-sensitive
+    # values like ``WORKSPACE_NAME`` or feature flags.
+    env_vars: dict[str, str] = Field(default_factory=dict)
+
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+    @property
+    def is_active(self) -> bool:
+        """Convenience for the dashboard — soft-delete via ``archived_at``."""
+        return self.archived_at is None

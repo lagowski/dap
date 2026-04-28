@@ -15,6 +15,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from dap_engine.api.agents import router as agents_router
 from dap_engine.api.health import router as health_router
 from dap_engine.api.pipelines import router as pipelines_router
+from dap_engine.api.projects import router as projects_router
 from dap_engine.api.runs import router as runs_router
 from dap_engine.api.runtimes import router as runtimes_router
 from dap_engine.api.settings import router as settings_router
@@ -120,6 +121,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     app.include_router(runtimes_router)
     app.include_router(agents_router)
     app.include_router(pipelines_router)
+    app.include_router(projects_router)
     app.include_router(runs_router)
     app.include_router(settings_router)
 
