@@ -45,6 +45,9 @@ but runs commands with the engine's privileges — see the security note in
 
 - [`docs/architecture.md`](docs/architecture.md) — components, state schema,
   Run lifecycle, LangGraph checkpoint model.
+- [`docs/projects.md`](docs/projects.md) — projects (v0.6 workspace layer):
+  binding workflow kinds to pipelines, env layering, recipes for the
+  common multi-pipeline patterns.
 - [`docs/providers.md`](docs/providers.md) — provider matrix (Anthropic /
   OpenAI / Gemini / GLM / OpenRouter / Ollama), per-provider setup, agent
   recipes for the common patterns.
