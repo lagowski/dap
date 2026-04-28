@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import type {
   AgentCreate,
+  AgentDryRunRequest,
   AgentExport,
   AgentUpdate,
   PipelineCreate,
@@ -211,6 +212,14 @@ export function useImportAgent() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.agents });
     },
+  });
+}
+
+export function useDryRunAgent() {
+  // Stateless on the server (#103) — no cache invalidation. The mutation
+  // is here purely for the loading/error/result UI on the Test panel.
+  return useMutation({
+    mutationFn: (payload: AgentDryRunRequest) => api.dryRunAgent(payload),
   });
 }
 

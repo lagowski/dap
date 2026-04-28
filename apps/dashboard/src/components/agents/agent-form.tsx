@@ -93,6 +93,15 @@ interface AgentFormProps {
    * usually shouldn't (would change cost/behaviour materially).
    */
   lockedFields?: ReadonlyArray<"role" | "runtime_id">;
+  /**
+   * Optional snapshot of the live form values. Called on every change
+   * so a sibling component (e.g. the dry-run Test panel) can read the
+   * current draft without lifting state. Validity reflects the same
+   * gate as ``Submit`` — runtime_config required fields + JSON parse
+   * status — so the Test panel can disable "Run test" for the same
+   * reasons Submit is disabled.
+   */
+  onValuesChange?: (snapshot: { values: AgentFormValues; valid: boolean }) => void;
 }
 
 export function AgentForm({
@@ -103,9 +112,15 @@ export function AgentForm({
   submitLabel,
   cancelHref = "/agents",
   lockedFields = [],
+  onValuesChange,
 }: AgentFormProps) {
   const form = useForm<FormShape>({
     resolver: zodResolver(formSchema),
+    // ``onChange`` so ``formState.isValid`` reflects the live form state.
+    // The default ``onSubmit`` mode keeps ``isValid`` stuck at ``false``
+    // until the user clicks Submit at least once — which would leave the
+    // dry-run Test panel disabled even on a perfectly valid form.
+    mode: "onChange",
     defaultValues: {
       name: initialValues?.name ?? "",
       role: initialValues?.role ?? ROLES[0],
@@ -154,6 +169,43 @@ export function AgentForm({
 
   const watchedRuntimeId = form.watch("runtime_id");
   const watchedRole = form.watch("role");
+  const watchedName = form.watch("name");
+  const watchedPrompt = form.watch("prompt_template");
+
+  // Emit the current form snapshot to interested siblings (e.g. the
+  // dry-run Test panel). ``valid`` mirrors the Submit gate: zod schema
+  // + per-runtime required fields + parseable JSON inputs.
+  useEffect(() => {
+    if (!onValuesChange) return;
+    const runtimeErrors = validateRuntimeConfig(watchedRuntimeId, runtimeConfig);
+    const valid =
+      form.formState.isValid &&
+      runtimeConfigJsonValid &&
+      runtimeErrors.length === 0;
+    onValuesChange({
+      values: {
+        name: watchedName,
+        role: watchedRole,
+        runtime_id: watchedRuntimeId,
+        prompt_template: watchedPrompt,
+        runtime_config: pruneRuntimeConfig(watchedRuntimeId, runtimeConfig),
+        input_schema: inputSchema,
+        output_schema: outputSchema,
+      },
+      valid,
+    });
+  }, [
+    onValuesChange,
+    watchedName,
+    watchedRole,
+    watchedRuntimeId,
+    watchedPrompt,
+    runtimeConfig,
+    runtimeConfigJsonValid,
+    inputSchema,
+    outputSchema,
+    form.formState.isValid,
+  ]);
 
   // When the user switches runtimes, swap to that runtime's defaults so
   // required fields aren't left blank from the previous selection.

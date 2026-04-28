@@ -8,6 +8,8 @@
 import type {
   Agent,
   AgentCreate,
+  AgentDryRunRequest,
+  AgentDryRunResponse,
   AgentExport,
   AgentUpdate,
   NodeExecutionLog,
@@ -261,6 +263,15 @@ export async function exportAgent(id: string): Promise<AgentExport> {
 
 export async function importAgent(payload: AgentExport): Promise<Agent> {
   return request<Agent>("/agents/import", { method: "POST", json: payload });
+}
+
+export async function dryRunAgent(
+  payload: AgentDryRunRequest,
+): Promise<AgentDryRunResponse> {
+  return request<AgentDryRunResponse>("/agents/dry-run", {
+    method: "POST",
+    json: payload,
+  });
 }
 
 // ---------------------------------------------------------------------------
