@@ -3,9 +3,9 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Pencil } from "lucide-react";
+import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Pencil } from "lucide-react";
 import { useAgent, useAgentVersions, useArchiveAgent } from "@/hooks/api";
-import { formatApiError } from "@/lib/api/client";
+import { exportAgent, formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,31 @@ export default function AgentDetailPage({
     });
   };
 
+  const handleExport = async () => {
+    try {
+      const exportPayload = await exportAgent(id);
+      const json = JSON.stringify(exportPayload, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      // Slugify the agent name so the filename is git-friendly. Falls
+      // back to the agent id if the slug ends up empty.
+      const slug =
+        agent.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/(^-|-$)+/g, "") || agent.id.slice(0, 8);
+      a.download = `${slug}.agent.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      window.alert(`Export failed: ${formatApiError(err)}`);
+    }
+  };
+
   return (
     <div className="p-6 space-y-4 max-w-4xl">
       <div className="flex items-center gap-2">
@@ -76,6 +101,10 @@ export default function AgentDetailPage({
                   <Copy className="h-3.5 w-3.5 mr-1" />
                   Clone
                 </Link>
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExport}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                Export JSON
               </Button>
               <Button
                 variant="outline"

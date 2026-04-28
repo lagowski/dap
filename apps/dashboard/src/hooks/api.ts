@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import type {
   AgentCreate,
+  AgentExport,
   AgentUpdate,
   PipelineCreate,
   PipelineUpdate,
@@ -199,6 +200,16 @@ export function useArchiveAgent() {
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: queryKeys.agents });
       qc.invalidateQueries({ queryKey: queryKeys.agent(id) });
+    },
+  });
+}
+
+export function useImportAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AgentExport) => api.importAgent(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
     },
   });
 }

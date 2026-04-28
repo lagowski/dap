@@ -8,6 +8,7 @@
 import type {
   Agent,
   AgentCreate,
+  AgentExport,
   AgentUpdate,
   NodeExecutionLog,
   PaginatedList,
@@ -252,6 +253,14 @@ export async function archiveAgent(id: string): Promise<void> {
 
 export async function listAgentVersions(id: string): Promise<Agent[]> {
   return request<Agent[]>(`/agents/${encodeURIComponent(id)}/versions`);
+}
+
+export async function exportAgent(id: string): Promise<AgentExport> {
+  return request<AgentExport>(`/agents/${encodeURIComponent(id)}/export`);
+}
+
+export async function importAgent(payload: AgentExport): Promise<Agent> {
+  return request<Agent>("/agents/import", { method: "POST", json: payload });
 }
 
 // ---------------------------------------------------------------------------

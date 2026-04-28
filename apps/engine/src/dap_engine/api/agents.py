@@ -1,17 +1,23 @@
-"""REST CRUD for agents + prompt render preview."""
+"""REST CRUD for agents + prompt render preview + import/export (#94)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
+from dap_runtimes import RuntimeRegistry
 from dap_types import Agent
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from dap_engine.api.deps import get_session
+from dap_engine.api.deps import get_registry, get_session
 from dap_engine.api.schemas import (
+    AGENT_EXPORT_SCHEMA_VERSION,
     AgentCreate,
+    AgentExport,
+    AgentExportPayload,
+    AgentImportRequest,
     AgentUpdate,
     RenderPreviewRequest,
     RenderPreviewResponse,
@@ -47,6 +53,48 @@ def list_agents(
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Agent)
 def create_agent(payload: AgentCreate, session: Session = Depends(get_session)) -> Agent:
     return repo.create_agent(session, payload)
+
+
+@router.post(
+    "/import",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Agent,
+)
+def import_agent(
+    payload: AgentImportRequest,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+) -> Agent:
+    """Create a new agent (v1) from an exported JSON payload (#94).
+
+    ``schema_version`` and field-list validators run during request
+    parsing (Pydantic). The runtime_id check happens here because it
+    needs the runtime registry. Everything else delegates to the
+    standard create flow — same validation, same versioning, same
+    response shape.
+    """
+    if not registry.has(payload.agent.runtime_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Unknown runtime_id '{payload.agent.runtime_id}' — "
+                "this engine has no adapter registered with that id."
+            ),
+        )
+
+    create_payload = AgentCreate(
+        name=payload.agent.name,
+        role=payload.agent.role,
+        runtime_id=payload.agent.runtime_id,
+        runtime_config=payload.agent.runtime_config,
+        prompt_template=payload.agent.prompt_template,
+        input_schema=payload.agent.input_schema,
+        output_schema=payload.agent.output_schema,
+        constraints=payload.agent.constraints,
+        budget_limit_usd=payload.agent.budget_limit_usd,
+        timeout_ms=payload.agent.timeout_ms,
+    )
+    return repo.create_agent(session, create_payload)
 
 
 @router.get("/{agent_id}", response_model=Agent)
@@ -96,6 +144,49 @@ def get_agent_version(
         return repo.get_agent_version(session, agent_id, version)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{agent_id}/export", response_model=AgentExport)
+def export_agent(
+    agent_id: str,
+    session: Session = Depends(get_session),
+) -> AgentExport:
+    """Return a portable JSON shape of the agent (#94).
+
+    Strips per-installation fields (id, version, timestamps,
+    archived_at) so the result can move between DAP installations
+    or be checked into git. Secrets stay in env — adapters read API
+    keys from process env, not from the exported JSON.
+    """
+    try:
+        agent = repo.get_agent(session, agent_id)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    try:
+        payload = AgentExportPayload(
+            name=agent.name,
+            role=agent.role,
+            runtime_id=agent.runtime_id,
+            runtime_config=agent.runtime_config,
+            prompt_template=agent.prompt_template,
+            input_schema=list(agent.input_schema),
+            output_schema=list(agent.output_schema),
+            constraints=list(agent.constraints),
+            budget_limit_usd=agent.budget_limit_usd,
+            timeout_ms=agent.timeout_ms,
+        )
+    except ValidationError as exc:
+        # Shouldn't happen — agent stored shape was already validated
+        # on write — but if a future migration ever introduces a stored
+        # shape we can't export, surface it as 500 with the details
+        # rather than crashing without context.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stored agent could not be re-validated for export: {exc.errors()}",
+        ) from exc
+
+    return AgentExport(schema_version=AGENT_EXPORT_SCHEMA_VERSION, agent=payload)
 
 
 @router.post("/{agent_id}/render-preview", response_model=RenderPreviewResponse)

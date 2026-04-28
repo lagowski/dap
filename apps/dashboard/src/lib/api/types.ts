@@ -46,6 +46,33 @@ export interface AgentCreate {
   timeout_ms?: number;
 }
 
+// ---- Agent import / export (#94) ----
+
+/** Stable export schema version. Bump only when the shape changes incompatibly. */
+export const AGENT_EXPORT_SCHEMA_VERSION = "agent-export/1";
+
+/**
+ * Portable subset of an agent — no per-installation fields. Mirrors
+ * ``AgentExportPayload`` on the server.
+ */
+export interface AgentExportPayload {
+  name: string;
+  role: string;
+  runtime_id: string;
+  runtime_config: Record<string, unknown>;
+  prompt_template: string;
+  input_schema: string[];
+  output_schema: string[];
+  constraints: string[];
+  budget_limit_usd: number | null;
+  timeout_ms: number;
+}
+
+export interface AgentExport {
+  schema_version: string;
+  agent: AgentExportPayload;
+}
+
 // ---- Projects (#63 / #67) ----
 
 /**
