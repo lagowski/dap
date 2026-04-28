@@ -112,12 +112,16 @@ class CodexAdapter(BaseAdapter):
         cwd = task.working_directory or os.getcwd()
         timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
         new_session = hasattr(os, "setsid")
+        # Engine env (with OPENAI_API_KEY) is the base; project env_vars
+        # overlay on top (#65). The Codex CLI reads the env itself.
+        env = _merge_project_env(task.project_env_vars)
 
         start = time.monotonic()
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=cwd,
+                env=env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -372,6 +376,14 @@ async def _kill_process_tree(
 
 def _elapsed_ms(start: float) -> int:
     return int((time.monotonic() - start) * MS_PER_SECOND)
+
+
+def _merge_project_env(project_env_vars: dict[str, str]) -> dict[str, str]:
+    """Build the subprocess env: engine env (base) + project overlay (#65)."""
+    env = os.environ.copy()
+    if project_env_vars:
+        env.update(project_env_vars)
+    return env
 
 
 def _failed(

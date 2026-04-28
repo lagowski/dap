@@ -254,9 +254,7 @@ async def test_execute_with_extra_args(with_api_key: None) -> None:
         patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
     ):
-        await adapter.execute(
-            _task(extra_args=["--allowed-tools", "Read,Edit,Bash"])
-        )
+        await adapter.execute(_task(extra_args=["--allowed-tools", "Read,Edit,Bash"]))
 
     argv = create_mock.call_args.args
     assert "--allowed-tools" in argv

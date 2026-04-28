@@ -72,6 +72,7 @@ async def trigger_run(
     # When a project is bound, it must exist and be active. Archived
     # projects fail loudly here so users notice instead of getting a
     # half-stamped run that the dashboard can't group cleanly.
+    project: ProjectORM | None = None
     if payload.project_id is not None:
         project = session.get(ProjectORM, payload.project_id)
         if project is None:
@@ -97,11 +98,21 @@ async def trigger_run(
             detail=f"Pipeline version not found: {payload.pipeline_id}@v{target_version}",
         )
 
-    # Build initial state — merge supplied fields over PipelineState defaults
+    # Build initial state — defaults < project context (#65) < caller's
+    # initial_state (caller wins). Project supplies ``repo`` from
+    # ``repo_url`` and ``branch`` from ``default_branch`` so a project
+    # owner doesn't have to repeat them on every trigger.
+    project_defaults: dict[str, Any] = {}
+    if project is not None:
+        if project.repo_url:
+            project_defaults["repo"] = project.repo_url
+        project_defaults["branch"] = project.default_branch
+
     state_dict: dict[str, Any] = {
         "run_id": "pending",
         "repo": "",
         "branch": "",
+        **project_defaults,
         **payload.initial_state,
     }
     try:

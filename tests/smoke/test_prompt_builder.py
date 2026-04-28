@@ -155,10 +155,7 @@ def test_input_schema_none_passes_through() -> None:
 def test_input_schema_drops_extra_context_silently() -> None:
     """Context fields outside the schema are dropped — they never reach the template."""
     template = (
-        "<agent_prompt>"
-        "<role>{{ role }}</role>"
-        "<count>{{ max_attempts }}</count>"
-        "</agent_prompt>"
+        "<agent_prompt><role>{{ role }}</role><count>{{ max_attempts }}</count></agent_prompt>"
     )
     # Schema declares role + max_attempts; context also has 'sneaky' which
     # the template doesn't reference. Build should succeed; sneaky's value

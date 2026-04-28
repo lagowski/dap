@@ -24,6 +24,13 @@ class RuntimeTask(BaseModel):
     budget_usd: float | None = None
     runtime_config: dict[str, Any] = Field(default_factory=dict)
     context: RuntimeContext = Field(default_factory=RuntimeContext)
+    # Project-scoped env overlay (#65). Subprocess-spawning adapters
+    # layer these onto the inherited engine env, *before* per-agent
+    # ``runtime_config.env`` is applied — so agent overrides still win,
+    # project env still beats engine env, engine env is the base.
+    # Empty dict for ad-hoc runs and api-call style adapters that
+    # don't spawn subprocesses.
+    project_env_vars: dict[str, str] = Field(default_factory=dict)
 
 
 class RuntimeResult(BaseModel):

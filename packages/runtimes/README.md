@@ -113,6 +113,24 @@ ma faktyczną kontrolę nad maszyną. Multi-user setup wymaga najpierw auth
 (#38) i dodatkowej warstwy izolacji (firejail / Docker / nsjail) zanim ten
 runtime można wystawić niezaufanym definicjom agentów.
 
+## Env layering (v0.6)
+
+Subprocess-spawning adapters (`bash`, `claude-code`, `codex`, `gemini-cli`)
+budują env subprocesa w trzech warstwach. Wyższa warstwa wygrywa nad niższą:
+
+1. **Engine process env** (najniższa) — env, w którym działa `dap-engine`.
+   Trzymaj tu sekrety (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`).
+2. **Project `env_vars`** (overlay) — `Project.env_vars` projektu związanego z
+   runem (#65). Wartości wyższe od engine env, niższe od per-agent. Convenience
+   dla nie-sekretnych zmiennych typu `WORKSPACE_NAME`, feature flagów, ścieżek
+   per-projekt.
+3. **Per-agent `runtime_config.env`** (najwyższa) — wprost w agent definition.
+   Ostatnia szansa na override per-call.
+
+Ad-hoc runs (bez `project_id`) widzą tylko warstwy 1 + 3 — warstwa 2 jest pustym
+dictem. `api-call` adapter nie spawnuje subprocesów, więc env layering go nie
+dotyczy (klucz API czyta SDK z `os.environ` bezpośrednio).
+
 ## claude-code
 
 Wywołuje Claude Code CLI w trybie `--print --output-format json`. Prompt

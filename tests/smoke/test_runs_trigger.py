@@ -40,22 +40,29 @@ class TriggerStubAdapter:
     display_name = "Trigger Stub"
     kind: RuntimeKind = "api"
 
+    def __init__(self) -> None:
+        # Captured RuntimeTask payloads — tests for project context (#65)
+        # assert against this list to prove cwd / env propagated.
+        self.received_tasks: list[RuntimeTask] = []
+
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, _task: RuntimeTask) -> RuntimeResult:
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+        self.received_tasks.append(task)
         return RuntimeResult(success=True, output="executed", duration_ms=1)
 
 
 @pytest.fixture
-def client_with_stub() -> Iterator[tuple[TestClient, RuntimeRegistry]]:
+def client_with_stub() -> Iterator[tuple[TestClient, RuntimeRegistry, TriggerStubAdapter]]:
     tmp = tempfile.mkdtemp(prefix="dap-trigger-")
     config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
     app = create_app(config)
     with TestClient(app) as c:
         registry: RuntimeRegistry = app.state.runtime_registry
-        registry.register(TriggerStubAdapter())
-        yield c, registry
+        stub = TriggerStubAdapter()
+        registry.register(stub)
+        yield c, registry, stub
 
 
 def _create_agent(client: TestClient) -> str:
@@ -94,8 +101,10 @@ def _create_pipeline(client: TestClient, agent_id: str) -> str:
     return str(response.json()["id"])
 
 
-def test_trigger_run_e2e(client_with_stub: tuple[TestClient, RuntimeRegistry]) -> None:
-    client, _registry = client_with_stub
+def test_trigger_run_e2e(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
 
@@ -131,9 +140,9 @@ def test_trigger_run_e2e(client_with_stub: tuple[TestClient, RuntimeRegistry]) -
 
 
 def test_trigger_run_404_unknown_pipeline(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _registry = client_with_stub
+    client, _registry, _stub = client_with_stub
     response = client.post(
         "/runs",
         json={"pipeline_id": "nonexistent", "initial_state": {}},
@@ -142,9 +151,9 @@ def test_trigger_run_404_unknown_pipeline(
 
 
 def test_trigger_run_extra_field_rejected(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _registry = client_with_stub
+    client, _registry, _stub = client_with_stub
     response = client.post(
         "/runs",
         json={"pipeline_id": "anything", "extra": "field"},
@@ -153,9 +162,9 @@ def test_trigger_run_extra_field_rejected(
 
 
 def test_trigger_run_invalid_initial_state(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _registry = client_with_stub
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
 
@@ -171,9 +180,9 @@ def test_trigger_run_invalid_initial_state(
 
 
 def test_trigger_run_specific_version(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _registry = client_with_stub
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
 
@@ -225,9 +234,9 @@ def _create_project(client: TestClient, **overrides: Any) -> str:
 
 
 def test_trigger_run_without_project_keeps_id_null(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _ = client_with_stub
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
     response = client.post(
@@ -239,9 +248,9 @@ def test_trigger_run_without_project_keeps_id_null(
 
 
 def test_trigger_run_stamps_project_id(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _ = client_with_stub
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
     project_id = _create_project(client)
@@ -263,9 +272,9 @@ def test_trigger_run_stamps_project_id(
 
 
 def test_trigger_run_unknown_project_returns_422(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _ = client_with_stub
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
     response = client.post(
@@ -281,9 +290,9 @@ def test_trigger_run_unknown_project_returns_422(
 
 
 def test_trigger_run_archived_project_returns_422(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    client, _ = client_with_stub
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
     project_id = _create_project(client)
@@ -303,10 +312,10 @@ def test_trigger_run_archived_project_returns_422(
 
 
 def test_list_runs_filter_by_project(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
     """Three runs across two projects + one ad-hoc; filter must scope correctly."""
-    client, _ = client_with_stub
+    client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
 
@@ -353,10 +362,126 @@ def test_list_runs_filter_by_project(
 
 
 def test_list_runs_unknown_project_returns_empty(
-    client_with_stub: tuple[TestClient, RuntimeRegistry],
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
     """Filtering by an unknown project_id is harmless — returns empty page."""
-    client, _ = client_with_stub
+    client, _registry, _stub = client_with_stub
     listing = client.get("/runs?project_id=does-not-exist").json()
     assert listing["items"] == []
     assert listing["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# project context propagation (#65)
+# ---------------------------------------------------------------------------
+
+
+def test_project_context_flows_into_runtime_task(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """working_directory + env_vars from the project must reach the adapter."""
+    client, _registry, stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(
+        client,
+        working_directory="/tmp/project-ctx",
+        env_vars={"DAP_PROJECT_FLAG": "on"},
+    )
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    assert stub.received_tasks, "stub adapter should have been invoked"
+    task = stub.received_tasks[-1]
+    assert task.working_directory == "/tmp/project-ctx"
+    assert task.project_env_vars == {"DAP_PROJECT_FLAG": "on"}
+
+
+def test_ad_hoc_run_keeps_legacy_task_defaults(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """Without project_id the adapter sees legacy ``"."`` cwd and empty env."""
+    client, _registry, stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+
+    response = client.post(
+        "/runs",
+        json={"pipeline_id": pipeline_id, "initial_state": {}},
+    )
+    assert response.status_code == 201
+    _wait_for_completion(client, response.json()["id"])
+
+    task = stub.received_tasks[-1]
+    assert task.working_directory == "."
+    assert task.project_env_vars == {}
+
+
+def test_project_seeds_initial_state_repo_and_branch(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """Project repo_url + default_branch land in initial_state when caller omits them."""
+    client, _registry, _stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(
+        client,
+        repo_url="https://example.com/proj.git",
+        default_branch="develop",
+    )
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    fetched = client.get(f"/runs/{run_id}").json()
+    assert fetched["initial_state"]["repo"] == "https://example.com/proj.git"
+    assert fetched["initial_state"]["branch"] == "develop"
+
+
+def test_caller_initial_state_overrides_project_defaults(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """Caller's initial_state takes priority over the project defaults (#65 spec)."""
+    client, _registry, _stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(
+        client,
+        repo_url="https://example.com/proj.git",
+        default_branch="develop",
+    )
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {"repo": "explicit-repo", "branch": "feature"},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    fetched = client.get(f"/runs/{run_id}").json()
+    assert fetched["initial_state"]["repo"] == "explicit-repo"
+    assert fetched["initial_state"]["branch"] == "feature"
