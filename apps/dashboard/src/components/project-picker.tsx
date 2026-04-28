@@ -42,14 +42,18 @@ export function ProjectPicker() {
         className="flex items-center gap-1.5 mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
         htmlFor="project-picker"
       >
-        <FolderKanban className="h-3 w-3" />
+        <FolderKanban className="h-3 w-3" aria-hidden="true" />
         Project scope
       </label>
       <select
         id="project-picker"
         value={value}
         onChange={(e) => handleChange(e.target.value)}
-        disabled={isPending}
+        // Disable until hydration completes — otherwise a user click
+        // during the brief pre-hydration window gets clobbered by the
+        // hydration effect's setState. Also disabled during the
+        // initial projects fetch so the dropdown isn't empty.
+        disabled={!isHydrated || isPending}
         className={cn(
           "w-full h-8 rounded-md border border-input bg-background px-2 text-sm",
           "disabled:opacity-50 disabled:cursor-not-allowed",
@@ -57,7 +61,9 @@ export function ProjectPicker() {
       >
         <option value={ALL_PROJECTS_VALUE}>All projects</option>
         {!activeKnown && activeProjectId !== null ? (
-          <option value={activeProjectId}>
+          // Disabled so the user can't actively re-select the stale
+          // id; switching to a valid entry clears it on next change.
+          <option value={activeProjectId} disabled>
             {activeProjectId.slice(0, 8)}… (unavailable)
           </option>
         ) : null}

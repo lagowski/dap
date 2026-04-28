@@ -43,14 +43,18 @@ export const queryKeys = {
 const RUNS_LIST_REFETCH_MS = 2_000;
 const RUN_DETAIL_REFETCH_MS = 2_000;
 
-export function useRunsList(filters?: {
-  pipelineId?: string;
-  finalStatus?: string;
-  projectId?: string;
-}) {
+export function useRunsList(
+  filters?: {
+    pipelineId?: string;
+    finalStatus?: string;
+    projectId?: string;
+  },
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: queryKeys.runsList(filters),
     queryFn: () => api.listRuns(filters),
+    enabled: options?.enabled ?? true,
     refetchInterval: (query) => {
       // Stop polling when there are no running runs
       const data = query.state.data;

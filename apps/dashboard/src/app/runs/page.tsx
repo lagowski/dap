@@ -12,10 +12,15 @@ import type { Run } from "@/lib/api/types";
 const RUN_ID_PREFIX_LENGTH = 8;
 
 export default function RunsPage() {
-  const { activeProjectId } = useActiveProject();
+  const { activeProjectId, isHydrated } = useActiveProject();
   const { data: activeProject } = useProject(activeProjectId);
+  // Gate the request on hydration so we don't fire an org-wide query
+  // first and then immediately re-fire a scoped one when the
+  // persisted activeProjectId comes in. Until hydration ``isPending``
+  // stays true and the page renders the existing "Loading…" state.
   const { data, isPending, isError, error, isFetching } = useRunsList(
     activeProjectId !== null ? { projectId: activeProjectId } : undefined,
+    { enabled: isHydrated },
   );
 
   return (
