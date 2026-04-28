@@ -19,7 +19,16 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { useAgentsList, useCreatePipeline, useUpdatePipeline, useValidatePipeline } from "@/hooks/api";
+import {
+  annotationTooltip,
+  computeEdgeAnnotation,
+  END_SENTINEL,
+  formatEdgeLabel,
+  START_SENTINEL,
+  type EdgeAnnotation,
+} from "@/lib/edge-annotations";
 import type {
+  Agent,
   EdgeCondition,
   Pipeline,
   PipelineEdge,
@@ -37,6 +46,10 @@ import {
   type PipelineFormPayload,
 } from "./types";
 
+const EDGE_WARNING_STROKE = "#dc2626"; // red-600
+const EDGE_CONDITION_STROKE = "#3b82f6"; // blue-500
+const EDGE_DEFAULT_STROKE = "#94a3b8"; // slate-400
+
 interface PipelineDesignerProps {
   initialPipeline: Pipeline | null;
 }
@@ -46,7 +59,12 @@ const NEW_NODE_OFFSET = 80;
 export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
   const router = useRouter();
   const { data: agentsData } = useAgentsList();
-  const agents = agentsData?.items ?? [];
+  // Stable reference so memos that depend on `agents` don't re-run when
+  // useAgentsList re-renders without a real data change.
+  const agents = useMemo<Agent[]>(
+    () => agentsData?.items ?? [],
+    [agentsData?.items],
+  );
 
   const [name, setName] = useState(initialPipeline?.name ?? "");
   const [description, setDescription] = useState(initialPipeline?.description ?? "");
@@ -247,10 +265,83 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
     }
   }, [buildPayload, initialPipeline, create, update, router]);
 
-  // Compute current selection details for inspector
+  // Single source-of-truth map: edge_id → EdgeAnnotation. Both the
+  // rendered edges and the inspector read from this so the chip on
+  // the canvas and the field list in the side panel can never drift.
+  const annotations = useMemo<Map<string, EdgeAnnotation>>(() => {
+    const agentsById = new Map<string, Agent>(agents.map((a) => [a.id, a]));
+    const agentForReactFlowNode = (nodeId: string): Agent | undefined => {
+      // Sentinels never resolve to an agent — return undefined so the
+      // empty-annotation branch below kicks in (no chip, no warning).
+      if (nodeId === START_SENTINEL || nodeId === END_SENTINEL) {
+        return undefined;
+      }
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node === undefined) return undefined;
+      const agentId = String((node.data as { agentId?: string })?.agentId ?? "");
+      return agentsById.get(agentId);
+    };
+    const out = new Map<string, EdgeAnnotation>();
+    for (const e of edges) {
+      // Sentinel-touching edges have no contract to evaluate.
+      if (e.target === END_SENTINEL || e.source === START_SENTINEL) {
+        out.set(e.id, { fields: [], warning: false, unknown: false });
+        continue;
+      }
+      out.set(
+        e.id,
+        computeEdgeAnnotation(
+          agentForReactFlowNode(e.source),
+          agentForReactFlowNode(e.target),
+        ),
+      );
+    }
+    return out;
+  }, [edges, nodes, agents]);
+
+  // Decorate React Flow edges with field annotations (#62). Original
+  // ``edges`` stays the source of truth; we only rewrite cosmetic
+  // props (label / style / data) using the precomputed map above.
+  const annotatedEdges = useMemo<Edge[]>(() => {
+    return edges.map((e) => {
+      const annotation =
+        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
+      const meta = edgeMeta[e.id];
+      const hasCondition = meta?.condition != null;
+      const userLabel = meta?.label?.trim() ?? "";
+      const annotationLabel = formatEdgeLabel(annotation, hasCondition);
+      // User-set edge label takes priority — they wrote it deliberately.
+      // When unset we fall back to the auto annotation chip.
+      const label = userLabel.length > 0 ? userLabel : annotationLabel;
+      const stroke = annotation.warning
+        ? EDGE_WARNING_STROKE
+        : hasCondition
+          ? EDGE_CONDITION_STROKE
+          : EDGE_DEFAULT_STROKE;
+      return {
+        ...e,
+        label,
+        labelStyle: annotation.warning
+          ? { fill: EDGE_WARNING_STROKE, fontWeight: 600 }
+          : undefined,
+        labelBgStyle: annotation.warning ? { fill: "#fee2e2" } : undefined,
+        animated: hasCondition,
+        style: { stroke, strokeWidth: annotation.warning ? 2 : 1 },
+        data: {
+          ...(e.data as object | undefined),
+          tooltip: annotationTooltip(annotation),
+          annotation,
+        },
+      };
+    });
+  }, [edges, edgeMeta, annotations]);
+
+  // Compute current selection details for inspector. Pulls the
+  // edge's annotation from the shared ``annotations`` map so the
+  // inspector view never disagrees with the chip on the canvas.
   const selectionDetail = useMemo<
     | { kind: "node"; node: DesignerNode }
-    | { kind: "edge"; edge: DesignerEdge }
+    | { kind: "edge"; edge: DesignerEdge; annotation: EdgeAnnotation }
     | { kind: "none" }
   >(() => {
     if (selection.kind === "node") {
@@ -274,10 +365,12 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         condition: meta?.condition ?? null,
         label: meta?.label ?? null,
       };
-      return { kind: "edge", edge };
+      const annotation =
+        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
+      return { kind: "edge", edge, annotation };
     }
     return { kind: "none" };
-  }, [selection, nodes, edges, edgeMeta]);
+  }, [selection, nodes, edges, edgeMeta, annotations]);
 
   const isSaving = create.isPending || update.isPending;
   const saveLabel = initialPipeline ? `Save v${initialPipeline.version + 1}` : "Save";
@@ -307,7 +400,7 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         <div className="flex-1 bg-muted/30">
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={annotatedEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

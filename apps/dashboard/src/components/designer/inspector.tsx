@@ -2,6 +2,7 @@
 
 import { Trash2 } from "lucide-react";
 import type { Agent, EdgeCondition } from "@/lib/api/types";
+import type { EdgeAnnotation } from "@/lib/edge-annotations";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
@@ -11,7 +12,7 @@ import type { DesignerEdge, DesignerNode } from "./types";
 
 type Selection =
   | { kind: "node"; node: DesignerNode }
-  | { kind: "edge"; edge: DesignerEdge }
+  | { kind: "edge"; edge: DesignerEdge; annotation: EdgeAnnotation }
   | { kind: "none" };
 
 interface InspectorProps {
@@ -51,6 +52,7 @@ export function Inspector(props: InspectorProps) {
         {props.selection.kind === "edge" && (
           <EdgePanel
             edge={props.selection.edge}
+            annotation={props.selection.annotation}
             onUpdateCondition={(c) =>
               props.onUpdateEdgeCondition(props.selection.kind === "edge" ? props.selection.edge.id : "", c)
             }
@@ -151,6 +153,7 @@ function NodePanel({
 
 interface EdgePanelProps {
   edge: DesignerEdge;
+  annotation: EdgeAnnotation;
   onUpdateCondition: (condition: EdgeCondition | null) => void;
   onUpdateLabel: (label: string) => void;
   onDelete: (edgeId: string) => void;
@@ -158,6 +161,7 @@ interface EdgePanelProps {
 
 function EdgePanel({
   edge,
+  annotation,
   onUpdateCondition,
   onUpdateLabel,
   onDelete,
@@ -182,6 +186,34 @@ function EdgePanel({
           </code>
         </Field>
       </div>
+
+      <Field label="Fields flowing through">
+        {annotation.warning ? (
+          <p className="text-xs text-destructive">
+            Downstream node declares inputs but none match the upstream&apos;s
+            outputs. Either widen the source&apos;s output_schema or narrow
+            the target&apos;s input_schema.
+          </p>
+        ) : annotation.unknown ? (
+          <p className="text-xs italic text-muted-foreground">
+            Agent lookup failed — the agents list may still be loading,
+            or one of the referenced agents has been archived/deleted.
+          </p>
+        ) : annotation.fields.length === 0 ? (
+          <p className="text-xs italic text-muted-foreground">
+            No declared field flow — at least one endpoint is in legacy
+            mode (empty schema).
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {annotation.fields.map((f) => (
+              <Badge key={f} variant="outline" className="font-mono text-[10px]">
+                {f}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </Field>
 
       <Field label="Label (optional)">
         <Input
