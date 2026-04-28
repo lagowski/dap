@@ -178,6 +178,20 @@ class PipelineUpdate(BaseModel):
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
 
 
+class ProjectRunRequest(BaseModel):
+    """POST /projects/{project_id}/run/{kind} body — convenience trigger.
+
+    All fields optional: the project resolves the bound pipeline_id
+    from ``kind`` and seeds ``repo`` / ``branch`` defaults; the caller
+    only supplies what they want to override per-call.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_version: int | None = None
+    initial_state: dict[str, Any] = Field(default_factory=dict)
+
+
 class RunCreateRequest(BaseModel):
     """POST /runs body — trigger pipeline execution.
 
