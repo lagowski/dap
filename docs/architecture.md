@@ -1,9 +1,11 @@
 # DAP architecture
 
 A bird's-eye view of how the pieces fit together. Pair this with
-`docs/runtimes.md` (how to plug in a new executor) and the auto-generated
-FastAPI docs at `http://127.0.0.1:7333/docs` (full endpoint reference) once
-you start the engine.
+[`docs/projects.md`](projects.md) (the workspace layer that composes
+pipelines), [`docs/runtimes.md`](runtimes.md) (how to plug in a new
+executor) and the auto-generated FastAPI docs at
+`http://127.0.0.1:7333/docs` (full endpoint reference) once you start
+the engine.
 
 ## Components
 
@@ -61,9 +63,21 @@ PID-file-based lifecycle (`init`, `start`, `stop`, `status`).
 ### `packages/types` — shared schema
 
 Pydantic v2 models that show up on both ends of every wire boundary:
-`Agent`, `Pipeline`, `PipelineState`, `Run`, `RuntimeTask`, `RuntimeResult`,
-`HealthStatus`. The dashboard hand-mirrors these in TypeScript; backend
-tests import them directly.
+`Agent`, `Pipeline`, `PipelineState`, `Project`, `Run`, `RuntimeTask`,
+`RuntimeResult`, `HealthStatus`. The dashboard hand-mirrors these in
+TypeScript; backend tests import them directly.
+
+### Workspace layer — `Project`
+
+A `Project` (added in v0.6) is a workspace: a binding of *workflow
+kinds* (configure / plan / develop / verify / release, plus any
+custom kind you want) to specific `pipeline_id`s, plus context that
+the engine folds into every run — `working_directory`, default
+`branch`, project-scoped `env_vars`. Pipelines stay reusable; the
+project glues them to a concrete codebase. Runs created via
+`POST /projects/{id}/run/{kind}` carry `Run.project_id` for grouping
+in the dashboard. Full operator guide in
+[`docs/projects.md`](projects.md).
 
 ### `packages/runtimes` — adapter implementations
 
@@ -191,7 +205,9 @@ Two SQLite databases per `.dap` directory:
 | `state.db`              | Alembic + ORM       | Agents, pipelines, runs, snapshots, logs |
 | `state.checkpoints.db`  | `AsyncSqliteSaver`  | LangGraph step-by-step graph state      |
 
-Both run with `journal_mode=WAL`. Five app tables: `agents`,
-`agent_versions`, `pipelines`, `pipeline_versions`, `runs`,
-`state_snapshots`, `node_execution_logs`. Migrations live in
+Both run with `journal_mode=WAL`. App tables: `agents`,
+`agent_versions`, `pipelines`, `pipeline_versions`, `projects`
+(v0.6 — single unversioned row per project, FK target for
+`runs.project_id`), `runs`, `state_snapshots`,
+`node_execution_logs`. Migrations live in
 `apps/engine/migrations/`.
