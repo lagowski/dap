@@ -1,24 +1,35 @@
-"""REST CRUD for agents + prompt render preview + import/export (#94)."""
+"""REST CRUD for agents + prompt render preview + import/export (#94) + dry-run (#103)."""
 
 from __future__ import annotations
 
-from typing import Any
+import tempfile
+import uuid
+from typing import TYPE_CHECKING, Any
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
-from dap_types import Agent
+from dap_types import Agent, RuntimeTask
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from dap_engine.api.deps import get_registry, get_session
+from dap_engine.api.deps import get_engine_config, get_registry, get_session
+
+if TYPE_CHECKING:
+    # Runtime cycle: dap_engine.app imports this router module, so we
+    # can't import EngineConfig at runtime. The type is needed only
+    # for the dry_run endpoint signature; behaviour is unchanged.
+    from dap_engine.app import EngineConfig
 from dap_engine.api.schemas import (
     AGENT_EXPORT_SCHEMA_VERSION,
     AgentCreate,
+    AgentDryRunRequest,
+    AgentDryRunResponse,
     AgentExport,
     AgentExportPayload,
     AgentImportRequest,
     AgentUpdate,
+    OutputSchemaValidation,
     RenderPreviewRequest,
     RenderPreviewResponse,
 )
@@ -261,4 +272,171 @@ def render_preview(
         valid=result.valid,
         warnings=result.warnings,
         errors=result.errors,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dry-run (#103) — execute the agent end-to-end against sample context
+# without persisting anything. The Test panel on the agent create/edit
+# pages is the primary caller.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_dryrun_source(
+    payload: AgentDryRunRequest, session: Session
+) -> tuple[str, str, list[str], list[str], dict[str, Any], int, float | None]:
+    """Return (runtime_id, prompt_template, input_schema, output_schema,
+    runtime_config, timeout_ms, agent_budget_usd) for the request, fetching
+    a saved agent or unwrapping the inline draft."""
+    if payload.draft is not None:
+        d = payload.draft
+        return (
+            d.runtime_id,
+            d.prompt_template,
+            list(d.input_schema),
+            list(d.output_schema),
+            dict(d.runtime_config),
+            d.timeout_ms,
+            d.budget_limit_usd,
+        )
+    # agent_id path — schema validator guarantees exactly one of the
+    # two is set, so this branch only runs when agent_id is present.
+    assert payload.agent_id is not None
+    try:
+        agent = (
+            repo.get_agent_version(session, payload.agent_id, payload.agent_version)
+            if payload.agent_version is not None
+            else repo.get_agent(session, payload.agent_id)
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return (
+        agent.runtime_id,
+        agent.prompt_template,
+        list(agent.input_schema),
+        list(agent.output_schema),
+        dict(agent.runtime_config),
+        agent.timeout_ms,
+        agent.budget_limit_usd,
+    )
+
+
+def _validate_output_schema(
+    structured: dict[str, Any] | None, expected: list[str]
+) -> OutputSchemaValidation:
+    """Soft-check the runtime's structured output against ``output_schema``.
+
+    No declared schema → ``checked=False`` (we don't pretend to validate).
+    No structured output (CLI returned plain text) → ``checked=False`` with
+    a note so the panel can explain why nothing was checked.
+    """
+    if not expected:
+        return OutputSchemaValidation(
+            valid=True,
+            checked=False,
+            note="output_schema is empty — nothing to validate against",
+        )
+    if structured is None:
+        return OutputSchemaValidation(
+            valid=False,
+            checked=False,
+            missing_fields=list(expected),
+            note="runtime did not return a structured payload — output schema cannot be checked",
+        )
+    expected_set = set(expected)
+    actual_set = set(structured.keys())
+    missing = sorted(expected_set - actual_set)
+    extras = sorted(actual_set - expected_set)
+    return OutputSchemaValidation(
+        valid=not missing,
+        checked=True,
+        missing_fields=missing,
+        extra_fields=extras,
+    )
+
+
+@router.post("/dry-run", response_model=AgentDryRunResponse)
+async def dry_run_agent(
+    payload: AgentDryRunRequest,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+    config: EngineConfig = Depends(get_engine_config),
+) -> AgentDryRunResponse:
+    """Execute one agent end-to-end without persisting anything (#103).
+
+    Runs in a fresh ``tempfile.TemporaryDirectory`` so CLI runtimes that
+    edit files (claude-code, aider, codex, bash) do their work in a
+    sandbox that's discarded on response. No ``Run`` row, no
+    ``NodeExecutionLog`` row — the result is returned only to the
+    caller.
+
+    Auth handled by the runtime adapter itself (env key OR stored OAuth
+    session — see #99).
+    """
+    (
+        runtime_id,
+        prompt_template,
+        input_schema,
+        output_schema,
+        runtime_config,
+        timeout_ms,
+        agent_budget,
+    ) = _resolve_dryrun_source(payload, session)
+
+    if not registry.has(runtime_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Unknown runtime_id '{runtime_id}' — no adapter registered. "
+                "Install the adapter or pick a different runtime."
+            ),
+        )
+
+    # Budget cap. The lower of agent's own ``budget_limit_usd`` and the
+    # engine-wide ``dry_run_budget_usd`` wins; if either declares a
+    # value above the engine cap, refuse before invocation.
+    cap = config.dry_run_budget_usd
+    if agent_budget is not None and agent_budget > cap:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Agent budget_limit_usd ({agent_budget:.4f}) exceeds the "
+                f"dry-run cap ({cap:.4f}). Lower the agent's budget or raise "
+                "DAP_DRY_RUN_BUDGET_USD on the engine."
+            ),
+        )
+    effective_budget = min(agent_budget, cap) if agent_budget is not None else cap
+
+    try:
+        build_result = build_prompt(
+            prompt_template,
+            payload.context,
+            input_schema=input_schema or None,
+        )
+    except PromptBuildError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+
+    adapter = registry.get(runtime_id)
+
+    with tempfile.TemporaryDirectory(prefix="dap-dryrun-") as workdir:
+        task = RuntimeTask(
+            execution_id=f"dryrun-{uuid.uuid4().hex[:12]}",
+            prompt_xml=build_result.xml,
+            working_directory=workdir,
+            timeout_ms=timeout_ms,
+            budget_usd=effective_budget,
+            runtime_config=runtime_config,
+        )
+        runtime_result = await adapter.execute(task)
+
+    output_check = _validate_output_schema(runtime_result.structured, output_schema)
+
+    return AgentDryRunResponse(
+        rendered_xml=build_result.xml,
+        prompt_warnings=list(build_result.warnings),
+        prompt_errors=list(build_result.errors),
+        runtime_result=runtime_result.model_dump(mode="json"),
+        output_schema_validation=output_check,
     )
