@@ -212,9 +212,14 @@ export const AGENT_TEMPLATES: readonly AgentTemplate[] = [
     id: "bash-runner",
     name: "BashRunner — shell command",
     description:
-      "Runs a single shell command in the run's working directory. No LLM. Good for deterministic steps — pytest, ruff, git, build scripts.",
+      "Runs a single shell command in the run's working directory. No LLM. Good for deterministic steps — pytest, ruff, git, build scripts. Role set to post_check to match the form's role select; the engine accepts any string here so rename if it fits the pipeline better.",
     category: "Custom",
-    role: "bash_runner",
+    // The agent form's role select today is a fixed list (task_selector,
+    // prompt_builder, test_author, implementer, verifier, post_check).
+    // ``post_check`` is the closest match for "deterministic step at
+    // some pipeline stage". Engine itself treats role as a free string
+    // so this is purely a UI-pickability constraint.
+    role: "post_check",
     runtime_id: "bash",
     runtime_config: {
       shell: "/bin/bash",
