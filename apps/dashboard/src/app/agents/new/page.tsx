@@ -21,14 +21,18 @@ export default function NewAgentPage() {
 function NewAgentPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const fromId = searchParams.get("from");
+  // Treat an empty / whitespace-only ``?from=`` as not-cloning. Without
+  // this, ``/agents/new?from=`` would trip the cloning branch and call
+  // ``useAgent("")``, which the hook rejects with a noisy error.
+  const fromIdRaw = searchParams.get("from");
+  const fromId = fromIdRaw && fromIdRaw.trim() !== "" ? fromIdRaw.trim() : null;
   const create = useCreateAgent();
 
   const isCloning = fromId !== null;
   // The hook is enabled only when fromId is present; in the
   // freshly-create path it returns isPending=false / data=undefined
   // and we render the empty form straight away.
-  const sourceQuery = useAgent(isCloning ? fromId : null);
+  const sourceQuery = useAgent(fromId);
 
   return (
     <div className="p-6 space-y-4 max-w-3xl">
@@ -73,6 +77,16 @@ function NewAgentPageContent() {
                   prompt_template: values.prompt_template,
                   input_schema: values.input_schema,
                   output_schema: values.output_schema,
+                  // Carry through the fields the form doesn't surface
+                  // when cloning so the duplicate matches the source's
+                  // full config (matches user intent of "duplicate me").
+                  ...(sourceQuery.data
+                    ? {
+                        constraints: sourceQuery.data.constraints,
+                        budget_limit_usd: sourceQuery.data.budget_limit_usd,
+                        timeout_ms: sourceQuery.data.timeout_ms,
+                      }
+                    : {}),
                 });
                 router.push("/agents");
               }}
@@ -90,7 +104,7 @@ function NewAgentPageContent() {
 function SourceLoadError({ error }: { error: unknown }) {
   return (
     <div className="space-y-2">
-      <p className="text-sm text-destructive">
+      <p className="text-sm text-destructive" role="alert">
         Could not load the source agent: {formatApiError(error)}
       </p>
       <Button asChild variant="outline" size="sm">
@@ -103,7 +117,7 @@ function SourceLoadError({ error }: { error: unknown }) {
 function SourceArchivedError() {
   return (
     <div className="space-y-2">
-      <p className="text-sm text-destructive">
+      <p className="text-sm text-destructive" role="alert">
         The source agent is archived — clone unavailable.
       </p>
       <Button asChild variant="outline" size="sm">
