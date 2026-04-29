@@ -61,9 +61,10 @@ export interface RuntimeConfigSchema {
 const API_CALL_PROVIDERS: RuntimeFieldOption[] = [
   { value: "anthropic", label: "Anthropic (Claude)" },
   { value: "openai", label: "OpenAI (GPT-5, o-series)" },
+  { value: "glm", label: "Z.AI GLM (no base_url needed)" },
   {
     value: "openai-compat",
-    label: "OpenAI-compatible (GLM, Together, OpenRouter, …)",
+    label: "OpenAI-compatible custom (Together, OpenRouter, internal proxies, …)",
   },
   { value: "gemini", label: "Google Gemini" },
 ];

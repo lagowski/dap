@@ -71,6 +71,16 @@ PROVIDER_REGISTRY: Final[dict[str, ProviderInfo]] = {
         default_env_var=None,
         display_name="OpenAI-compatible (custom base_url)",
     ),
+    "glm": ProviderInfo(
+        id="glm",
+        # Reuses the OpenAI-compatible client with a hardcoded base_url
+        # and the ``GLM_API_KEY`` env var — operator no longer has to
+        # repeat them on every agent like the legacy ``openai-compat``
+        # recipe did.
+        module_path="dap_runtimes.adapters._providers._openai",
+        default_env_var="GLM_API_KEY",
+        display_name="Z.AI GLM (OpenAI-compatible)",
+    ),
     "gemini": ProviderInfo(
         id="gemini",
         module_path="dap_runtimes.adapters._providers._gemini",

@@ -217,6 +217,74 @@ async def test_openai_compat_missing_named_env_var() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GLM (#115) — first-class OpenAI-compatible provider
+# ---------------------------------------------------------------------------
+
+
+async def test_glm_provider_uses_hardcoded_base_url_and_env_var(
+    with_glm_key: None,
+) -> None:
+    """``provider: \"glm\"`` doesn't require base_url / api_key_env on the
+    agent — the provider hardcodes both. SDK call should land at z.ai
+    with ``GLM_API_KEY`` for auth."""
+    adapter = ApiCallAdapter()
+    fake = _mock_chat_completion(text="from glm", model="glm-5-flash")
+
+    with patch(_OPENAI_CLIENT_PATH) as mock_cls:
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(return_value=fake)
+        client.close = AsyncMock()
+        mock_cls.return_value = client
+
+        result = await adapter.execute(
+            _task(provider="glm", model_id="glm-5-flash"),
+        )
+        ctor_kwargs = mock_cls.call_args.kwargs
+
+    assert result.success is True
+    assert ctor_kwargs["api_key"] == "glm-test-fake"
+    assert ctor_kwargs["base_url"] == "https://api.z.ai/api/coding/paas/v4"
+    assert result.structured is not None
+    assert result.structured["provider"] == "glm"
+
+
+async def test_glm_provider_missing_env_var_returns_error() -> None:
+    """No ``GLM_API_KEY`` → validate_config refuses before SDK call."""
+    saved = os.environ.pop("GLM_API_KEY", None)
+    try:
+        adapter = ApiCallAdapter()
+        result = await adapter.execute(
+            _task(provider="glm", model_id="glm-5-flash"),
+        )
+        assert result.success is False
+        assert any("GLM_API_KEY" in e for e in result.errors)
+    finally:
+        if saved is not None:
+            os.environ["GLM_API_KEY"] = saved
+
+
+async def test_glm_provider_does_not_require_base_url_or_api_key_env(
+    with_glm_key: None,
+) -> None:
+    """The two openai-compat-specific fields are optional for ``glm``;
+    leaving them out should not produce a 'required' error."""
+    adapter = ApiCallAdapter()
+    fake = _mock_chat_completion(text="ok", model="glm-5-flash")
+
+    with patch(_OPENAI_CLIENT_PATH) as mock_cls:
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(return_value=fake)
+        client.close = AsyncMock()
+        mock_cls.return_value = client
+
+        result = await adapter.execute(
+            _task(provider="glm", model_id="glm-5-flash"),
+        )
+
+    assert result.success is True
+
+
+# ---------------------------------------------------------------------------
 # Cost calculation
 # ---------------------------------------------------------------------------
 

@@ -1,10 +1,16 @@
-"""OpenAI provider — handles both ``openai`` and ``openai-compat``.
+"""OpenAI provider — handles ``openai``, ``openai-compat``, and ``glm``.
 
 The OpenAI Python SDK speaks the Chat Completions shape. For the
 ``openai`` provider we use the default base URL + ``OPENAI_API_KEY``.
-For ``openai-compat`` (GLM, Together, OpenRouter, llama.cpp servers,
-internal proxies) the agent supplies ``base_url`` and an
-``api_key_env`` naming the env var that holds the key.
+For ``openai-compat`` (Together, OpenRouter, llama.cpp servers,
+internal proxies, plus any unregistered z.ai-style endpoint) the
+agent supplies ``base_url`` and an ``api_key_env`` naming the env
+var that holds the key.
+
+``glm`` is the first-class registration of Z.AI's GLM service (#115)
+— same SDK shape, but the operator doesn't have to repeat the
+``base_url`` + ``api_key_env`` pair on every agent. The constants
+below pin them so a one-line ``provider: "glm"`` is enough.
 """
 
 from __future__ import annotations
@@ -19,7 +25,10 @@ from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
 
 ID: Final = "openai"
 ID_COMPAT: Final = "openai-compat"
+ID_GLM: Final = "glm"
 DEFAULT_ENV_VAR: Final = "OPENAI_API_KEY"
+GLM_BASE_URL: Final = "https://api.z.ai/api/coding/paas/v4"
+GLM_ENV_VAR: Final = "GLM_API_KEY"
 
 # USD per 1M tokens (input, output). Update as pricing changes.
 # Empty for ``openai-compat`` — we don't know third-party prices.
@@ -39,14 +48,17 @@ DEFAULT_USER_MESSAGE: Final = "Execute the task as specified in the system instr
 
 
 def env_var_for(config: dict[str, Any]) -> str:
-    """Native OpenAI always reads OPENAI_API_KEY. Compat respects api_key_env.
+    """Native OpenAI → OPENAI_API_KEY; GLM → GLM_API_KEY; compat → api_key_env.
 
     The split matters: ``_make_client`` only forwards ``api_key`` to the
-    SDK constructor for the compat path; honoring ``api_key_env`` for
-    native OpenAI here would let validation pass while the actual call
-    still relied on ``OPENAI_API_KEY`` — silently inconsistent.
+    SDK constructor for the compat / glm paths; honoring ``api_key_env``
+    for native OpenAI here would let validation pass while the actual
+    call still relied on ``OPENAI_API_KEY`` — silently inconsistent.
     """
-    if config.get("provider") == ID_COMPAT:
+    provider = config.get("provider")
+    if provider == ID_GLM:
+        return GLM_ENV_VAR
+    if provider == ID_COMPAT:
         custom = config.get("api_key_env")
         if isinstance(custom, str) and custom:
             return custom
@@ -167,7 +179,12 @@ async def call(
 
 
 def _make_client(provider_id: str, config: dict[str, Any]) -> AsyncOpenAI:
-    """Build the SDK client. Compat reads base_url + custom env var."""
+    """Build the SDK client. GLM + compat read a base_url + custom env var."""
+    if provider_id == ID_GLM:
+        return AsyncOpenAI(
+            api_key=os.environ[GLM_ENV_VAR],
+            base_url=GLM_BASE_URL,
+        )
     if provider_id == ID_COMPAT:
         return AsyncOpenAI(
             api_key=os.environ[config["api_key_env"]],
