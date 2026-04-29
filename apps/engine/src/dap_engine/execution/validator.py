@@ -37,6 +37,23 @@ END_SENTINEL: Final = "__end__"
 SENTINEL_NODES: Final = frozenset({START_SENTINEL, END_SENTINEL})
 
 
+def _load_referenced_agents(payload: PipelineCreate, session: Session) -> dict[str, AgentORM]:
+    """One SELECT for every agent the pipeline references (#120 hot-path).
+
+    ``validate_pipeline_dag`` runs on every save now, so per-agent
+    ``session.get`` calls turned into N+1 round-trips on pipelines
+    with many nodes. Single ``WHERE id IN (...)`` keeps the cost
+    flat regardless of node count.
+    """
+    referenced = {n.agent_id for n in payload.nodes}
+    if not referenced:
+        return {}
+    rows = session.scalars(
+        select(AgentORM).where(AgentORM.id.in_(referenced)),
+    ).all()
+    return {agent.id: agent for agent in rows}
+
+
 class ValidationResult(BaseModel):
     """Outcome of pipeline DAG validation."""
 
@@ -117,8 +134,9 @@ def _check_edge_references(payload: PipelineCreate, node_id_set: set[str]) -> li
 def _check_agents(payload: PipelineCreate, session: Session) -> list[str]:
     out: list[str] = []
     referenced = {n.agent_id for n in payload.nodes}
+    agents = _load_referenced_agents(payload, session)
     for agent_id in sorted(referenced):
-        agent = session.get(AgentORM, agent_id)
+        agent = agents.get(agent_id)
         if agent is None:
             out.append(f"Agent not found: '{agent_id}'")
         elif agent.archived_at is not None:
@@ -231,18 +249,30 @@ def _load_agent_contracts(
 
     Legacy dict-shaped schemas (pre-#58 rows) collapse to ``()`` so they
     contribute no constraint either way (matches the runtime fallback).
+
+    Two batched SELECTs total (#120 hot-path): one for the agent rows,
+    one for the matching version rows. Pipelines with N nodes used to
+    cost ``N + 1`` round-trips; now it's a flat 2 regardless of N.
     """
+    agents = _load_referenced_agents(payload, session)
+    active_agents = {aid: agent for aid, agent in agents.items() if agent.archived_at is None}
+    if not active_agents:
+        return {}
+
+    # Pull every candidate version row for the active agents in one
+    # query, then index by ``(agent_id, version)`` so we can pick the
+    # row matching each agent's ``current_version`` without another
+    # round-trip. ``in_(active_agents)`` is fine even with one element.
+    version_rows = session.scalars(
+        select(AgentVersionORM).where(
+            AgentVersionORM.agent_id.in_(active_agents),
+        ),
+    ).all()
+    versions_by_key = {(v.agent_id, v.version): v for v in version_rows}
+
     out: dict[str, _AgentContract] = {}
-    referenced = {n.agent_id for n in payload.nodes}
-    for agent_id in referenced:
-        agent = session.get(AgentORM, agent_id)
-        if agent is None or agent.archived_at is not None:
-            continue
-        version = session.scalar(
-            select(AgentVersionORM)
-            .where(AgentVersionORM.agent_id == agent_id)
-            .where(AgentVersionORM.version == agent.current_version)
-        )
+    for agent_id, agent in active_agents.items():
+        version = versions_by_key.get((agent_id, agent.current_version))
         if version is None:
             continue
         ins = version.input_schema if isinstance(version.input_schema, list) else []
