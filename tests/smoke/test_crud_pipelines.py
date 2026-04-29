@@ -256,6 +256,34 @@ def test_update_rejects_invalid_dag_keeps_existing_version(
     assert [v["version"] for v in versions] == [1]
 
 
+def test_update_unknown_pipeline_returns_404_even_with_invalid_body(
+    client: TestClient,
+) -> None:
+    """Existence wins over validation. A typo in the URL plus a typo
+    in the body should still surface as 404 (the real cause), not 422
+    (a misleading red herring about the body)."""
+    bad_payload = {
+        "name": "Bad",
+        "schema_version": "langgraph/1.0",
+        "state_schema_ref": "PipelineState.v1",
+        "entry_point": "n1",
+        "nodes": [
+            {"id": "n1", "agent_id": "ghost", "position": {"x": 0, "y": 0}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "__start__", "target": "n1"},
+            {"id": "e2", "source": "n1", "target": "__end__"},
+        ],
+        "defaults": {
+            "max_attempts": 3,
+            "budget_limit_usd": 5.0,
+            "approval_required_nodes": [],
+        },
+    }
+    response = client.put("/pipelines/no-such-pipeline", json=bad_payload)
+    assert response.status_code == 404
+
+
 def test_validate_endpoint_still_returns_200_for_invalid(
     client: TestClient,
 ) -> None:

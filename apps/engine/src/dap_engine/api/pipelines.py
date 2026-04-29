@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from dap_types import Pipeline
@@ -12,6 +13,8 @@ from dap_engine.api.deps import get_session
 from dap_engine.api.schemas import PipelineCreate, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
+
+logger = logging.getLogger("dap.engine.pipelines")
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 
@@ -47,10 +50,17 @@ def _enforce_validation(payload: PipelineCreate, session: Session) -> Validation
     *before* the user clicks Save.
 
     Warnings are not fatal — they're operator hints (unused outputs,
-    conflicting writers, etc.) and surface in the 200 path via
-    ``Response.headers``-style logging at higher layers if needed.
+    conflicting writers, etc.) and get logged here so operators see
+    them in engine output. They also ride along on the 422 ``detail``
+    when validation does fail, in case a related warning makes the
+    error easier to interpret.
     """
     result = validate_pipeline_dag(payload, session)
+    if result.warnings:
+        logger.warning(
+            "pipeline validation warnings: %s",
+            "; ".join(result.warnings),
+        )
     if not result.valid:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -134,12 +144,20 @@ def update_pipeline(
     Same enforcement as ``POST /pipelines`` — a failed update never
     rolls a new version. Existing pipeline keeps its current version
     when validation fails.
+
+    Existence is checked **before** the validator: an unknown
+    ``pipeline_id`` should always return 404 regardless of whether
+    the body would also fail DAG validation. Otherwise a typo in
+    the URL plus a typo in the body would surface as 422 and hide
+    the real "this id doesn't exist" cause.
     """
-    _enforce_validation(_update_to_create_shape(payload), session)
     try:
-        return repo.update_pipeline(session, pipeline_id, payload)
+        repo.get_pipeline(session, pipeline_id)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    _enforce_validation(_update_to_create_shape(payload), session)
+    return repo.update_pipeline(session, pipeline_id, payload)
 
 
 @router.delete("/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
