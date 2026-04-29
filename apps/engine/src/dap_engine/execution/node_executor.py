@@ -101,6 +101,12 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
                 ctx.agent_version.prompt_template,
                 state.model_dump(),
                 input_schema=input_schema,
+                # Auto-inject agent identity (#113) so templates can use
+                # ``{{ role }}`` without forcing every agent to declare
+                # ``role`` as an input. ``PipelineState`` doesn't carry
+                # it; ``role`` lives on the parent ``AgentORM`` (not
+                # the version row, which is per-revision data).
+                agent_metadata={"role": ctx.agent.role},
             )
         except PromptBuildError as exc:
             return _record_failure(

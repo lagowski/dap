@@ -1,4 +1,9 @@
-from dap_prompt_dsl.builder import BuildResult, PromptBuildError, build_prompt
+from dap_prompt_dsl.builder import (
+    RESERVED_METADATA_KEYS,
+    BuildResult,
+    PromptBuildError,
+    build_prompt,
+)
 from dap_prompt_dsl.context import (
     ImplementerContext,
     PromptContextBase,
@@ -8,6 +13,7 @@ from dap_prompt_dsl.context import (
 from dap_prompt_dsl.validator import ValidationOutcome, validate_xml
 
 __all__ = [
+    "RESERVED_METADATA_KEYS",
     "BuildResult",
     "ImplementerContext",
     "PromptBuildError",

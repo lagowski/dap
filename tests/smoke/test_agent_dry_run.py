@@ -205,6 +205,83 @@ def test_dry_run_prompt_render_error_returns_422(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Agent metadata auto-injection (#113)
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_injects_role_into_render_context(client: TestClient) -> None:
+    """Templates can reference ``{{ role }}`` without the user supplying
+    it in the sample context — the engine reads it off the agent and
+    merges it into the render context. Closes the gap that broke every
+    built-in template (#113)."""
+    response = client.post(
+        "/agents/dry-run",
+        json={
+            "draft": _bash_draft(
+                role="implementer",
+                prompt_template=(
+                    "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+                ),
+            ),
+            "context": {},
+        },
+    )
+    assert response.status_code == 200
+    rendered = response.json()["rendered_xml"]
+    assert "<role>implementer</role>" in rendered
+
+
+def test_dry_run_role_injection_survives_input_schema_projection(
+    client: TestClient,
+) -> None:
+    """Even when ``input_schema`` projects state down to a subset,
+    ``role`` (agent metadata) still reaches the template. Otherwise
+    every templated agent with a non-empty input_schema would break."""
+    response = client.post(
+        "/agents/dry-run",
+        json={
+            "draft": _bash_draft(
+                role="test_author",
+                input_schema=["selected_issue_ids"],
+                prompt_template=(
+                    "<agent_prompt><role>{{ role }}</role>"
+                    "<task>issues: {{ selected_issue_ids }}</task></agent_prompt>"
+                ),
+            ),
+            "context": {"selected_issue_ids": [1, 2, 3]},
+        },
+    )
+    assert response.status_code == 200
+    rendered = response.json()["rendered_xml"]
+    assert "<role>test_author</role>" in rendered
+    assert "[1, 2, 3]" in rendered
+
+
+def test_dry_run_caller_context_role_wins_over_agent_role(
+    client: TestClient,
+) -> None:
+    """Caller-supplied context overrides metadata on collision — gives
+    the user a way to test what a different role would see without
+    re-saving the agent."""
+    response = client.post(
+        "/agents/dry-run",
+        json={
+            "draft": _bash_draft(
+                role="implementer",
+                input_schema=[],
+                prompt_template=(
+                    "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+                ),
+            ),
+            "context": {"role": "verifier-override"},
+        },
+    )
+    assert response.status_code == 200
+    rendered = response.json()["rendered_xml"]
+    assert "<role>verifier-override</role>" in rendered
+
+
+# ---------------------------------------------------------------------------
 # Budget cap
 # ---------------------------------------------------------------------------
 

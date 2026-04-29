@@ -236,3 +236,61 @@ def test_complex_test_authoring_template() -> None:
     assert 'id="US-123"' in result.xml
     assert "<criterion>Invalid rows reported</criterion>" in result.xml
     assert "<framework>pytest</framework>" in result.xml
+
+
+# ---------------------------------------------------------------------------
+# Agent metadata injection (#113)
+# ---------------------------------------------------------------------------
+
+
+def test_agent_metadata_visible_to_template_when_input_schema_set() -> None:
+    """``agent_metadata`` bypasses ``input_schema`` projection — agents
+    can reference ``{{ role }}`` without declaring it as an input."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    result = build_prompt(
+        template,
+        {"selected_issue_ids": [1]},
+        input_schema=["selected_issue_ids"],
+        agent_metadata={"role": "implementer"},
+    )
+    assert result.valid is True
+    assert "<role>implementer</role>" in result.xml
+
+
+def test_agent_metadata_does_not_mutate_caller_context() -> None:
+    """Caller's ``context`` dict must not gain reserved metadata keys
+    after the render — would otherwise leak between node calls when
+    callers reuse the same dict."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    context: dict[str, object] = {}
+    build_prompt(template, context, agent_metadata={"role": "verifier"})
+    assert "role" not in context
+
+
+def test_caller_context_wins_over_agent_metadata_on_collision() -> None:
+    """``role`` from ``context`` overrides the metadata value — gives
+    callers an escape hatch to test what a different role sees."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    result = build_prompt(
+        template,
+        {"role": "from-context"},
+        agent_metadata={"role": "from-metadata"},
+    )
+    assert result.valid is True
+    assert "<role>from-context</role>" in result.xml
+
+
+def test_unknown_agent_metadata_key_is_rejected() -> None:
+    """Only ``RESERVED_METADATA_KEYS`` may be passed — anything else
+    would silently bypass ``input_schema`` projection."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    with pytest.raises(PromptBuildError) as exc_info:
+        build_prompt(
+            template,
+            {},
+            input_schema=["selected_issue_ids"],
+            agent_metadata={"role": "implementer", "secret_field": "leak"},
+        )
+    msg = str(exc_info.value)
+    assert "secret_field" in msg
+    assert "role" in msg  # message lists the allowed set
