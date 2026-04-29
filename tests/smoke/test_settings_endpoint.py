@@ -59,7 +59,19 @@ def test_settings_runtime_row_shape(client: TestClient) -> None:
 def test_settings_providers_lists_api_call_set(client: TestClient) -> None:
     body = client.get("/settings").json()
     provider_ids = {p["id"] for p in body["providers"]}
-    assert {"anthropic", "openai", "openai-compat", "gemini"}.issubset(provider_ids)
+    assert {"anthropic", "openai", "openai-compat", "glm", "gemini"}.issubset(
+        provider_ids,
+    )
+
+
+def test_settings_glm_provider_uses_glm_api_key_env(client: TestClient) -> None:
+    """GLM is registered as a first-class provider (#115) so the
+    Settings page can show it with its canonical env var without the
+    operator having to dig through ``runtime_config.api_key_env``."""
+    body = client.get("/settings").json()
+    glm = next(p for p in body["providers"] if p["id"] == "glm")
+    assert glm["default_env_var"] == "GLM_API_KEY"
+    assert "GLM" in glm["display_name"]
 
 
 def test_settings_provider_configured_reflects_env_state(
