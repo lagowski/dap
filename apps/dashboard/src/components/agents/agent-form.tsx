@@ -14,20 +14,11 @@ import { ROLE_DEFAULT_OUTPUT_SCHEMA } from "@/lib/pipeline-state-fields";
 import { PipelineStateFieldPicker } from "./pipeline-state-field-picker";
 import { RuntimeConfigEditor } from "./runtime-config-editor";
 import {
+  AGENT_RUNTIME_IDS,
   defaultRuntimeConfig,
   pruneRuntimeConfig,
   validateRuntimeConfig,
 } from "./runtime-config-schemas";
-
-const RUNTIMES = [
-  "api-call",
-  "claude-code",
-  "gemini-cli",
-  "codex",
-  "aider",
-  "bash",
-  "http",
-] as const;
 
 const ROLES = [
   "task_selector",
@@ -276,7 +267,7 @@ export function AgentForm({
           disabled={isLocked("runtime_id")}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {RUNTIMES.map((r) => (
+          {AGENT_RUNTIME_IDS.map((r) => (
             <option key={r} value={r}>
               {r}
             </option>

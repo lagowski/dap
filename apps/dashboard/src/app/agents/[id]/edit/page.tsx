@@ -10,7 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
 import { AgentTabs, type AgentTab } from "@/components/agents/agent-tabs";
-import { AgentTestPanel } from "@/components/agents/agent-test-panel";
+import {
+  AgentTestPanel,
+  type VariantBOverrides,
+} from "@/components/agents/agent-test-panel";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function EditAgentPage({
@@ -27,6 +30,14 @@ export default function EditAgentPage({
     values: AgentFormValues;
     valid: boolean;
   } | null>(null);
+  // Promoted Variant B overrides (#105). When set, drive the form's
+  // ``initialValues`` and bump ``formIteration`` to remount AgentForm
+  // with the new defaults. The promote lifecycle: user clicks Promote
+  // in compare mode → these overrides land here → form remounts →
+  // ``onValuesChange`` re-fires → ``snapshot`` updates → if user
+  // promotes again, we replace the overrides (effect doesn't dedupe).
+  const [promoted, setPromoted] = useState<VariantBOverrides | null>(null);
+  const [formIteration, setFormIteration] = useState(0);
   const formPanelId = useId();
   const testPanelId = useId();
 
@@ -87,15 +98,8 @@ export default function EditAgentPage({
             className={tab === "form" ? "block" : "hidden"}
           >
             <AgentForm
-              initialValues={{
-                name: agent.name,
-                role: agent.role,
-                runtime_id: agent.runtime_id,
-                runtime_config: agent.runtime_config,
-                prompt_template: agent.prompt_template,
-                input_schema: agent.input_schema,
-                output_schema: agent.output_schema,
-              }}
+              key={formIteration}
+              initialValues={mergeInitialValues(agent, snapshot?.values, promoted)}
               lockedFields={["role"]}
               onValuesChange={setSnapshot}
               onSubmit={async (values) => {
@@ -131,12 +135,54 @@ export default function EditAgentPage({
             <AgentTestPanel
               draft={draft}
               draftBlockedReason={draftBlockedReason}
+              onPromoteVariantB={(overrides) => {
+                setPromoted(overrides);
+                // Bump key → AgentForm remounts with the merged
+                // initialValues. Switch to the Form tab so the user
+                // sees the promoted change immediately.
+                setFormIteration((n) => n + 1);
+                setTab("form");
+              }}
             />
           </div>
         </CardContent>
       </Card>
     </div>
   );
+}
+
+/**
+ * Resolve the form's ``initialValues`` for the next render. Precedence:
+ *
+ *  1. ``promoted`` overrides — Variant B fields the user promoted in
+ *     the Test panel. Take priority so the user sees the promotion.
+ *  2. The live ``snapshot`` from the previous mount — preserves any
+ *     edits the user made before promoting (we'd otherwise reset to
+ *     the persisted agent and lose their work).
+ *  3. The persisted ``agent`` — what the form should show on first
+ *     mount with no edits and no promotion.
+ */
+function mergeInitialValues(
+  agent: Agent,
+  snapshot: AgentFormValues | undefined,
+  promoted: VariantBOverrides | null,
+) {
+  const base: Partial<AgentFormValues> = snapshot ?? {
+    name: agent.name,
+    role: agent.role,
+    runtime_id: agent.runtime_id,
+    runtime_config: agent.runtime_config,
+    prompt_template: agent.prompt_template,
+    input_schema: agent.input_schema,
+    output_schema: agent.output_schema,
+  };
+  if (!promoted) return base;
+  return {
+    ...base,
+    runtime_id: promoted.runtime_id,
+    runtime_config: promoted.runtime_config,
+    prompt_template: promoted.prompt_template,
+  };
 }
 
 /**

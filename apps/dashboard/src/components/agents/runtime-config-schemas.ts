@@ -81,6 +81,24 @@ const isProvider =
   (config: Record<string, unknown>): boolean =>
     wanted.includes(String(config.provider ?? "anthropic"));
 
+/**
+ * Ordered list of runtime ids the form / Test panel surface in
+ * dropdowns. Single source of truth — both ``AgentForm`` and the
+ * compare-mode editor in ``AgentTestPanel`` import this so they
+ * can't drift if a runtime is added or removed.
+ */
+export const AGENT_RUNTIME_IDS = [
+  "api-call",
+  "claude-code",
+  "gemini-cli",
+  "codex",
+  "aider",
+  "bash",
+  "http",
+] as const;
+
+export type AgentRuntimeId = (typeof AGENT_RUNTIME_IDS)[number];
+
 export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
   "api-call": {
     runtime_id: "api-call",
