@@ -10,7 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
-import { ROLE_DEFAULT_OUTPUT_SCHEMA } from "@/lib/pipeline-state-fields";
+import {
+  ROLE_DEFAULT_INPUT_SCHEMA,
+  ROLE_DEFAULT_OUTPUT_SCHEMA,
+} from "@/lib/pipeline-state-fields";
 import { PipelineStateFieldPicker } from "./pipeline-state-field-picker";
 import { RuntimeConfigEditor } from "./runtime-config-editor";
 import {
@@ -139,9 +142,12 @@ export function AgentForm({
   // Edit-mode pre-fills from server values; if the user changes the role
   // we leave the picker alone (don't clobber their work).
   const initialRole = initialValues?.role ?? ROLES[0];
-  const [inputSchema, setInputSchema] = useState<string[]>(
-    () => [...(initialValues?.input_schema ?? [])],
-  );
+  const [inputSchema, setInputSchema] = useState<string[]>(() => {
+    if (initialValues?.input_schema !== undefined) {
+      return [...initialValues.input_schema];
+    }
+    return [...(ROLE_DEFAULT_INPUT_SCHEMA[initialRole] ?? [])];
+  });
   const [outputSchema, setOutputSchema] = useState<string[]>(() => {
     if (initialValues?.output_schema !== undefined) {
       return [...initialValues.output_schema];
@@ -149,9 +155,14 @@ export function AgentForm({
     return [...(ROLE_DEFAULT_OUTPUT_SCHEMA[initialRole] ?? [])];
   });
 
-  // Track whether the user has ever touched the output_schema picker.
-  // If not, switching roles updates the seed; once they edit, we stop
+  // Track whether the user has ever touched each picker. If not,
+  // switching roles updates the seed; once they edit, we stop
   // overriding their selection on role change.
+  const inputSchemaTouched = useRef(initialValues?.input_schema !== undefined);
+  const handleInputSchemaChange = (next: string[]) => {
+    inputSchemaTouched.current = true;
+    setInputSchema(next);
+  };
   const outputSchemaTouched = useRef(initialValues?.output_schema !== undefined);
   const handleOutputSchemaChange = (next: string[]) => {
     outputSchemaTouched.current = true;
@@ -209,13 +220,20 @@ export function AgentForm({
     }
   }, [watchedRuntimeId, initialRuntimeId]);
 
-  // Mirror role → output_schema seed *until* the user edits the picker.
-  // After that, switching roles never silently overwrites their work.
+  // Mirror role → input/output_schema seed *until* the user edits the
+  // picker. After that, switching roles never silently overwrites
+  // their work. Independent ``touched`` refs let one picker stay in
+  // sync while the other holds custom values.
   useEffect(() => {
-    if (outputSchemaTouched.current) return;
     if (!watchedRole) return;
-    const seed = ROLE_DEFAULT_OUTPUT_SCHEMA[watchedRole] ?? [];
-    setOutputSchema([...seed]);
+    if (!inputSchemaTouched.current) {
+      const seed = ROLE_DEFAULT_INPUT_SCHEMA[watchedRole] ?? [];
+      setInputSchema([...seed]);
+    }
+    if (!outputSchemaTouched.current) {
+      const seed = ROLE_DEFAULT_OUTPUT_SCHEMA[watchedRole] ?? [];
+      setOutputSchema([...seed]);
+    }
   }, [watchedRole]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
@@ -285,18 +303,44 @@ export function AgentForm({
       </Field>
 
       <Field label="Inputs">
+        <RoleDefaultsHint
+          role={watchedRole}
+          recommended={ROLE_DEFAULT_INPUT_SCHEMA[watchedRole]}
+          current={inputSchema}
+          onUseDefaults={(next) => {
+            // Clearing ``touched`` puts the picker back into "follow
+            // role" mode — the user explicitly opted into defaults,
+            // so subsequent role changes should keep mirroring. Once
+            // they edit the picker manually, ``handleInputSchemaChange``
+            // flips ``touched`` back to true and mirroring stops.
+            inputSchemaTouched.current = false;
+            setInputSchema(next);
+          }}
+          subjectLabel="inputs"
+        />
         <PipelineStateFieldPicker
           value={inputSchema}
-          onChange={setInputSchema}
-          description="Fields the agent's prompt template can reference. Empty = legacy mode (template sees the full PipelineState)."
+          onChange={handleInputSchemaChange}
+          description="Fields the agent's prompt template can reference via Jinja {{ field_name }}. Empty = legacy mode (template sees the full PipelineState)."
         />
       </Field>
 
       <Field label="Outputs">
+        <RoleDefaultsHint
+          role={watchedRole}
+          recommended={ROLE_DEFAULT_OUTPUT_SCHEMA[watchedRole]}
+          current={outputSchema}
+          onUseDefaults={(next) => {
+            // Same rationale as the Inputs callback above.
+            outputSchemaTouched.current = false;
+            setOutputSchema(next);
+          }}
+          subjectLabel="outputs"
+        />
         <PipelineStateFieldPicker
           value={outputSchema}
           onChange={handleOutputSchemaChange}
-          description="Fields the agent's response is allowed to write. Empty = legacy mode (engine falls back to ROLE_FIELDS for known roles)."
+          description="Fields the agent's response is allowed to write back into PipelineState. Empty = legacy mode (engine falls back to ROLE_FIELDS for known roles)."
         />
       </Field>
 
@@ -351,6 +395,61 @@ function Field({
       <Label>{label}</Label>
       {children}
       {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Per-role recommendation hint above each schema picker.
+ *
+ * Surfaces what fields a conventional ``{role}`` agent typically picks
+ * (from ROLE_DEFAULT_INPUT_SCHEMA / ROLE_DEFAULT_OUTPUT_SCHEMA) plus a
+ * one-click "Use role defaults" button that pre-fills the picker with
+ * exactly those fields. Hidden for roles without a recommendation
+ * (e.g. ``post_check``, custom roles) — better than showing an empty
+ * "Typical for X: ___" with nothing to fill it.
+ */
+function RoleDefaultsHint({
+  role,
+  recommended,
+  current,
+  onUseDefaults,
+  subjectLabel,
+}: {
+  role: string;
+  recommended: readonly string[] | undefined;
+  current: readonly string[];
+  onUseDefaults: (next: string[]) => void;
+  subjectLabel: "inputs" | "outputs";
+}) {
+  if (!recommended || recommended.length === 0) {
+    return null;
+  }
+  const matches =
+    current.length === recommended.length &&
+    recommended.every((f) => current.includes(f));
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs">
+      <span className="text-muted-foreground">
+        Typical {subjectLabel} for{" "}
+        <span className="font-mono">{role}</span>:
+      </span>
+      <span className="font-mono">{recommended.join(", ")}</span>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="ml-auto h-7 text-xs"
+        onClick={() => onUseDefaults([...recommended])}
+        disabled={matches}
+        title={
+          matches
+            ? "Picker already matches the role default"
+            : "Replace the current picker selection with the role default"
+        }
+      >
+        Use role defaults
+      </Button>
     </div>
   );
 }
