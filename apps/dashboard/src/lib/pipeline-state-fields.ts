@@ -201,3 +201,32 @@ export const ROLE_DEFAULT_OUTPUT_SCHEMA: Record<string, readonly string[]> = {
     "last_test_output",
   ],
 };
+
+/**
+ * Per-role conventional `input_schema` — UX hint surfaced as the
+ * "Use role defaults" pre-fill on the Inputs picker. Derived from
+ * the typical pipeline graph: each role consumes the upstream
+ * outputs it needs to do its job.
+ *
+ * - ``task_selector``: candidate issues + retry budget.
+ * - ``test_author``: which issue(s) the suite should target.
+ * - ``implementer``: the same selection + any implementation notes
+ *   the verifier left from a previous attempt.
+ * - ``verifier``: the test run result + what the implementer touched.
+ * - ``post_check``: full state — runs after the loop, often used for
+ *   release / cleanup steps that need broad context.
+ *
+ * The user is free to deviate; this just fills the picker with a
+ * sensible starting point.
+ */
+export const ROLE_DEFAULT_INPUT_SCHEMA: Record<string, readonly string[]> = {
+  task_selector: ["available_issues", "max_attempts"],
+  test_author: ["selected_issue_ids"],
+  implementer: ["selected_issue_ids", "implementation_notes"],
+  verifier: [
+    "tests_passed",
+    "last_test_output",
+    "modified_files",
+    "implementation_notes",
+  ],
+};
