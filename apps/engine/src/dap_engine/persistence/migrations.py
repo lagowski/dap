@@ -18,16 +18,18 @@ Why not Alembic (yet):
 
 Contract for new migrations:
     - Pure SQL, idempotent. ``ALTER TABLE … IF NOT EXISTS`` doesn't
-      exist in SQLite — guard with ``_column_exists`` / ``PRAGMA
-      table_info`` before the ALTER instead.
+      exist in SQLite — guard with ``_column_exists`` (which uses
+      SQLAlchemy's ``Inspector``, not f-string PRAGMA) before the
+      ALTER instead.
     - Forward-only. We don't track down-migrations.
     - Append to :data:`MIGRATIONS` in order. Names are stable string
       keys recorded in ``schema_migrations``; never rename a name once
       it ships, or operators will re-run the migration on next start.
-    - Each migration runs in its own transaction. A failure stops
-      the lifespan startup (loud) — the operator can inspect the
-      error and either patch up DB state manually or roll the
-      release back.
+    - Each migration runs in its own transaction with an atomic
+      INSERT OR IGNORE claim on its name, so concurrent engine
+      instances racing the same SQLite file don't double-apply.
+      A failure rolls the transaction back (including the claim)
+      and stops lifespan startup loudly.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Connection, Engine, inspect, text
 
 logger = logging.getLogger("dap.engine.migrations")
 
@@ -51,13 +53,21 @@ class Migration:
 
 
 def _column_exists(conn: Connection, table: str, column: str) -> bool:
-    """``PRAGMA table_info`` returns rows: (cid, name, type, notnull, dflt, pk).
+    """Whether ``column`` exists on ``table`` according to the live schema.
 
-    We match by ``name`` — case-insensitive (SQLite is). Returns ``False``
-    if the table itself doesn't exist (the row set is empty).
+    Uses SQLAlchemy's ``Inspector`` rather than f-string interpolating
+    a ``PRAGMA table_info(<table>)`` — table/column names landing in
+    SQL via string formatting are an identifier-injection footgun and
+    don't survive reserved words / special chars. ``Inspector`` also
+    abstracts the dialect so the helper can be reused if we ever
+    target Postgres. Returns ``False`` when the table doesn't exist
+    (rather than raising) so a migration can guard "ADD COLUMN" with
+    a single check.
     """
-    rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-    return any(row[1].lower() == column.lower() for row in rows)
+    inspector = inspect(conn)
+    if not inspector.has_table(table):
+        return False
+    return any(col["name"].lower() == column.lower() for col in inspector.get_columns(table))
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +93,10 @@ def _001_runs_add_project_id(conn: Connection) -> None:
     # SQLite ALTER TABLE … ADD COLUMN can't include REFERENCES on
     # an existing table — the FK constraint would only apply if
     # declared at table creation. We accept that for the backfill;
-    # the application validates project_id existence at insert time
-    # in repository.create_run anyway.
+    # project_id existence is validated by the API layer
+    # (api/runs.py — POST /runs returns 422 when the project
+    # doesn't exist or is archived) before the row ever reaches
+    # the repository.
     conn.execute(text("ALTER TABLE runs ADD COLUMN project_id TEXT"))
 
 
@@ -112,43 +124,46 @@ def _ensure_table(conn: Connection) -> None:
     conn.execute(_CREATE_TABLE_SQL)
 
 
-def _applied_names(conn: Connection) -> set[str]:
-    rows = conn.execute(text("SELECT name FROM schema_migrations")).fetchall()
-    return {row[0] for row in rows}
-
-
 def apply_migrations(engine: Engine) -> list[str]:
     """Run pending migrations in order. Returns the names of the ones applied.
 
-    Each migration runs in its own transaction. Already-applied
-    migrations (by name) are skipped. The list is consulted from the
-    in-memory ``MIGRATIONS`` constant — adding a new entry there is
-    the only way to introduce a new migration.
+    Each migration runs in its own transaction with an "INSERT OR
+    IGNORE" claim on the migration name *before* the schema change.
+    The claim is atomic: if two engine processes start against the
+    same SQLite file, only one wins the row insert (rowcount == 1)
+    and runs the migration body; the other sees rowcount == 0 and
+    skips. If the migration body raises after the claim, the whole
+    transaction rolls back — including the row insert — so the
+    name doesn't get marked applied for a migration that didn't
+    actually run.
 
-    Raises whatever the migration raises — a failure is fatal, the
-    operator needs to see it loudly during startup rather than have
-    the engine soldier on against a half-migrated schema.
+    A failure is fatal: the engine refuses to soldier on against a
+    half-migrated schema. The operator inspects the error, fixes
+    the underlying problem, and restarts.
     """
     applied: list[str] = []
     with engine.begin() as conn:
         _ensure_table(conn)
-        already = _applied_names(conn)
 
     for migration in MIGRATIONS:
-        if migration.name in already:
-            continue
         with engine.begin() as conn:
-            logger.info("applying schema migration: %s", migration.name)
-            migration.apply(conn)
-            conn.execute(
+            claim = conn.execute(
                 text(
-                    "INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :applied_at)",
+                    "INSERT OR IGNORE INTO schema_migrations "
+                    "(name, applied_at) VALUES (:name, :applied_at)",
                 ),
                 {
                     "name": migration.name,
                     "applied_at": datetime.now(UTC).isoformat(),
                 },
             )
+            if claim.rowcount == 0:
+                # Already applied by us (previous startup) or by a
+                # concurrent instance racing the same DB — either
+                # way, nothing more to do.
+                continue
+            logger.info("applying schema migration: %s", migration.name)
+            migration.apply(conn)
         applied.append(migration.name)
 
     if applied:
