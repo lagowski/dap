@@ -9,6 +9,7 @@ from pathlib import Path
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
+from dap_engine.persistence.migrations import apply_migrations
 from dap_engine.persistence.models import Base
 
 
@@ -31,7 +32,14 @@ def create_engine_for_sqlite(db_path: str) -> Engine:
     )
     event.listen(engine, "connect", _enable_sqlite_pragmas)
 
+    # Order matters: ``create_all`` creates any missing tables (no-op
+    # for existing ones, *including ones that lack columns the current
+    # model defines*). Then ``apply_migrations`` runs the in-code
+    # ALTERs (#109) that catch up older schemas to today's shape. New
+    # DBs see all current columns from ``create_all`` and the
+    # migrations are recorded as applied no-ops.
     Base.metadata.create_all(engine)
+    apply_migrations(engine)
 
     return engine
 
