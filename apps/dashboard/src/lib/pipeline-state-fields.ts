@@ -213,8 +213,10 @@ export const ROLE_DEFAULT_OUTPUT_SCHEMA: Record<string, readonly string[]> = {
  * - ``implementer``: the same selection + any implementation notes
  *   the verifier left from a previous attempt.
  * - ``verifier``: the test run result + what the implementer touched.
- * - ``post_check``: full state — runs after the loop, often used for
- *   release / cleanup steps that need broad context.
+ *
+ * Roles without an entry (``post_check``, ``prompt_builder``, custom)
+ * intentionally have no recommendation — the form hides the hint
+ * block and leaves the picker empty for the user to populate.
  *
  * The user is free to deviate; this just fills the picker with a
  * sensible starting point.

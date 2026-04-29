@@ -308,7 +308,12 @@ export function AgentForm({
           recommended={ROLE_DEFAULT_INPUT_SCHEMA[watchedRole]}
           current={inputSchema}
           onUseDefaults={(next) => {
-            inputSchemaTouched.current = true;
+            // Clearing ``touched`` puts the picker back into "follow
+            // role" mode — the user explicitly opted into defaults,
+            // so subsequent role changes should keep mirroring. Once
+            // they edit the picker manually, ``handleInputSchemaChange``
+            // flips ``touched`` back to true and mirroring stops.
+            inputSchemaTouched.current = false;
             setInputSchema(next);
           }}
           subjectLabel="inputs"
@@ -326,7 +331,8 @@ export function AgentForm({
           recommended={ROLE_DEFAULT_OUTPUT_SCHEMA[watchedRole]}
           current={outputSchema}
           onUseDefaults={(next) => {
-            outputSchemaTouched.current = true;
+            // Same rationale as the Inputs callback above.
+            outputSchemaTouched.current = false;
             setOutputSchema(next);
           }}
           subjectLabel="outputs"
