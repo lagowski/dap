@@ -13,6 +13,7 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDryRunDraft, AgentDryRunResponse } from "@/lib/api/types";
+import { AGENT_RUNTIME_IDS } from "./runtime-config-schemas";
 
 interface AgentTestPanelProps {
   /**
@@ -59,16 +60,6 @@ export interface VariantBOverrides {
   prompt_template: string;
 }
 
-const RUNTIMES = [
-  "api-call",
-  "claude-code",
-  "gemini-cli",
-  "codex",
-  "aider",
-  "bash",
-  "http",
-] as const;
-
 const DEFAULT_CONTEXT = "{}";
 
 /**
@@ -103,25 +94,34 @@ export function AgentTestPanel({
   const [contextText, setContextText] = useState(DEFAULT_CONTEXT);
   const [compareOn, setCompareOn] = useState(false);
   const [variantB, setVariantB] = useState<VariantBOverrides | null>(null);
+  // Set the moment a VariantBEditor change handler runs (not on the
+  // initial mirror-from-draft). Lets the mirror effect keep B in sync
+  // with A while the user hasn't actually diverged yet — addressing
+  // the original "``variantB !== null`` flips true after first mirror"
+  // bug where edits to A wouldn't propagate.
+  const [variantBEdited, setVariantBEdited] = useState(false);
+  // VariantBEditor reports its runtime_config JSON parse status here
+  // so "Run both" can be gated on it — without this, an invalid
+  // textarea would silently run with the last-known-good value.
+  const [variantBJsonValid, setVariantBJsonValid] = useState(true);
 
   const dryRunA = useDryRunAgent();
   const dryRunB = useDryRunAgent();
 
   // Initialise / refresh Variant B from the current draft when compare
-  // is toggled on, or when the form changes shape (different runtime_id)
-  // while Variant B hasn't been edited yet. Once the user edits Variant B
-  // we keep their overrides — that's the whole point of compare mode.
-  const variantBTouched = variantB !== null;
+  // is toggled on, or when the form changes shape while Variant B
+  // hasn't been edited yet. Once the user edits Variant B we keep
+  // their overrides — that's the whole point of compare mode.
   useEffect(() => {
     if (!compareOn) return;
     if (draft === null) return;
-    if (variantBTouched) return;
+    if (variantBEdited) return;
     setVariantB({
       runtime_id: draft.runtime_id,
       runtime_config: draft.runtime_config,
       prompt_template: draft.prompt_template,
     });
-  }, [compareOn, draft, variantBTouched]);
+  }, [compareOn, draft, variantBEdited]);
 
   const parseResult = useMemo<
     | { ok: true; value: Record<string, unknown> }
@@ -171,7 +171,10 @@ export function AgentTestPanel({
 
   const canRunSingle = draft !== null && parseResult.ok && !dryRunA.isPending;
   const canRunBoth =
-    canRunSingle && variantB !== null && !dryRunB.isPending;
+    canRunSingle &&
+    variantB !== null &&
+    !dryRunB.isPending &&
+    variantBJsonValid;
 
   const diffs = variantB && draft ? diffVariantB(draft, variantB) : null;
   const hasDivergence = diffs ? diffs.length > 0 : false;
@@ -240,6 +243,8 @@ export function AgentTestPanel({
             // so re-toggling later starts from the form's current state
             // rather than stale overrides.
             setVariantB(null);
+            setVariantBEdited(false);
+            setVariantBJsonValid(true);
             dryRunB.reset();
           }
         }}
@@ -253,8 +258,12 @@ export function AgentTestPanel({
           hasDivergence={hasDivergence}
           showPromote={onPromoteVariantB !== undefined}
           onPromote={handlePromote}
-          draftBlockedReason={
-            draftBlockedReason && draft === null ? draftBlockedReason : null
+          blockedReason={
+            !variantBJsonValid
+              ? "Variant B's runtime_config JSON is invalid — fix it to enable Run both."
+              : draftBlockedReason && draft === null
+                ? draftBlockedReason
+                : null
           }
         />
       ) : (
@@ -277,7 +286,11 @@ export function AgentTestPanel({
         <CompareColumns
           variantA={draft}
           variantB={variantB}
-          onVariantBChange={setVariantB}
+          onVariantBChange={(next) => {
+            setVariantB(next);
+            setVariantBEdited(true);
+          }}
+          onVariantBJsonValidityChange={setVariantBJsonValid}
           dryRunA={dryRunA}
           dryRunB={dryRunB}
           diffs={new Set(diffs ?? [])}
@@ -341,7 +354,7 @@ function CompareControls({
   hasDivergence,
   showPromote,
   onPromote,
-  draftBlockedReason,
+  blockedReason,
 }: {
   canRunBoth: boolean;
   isPending: boolean;
@@ -349,7 +362,7 @@ function CompareControls({
   hasDivergence: boolean;
   showPromote: boolean;
   onPromote: () => void;
-  draftBlockedReason: string | null;
+  blockedReason: string | null;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -372,9 +385,9 @@ function CompareControls({
           Promote B → form
         </Button>
       ) : null}
-      {draftBlockedReason ? (
+      {blockedReason ? (
         <span className="text-xs text-muted-foreground">
-          {draftBlockedReason}
+          {blockedReason}
         </span>
       ) : null}
     </div>
@@ -385,6 +398,7 @@ function CompareColumns({
   variantA,
   variantB,
   onVariantBChange,
+  onVariantBJsonValidityChange,
   dryRunA,
   dryRunB,
   diffs,
@@ -392,6 +406,7 @@ function CompareColumns({
   variantA: AgentDryRunDraft | null;
   variantB: VariantBOverrides | null;
   onVariantBChange: (next: VariantBOverrides) => void;
+  onVariantBJsonValidityChange: (valid: boolean) => void;
   dryRunA: ReturnType<typeof useDryRunAgent>;
   dryRunB: ReturnType<typeof useDryRunAgent>;
   diffs: Set<keyof VariantBOverrides>;
@@ -412,6 +427,7 @@ function CompareColumns({
         <VariantBEditor
           value={variantB}
           onChange={onVariantBChange}
+          onJsonValidityChange={onVariantBJsonValidityChange}
           diffs={diffs}
         />
         {dryRunB.isError ? <ErrorBanner error={dryRunB.error} /> : null}
@@ -476,10 +492,12 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 function VariantBEditor({
   value,
   onChange,
+  onJsonValidityChange,
   diffs,
 }: {
   value: VariantBOverrides | null;
   onChange: (next: VariantBOverrides) => void;
+  onJsonValidityChange: (valid: boolean) => void;
   diffs: Set<keyof VariantBOverrides>;
 }) {
   // Hooks before any conditional return — rules-of-hooks. The empty
@@ -493,14 +511,17 @@ function VariantBEditor({
 
   // Re-sync the textarea when the parent rebuilds Variant B (e.g. after
   // compare toggle re-init). We don't want every keystroke to trigger
-  // this — guard on a structural mismatch.
+  // this — guard on a structural mismatch using ``stableStringify`` so
+  // a re-ordered-but-identical config doesn't clobber the user's text.
   useEffect(() => {
     if (!value) return;
     const expected = JSON.stringify(value.runtime_config, null, 2);
     if (expected === runtimeConfigText) return;
     try {
       const parsed: unknown = JSON.parse(runtimeConfigText);
-      if (JSON.stringify(parsed) !== JSON.stringify(value.runtime_config)) {
+      if (
+        stableStringify(parsed) !== stableStringify(value.runtime_config)
+      ) {
         setRuntimeConfigText(expected);
       }
     } catch {
@@ -508,6 +529,14 @@ function VariantBEditor({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.runtime_config]);
+
+  // Mirror the JSON parse status up to the parent so "Run both" can
+  // gate on it. ``onJsonValidityChange`` runs on every flip rather
+  // than every keystroke so we don't churn the parent unnecessarily.
+  const wasValid = runtimeConfigError === null;
+  useEffect(() => {
+    onJsonValidityChange(wasValid);
+  }, [wasValid, onJsonValidityChange]);
 
   if (!value) {
     return (
@@ -544,7 +573,7 @@ function VariantBEditor({
           onChange={(e) => onChange({ ...value, runtime_id: e.target.value })}
           className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
         >
-          {RUNTIMES.map((r) => (
+          {AGENT_RUNTIME_IDS.map((r) => (
             <option key={r} value={r}>
               {r}
             </option>
@@ -610,13 +639,41 @@ function FieldLabel({
   );
 }
 
+/**
+ * Order-insensitive deep equality on ``runtime_config`` — plain
+ * ``JSON.stringify`` would mark ``{a:1,b:2}`` as different from
+ * ``{b:2,a:1}`` even though the configs are identical, which would
+ * then enable the Promote button on a no-op diff. We sort keys
+ * recursively so the comparison is structural.
+ */
+function sortKeysRecursively(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortKeysRecursively);
+  }
+  if (value && typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = sortKeysRecursively(
+          (value as Record<string, unknown>)[key],
+        );
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortKeysRecursively(value));
+}
+
 function diffVariantB(
   a: AgentDryRunDraft,
   b: VariantBOverrides,
 ): (keyof VariantBOverrides)[] {
   const out: (keyof VariantBOverrides)[] = [];
   if (a.runtime_id !== b.runtime_id) out.push("runtime_id");
-  if (JSON.stringify(a.runtime_config) !== JSON.stringify(b.runtime_config)) {
+  if (stableStringify(a.runtime_config) !== stableStringify(b.runtime_config)) {
     out.push("runtime_config");
   }
   if (a.prompt_template !== b.prompt_template) out.push("prompt_template");

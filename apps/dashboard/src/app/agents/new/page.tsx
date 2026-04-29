@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useId, useState } from "react";
+import { Suspense, useEffect, useId, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy } from "lucide-react";
@@ -59,12 +59,33 @@ function NewAgentPageContent() {
   const formPanelId = useId();
   const testPanelId = useId();
 
-  // initialValues precedence: promoted > snapshot > clone source >
-  // template > undefined. ``promoted`` overrides come from the Test
-  // panel and need to win so the user actually sees the promotion.
-  // ``snapshot`` (last form values) preserves edits between remounts —
-  // promoting then editing the form shouldn't reset to clone/template
-  // defaults. Clone/template are first-mount seeds.
+  // ``seedKey`` identifies which clone-source / template the form is
+  // currently mounted against. We carry it alongside ``snapshot`` so
+  // that switching templates / clone source clears stale snapshot
+  // values from the previous seed (the existing "switch template to
+  // reset" behaviour). Promote bumps within the same seed.
+  const seedKey = sourceQuery.data
+    ? `clone:${sourceQuery.data.id}`
+    : template !== null
+      ? `template:${template.id}`
+      : "scratch";
+
+  // Drop snapshot + promoted overrides when the user switches between
+  // clone source / template / scratch — those are explicit "reset to
+  // this seed" actions and should *not* inherit edits from the previous
+  // seed.
+  useEffect(() => {
+    setSnapshot(null);
+    setPromoted(null);
+    setPromoteIteration(0);
+  }, [seedKey]);
+
+  // initialValues precedence: promoted > snapshot (same seed) > clone
+  // source > template > undefined. ``promoted`` overrides come from
+  // the Test panel and need to win so the user actually sees the
+  // promotion. ``snapshot`` is honoured only when its seed matches the
+  // current one (effect above clears it on switch). Clone/template
+  // are first-mount seeds.
   const baseInitialValues =
     sourceQuery.data !== undefined
       ? cloneInitialValuesFrom(sourceQuery.data)
@@ -76,13 +97,7 @@ function NewAgentPageContent() {
     promoted,
   );
 
-  const formKey = `${
-    sourceQuery.data
-      ? `clone:${sourceQuery.data.id}`
-      : template !== null
-        ? `template:${template.id}`
-        : "scratch"
-  }:${promoteIteration}`;
+  const formKey = `${seedKey}:${promoteIteration}`;
 
   return (
     <div className="p-6 space-y-4 max-w-3xl">
@@ -261,12 +276,6 @@ function cloneInitialValuesFrom(source: {
 }
 
 /**
- * Map a static template into the form's ``initialValues`` shape.
- * The template's display name (e.g. "DeveloperJr — GLM via …")
- * collapses to its short prefix so the agent's saved name is
- * something the user actually wants to read in the agents list.
- */
-/**
  * Layer Variant B overrides (#105) on top of the form's initial values
  * so a Promote click actually changes what the next form mount shows.
  * Returns the input untouched when nothing was promoted yet.
@@ -311,6 +320,12 @@ function toNewAgentDraft(
   };
 }
 
+/**
+ * Map a static template into the form's ``initialValues`` shape.
+ * The template's display name (e.g. "DeveloperJr — GLM via …")
+ * collapses to its short prefix so the agent's saved name is
+ * something the user actually wants to read in the agents list.
+ */
 function templateInitialValuesFrom(template: AgentTemplate) {
   // "DeveloperJr — GLM via OpenAI-compat" → "DeveloperJr"
   const displayPrefix = template.name.split(" — ")[0] ?? template.name;
