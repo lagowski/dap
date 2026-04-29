@@ -112,17 +112,18 @@ export const AGENT_TEMPLATES: readonly AgentTemplate[] = [
   // -- Implementation -----------------------------------------------------
   {
     id: "developer-jr-glm",
-    name: "DeveloperJr — GLM via OpenAI-compat",
+    name: "DeveloperJr — Z.AI GLM",
     description:
-      "Cheap, fast api-call backed by GLM 5 over OpenAI-compatible endpoint. Single-shot, no tools — best for trivial tasks where speed and cost beat agentic exploration.",
+      "Cheap, fast api-call backed by Z.AI's coding model. Uses the first-class glm provider so the form only needs model_id + GLM_API_KEY in env (no base_url / api_key_env). Single-shot, no tools — best for trivial tasks where speed and cost beat agentic exploration.",
     category: "Implementation",
     role: "implementer",
     runtime_id: "api-call",
     runtime_config: {
-      provider: "openai-compat",
-      model_id: "glm-5-flash",
-      base_url: "https://api.z.ai/api/coding/paas/v4",
-      api_key_env: "GLM_API_KEY",
+      provider: "glm",
+      // Flagship coding model on z.ai's `/api/coding/paas/v4` endpoint.
+      // The previous default `glm-5-flash` doesn't exist in z.ai's
+      // catalogue — operators saw `Unknown Model` (z.ai code 1211).
+      model_id: "glm-4.5",
       max_tokens: 4096,
     },
     prompt_template: PROMPT_IMPLEMENTER,
