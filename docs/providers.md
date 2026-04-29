@@ -24,7 +24,7 @@ expensive CLI does the actual coding.
 | Anthropic | `api-call` (`provider="anthropic"`) | `claude-code` | Full (Claude 4.x + cache) |
 | OpenAI | `api-call` (`provider="openai"`) | `codex` (stub) | Full (gpt-5, o-series) |
 | Google | `api-call` (`provider="gemini"`) | `gemini-cli` | Full (Gemini 2.x/3.x) |
-| GLM (z.ai) | `api-call` (`provider="openai-compat"`) | — | None (3rd-party) |
+| GLM (z.ai) | `api-call` (`provider="glm"`, first-class — see #115) | — | None (3rd-party) |
 | OpenRouter | `api-call` (`provider="openai-compat"`) | — | None in DAP today (`http` adapter + explicit `cost_usd` extractor only) |
 | Together / Groq | `api-call` (`provider="openai-compat"`) | — | None (3rd-party) |
 | Ollama / llama.cpp | `http` adapter | `bash` (`ollama run`) | n/a (local) |
@@ -128,20 +128,26 @@ CLI mode (`gemini-cli`): install via `npm install -g @google/gemini-cli`.
 
 ### GLM (z.ai)
 
-**Env vars:** any name you choose; pass via `runtime_config.api_key_env`.
-Convention: `GLM_API_KEY`.
+GLM is a first-class registered provider as of #115. The agent only
+needs `model_id` + `GLM_API_KEY` in env — `base_url` and
+`api_key_env` are hardcoded inside the provider so you don't repeat
+them on every agent.
 
-**Models:** `glm-4-flash`, `glm-4-plus`, `glm-5-flash` (verify against
-your z.ai account).
+**Env var:** `GLM_API_KEY` (canonical — Settings page picks this up
+automatically).
+
+**Models:** `glm-4.5` (flagship coding model on the
+`/api/coding/paas/v4` endpoint), `glm-4.5-air` (cheaper/faster),
+`glm-4.5-flash`, `codegeex-4`. Run
+``curl -H "Authorization: Bearer $GLM_API_KEY" https://api.z.ai/api/coding/paas/v4/models``
+for the authoritative list on your account.
 
 `runtime_config`:
 
 ```json
 {
-  "provider": "openai-compat",
-  "model_id": "glm-5-flash",
-  "base_url": "https://api.z.ai/api/coding/paas/v4",
-  "api_key_env": "GLM_API_KEY",
+  "provider": "glm",
+  "model_id": "glm-4.5",
   "max_tokens": 4096,
   "temperature": 0.2
 }
@@ -149,6 +155,18 @@ your z.ai account).
 
 Cost is reported as `null` — pricing is per-account on z.ai and we
 don't ship a table.
+
+**Legacy `openai-compat` recipe** (still works, no migration needed
+for existing agents):
+
+```json
+{
+  "provider": "openai-compat",
+  "model_id": "glm-4.5",
+  "base_url": "https://api.z.ai/api/coding/paas/v4",
+  "api_key_env": "GLM_API_KEY"
+}
+```
 
 ### OpenRouter
 
@@ -216,7 +234,7 @@ deployment, add an `auth: {"type": "bearer", "env": "OLLAMA_API_KEY"}`.
 Three concrete agents matching common roles. Drop them into the
 dashboard via the New Agent form, or POST `/agents` directly.
 
-### DeveloperJr — GLM 5 (cheap, fast)
+### DeveloperJr — Z.AI GLM (cheap, fast)
 
 ```json
 {
@@ -224,15 +242,17 @@ dashboard via the New Agent form, or POST `/agents` directly.
   "role": "implementer",
   "runtime_id": "api-call",
   "runtime_config": {
-    "provider": "openai-compat",
-    "model_id": "glm-5-flash",
-    "base_url": "https://api.z.ai/api/coding/paas/v4",
-    "api_key_env": "GLM_API_KEY",
+    "provider": "glm",
+    "model_id": "glm-4.5",
     "max_tokens": 4096
   },
   "prompt_template": "<agent_prompt><role>implementer</role><task>Implement: {{ implementation_notes }}</task></agent_prompt>"
 }
 ```
+
+Needs `GLM_API_KEY` in the engine's environment. The legacy
+`openai-compat` recipe (with explicit `base_url` + `api_key_env`)
+still works for existing agents.
 
 Runs via `api-call` — single-shot, no tools. Best for trivial tasks
 where speed and cost matter more than agentic exploration.
