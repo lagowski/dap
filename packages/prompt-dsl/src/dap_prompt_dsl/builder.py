@@ -84,15 +84,33 @@ def build_prompt(
     ``agent_metadata`` keys on collision so existing pipelines that
     happen to put ``role`` into PipelineState aren't disrupted.
 
+    Only keys present in :data:`RESERVED_METADATA_KEYS` are accepted —
+    arbitrary metadata would let callers silently bypass
+    ``input_schema`` projection for any field, which is exactly what
+    the projection is there to prevent. Unknown keys raise
+    :class:`PromptBuildError`.
+
     Raises:
         PromptBuildError: when template fails to render (syntax error,
-                          undefined variable in StrictUndefined mode).
+                          undefined variable in StrictUndefined mode),
+                          or when ``agent_metadata`` carries a key
+                          outside :data:`RESERVED_METADATA_KEYS`.
 
     Returns:
         BuildResult with rendered xml + validation outcome. The XML is returned
         even if invalid (so callers can show diagnostics), but `valid=False`.
     """
     env = _make_sandbox()
+
+    if agent_metadata:
+        unknown = sorted(set(agent_metadata) - RESERVED_METADATA_KEYS)
+        if unknown:
+            allowed = ", ".join(sorted(RESERVED_METADATA_KEYS))
+            raise PromptBuildError(
+                f"agent_metadata contains unsupported key(s): {', '.join(unknown)}. "
+                f"Reserved metadata keys are: {allowed}.",
+            )
+
     # ``_project_context`` returns the caller's context object directly
     # when no projection is needed. Copy before merging metadata so we
     # never mutate the caller's dict — this would otherwise leak

@@ -278,3 +278,19 @@ def test_caller_context_wins_over_agent_metadata_on_collision() -> None:
     )
     assert result.valid is True
     assert "<role>from-context</role>" in result.xml
+
+
+def test_unknown_agent_metadata_key_is_rejected() -> None:
+    """Only ``RESERVED_METADATA_KEYS`` may be passed — anything else
+    would silently bypass ``input_schema`` projection."""
+    template = "<agent_prompt><role>{{ role }}</role></agent_prompt>"
+    with pytest.raises(PromptBuildError) as exc_info:
+        build_prompt(
+            template,
+            {},
+            input_schema=["selected_issue_ids"],
+            agent_metadata={"role": "implementer", "secret_field": "leak"},
+        )
+    msg = str(exc_info.value)
+    assert "secret_field" in msg
+    assert "role" in msg  # message lists the allowed set

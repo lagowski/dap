@@ -268,7 +268,7 @@ def test_dry_run_caller_context_role_wins_over_agent_role(
         json={
             "draft": _bash_draft(
                 role="implementer",
-                input_schema=["role"] if False else [],
+                input_schema=[],
                 prompt_template=(
                     "<agent_prompt><role>{{ role }}</role></agent_prompt>"
                 ),
