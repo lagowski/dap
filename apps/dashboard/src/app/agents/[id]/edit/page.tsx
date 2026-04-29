@@ -3,8 +3,9 @@
 import { useId, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Copy, Download } from "lucide-react";
 import { useAgent, useUpdateAgent } from "@/hooks/api";
+import { downloadAgentExportWithAlert } from "@/lib/agent-export";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -77,6 +78,22 @@ export default function EditAgentPage({
         <span className="text-sm text-muted-foreground">
           (v{agent.version} → saving will create v{nextVersion})
         </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/agents/new?from=${agent.id}`}>
+              <Copy className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+              Clone
+            </Link>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => downloadAgentExportWithAlert(agent)}
+          >
+            <Download className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+            Export JSON
+          </Button>
+        </div>
       </div>
 
       <AgentTabs
