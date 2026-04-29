@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
@@ -260,6 +260,7 @@ def render_preview(
             agent.prompt_template,
             payload.context,
             input_schema=agent.input_schema or None,
+            agent_metadata={"role": agent.role},
         )
     except PromptBuildError as exc:
         raise HTTPException(
@@ -282,25 +283,44 @@ def render_preview(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_dryrun_source(
-    payload: AgentDryRunRequest, session: Session
-) -> tuple[str, str, list[str], list[str], dict[str, Any], int, float | None]:
-    """Return (runtime_id, prompt_template, input_schema, output_schema,
-    runtime_config, timeout_ms, agent_budget_usd) for the request, fetching
-    a saved agent or unwrapping the inline draft."""
+class _DryRunSource(NamedTuple):
+    """Resolved fields needed to execute one dry-run.
+
+    Sourced from either a saved agent (``agent_id`` path) or an inline
+    draft (``draft`` path). Bundled into a NamedTuple so adding a new
+    field doesn't keep widening a positional return tuple at the call
+    site.
+    """
+
+    runtime_id: str
+    role: str
+    prompt_template: str
+    input_schema: list[str]
+    output_schema: list[str]
+    runtime_config: dict[str, Any]
+    timeout_ms: int
+    agent_budget_usd: float | None
+
+
+def _resolve_dryrun_source(payload: AgentDryRunRequest, session: Session) -> _DryRunSource:
+    """Resolve the agent fields needed for a dry-run.
+
+    Fetches a saved agent or unwraps the inline draft; the schema
+    validator on ``AgentDryRunRequest`` guarantees exactly one path
+    is taken.
+    """
     if payload.draft is not None:
         d = payload.draft
-        return (
-            d.runtime_id,
-            d.prompt_template,
-            list(d.input_schema),
-            list(d.output_schema),
-            dict(d.runtime_config),
-            d.timeout_ms,
-            d.budget_limit_usd,
+        return _DryRunSource(
+            runtime_id=d.runtime_id,
+            role=d.role,
+            prompt_template=d.prompt_template,
+            input_schema=list(d.input_schema),
+            output_schema=list(d.output_schema),
+            runtime_config=dict(d.runtime_config),
+            timeout_ms=d.timeout_ms,
+            agent_budget_usd=d.budget_limit_usd,
         )
-    # agent_id path — schema validator guarantees exactly one of the
-    # two is set, so this branch only runs when agent_id is present.
     assert payload.agent_id is not None
     try:
         agent = (
@@ -310,14 +330,15 @@ def _resolve_dryrun_source(
         )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return (
-        agent.runtime_id,
-        agent.prompt_template,
-        list(agent.input_schema),
-        list(agent.output_schema),
-        dict(agent.runtime_config),
-        agent.timeout_ms,
-        agent.budget_limit_usd,
+    return _DryRunSource(
+        runtime_id=agent.runtime_id,
+        role=agent.role,
+        prompt_template=agent.prompt_template,
+        input_schema=list(agent.input_schema),
+        output_schema=list(agent.output_schema),
+        runtime_config=dict(agent.runtime_config),
+        timeout_ms=agent.timeout_ms,
+        agent_budget_usd=agent.budget_limit_usd,
     )
 
 
@@ -373,21 +394,13 @@ async def dry_run_agent(
     Auth handled by the runtime adapter itself (env key OR stored OAuth
     session — see #99).
     """
-    (
-        runtime_id,
-        prompt_template,
-        input_schema,
-        output_schema,
-        runtime_config,
-        timeout_ms,
-        agent_budget,
-    ) = _resolve_dryrun_source(payload, session)
+    source = _resolve_dryrun_source(payload, session)
 
-    if not registry.has(runtime_id):
+    if not registry.has(source.runtime_id):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Unknown runtime_id '{runtime_id}' — no adapter registered. "
+                f"Unknown runtime_id '{source.runtime_id}' — no adapter registered. "
                 "Install the adapter or pick a different runtime."
             ),
         )
@@ -396,6 +409,7 @@ async def dry_run_agent(
     # engine-wide ``dry_run_budget_usd`` wins; if either declares a
     # value above the engine cap, refuse before invocation.
     cap = config.dry_run_budget_usd
+    agent_budget = source.agent_budget_usd
     if agent_budget is not None and agent_budget > cap:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -409,29 +423,30 @@ async def dry_run_agent(
 
     try:
         build_result = build_prompt(
-            prompt_template,
+            source.prompt_template,
             payload.context,
-            input_schema=input_schema or None,
+            input_schema=source.input_schema or None,
+            agent_metadata={"role": source.role},
         )
     except PromptBuildError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
 
-    adapter = registry.get(runtime_id)
+    adapter = registry.get(source.runtime_id)
 
     with tempfile.TemporaryDirectory(prefix="dap-dryrun-") as workdir:
         task = RuntimeTask(
             execution_id=f"dryrun-{uuid.uuid4().hex[:12]}",
             prompt_xml=build_result.xml,
             working_directory=workdir,
-            timeout_ms=timeout_ms,
+            timeout_ms=source.timeout_ms,
             budget_usd=effective_budget,
-            runtime_config=runtime_config,
+            runtime_config=source.runtime_config,
         )
         runtime_result = await adapter.execute(task)
 
-    output_check = _validate_output_schema(runtime_result.structured, output_schema)
+    output_check = _validate_output_schema(runtime_result.structured, source.output_schema)
 
     return AgentDryRunResponse(
         rendered_xml=build_result.xml,

@@ -46,12 +46,22 @@ def _make_sandbox() -> SandboxedEnvironment:
     )
 
 
+#: Reserved metadata keys that ``build_prompt`` always lifts into the
+#: render context regardless of ``input_schema`` projection. These are
+#: agent identity (not pipeline state), so templates can reference them
+#: without having to declare them as inputs. Add to this set sparingly —
+#: every key is a name the agent's prompt template can never use for
+#: pipeline state without a clash.
+RESERVED_METADATA_KEYS: frozenset[str] = frozenset({"role"})
+
+
 def build_prompt(
     template: str,
     context: dict[str, Any],
     *,
     expected_root: str = DEFAULT_ROOT,
     input_schema: list[str] | None = None,
+    agent_metadata: dict[str, Any] | None = None,
 ) -> BuildResult:
     """Render template with context, validate XML output.
 
@@ -65,16 +75,52 @@ def build_prompt(
     context is passed through unchanged (backward compat with v0.4
     agents that haven't declared a contract yet).
 
+    ``agent_metadata`` is merged into the render context *after*
+    projection — the agent's identity (currently ``role``, see
+    :data:`RESERVED_METADATA_KEYS`) is always visible to the template
+    regardless of ``input_schema``. This lets the built-in templates
+    use ``{{ role }}`` without forcing every agent to declare ``role``
+    as an input. Caller-supplied ``context`` keys win over
+    ``agent_metadata`` keys on collision so existing pipelines that
+    happen to put ``role`` into PipelineState aren't disrupted.
+
+    Only keys present in :data:`RESERVED_METADATA_KEYS` are accepted —
+    arbitrary metadata would let callers silently bypass
+    ``input_schema`` projection for any field, which is exactly what
+    the projection is there to prevent. Unknown keys raise
+    :class:`PromptBuildError`.
+
     Raises:
         PromptBuildError: when template fails to render (syntax error,
-                          undefined variable in StrictUndefined mode).
+                          undefined variable in StrictUndefined mode),
+                          or when ``agent_metadata`` carries a key
+                          outside :data:`RESERVED_METADATA_KEYS`.
 
     Returns:
         BuildResult with rendered xml + validation outcome. The XML is returned
         even if invalid (so callers can show diagnostics), but `valid=False`.
     """
     env = _make_sandbox()
-    render_context = _project_context(context, input_schema)
+
+    if agent_metadata:
+        unknown = sorted(set(agent_metadata) - RESERVED_METADATA_KEYS)
+        if unknown:
+            allowed = ", ".join(sorted(RESERVED_METADATA_KEYS))
+            raise PromptBuildError(
+                f"agent_metadata contains unsupported key(s): {', '.join(unknown)}. "
+                f"Reserved metadata keys are: {allowed}.",
+            )
+
+    # ``_project_context`` returns the caller's context object directly
+    # when no projection is needed. Copy before merging metadata so we
+    # never mutate the caller's dict — this would otherwise leak
+    # ``role`` into ``PipelineState.model_dump()`` between node calls.
+    render_context = dict(_project_context(context, input_schema))
+    if agent_metadata:
+        for key, value in agent_metadata.items():
+            # Caller context wins on collision — this only fills in
+            # metadata keys the caller didn't supply themselves.
+            render_context.setdefault(key, value)
 
     try:
         compiled = env.from_string(template)
