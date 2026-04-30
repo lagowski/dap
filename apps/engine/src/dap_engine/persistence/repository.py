@@ -6,7 +6,7 @@ Routes stay thin: validate input → call repository → serialize output.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
 from dap_types import (
@@ -258,6 +258,42 @@ def get_agent(session: Session, agent_id: str) -> Agent:
         raise NotFoundError(f"Agent not found: {agent_id}")
     version = _get_agent_version_orm(session, agent_id, agent.current_version)
     return _agent_from_orm(agent, version, is_current=True)
+
+
+def get_agents_by_ids(session: Session, agent_ids: Iterable[str]) -> dict[str, Agent]:
+    """Fetch multiple agents (current version) in 2 queries total (#126).
+
+    Used by the pipeline bundle exporter, where a pipeline can
+    reference N agents and per-id ``get_agent`` calls would cost
+    ``2N`` round-trips. ``WHERE id IN (...)`` for the agent rows,
+    then ``WHERE agent_id IN (...)`` for the matching version rows
+    indexed by ``(agent_id, current_version)`` to pick each agent's
+    head version.
+
+    Missing ids are silently absent from the returned dict — callers
+    handle them however they want (404 vs skip).
+    """
+    ids = list(agent_ids)
+    if not ids:
+        return {}
+    agent_rows = session.scalars(
+        select(AgentORM).where(AgentORM.id.in_(ids)),
+    ).all()
+    if not agent_rows:
+        return {}
+    version_rows = session.scalars(
+        select(AgentVersionORM).where(
+            AgentVersionORM.agent_id.in_(a.id for a in agent_rows),
+        ),
+    ).all()
+    versions_by_key = {(v.agent_id, v.version): v for v in version_rows}
+    out: dict[str, Agent] = {}
+    for agent in agent_rows:
+        version = versions_by_key.get((agent.id, agent.current_version))
+        if version is None:
+            continue
+        out[agent.id] = _agent_from_orm(agent, version, is_current=True)
+    return out
 
 
 def get_agent_version(session: Session, agent_id: str, version: int) -> Agent:

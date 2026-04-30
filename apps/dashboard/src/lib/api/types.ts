@@ -176,10 +176,15 @@ export interface PipelineExport {
    * Optional bundle (#126) — when present, the importer creates the
    * agents first, builds an old→new id remap, and rewrites every
    * ``node.agent_id`` in the pipeline payload before persisting.
-   * Keys are the *source* installation's agent ids. ``null`` /
-   * absent means the export is pipeline-only (legacy Phase 1 shape).
+   * Keys are the *source* installation's agent ids.
+   *
+   * Field is fully **optional**: pipeline-only exports (Phase 1
+   * shape, ``?bundle=false``) omit it entirely from the JSON
+   * response (the engine sets ``response_model_exclude_none=True``).
+   * Bundle exports include it as a non-null record. Treat both
+   * ``undefined`` and a missing key as "no bundle".
    */
-  bundled_agents: Record<string, AgentExportPayload> | null;
+  bundled_agents?: Record<string, AgentExportPayload>;
 }
 
 // ---- Projects (#63 / #67) ----

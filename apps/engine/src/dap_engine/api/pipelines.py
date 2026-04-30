@@ -168,22 +168,35 @@ def import_pipeline(
     bundled = payload.bundled_agents
     pipeline_payload = payload.pipeline
 
-    if bundled:
-        # Step 1 — create bundled agents in dependency order (no
-        # ordering needed today; agents have no inter-references).
-        # Build the remap from source ids to fresh local ids.
+    # Bundle mode is keyed on *presence* of the field, not truthiness
+    # — the contract is "bundle if the caller chose to send it",
+    # which an empty dict still expresses (no agents to remap, but
+    # the user explicitly opted in). Keeps the contract documented
+    # in :class:`PipelineImportRequest` accurate.
+    if bundled is not None:
+        # Step 1 — create bundled agents (no inter-agent ordering
+        # required today). Build the remap from source ids to
+        # fresh local ids.
         id_remap: dict[str, str] = {}
         for source_id, agent_payload in bundled.items():
             try:
                 agent_create = AgentCreate.model_validate(agent_payload.model_dump())
             except ValidationError as exc:
+                # Keep the structured Pydantic error list intact
+                # under ``agent_validation_errors`` so frontends can
+                # surface field-level issues. ``errors`` keeps the
+                # human-friendly summary the rest of the import
+                # paths use, including the offending source id so
+                # operators know which entry in the bundle broke.
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail={
                         "errors": [
-                            f"bundled_agents['{source_id}']: {exc.errors()}",
+                            f"bundled_agents['{source_id}'] is not a valid agent payload",
                         ],
                         "warnings": [],
+                        "agent_validation_errors": exc.errors(),
+                        "source_id": source_id,
                     },
                 ) from exc
             new_agent = repo.create_agent(session, agent_create)
@@ -287,7 +300,16 @@ def get_pipeline_version(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
-@router.get("/{pipeline_id}/export", response_model=PipelineExport)
+@router.get(
+    "/{pipeline_id}/export",
+    response_model=PipelineExport,
+    # ``bundled_agents`` defaults to ``None`` on non-bundle exports;
+    # ``exclude_none`` strips it from the JSON so Phase 1 wire format
+    # stays exactly the way it was — no ``"bundled_agents": null``
+    # noise in pipeline-only exports, and the field appears only when
+    # the operator opted in via ``?bundle=true``.
+    response_model_exclude_none=True,
+)
 def export_pipeline(
     pipeline_id: str,
     bundle: bool = Query(
@@ -342,22 +364,21 @@ def export_pipeline(
 
     bundled_agents: dict[str, AgentExportPayload] | None = None
     if bundle:
-        # Each unique referenced agent_id once; archived agents are
-        # skipped silently since they couldn't have passed save-time
-        # validation. ``build_agent_export_payload`` does its own
-        # secret scrubbing so bundle exports stay safe to share.
+        # One batched fetch for every unique agent_id in the pipeline
+        # — a 2-query lookup regardless of node count (#126 review).
+        # ``_check_agents`` at save time guarantees a valid pipeline
+        # has no archived references, so any id we don't find here
+        # would be a row that vanished after save (race / manual DB
+        # tinkering). Skip silently in that case; the importer falls
+        # back to "agent not found" 422 on the receiving end if the
+        # bundle ends up incomplete.
         agent_ids = sorted({node.agent_id for node in payload.nodes})
-        bundled_agents = {}
-        for agent_id in agent_ids:
-            try:
-                agent = repo.get_agent(session, agent_id)
-            except repo.NotFoundError:
-                # Pipeline references an agent that's gone from this
-                # DB — would mean a partial bundle on the receiving
-                # end. Skip silently; the importer surfaces it as a
-                # standard "agent not found" 422 if needed.
-                continue
-            bundled_agents[agent_id] = build_agent_export_payload(agent)
+        agents_by_id = repo.get_agents_by_ids(session, agent_ids)
+        bundled_agents = {
+            agent_id: build_agent_export_payload(agents_by_id[agent_id])
+            for agent_id in agent_ids
+            if agent_id in agents_by_id
+        }
 
     return PipelineExport(
         schema_version=PIPELINE_EXPORT_SCHEMA_VERSION,

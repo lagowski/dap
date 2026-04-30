@@ -241,15 +241,18 @@ def _agent_export_payload(name: str = "Bundled Agent") -> dict[str, Any]:
 
 
 def test_export_bundle_includes_referenced_agents(client: TestClient) -> None:
-    """``?bundle=true`` adds ``bundled_agents`` keyed by agent_id."""
+    """``?bundle=true`` adds ``bundled_agents`` keyed by agent_id;
+    plain export omits the field entirely (Phase 1 wire shape)."""
     agent_id = _create_minimal_agent(client, name="My Source Agent")
     pipeline = client.post("/pipelines", json=_pipeline_payload(agent_id)).json()
 
     plain = client.get(f"/pipelines/{pipeline['id']}/export").json()
-    assert plain["bundled_agents"] is None
+    # Field is omitted, not null — ``response_model_exclude_none``
+    # keeps Phase 1 importers blind to the new field.
+    assert "bundled_agents" not in plain
 
     bundled = client.get(f"/pipelines/{pipeline['id']}/export?bundle=true").json()
-    assert bundled["bundled_agents"] is not None
+    assert "bundled_agents" in bundled
     assert agent_id in bundled["bundled_agents"]
     bundled_agent = bundled["bundled_agents"][agent_id]
     assert bundled_agent["name"] == "My Source Agent"
