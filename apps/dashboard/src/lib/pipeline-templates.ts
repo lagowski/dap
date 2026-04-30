@@ -21,7 +21,16 @@
  *    consistency.
  * 3. Making sure each agent's ``input_schema`` / ``output_schema``
  *    satisfies the cohesion rules so the DAG validator accepts the
- *    bundle on import.
+ *    bundle on import. **In particular**: an entry node (or any node
+ *    upstream-of-which the field isn't written) cannot declare an
+ *    ``input_schema`` field whose ``PipelineState`` default is in
+ *    ``_TRIVIAL_DEFAULTS`` (None / False / 0 / "" / [] / {}). The
+ *    cohesion check rejects a pipeline like that with
+ *    "requires X but no upstream node writes it". Templates here
+ *    keep ``input_schema`` empty (legacy mode — prompts can still
+ *    reference any state field via Jinja) so a small DAG validates
+ *    cleanly out of the box; tightening contracts is a deliberate
+ *    follow-up the user does after import.
  */
 
 import type { PipelineExport } from "./api/types";
@@ -224,7 +233,12 @@ export const PIPELINE_TEMPLATES: readonly PipelineTemplate[] = [
             prompt_cache: true,
           },
           prompt_template: PROMPT_TEST_AUTHOR,
-          input_schema: ["selected_issue_ids", "available_issues"],
+          // Empty input_schema = legacy mode: the prompt can still
+          // reference any PipelineState field via Jinja, but the
+          // DAG validator's cohesion check sees no declared
+          // contract and skips this node. Templates ship a working
+          // pipeline first; the user tightens contracts after.
+          input_schema: [],
           output_schema: ["tests_generated", "test_files", "test_generation_errors"],
           constraints: [],
           budget_limit_usd: null,
@@ -241,7 +255,7 @@ export const PIPELINE_TEMPLATES: readonly PipelineTemplate[] = [
             prompt_cache: true,
           },
           prompt_template: PROMPT_IMPLEMENTER,
-          input_schema: ["selected_issue_ids", "implementation_notes"],
+          input_schema: [],
           output_schema: ["modified_files", "implementation_notes"],
           constraints: [],
           budget_limit_usd: null,
@@ -257,12 +271,7 @@ export const PIPELINE_TEMPLATES: readonly PipelineTemplate[] = [
             max_tokens: 2048,
           },
           prompt_template: PROMPT_VERIFIER,
-          input_schema: [
-            "tests_passed",
-            "last_test_output",
-            "modified_files",
-            "implementation_notes",
-          ],
+          input_schema: [],
           output_schema: [
             "verification_status",
             "verification_reason",
@@ -320,7 +329,14 @@ export const PIPELINE_TEMPLATES: readonly PipelineTemplate[] = [
             max_tokens: 4096,
           },
           prompt_template: PROMPT_IMPLEMENTER,
-          input_schema: ["selected_issue_ids", "implementation_notes"],
+          // Legacy mode for the same reason as the TDD template:
+          // an entry-point node can't declare ``input_schema``
+          // fields whose ``PipelineState`` defaults are trivial
+          // (None / [] / "" — see _TRIVIAL_DEFAULTS in the
+          // engine validator). Empty list keeps the cohesion
+          // check quiet on import; the prompt still reads state
+          // via Jinja.
+          input_schema: [],
           output_schema: ["modified_files", "implementation_notes"],
           constraints: [],
           budget_limit_usd: null,

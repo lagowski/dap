@@ -32,6 +32,13 @@ function NewPipelinePageContent() {
   const [templateError, setTemplateError] = useState<string | null>(null);
 
   const handleUseTemplate = async (template: PipelineTemplate) => {
+    // Guard at the top of the handler: ``importPipeline.isPending``
+    // doesn't flip true until React commits the mutation's state
+    // change, so a fast double-click could fire two ``mutateAsync``
+    // calls before the disabled-state propagates. ``pendingTemplateId``
+    // is set synchronously below, so reading it here is the source
+    // of truth.
+    if (pendingTemplateId !== null) return;
     setTemplateError(null);
     setPendingTemplateId(template.id);
     try {
@@ -39,6 +46,11 @@ function NewPipelinePageContent() {
       router.push(`/pipelines/${created.id}/edit`);
     } catch (err) {
       setTemplateError(formatApiError(err));
+    } finally {
+      // Clear in ``finally`` so the picker stays usable after an
+      // error, and so the state is consistent even if the user
+      // cancels mid-navigation. On success the page unmounts and
+      // the setter is a no-op.
       setPendingTemplateId(null);
     }
   };
@@ -74,7 +86,12 @@ function NewPipelinePageContent() {
           ) : null}
           <PipelineTemplatePicker
             onUseTemplate={handleUseTemplate}
-            disabled={importPipeline.isPending}
+            // ``pendingTemplateId`` is the synchronous source of
+            // truth — gating on the mutation's ``isPending`` alone
+            // would leave a one-render-cycle hole where multiple
+            // cards could be clicked before the mutation has
+            // committed its state change.
+            disabled={pendingTemplateId !== null}
             pendingTemplateId={pendingTemplateId}
           />
           <p className="mt-3 text-xs text-muted-foreground">
