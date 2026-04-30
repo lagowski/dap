@@ -191,7 +191,7 @@ function NodePanel({
 }
 
 function AgentDetailsCollapse({ agent }: { agent: Agent }) {
-  const promptShort = agent.prompt_template.length > PROMPT_PREVIEW_LIMIT;
+  const isPromptLong = agent.prompt_template.length > PROMPT_PREVIEW_LIMIT;
   return (
     <details className="border rounded-md bg-muted/20">
       <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -205,7 +205,7 @@ function AgentDetailsCollapse({ agent }: { agent: Agent }) {
           <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-background border rounded p-2 max-h-48 overflow-y-auto">
             {agent.prompt_template}
           </pre>
-          {promptShort ? (
+          {isPromptLong ? (
             <p className="text-[10px] text-muted-foreground italic">
               {agent.prompt_template.length} chars
             </p>
@@ -255,16 +255,17 @@ function SchemaList({ label, fields }: { label: string; fields: string[] }) {
 
 interface StateAfterNodeFields {
   fields: string[];
-  hasLegacyAncestor: boolean;
-  legacyNodeIds: string[];
+  selfIsLegacy: boolean;
+  legacyAncestorIds: string[];
 }
 
 function StateAfterNodeView({ fields }: { fields: StateAfterNodeFields }) {
-  if (fields.fields.length === 0 && !fields.hasLegacyAncestor) {
+  const hasUpstreamLegacy = fields.legacyAncestorIds.length > 0;
+  if (fields.fields.length === 0 && !hasUpstreamLegacy && !fields.selfIsLegacy) {
     return (
       <p className="italic text-muted-foreground text-[11px]">
-        Nothing declared — entry node with no upstream writers and no
-        ``output_schema`` of its own.
+        Nothing declared — no upstream writers and this node has no{" "}
+        <code className="font-mono">output_schema</code>.
       </p>
     );
   }
@@ -279,19 +280,28 @@ function StateAfterNodeView({ fields }: { fields: StateAfterNodeFields }) {
           ))}
         </div>
       ) : null}
-      {fields.hasLegacyAncestor ? (
+      {hasUpstreamLegacy ? (
         <p className="text-[11px] italic text-muted-foreground">
-          + any state field a downstream node may read — at least one
-          upstream agent ({fields.legacyNodeIds.join(", ")}) is in
-          legacy mode (empty <code className="font-mono">output_schema</code>),
-          so its writes aren&apos;t declared.
+          + any state field a downstream node may read —{" "}
+          {fields.legacyAncestorIds.length > 1
+            ? `upstream agents (${fields.legacyAncestorIds.join(", ")}) are`
+            : `upstream agent (${fields.legacyAncestorIds[0]}) is`}{" "}
+          in legacy mode (empty <code className="font-mono">output_schema</code>),
+          so their writes aren&apos;t declared.
+        </p>
+      ) : null}
+      {fields.selfIsLegacy ? (
+        <p className="text-[11px] italic text-muted-foreground">
+          This node is in legacy mode (empty{" "}
+          <code className="font-mono">output_schema</code>) — its own writes
+          aren&apos;t declared.
         </p>
       ) : null}
     </div>
   );
 }
 
-// BFS upstream from target collecting output_schema. Legacy ancestors (empty output_schema) are flagged separately since we can't enumerate their writes.
+// BFS upstream from target collecting output_schema. Self-legacy and upstream-legacy are tracked separately so the UI can word them differently.
 function computeStateAfterNode(
   targetNodeId: string,
   allNodes: PipelineNode[],
@@ -299,6 +309,7 @@ function computeStateAfterNode(
   agents: Agent[],
 ): StateAfterNodeFields {
   const agentById = new Map(agents.map((a) => [a.id, a] as const));
+  const nodeById = new Map(allNodes.map((n) => [n.id, n] as const));
   const reverseAdj = new Map<string, string[]>();
   for (const edge of allEdges) {
     if (!reverseAdj.has(edge.target)) reverseAdj.set(edge.target, []);
@@ -319,14 +330,19 @@ function computeStateAfterNode(
   }
 
   const fieldUnion = new Set<string>();
-  const legacyNodeIds: string[] = [];
+  const legacyAncestorIds: string[] = [];
+  let selfIsLegacy = false;
   for (const nodeId of visited) {
-    const node = allNodes.find((n) => n.id === nodeId);
+    const node = nodeById.get(nodeId);
     if (!node) continue;
     const agent = agentById.get(node.agent_id);
     if (!agent) continue;
     if (agent.output_schema.length === 0) {
-      legacyNodeIds.push(nodeId);
+      if (nodeId === targetNodeId) {
+        selfIsLegacy = true;
+      } else {
+        legacyAncestorIds.push(nodeId);
+      }
       continue;
     }
     for (const f of agent.output_schema) fieldUnion.add(f);
@@ -334,8 +350,8 @@ function computeStateAfterNode(
 
   return {
     fields: Array.from(fieldUnion).sort(),
-    hasLegacyAncestor: legacyNodeIds.length > 0,
-    legacyNodeIds: legacyNodeIds.sort(),
+    selfIsLegacy,
+    legacyAncestorIds: legacyAncestorIds.sort(),
   };
 }
 
