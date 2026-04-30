@@ -277,9 +277,7 @@ def pipelines_using_agent(session: Session, agent_id: str) -> list[tuple[str, st
     out: list[tuple[str, str]] = []
     pipeline_names = {
         p.id: p.name
-        for p in session.scalars(
-            select(PipelineORM).where(PipelineORM.archived_at.is_(None))
-        ).all()
+        for p in session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
     }
     for version in _current_pipeline_versions(session):
         for node in version.nodes or []:
