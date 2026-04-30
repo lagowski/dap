@@ -7,11 +7,12 @@
 #
 # Usage:
 #   ./scripts/dev                     # start both
-#   ./scripts/dev --install           # also run uv sync + pnpm install first
+#   ./scripts/dev --install           # run scripts/setup first, then start
 #   DAP_DEV_INSTALL=1 ./scripts/dev   # equivalent to --install
 #
-# The script is idempotent re: cwd — it always cd's to repo root before
-# touching anything, so calling it from a subdir works.
+# For first-time setup without launching, see scripts/setup. The script is
+# idempotent re: cwd — it always cd's to repo root before touching
+# anything, so calling it from a subdir works.
 
 set -euo pipefail
 
@@ -58,10 +59,9 @@ fi
 # ----- optional install ------------------------------------------------------
 
 if [[ "$DO_INSTALL" == "1" ]]; then
-  echo "[dap] uv sync --all-packages"
-  uv sync --all-packages
-  echo "[dap] pnpm install (apps/dashboard)"
-  (cd apps/dashboard && pnpm install)
+  # Delegate to scripts/setup so install behaviour stays in one place
+  # (version pre-flight, .env.local bootstrap, git hook activation, sync).
+  "$REPO_ROOT/scripts/setup"
 fi
 
 # ----- run -------------------------------------------------------------------
