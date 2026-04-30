@@ -22,10 +22,29 @@ UV_MIN="0.8"
 NODE_MIN="22"
 PNPM_MIN="9"
 
-# Returns 0 if $1 (current) is at least $2 (required), else 1. Uses sort -V
-# (version-aware) so "3.13" < "3.13.0" < "3.13.5" sort as humans expect.
+# Returns 0 if $1 (current) is at least $2 (required), else 1.
+# Pure-bash dot-segment numeric compare so "3.13" == "3.13.0" < "3.13.5".
+# Avoids ``sort -V`` because BSD sort on older macOS doesn't ship that flag.
 ver_at_least() {
-  [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" == "$2" ]]
+  local current=$1 required=$2
+  local -a current_parts required_parts
+  IFS='.' read -r -a current_parts <<< "$current"
+  IFS='.' read -r -a required_parts <<< "$required"
+
+  local max=${#current_parts[@]}
+  if (( ${#required_parts[@]} > max )); then
+    max=${#required_parts[@]}
+  fi
+
+  local i cp rp
+  for (( i = 0; i < max; i++ )); do
+    # ``10#`` forces base-10 so a stray leading zero doesn't get parsed as octal.
+    cp=${current_parts[i]:-0}
+    rp=${required_parts[i]:-0}
+    if (( 10#$cp > 10#$rp )); then return 0; fi
+    if (( 10#$cp < 10#$rp )); then return 1; fi
+  done
+  return 0
 }
 
 # ----- helpers ---------------------------------------------------------------
@@ -39,14 +58,21 @@ ok() {
   echo "[setup] ✓ $1"
 }
 
+# Per-tool version extractors. Named functions instead of eval'd strings so a
+# typo or shell-meta surprise becomes a syntax error here, not at runtime.
+get_python_version() { python3 --version 2>&1 | awk '{print $2}'; }
+get_uv_version()     { uv --version 2>&1 | awk '{print $2}'; }
+get_node_version()   { node --version 2>&1 | sed 's/^v//'; }
+get_pnpm_version()   { pnpm --version 2>&1; }
+
 check_tool() {
-  local name=$1 min=$2 version_cmd=$3 install_hint=$4
+  local name=$1 min=$2 version_func=$3 install_hint=$4
   if ! command -v "$name" >/dev/null 2>&1; then
     fail "$name not found — $install_hint"
     return
   fi
   local current
-  current=$(eval "$version_cmd")
+  current=$("$version_func")
   if [[ -z "$current" ]]; then
     fail "$name installed but version unparseable — $install_hint"
     return
@@ -61,17 +87,13 @@ check_tool() {
 # ----- step 1: tool versions -------------------------------------------------
 
 echo "[setup] checking required tools..."
-check_tool python3 "$PY_MIN" \
-  "python3 --version 2>&1 | awk '{print \$2}'" \
+check_tool python3 "$PY_MIN" get_python_version \
   "install with pyenv / brew install python@3.13"
-check_tool uv "$UV_MIN" \
-  "uv --version 2>&1 | awk '{print \$2}'" \
+check_tool uv "$UV_MIN" get_uv_version \
   "https://docs.astral.sh/uv/getting-started/installation/"
-check_tool node "$NODE_MIN" \
-  "node --version 2>&1 | sed 's/^v//'" \
+check_tool node "$NODE_MIN" get_node_version \
   "install with nvm: nvm install 22 && nvm use 22"
-check_tool pnpm "$PNPM_MIN" \
-  "pnpm --version 2>&1" \
+check_tool pnpm "$PNPM_MIN" get_pnpm_version \
   "corepack enable && corepack prepare pnpm@latest --activate"
 
 if [[ $bad -ne 0 ]]; then

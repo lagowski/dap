@@ -61,7 +61,9 @@ fi
 if [[ "$DO_INSTALL" == "1" ]]; then
   # Delegate to scripts/setup so install behaviour stays in one place
   # (version pre-flight, .env.local bootstrap, git hook activation, sync).
-  "$REPO_ROOT/scripts/setup"
+  # Invoke via ``bash`` so the call works even if the executable bit on
+  # scripts/setup got dropped (some filesystems / archive extractions).
+  bash "$REPO_ROOT/scripts/setup"
 fi
 
 # ----- run -------------------------------------------------------------------
