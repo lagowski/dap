@@ -224,23 +224,33 @@ export function PipelineDesigner({
     [],
   );
 
-  const buildPayload = useCallback((): PipelineFormPayload => {
-    const designerNodes: PipelineNode[] = nodes.map((n) => ({
-      id: n.id,
-      agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
-      position: { x: n.position.x, y: n.position.y },
-    }));
-    const designerEdges: PipelineEdge[] = edges.map((e) => {
-      const meta = edgeMeta[e.id];
-      return {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        condition: meta?.condition ?? null,
-        label: meta?.label ?? null,
-      };
-    });
-    return {
+  // Lifted from buildPayload so the Inspector can reuse the projections.
+  const designerNodes = useMemo<PipelineNode[]>(
+    () =>
+      nodes.map((n) => ({
+        id: n.id,
+        agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
+        position: { x: n.position.x, y: n.position.y },
+      })),
+    [nodes],
+  );
+  const designerEdges = useMemo<PipelineEdge[]>(
+    () =>
+      edges.map((e) => {
+        const meta = edgeMeta[e.id];
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          condition: meta?.condition ?? null,
+          label: meta?.label ?? null,
+        };
+      }),
+    [edges, edgeMeta],
+  );
+
+  const buildPayload = useCallback(
+    (): PipelineFormPayload => ({
       name,
       description,
       schema_version: "langgraph/1.0",
@@ -249,8 +259,9 @@ export function PipelineDesigner({
       nodes: designerNodes,
       edges: designerEdges,
       defaults: DEFAULT_DEFAULTS,
-    };
-  }, [name, description, entryPoint, nodes, edges, edgeMeta]);
+    }),
+    [name, description, entryPoint, designerNodes, designerEdges],
+  );
 
   const validate = useValidatePipeline();
   const create = useCreatePipeline();
@@ -442,6 +453,8 @@ export function PipelineDesigner({
         <Inspector
           selection={selectionDetail}
           agents={agents}
+          allNodes={designerNodes}
+          allEdges={designerEdges}
           entryPoint={entryPoint}
           onSetEntryPoint={setEntryPoint}
           onDeleteNode={handleDeleteNode}
