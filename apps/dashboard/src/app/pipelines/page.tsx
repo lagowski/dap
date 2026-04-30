@@ -1,21 +1,66 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Play, Plus } from "lucide-react";
-import { usePipelinesList, useProject } from "@/hooks/api";
+import { useRouter } from "next/navigation";
+import { Play, Plus, Upload } from "lucide-react";
+import { useImportPipeline, usePipelinesList, useProject } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
+import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TriggerRunDialog } from "@/components/trigger-run-dialog";
+import type { PipelineExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
 
 export default function PipelinesPage() {
+  const router = useRouter();
   const { data, isPending, isError, error } = usePipelinesList();
   const { activeProjectId } = useActiveProject();
   const { data: activeProject } = useProject(activeProjectId);
+  const importPipeline = useImportPipeline();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const handleImportClick = () => {
+    setImportError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset the input value so picking the same file twice in a row
+    // still triggers ``change`` (otherwise the browser ignores it).
+    event.target.value = "";
+    if (!file) return;
+
+    let parsed: unknown;
+    try {
+      const text = await file.text();
+      parsed = JSON.parse(text);
+    } catch (err) {
+      setImportError(
+        `Could not read ${file.name} as JSON: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    if (!isPipelineExportShape(parsed)) {
+      setImportError(
+        `${file.name} doesn't look like a pipeline export (expected schema_version + pipeline at the top level).`,
+      );
+      return;
+    }
+
+    try {
+      const created = await importPipeline.mutateAsync(parsed);
+      router.push(`/pipelines/${created.id}/edit`);
+    } catch (err) {
+      setImportError(formatApiError(err));
+    }
+  };
 
   // Map pipeline_id → list of workflow kinds it's bound to in the
   // active project. List, not single value, because the same pipeline
@@ -44,13 +89,38 @@ export default function PipelinesPage() {
             </span>
           ) : null}
         </div>
-        <Button asChild size="sm">
-          <Link href="/pipelines/new">
-            <Plus className="h-4 w-4 mr-1" />
-            New pipeline
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleFileChange}
+            aria-hidden="true"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleImportClick}
+            disabled={importPipeline.isPending}
+          >
+            <Upload className="h-4 w-4 mr-1" />
+            {importPipeline.isPending ? "Importing…" : "Import JSON"}
+          </Button>
+          <Button asChild size="sm">
+            <Link href="/pipelines/new">
+              <Plus className="h-4 w-4 mr-1" />
+              New pipeline
+            </Link>
+          </Button>
+        </div>
       </div>
+
+      {importError ? (
+        <p className="text-sm text-destructive" role="alert">
+          Import failed: {importError}
+        </p>
+      ) : null}
 
       {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
       {isError && (
@@ -138,4 +208,27 @@ export default function PipelinesPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Cheap structural check before POSTing — keeps the engine from
+ * returning a noisy 422 when the user picked the wrong JSON. The
+ * engine does its own ``schema_version`` + payload validation;
+ * this guard just catches obviously-wrong files (agent exports,
+ * arbitrary JSON, null) before they hit the network.
+ */
+function isPipelineExportShape(value: unknown): value is PipelineExport {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as { schema_version?: unknown; pipeline?: unknown };
+  if (typeof candidate.schema_version !== "string") return false;
+  if (
+    typeof candidate.pipeline !== "object" ||
+    candidate.pipeline === null ||
+    Array.isArray(candidate.pipeline)
+  ) {
+    return false;
+  }
+  return true;
 }

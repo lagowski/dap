@@ -5,7 +5,7 @@ Response models reuse `dap_types.{Agent, Pipeline, Run, ...}` directly.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Self
+from typing import Any, Final, Literal, Self
 
 from dap_types.agent import coerce_legacy_field_list, validate_field_list
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
@@ -249,6 +249,75 @@ class PipelineUpdate(BaseModel):
     nodes: list[PipelineNode]
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+
+
+# ``Final`` narrows the inferred type to ``Literal["pipeline-export/1"]``
+# so the constant is assignable to the ``Literal`` schema_version
+# fields below without mypy complaining. Same string, stronger type.
+PIPELINE_EXPORT_SCHEMA_VERSION: Final = "pipeline-export/1"
+
+
+class PipelineExportPayload(BaseModel):
+    """The portable subset of a pipeline — no per-installation fields.
+
+    Mirrors :class:`PipelineCreate` field-by-field minus the fields
+    the server fills in (``id``, ``version``, timestamps,
+    ``archived_at``). Reuses the same node / edge / defaults shapes
+    so an exported pipeline that's importable here is also creatable
+    directly via ``POST /pipelines``.
+
+    ``node.agent_id`` references the *source installation's* agent
+    ids. The importer doesn't rewrite them — the existing DAG
+    validator (#120) returns 422 if any referenced agent is missing
+    or archived in the target DB. Bundling the referenced agents
+    into the export envelope (so import auto-creates them and
+    rewrites the references) is a separate follow-up.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+
+    schema_version: Literal["langgraph/1.0"] = "langgraph/1.0"
+    state_schema_ref: str = Field(min_length=1)
+    entry_point: str = Field(min_length=1)
+
+    nodes: list[PipelineNode]
+    edges: list[PipelineEdge]
+    defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+
+
+class PipelineExport(BaseModel):
+    """Response shape of ``GET /pipelines/{id}/export``.
+
+    Versioned so future format changes can be detected at import
+    time rather than silently producing odd state. The ``Literal``
+    type locks the response contract — clients reading the OpenAPI
+    schema see a single accepted value, and constructing a
+    ``PipelineExport`` instance with anything else fails Pydantic
+    validation at the call site.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["pipeline-export/1"] = PIPELINE_EXPORT_SCHEMA_VERSION
+    pipeline: PipelineExportPayload
+
+
+class PipelineImportRequest(BaseModel):
+    """Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`.
+
+    Pydantic enforces ``schema_version`` against the literal — a
+    different value comes back as a 422 from FastAPI's standard
+    request-validation error path with the offending value visible
+    in the detail. No custom validator needed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["pipeline-export/1"]
+    pipeline: PipelineExportPayload
 
 
 class ProjectRunRequest(BaseModel):

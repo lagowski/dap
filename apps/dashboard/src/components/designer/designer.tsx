@@ -51,12 +51,24 @@ const EDGE_CONDITION_STROKE = "#3b82f6"; // blue-500
 const EDGE_DEFAULT_STROKE = "#94a3b8"; // slate-400
 
 interface PipelineDesignerProps {
+  /** The persisted pipeline being edited; ``null`` for a fresh pipeline. */
   initialPipeline: Pipeline | null;
+  /**
+   * Source pipeline to copy nodes/edges/defaults from when creating a
+   * fresh pipeline (Clone flow, #124). Different from
+   * ``initialPipeline`` because the save path stays in *create* mode —
+   * we don't want Clone to bump a v2 of the source. ``null`` for a
+   * scratch pipeline, ignored when ``initialPipeline`` is non-null.
+   */
+  seedFromPipeline?: Pipeline | null;
 }
 
 const NEW_NODE_OFFSET = 80;
 
-export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
+export function PipelineDesigner({
+  initialPipeline,
+  seedFromPipeline = null,
+}: PipelineDesignerProps) {
   const router = useRouter();
   const { data: agentsData } = useAgentsList();
   // Stable reference so memos that depend on `agents` don't re-run when
@@ -66,15 +78,27 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
     [agentsData?.items],
   );
 
-  const [name, setName] = useState(initialPipeline?.name ?? "");
-  const [description, setDescription] = useState(initialPipeline?.description ?? "");
-  const [entryPoint, setEntryPoint] = useState(initialPipeline?.entry_point ?? "");
+  // Edit-mode source: ``initialPipeline`` (existing pipeline being
+  // edited). Clone-mode source: ``seedFromPipeline`` (existing pipeline
+  // duplicated into a fresh one). Both paint the form the same way;
+  // only ``initialPipeline`` flips the save path into update mode.
+  const seed = initialPipeline ?? seedFromPipeline;
+  // Default the cloned name with a "(copy)" suffix so the user can
+  // save without renaming and still tell which is which in lists.
+  // Edit mode keeps the original name verbatim.
+  const initialName =
+    initialPipeline?.name ??
+    (seedFromPipeline ? `${seedFromPipeline.name} (copy)` : "");
+
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(seed?.description ?? "");
+  const [entryPoint, setEntryPoint] = useState(seed?.entry_point ?? "");
 
   const [nodes, setNodes] = useState<Node[]>(() =>
-    (initialPipeline?.nodes ?? []).map(toReactFlowNode),
+    (seed?.nodes ?? []).map(toReactFlowNode),
   );
   const [edges, setEdges] = useState<Edge[]>(() =>
-    (initialPipeline?.edges ?? []).map(toReactFlowEdge),
+    (seed?.edges ?? []).map(toReactFlowEdge),
   );
 
   // Designer-domain edge metadata that React Flow doesn't know about.
@@ -82,7 +106,7 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
     Record<string, { condition: EdgeCondition | null; label: string | null }>
   >(() => {
     const initial: Record<string, { condition: EdgeCondition | null; label: string | null }> = {};
-    for (const e of initialPipeline?.edges ?? []) {
+    for (const e of seed?.edges ?? []) {
       initial[e.id] = { condition: e.condition ?? null, label: e.label ?? null };
     }
     return initial;
@@ -394,6 +418,7 @@ export function PipelineDesigner({ initialPipeline }: PipelineDesignerProps) {
         submitError={submitError}
         pipelineId={initialPipeline?.id}
         pipelineVersion={initialPipeline?.version}
+        pipeline={initialPipeline}
       />
       <div className="flex flex-1 overflow-hidden">
         <AgentPalette onAddNode={handleAddNode} />

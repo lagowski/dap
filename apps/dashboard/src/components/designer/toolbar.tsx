@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, AlertCircle, CheckCircle2, Play } from "lucide-react";
-import type { ValidationResult } from "@/lib/api/types";
+import { AlertCircle, ArrowLeft, CheckCircle2, Copy, Download, Play } from "lucide-react";
+import type { Pipeline, ValidationResult } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
+import { downloadPipelineExportWithAlert } from "@/lib/pipeline-export";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,9 +25,15 @@ interface DesignerToolbarProps {
    *  Surfaced inline so users see the reason instead of just the
    *  Next.js dev-mode unhandled-rejection overlay. */
   submitError?: unknown;
-  /** Set when editing an existing saved pipeline — enables the "Run" button. */
+  /** Set when editing an existing saved pipeline — enables the
+   *  "Run", "Clone", and "Export JSON" buttons. None of those make
+   *  sense before the pipeline has an id. */
   pipelineId?: string;
   pipelineVersion?: number;
+  /** The persisted pipeline used by Export — needs ``name`` for the
+   *  download filename slug, plus ``id`` for the API call. ``null``
+   *  while the user is creating a new pipeline (no Export yet). */
+  pipeline?: Pipeline | null;
 }
 
 export function DesignerToolbar({
@@ -43,9 +50,14 @@ export function DesignerToolbar({
   submitError,
   pipelineId,
   pipelineVersion,
+  pipeline,
 }: DesignerToolbarProps) {
   const canSave = !isSaving && name.length > 0 && validationResult?.valid !== false;
   const canRun = pipelineId != null && pipelineVersion != null;
+  // Clone + Export only make sense for a saved pipeline. Both use
+  // the persisted server id; pre-save there's nothing to clone or
+  // export from.
+  const canCloneOrExport = pipelineId != null && pipeline != null;
 
   return (
     <div className="border-b bg-background">
@@ -93,6 +105,25 @@ export function DesignerToolbar({
           >
             {isSaving ? "Saving…" : saveLabel}
           </Button>
+          {canCloneOrExport ? (
+            <>
+              <Button asChild type="button" variant="outline" size="sm">
+                <Link href={`/pipelines/new?from=${pipelineId}`}>
+                  <Copy className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                  Clone
+                </Link>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => downloadPipelineExportWithAlert(pipeline)}
+              >
+                <Download className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                Export JSON
+              </Button>
+            </>
+          ) : null}
           {canRun ? (
             <TriggerRunDialog
               pipelineId={pipelineId}
