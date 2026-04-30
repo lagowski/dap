@@ -15,9 +15,18 @@ Requires Python 3.13, `uv >= 0.8`, Node 22, and pnpm 9.
 
 ```bash
 git clone https://github.com/rafeekpro/dap && cd dap
+cp .env.example .env.local                # add your provider keys
+./scripts/dev --install                   # one-shot: installs + starts both
+```
 
+`scripts/dev` auto-loads `.env.local`, starts the engine on :7333 and the dashboard on :3000, prefixes both log streams, and tears everything down on Ctrl+C. Drop `--install` after the first run.
+
+If you'd rather drive each side from its own terminal:
+
+```bash
 # 1. Backend — engine + CLI + runtimes
 uv sync --all-packages
+set -a; source .env.local; set +a
 uv run dap-engine start                  # binds 127.0.0.1:7333
 
 # 2. Dashboard — in a second terminal

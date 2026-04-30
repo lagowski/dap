@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# scripts/dev — bring up the full DAP stack (engine + dashboard) in one shot.
+#
+# Auto-loads .env.local (if present), runs uv-managed engine on :7333 and the
+# Next.js dashboard on :3000 in parallel, prefixes both log streams, and tears
+# everything down on Ctrl+C.
+#
+# Usage:
+#   ./scripts/dev                     # start both
+#   ./scripts/dev --install           # also run uv sync + pnpm install first
+#   DAP_DEV_INSTALL=1 ./scripts/dev   # equivalent to --install
+#
+# The script is idempotent re: cwd — it always cd's to repo root before
+# touching anything, so calling it from a subdir works.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# ----- args ------------------------------------------------------------------
+
+DO_INSTALL="${DAP_DEV_INSTALL:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --install) DO_INSTALL=1 ;;
+    -h|--help)
+      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) echo "[dap] unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+# ----- pre-flight ------------------------------------------------------------
+
+need() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "[dap] missing required tool: $1" >&2
+    echo "[dap] see README Quickstart for install steps" >&2
+    exit 1
+  fi
+}
+need uv
+need pnpm
+
+# ----- env -------------------------------------------------------------------
+
+if [[ -f .env.local ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env.local
+  set +a
+  echo "[dap] loaded .env.local"
+else
+  echo "[dap] no .env.local — provider keys will be empty (api-call adapter will 401)"
+fi
+
+# ----- optional install ------------------------------------------------------
+
+if [[ "$DO_INSTALL" == "1" ]]; then
+  echo "[dap] uv sync --all-packages"
+  uv sync --all-packages
+  echo "[dap] pnpm install (apps/dashboard)"
+  (cd apps/dashboard && pnpm install)
+fi
+
+# ----- run -------------------------------------------------------------------
+
+# Job control on so each backgrounded job gets its own process group with
+# pgid == job's pid. We then ``kill -- -<pgid>`` to take down the whole
+# tree (uv → python uvicorn, pnpm → node next dev), since the wrappers
+# don't reliably forward SIGTERM to their grandchildren.
+set -m
+
+ENGINE_PID=""
+DASH_PID=""
+
+kill_group() {
+  # ``kill -- -<pgid>`` signals every process in the group. Silently no-ops if
+  # the group is already gone.
+  local sig=$1 pid=$2
+  [[ -n "$pid" ]] || return 0
+  kill -"$sig" -- "-$pid" 2>/dev/null || true
+}
+
+cleanup() {
+  # Disarm — a second Ctrl+C during shutdown should hard-kill the script via
+  # the default handler instead of re-entering this function.
+  trap - INT TERM EXIT
+  echo
+  echo "[dap] shutting down..."
+
+  kill_group TERM "$ENGINE_PID"
+  kill_group TERM "$DASH_PID"
+  sleep 1
+  kill_group KILL "$ENGINE_PID"
+  kill_group KILL "$DASH_PID"
+
+  # Reap children and capture their exit codes so the script reflects what
+  # actually happened (Ctrl+C → 130, crash → child's rc, clean exit → 0).
+  local engine_rc=0 dash_rc=0
+  if [[ -n "$ENGINE_PID" ]]; then
+    wait "$ENGINE_PID" 2>/dev/null || engine_rc=$?
+  fi
+  if [[ -n "$DASH_PID" ]]; then
+    wait "$DASH_PID" 2>/dev/null || dash_rc=$?
+  fi
+
+  echo "[dap] done (engine=$engine_rc dashboard=$dash_rc)"
+  if [[ $engine_rc -ne 0 ]]; then
+    exit "$engine_rc"
+  elif [[ $dash_rc -ne 0 ]]; then
+    exit "$dash_rc"
+  fi
+  exit 0
+}
+trap cleanup INT TERM EXIT
+
+ENGINE_PORT="${DAP_ENGINE_PORT:-7333}"
+echo "[dap] starting engine on http://127.0.0.1:${ENGINE_PORT}"
+# Process substitution (``> >(awk)``) instead of a pipeline so $! captures the
+# real engine PID, not the awk prefixer's. With ``set -m`` above, $! is also
+# the process group id we'll target in cleanup.
+# awk fflush() keeps logs interactive on both BSD and GNU awk.
+uv run dap-engine > >(awk '{ print "[engine] " $0; fflush(); }') 2>&1 &
+ENGINE_PID=$!
+
+echo "[dap] starting dashboard on http://localhost:3000"
+# ``exec`` inside the cd-subshell replaces the subshell with pnpm dev so $!
+# tracks pnpm directly, not a wrapper subshell that survives kill-by-pid.
+( cd apps/dashboard && exec pnpm dev > >(awk '{ print "[dashboard] " $0; fflush(); }') 2>&1 ) &
+DASH_PID=$!
+
+# Poll both — exit (and let trap clean up) as soon as either dies, so the user
+# notices a crash instead of staring at a half-running stack. ``kill -0`` is a
+# liveness probe that works in bash 3.2 (no ``wait -n`` dependency).
+while kill -0 "$ENGINE_PID" 2>/dev/null && kill -0 "$DASH_PID" 2>/dev/null; do
+  sleep 1
+done
+
+if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+  echo "[dap] engine exited — bringing down dashboard"
+elif ! kill -0 "$DASH_PID" 2>/dev/null; then
+  echo "[dap] dashboard exited — bringing down engine"
+fi
