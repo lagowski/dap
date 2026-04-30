@@ -220,8 +220,18 @@ export async function validatePipeline(
   });
 }
 
-export async function exportPipeline(id: string): Promise<PipelineExport> {
-  return request<PipelineExport>(`/pipelines/${encodeURIComponent(id)}/export`);
+export async function exportPipeline(
+  id: string,
+  options: { bundle?: boolean } = {},
+): Promise<PipelineExport> {
+  // Default ``bundle=false`` keeps the wire-compatible path with #124;
+  // callers opt into the bigger envelope explicitly.
+  const search = new URLSearchParams();
+  if (options.bundle) search.set("bundle", "true");
+  const qs = search.toString();
+  return request<PipelineExport>(
+    `/pipelines/${encodeURIComponent(id)}/export${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export async function importPipeline(payload: PipelineExport): Promise<Pipeline> {

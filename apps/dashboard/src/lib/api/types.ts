@@ -172,6 +172,14 @@ export interface PipelineExportPayload {
 export interface PipelineExport {
   schema_version: typeof PIPELINE_EXPORT_SCHEMA_VERSION;
   pipeline: PipelineExportPayload;
+  /**
+   * Optional bundle (#126) — when present, the importer creates the
+   * agents first, builds an old→new id remap, and rewrites every
+   * ``node.agent_id`` in the pipeline payload before persisting.
+   * Keys are the *source* installation's agent ids. ``null`` /
+   * absent means the export is pipeline-only (legacy Phase 1 shape).
+   */
+  bundled_agents: Record<string, AgentExportPayload> | null;
 }
 
 // ---- Projects (#63 / #67) ----

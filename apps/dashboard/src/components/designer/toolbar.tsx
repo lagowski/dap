@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { AlertCircle, ArrowLeft, CheckCircle2, Copy, Download, Play } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, Copy, Download, Package, Play } from "lucide-react";
 import type { Pipeline, ValidationResult } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
 import { downloadPipelineExportWithAlert } from "@/lib/pipeline-export";
@@ -118,9 +118,20 @@ export function DesignerToolbar({
                 variant="outline"
                 size="sm"
                 onClick={() => downloadPipelineExportWithAlert(pipeline)}
+                title="Pipeline only — referenced agents must already exist on the target installation."
               >
                 <Download className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-                Export JSON
+                Export
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => downloadPipelineExportWithAlert(pipeline, { bundle: true })}
+                title="Pipeline + every referenced agent in one file — drop it on a target installation that doesn't have the agents yet."
+              >
+                <Package className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                Export bundle
               </Button>
             </>
           ) : null}

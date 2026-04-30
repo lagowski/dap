@@ -10,9 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from dap_engine.api.agents import build_agent_export_payload
 from dap_engine.api.deps import get_session
 from dap_engine.api.schemas import (
     PIPELINE_EXPORT_SCHEMA_VERSION,
+    AgentCreate,
+    AgentExportPayload,
     PipelineCreate,
     PipelineExport,
     PipelineExportPayload,
@@ -144,26 +147,72 @@ def import_pipeline(
 ) -> Pipeline:
     """Create a new pipeline (v1) from an exported JSON payload (#124).
 
-    ``schema_version`` is validated during request parsing
-    (Pydantic ``field_validator``). The DAG validator runs via the
-    standard ``_enforce_validation`` path, so a payload that
-    references an agent which doesn't exist (or is archived) in
-    *this* DB returns 422 with the agent id in the detail —
-    exactly the cross-installation safety check operators need.
+    Two paths share this endpoint:
 
-    Round-trips through ``PipelineCreate`` so any future field added
-    to ``PipelineExportPayload`` / ``PipelineCreate`` flows
-    automatically rather than relying on this function staying in
-    lockstep with both.
+    - **Pipeline-only** (``bundled_agents`` absent): same as Phase 1.
+      Referenced agents must already exist in this DB or the DAG
+      validator returns 422.
+    - **Bundle** (``bundled_agents`` present, #126): creates each
+      bundled agent first, builds an ``old_id → new_id`` remap,
+      rewrites every ``node.agent_id`` in the pipeline payload,
+      then runs the standard validator + create path. The whole
+      thing rides the request session, so a failure anywhere
+      (agent validation, pipeline validation, repo write) rolls
+      back the agents that were created earlier — no orphans
+      land in the DB.
+
+    Round-trips agents/pipeline through their ``Create`` types so
+    any future field added flows automatically rather than relying
+    on this function staying in lockstep with three models.
     """
+    bundled = payload.bundled_agents
+    pipeline_payload = payload.pipeline
+
+    if bundled:
+        # Step 1 — create bundled agents in dependency order (no
+        # ordering needed today; agents have no inter-references).
+        # Build the remap from source ids to fresh local ids.
+        id_remap: dict[str, str] = {}
+        for source_id, agent_payload in bundled.items():
+            try:
+                agent_create = AgentCreate.model_validate(agent_payload.model_dump())
+            except ValidationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail={
+                        "errors": [
+                            f"bundled_agents['{source_id}']: {exc.errors()}",
+                        ],
+                        "warnings": [],
+                    },
+                ) from exc
+            new_agent = repo.create_agent(session, agent_create)
+            id_remap[source_id] = new_agent.id
+
+        # Step 2 — rewrite node.agent_id in the pipeline payload.
+        # Nodes whose agent_id isn't in the bundle keep their
+        # original string; the validator will catch them if they
+        # don't exist locally either (legitimate use case: a
+        # partial bundle that relies on some pre-existing agents).
+        rewritten_nodes = [
+            node.model_copy(
+                update={"agent_id": id_remap.get(node.agent_id, node.agent_id)},
+            )
+            for node in pipeline_payload.nodes
+        ]
+        pipeline_payload = pipeline_payload.model_copy(update={"nodes": rewritten_nodes})
+
     try:
-        create_payload = PipelineCreate.model_validate(payload.pipeline.model_dump())
+        create_payload = PipelineCreate.model_validate(pipeline_payload.model_dump())
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors(),
         ) from exc
 
+    # ``_enforce_validation`` raises 422 on any DAG / cohesion
+    # error. The session-wide rollback in ``get_session`` then
+    # tears down the bundled agents created above — no orphans.
     _enforce_validation(create_payload, session)
     return repo.create_pipeline(session, create_payload)
 
@@ -241,17 +290,29 @@ def get_pipeline_version(
 @router.get("/{pipeline_id}/export", response_model=PipelineExport)
 def export_pipeline(
     pipeline_id: str,
+    bundle: bool = Query(
+        default=False,
+        description=(
+            "When true, include every agent the pipeline references in "
+            "``bundled_agents`` so a target installation that doesn't "
+            "have them yet can import the whole thing in one shot."
+        ),
+    ),
     session: Session = Depends(get_session),
 ) -> PipelineExport:
-    """Return a portable JSON shape of the pipeline (#124).
+    """Return a portable JSON shape of the pipeline (#124, #126).
 
     Strips per-installation fields (id, version, timestamps,
     archived_at) so the result can move between DAP installations
     or be checked into git. ``node.agent_id`` strings still point
-    at the *source* installation's agent ids — the importer will
-    fail with 422 if they don't exist in the target DB. Bundling
-    the referenced agents into the envelope so import auto-creates
-    them is a separate follow-up.
+    at the *source* installation's agent ids.
+
+    With ``bundle=true`` (#126) the response also carries a
+    ``bundled_agents`` map keyed by source agent id. The importer
+    creates each agent, builds an ``old_id → new_id`` remap, and
+    rewrites every ``node.agent_id`` before persisting the
+    pipeline. Without the bundle, a target DB that's missing any
+    referenced agent gets the standard 422 from the DAG validator.
     """
     try:
         pipeline = repo.get_pipeline(session, pipeline_id)
@@ -279,4 +340,27 @@ def export_pipeline(
             detail=f"Stored pipeline could not be re-validated for export: {exc.errors()}",
         ) from exc
 
-    return PipelineExport(schema_version=PIPELINE_EXPORT_SCHEMA_VERSION, pipeline=payload)
+    bundled_agents: dict[str, AgentExportPayload] | None = None
+    if bundle:
+        # Each unique referenced agent_id once; archived agents are
+        # skipped silently since they couldn't have passed save-time
+        # validation. ``build_agent_export_payload`` does its own
+        # secret scrubbing so bundle exports stay safe to share.
+        agent_ids = sorted({node.agent_id for node in payload.nodes})
+        bundled_agents = {}
+        for agent_id in agent_ids:
+            try:
+                agent = repo.get_agent(session, agent_id)
+            except repo.NotFoundError:
+                # Pipeline references an agent that's gone from this
+                # DB — would mean a partial bundle on the receiving
+                # end. Skip silently; the importer surfaces it as a
+                # standard "agent not found" 422 if needed.
+                continue
+            bundled_agents[agent_id] = build_agent_export_payload(agent)
+
+    return PipelineExport(
+        schema_version=PIPELINE_EXPORT_SCHEMA_VERSION,
+        pipeline=payload,
+        bundled_agents=bundled_agents,
+    )

@@ -208,8 +208,28 @@ def export_agent(
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
+    return AgentExport(
+        schema_version=AGENT_EXPORT_SCHEMA_VERSION,
+        agent=build_agent_export_payload(agent),
+    )
+
+
+def build_agent_export_payload(agent: Agent) -> AgentExportPayload:
+    """Project an :class:`Agent` ORM-backed model onto its portable shape.
+
+    Strips per-installation fields (id, version, timestamps,
+    archived_at) and scrubs ``runtime_config`` for credential-shaped
+    keys (``api_key`` / ``token`` / ``secret`` / ``password`` /
+    ``credential``). Used both by the standalone agent export
+    endpoint and the pipeline bundle export (#126).
+
+    Raises ``HTTPException(500)`` when the stored shape can't be
+    re-validated against ``AgentExportPayload`` — a real defence
+    against a future migration introducing data we can't export,
+    not a routine error path.
+    """
     try:
-        payload = AgentExportPayload(
+        return AgentExportPayload(
             name=agent.name,
             role=agent.role,
             runtime_id=agent.runtime_id,
@@ -222,16 +242,10 @@ def export_agent(
             timeout_ms=agent.timeout_ms,
         )
     except ValidationError as exc:
-        # Shouldn't happen — agent stored shape was already validated
-        # on write — but if a future migration ever introduces a stored
-        # shape we can't export, surface it as 500 with the details
-        # rather than crashing without context.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Stored agent could not be re-validated for export: {exc.errors()}",
         ) from exc
-
-    return AgentExport(schema_version=AGENT_EXPORT_SCHEMA_VERSION, agent=payload)
 
 
 @router.post("/{agent_id}/render-preview", response_model=RenderPreviewResponse)
