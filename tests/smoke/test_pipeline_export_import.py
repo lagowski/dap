@@ -219,6 +219,205 @@ def test_import_rejects_archived_agent_reference(client: TestClient) -> None:
     assert any("archived" in err.lower() for err in detail["errors"])
 
 
+# ---------------------------------------------------------------------------
+# Bundle export + import (#126)
+# ---------------------------------------------------------------------------
+
+
+def _agent_export_payload(name: str = "Bundled Agent") -> dict[str, Any]:
+    """Portable agent shape compatible with ``AgentExportPayload``."""
+    return {
+        "name": name,
+        "role": "task_selector",
+        "runtime_id": "api-call",
+        "runtime_config": {"provider": "anthropic", "model_id": "claude-haiku-4-5"},
+        "prompt_template": "<agent_prompt><role>x</role></agent_prompt>",
+        "input_schema": [],
+        "output_schema": [],
+        "constraints": [],
+        "budget_limit_usd": None,
+        "timeout_ms": 60_000,
+    }
+
+
+def test_export_bundle_includes_referenced_agents(client: TestClient) -> None:
+    """``?bundle=true`` adds ``bundled_agents`` keyed by agent_id;
+    plain export omits the field entirely (Phase 1 wire shape)."""
+    agent_id = _create_minimal_agent(client, name="My Source Agent")
+    pipeline = client.post("/pipelines", json=_pipeline_payload(agent_id)).json()
+
+    plain = client.get(f"/pipelines/{pipeline['id']}/export").json()
+    # Field is omitted, not null — ``response_model_exclude_none``
+    # keeps Phase 1 importers blind to the new field.
+    assert "bundled_agents" not in plain
+
+    bundled = client.get(f"/pipelines/{pipeline['id']}/export?bundle=true").json()
+    assert "bundled_agents" in bundled
+    assert agent_id in bundled["bundled_agents"]
+    bundled_agent = bundled["bundled_agents"][agent_id]
+    assert bundled_agent["name"] == "My Source Agent"
+    # Per-installation fields stripped (same as standalone agent export).
+    assert "id" not in bundled_agent
+    assert "version" not in bundled_agent
+
+
+def test_export_bundle_scrubs_secrets_in_runtime_config(client: TestClient) -> None:
+    """Bundle reuses ``build_agent_export_payload`` so the secret-key
+    redaction from #94 applies to bundled agents too."""
+    create_response = client.post(
+        "/agents",
+        json={
+            "name": "Has Secret",
+            "role": "task_selector",
+            "runtime_id": "api-call",
+            "runtime_config": {
+                "model_id": "claude-haiku-4-5",
+                "api_key": "sk-very-secret",
+            },
+            "prompt_template": "<agent_prompt><role>x</role></agent_prompt>",
+        },
+    )
+    assert create_response.status_code == 201, create_response.text
+    agent_id = create_response.json()["id"]
+    pipeline = client.post("/pipelines", json=_pipeline_payload(agent_id)).json()
+
+    bundled = client.get(f"/pipelines/{pipeline['id']}/export?bundle=true").json()
+    bundled_config = bundled["bundled_agents"][agent_id]["runtime_config"]
+    assert bundled_config["api_key"] == "<redacted>"
+
+
+def test_bundle_import_creates_agents_and_remaps_node_references(
+    client: TestClient,
+) -> None:
+    """End-to-end: import a bundle into a fresh DB-state. Bundled
+    agents land as new rows; pipeline's ``node.agent_id`` strings
+    point at the freshly assigned local ids, not the source ones."""
+    # Build a bundle by hand so we can prove remapping happens
+    # (no agent with this id exists in the DB yet).
+    source_agent_id = "source-old-id-doesnt-exist-locally"
+    bundle = {
+        "schema_version": "pipeline-export/1",
+        "pipeline": _pipeline_payload(source_agent_id),
+        "bundled_agents": {source_agent_id: _agent_export_payload()},
+    }
+
+    response = client.post("/pipelines/import", json=bundle)
+    assert response.status_code == 201, response.text
+    imported = response.json()
+
+    # Pipeline's node.agent_id should NOT match the source id any more —
+    # the importer rewrote it to whatever local id the new agent got.
+    new_agent_id = imported["nodes"][0]["agent_id"]
+    assert new_agent_id != source_agent_id
+
+    # The new agent exists, has the bundled name, and the imported
+    # pipeline points at it.
+    fetched = client.get(f"/agents/{new_agent_id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["name"] == "Bundled Agent"
+
+
+def test_bundle_import_rolls_back_agents_on_pipeline_validation_failure(
+    client: TestClient,
+) -> None:
+    """Transactional invariant: if pipeline validation fails, the
+    bundled agents must NOT survive — orphans would be a real bug."""
+    source_agent_id = "phantom-agent"
+    # Construct a bundle where the agents would land but the pipeline
+    # references a node id that doesn't match the entry_point — DAG
+    # validation rejects this. The bundled agent should not stick.
+    bundle = {
+        "schema_version": "pipeline-export/1",
+        "pipeline": _pipeline_payload(
+            source_agent_id,
+            entry_point="nonexistent_node",  # triggers validator
+        ),
+        "bundled_agents": {source_agent_id: _agent_export_payload(name="Should Not Persist")},
+    }
+
+    response = client.post("/pipelines/import", json=bundle)
+    assert response.status_code == 422
+
+    # No agent with the bundled name should be in the DB.
+    listing = client.get("/agents").json()
+    names = {item["name"] for item in listing["items"]}
+    assert "Should Not Persist" not in names
+
+
+def test_bundle_round_trip(client: TestClient) -> None:
+    """Export with ``bundle=true`` → import same envelope → fresh
+    pipeline + fresh agents in a single round-trip. The imported
+    pipeline should still validate (no missing references)."""
+    source_agent_id = _create_minimal_agent(client, name="Round Trip Source")
+    created = client.post("/pipelines", json=_pipeline_payload(source_agent_id)).json()
+
+    exported = client.get(f"/pipelines/{created['id']}/export?bundle=true").json()
+    assert exported["bundled_agents"] is not None
+
+    response = client.post("/pipelines/import", json=exported)
+    assert response.status_code == 201, response.text
+    imported = response.json()
+
+    # Two distinct pipelines, two distinct agent rows (since the
+    # importer always creates fresh; conflict resolution against
+    # existing names is out of scope per the issue).
+    assert imported["id"] != created["id"]
+    new_agent_id = imported["nodes"][0]["agent_id"]
+    assert new_agent_id != source_agent_id
+
+
+def test_bundle_import_partial_bundle_uses_local_agent_for_unbundled_ref(
+    client: TestClient,
+) -> None:
+    """A pipeline with two nodes where only one agent is bundled and
+    the other already exists locally should land successfully — the
+    importer remaps the bundled one and leaves the unbundled
+    reference alone."""
+    local_agent_id = _create_minimal_agent(client, name="Local Existing")
+    source_bundled_id = "source-bundled-id"
+
+    pipeline_payload = {
+        "name": "Two Node Pipeline",
+        "description": "",
+        "schema_version": "langgraph/1.0",
+        "state_schema_ref": "PipelineState.v1",
+        "entry_point": "n1",
+        "nodes": [
+            {"id": "n1", "agent_id": source_bundled_id, "position": {"x": 0, "y": 0}},
+            {"id": "n2", "agent_id": local_agent_id, "position": {"x": 100, "y": 0}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "__start__", "target": "n1"},
+            {"id": "e2", "source": "n1", "target": "n2"},
+            {"id": "e3", "source": "n2", "target": "__end__"},
+        ],
+        "defaults": {
+            "max_attempts": 3,
+            "budget_limit_usd": 5.0,
+            "approval_required_nodes": [],
+        },
+    }
+
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/1",
+            "pipeline": pipeline_payload,
+            "bundled_agents": {source_bundled_id: _agent_export_payload()},
+        },
+    )
+    assert response.status_code == 201, response.text
+    imported = response.json()
+
+    nodes_by_id = {n["id"]: n for n in imported["nodes"]}
+    # n1's agent_id was remapped from the source id to a fresh local id.
+    assert nodes_by_id["n1"]["agent_id"] != source_bundled_id
+    # n2's agent_id wasn't in the bundle so it stayed as the
+    # original local id — proving the importer doesn't touch
+    # references that aren't in the bundle.
+    assert nodes_by_id["n2"]["agent_id"] == local_agent_id
+
+
 def test_import_rejects_broken_dag(client: TestClient) -> None:
     """A payload that's structurally valid Pydantic but has a duplicate
     node id should fail the DAG validator's ``_check_duplicate_ids``."""

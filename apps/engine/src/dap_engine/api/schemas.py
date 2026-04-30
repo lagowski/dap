@@ -297,12 +297,22 @@ class PipelineExport(BaseModel):
     schema see a single accepted value, and constructing a
     ``PipelineExport`` instance with anything else fails Pydantic
     validation at the call site.
+
+    ``bundled_agents`` (#126) ships the agents this pipeline
+    references so a target installation that doesn't have them yet
+    can import the whole thing in one shot. Keys are the *source*
+    installation's agent ids — the importer rewrites every
+    ``node.agent_id`` in the pipeline payload to the freshly
+    assigned local id before the DAG validator runs. ``None``
+    means the export is pipeline-only (default behaviour, backward
+    compat with Phase 1 exports).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["pipeline-export/1"] = PIPELINE_EXPORT_SCHEMA_VERSION
     pipeline: PipelineExportPayload
+    bundled_agents: dict[str, AgentExportPayload] | None = None
 
 
 class PipelineImportRequest(BaseModel):
@@ -312,12 +322,19 @@ class PipelineImportRequest(BaseModel):
     different value comes back as a 422 from FastAPI's standard
     request-validation error path with the offending value visible
     in the detail. No custom validator needed.
+
+    ``bundled_agents`` mirrors :class:`PipelineExport` — when
+    present the importer creates each agent, builds an
+    ``old_id → new_id`` map, and rewrites ``node.agent_id`` before
+    persisting the pipeline. Missing field = legacy pipeline-only
+    import (referenced agents must already exist locally).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["pipeline-export/1"]
     pipeline: PipelineExportPayload
+    bundled_agents: dict[str, AgentExportPayload] | None = None
 
 
 class ProjectRunRequest(BaseModel):
