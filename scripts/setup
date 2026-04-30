@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# scripts/setup — one-shot first-run installer for the DAP dev stack.
+#
+# Pre-flights tool versions (Python / uv / Node / pnpm), bootstraps
+# .env.local from the template, runs uv + pnpm installs, and activates
+# the local pre-push hook. Idempotent — safe to re-run any time.
+#
+# Usage:
+#   ./scripts/setup
+#
+# Run ``./scripts/dev --install`` if you want install + immediate launch
+# in one shot — that delegates here under the hood.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# Required versions — keep in sync with README Quickstart and ci.yml.
+PY_MIN="3.13"
+UV_MIN="0.8"
+NODE_MIN="22"
+PNPM_MIN="9"
+
+# Returns 0 if $1 (current) is at least $2 (required), else 1.
+# Pure-bash dot-segment numeric compare so "3.13" == "3.13.0" < "3.13.5".
+# Avoids ``sort -V`` because BSD sort on older macOS doesn't ship that flag.
+ver_at_least() {
+  local current=$1 required=$2
+  local -a current_parts required_parts
+  IFS='.' read -r -a current_parts <<< "$current"
+  IFS='.' read -r -a required_parts <<< "$required"
+
+  local max=${#current_parts[@]}
+  if (( ${#required_parts[@]} > max )); then
+    max=${#required_parts[@]}
+  fi
+
+  local i cp rp
+  for (( i = 0; i < max; i++ )); do
+    # ``10#`` forces base-10 so a stray leading zero doesn't get parsed as octal.
+    cp=${current_parts[i]:-0}
+    rp=${required_parts[i]:-0}
+    if (( 10#$cp > 10#$rp )); then return 0; fi
+    if (( 10#$cp < 10#$rp )); then return 1; fi
+  done
+  return 0
+}
+
+# ----- helpers ---------------------------------------------------------------
+
+bad=0
+fail() {
+  echo "[setup] ✗ $1" >&2
+  bad=1
+}
+ok() {
+  echo "[setup] ✓ $1"
+}
+
+# Per-tool version extractors. Named functions instead of eval'd strings so a
+# typo or shell-meta surprise becomes a syntax error here, not at runtime.
+get_python_version() { python3 --version 2>&1 | awk '{print $2}'; }
+get_uv_version()     { uv --version 2>&1 | awk '{print $2}'; }
+get_node_version()   { node --version 2>&1 | sed 's/^v//'; }
+get_pnpm_version()   { pnpm --version 2>&1; }
+
+check_tool() {
+  local name=$1 min=$2 version_func=$3 install_hint=$4
+  if ! command -v "$name" >/dev/null 2>&1; then
+    fail "$name not found — $install_hint"
+    return
+  fi
+  local current
+  current=$("$version_func")
+  if [[ -z "$current" ]]; then
+    fail "$name installed but version unparseable — $install_hint"
+    return
+  fi
+  if ver_at_least "$current" "$min"; then
+    ok "$name $current (>= $min)"
+  else
+    fail "$name $current is older than $min — $install_hint"
+  fi
+}
+
+# ----- step 1: tool versions -------------------------------------------------
+
+echo "[setup] checking required tools..."
+check_tool python3 "$PY_MIN" get_python_version \
+  "install with pyenv / brew install python@3.13"
+check_tool uv "$UV_MIN" get_uv_version \
+  "https://docs.astral.sh/uv/getting-started/installation/"
+check_tool node "$NODE_MIN" get_node_version \
+  "install with nvm: nvm install 22 && nvm use 22"
+check_tool pnpm "$PNPM_MIN" get_pnpm_version \
+  "corepack enable && corepack prepare pnpm@latest --activate"
+
+if [[ $bad -ne 0 ]]; then
+  echo "[setup] one or more prerequisites missing — fix the items above and re-run." >&2
+  exit 1
+fi
+
+# ----- step 2: .env.local ----------------------------------------------------
+
+if [[ -f .env.local ]]; then
+  ok ".env.local already present"
+elif [[ -f .env.example ]]; then
+  cp .env.example .env.local
+  ok "created .env.local from .env.example"
+  echo "[setup]   ⚠ edit .env.local to add provider keys before running pipelines that hit LLMs"
+else
+  fail ".env.example missing — repo state is unexpected, can't bootstrap .env.local"
+  exit 1
+fi
+
+# ----- step 3: uv sync -------------------------------------------------------
+
+echo "[setup] uv sync --all-packages"
+uv sync --all-packages
+ok "python deps synced"
+
+# ----- step 4: pnpm install --------------------------------------------------
+
+echo "[setup] pnpm install (apps/dashboard)"
+(cd apps/dashboard && pnpm install)
+ok "dashboard deps installed"
+
+# ----- step 5: git hooks -----------------------------------------------------
+
+if [[ -d .githooks ]]; then
+  current=$(git config --get core.hooksPath 2>/dev/null || echo "")
+  if [[ "$current" == ".githooks" ]]; then
+    ok "git core.hooksPath already points at .githooks"
+  else
+    git config core.hooksPath .githooks
+    ok "enabled .githooks (pre-push protection on main / develop)"
+  fi
+fi
+
+# ----- next step -------------------------------------------------------------
+
+echo
+echo "[setup] done. Next:"
+echo "  1. (if you skipped earlier) edit .env.local and add provider keys you need"
+echo "  2. ./scripts/dev    — start engine + dashboard"

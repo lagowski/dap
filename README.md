@@ -11,15 +11,22 @@ model, decides what runs next.
 
 ## Quickstart
 
-Requires Python 3.13, `uv >= 0.8`, Node 22, and pnpm 9.
+Requires Python 3.13, `uv >= 0.8`, Node 22, and pnpm 9. (`scripts/setup` checks all four — you don't need to verify by hand.)
 
 ```bash
 git clone https://github.com/rafeekpro/dap && cd dap
-cp .env.example .env.local                # add your provider keys
-./scripts/dev --install                   # one-shot: installs + starts both
+./scripts/setup            # version pre-flight, .env.local bootstrap, deps, git hooks
+# edit .env.local to add provider keys
+./scripts/dev              # start engine on :7333 + dashboard on :3000
 ```
 
-`scripts/dev` auto-loads `.env.local`, starts the engine on :7333 and the dashboard on :3000, prefixes both log streams, and tears everything down on Ctrl+C. Drop `--install` after the first run.
+Or one-shot install + launch (`--install` delegates to `scripts/setup` under the hood):
+
+```bash
+./scripts/dev --install
+```
+
+`scripts/dev` auto-loads `.env.local`, prefixes both log streams (`[engine] …` / `[dashboard] …`), and tears the whole stack down on Ctrl+C.
 
 If you'd rather drive each side from its own terminal:
 
