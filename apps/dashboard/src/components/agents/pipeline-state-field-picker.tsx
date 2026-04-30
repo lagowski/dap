@@ -190,6 +190,15 @@ function FieldRow({ field, checked, onToggle, disabled }: FieldRowProps) {
                 required
               </span>
             ) : null}
+            {/* Concrete example value, inline so it doesn't grow the
+                row height. The "e.g." prefix makes it parse as a
+                hint rather than the actual current value. */}
+            <span
+              className="font-mono text-xs text-muted-foreground/70 truncate"
+              title={`Example value: ${field.example}`}
+            >
+              e.g. {field.example}
+            </span>
           </div>
           <p className="text-xs text-muted-foreground">{field.description}</p>
         </div>
