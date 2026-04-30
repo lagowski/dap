@@ -211,7 +211,7 @@ export default function AgentsPage() {
                       {usage === 0 ? (
                         <span className="text-xs text-muted-foreground">—</span>
                       ) : (
-                        <Badge variant={blockArchive ? "info" : "secondary"}>
+                        <Badge variant="info">
                           {usage} pipeline{usage === 1 ? "" : "s"}
                         </Badge>
                       )}

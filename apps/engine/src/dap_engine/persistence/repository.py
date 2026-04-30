@@ -19,7 +19,7 @@ from dap_types import (
     StateSnapshot,
 )
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from dap_engine.api.schemas import (
@@ -252,25 +252,39 @@ def archive_agent(session: Session, agent_id: str) -> None:
     session.flush()
 
 
-def pipelines_using_agent(session: Session, agent_id: str) -> list[tuple[str, str]]:
-    """Return (id, name) of non-archived pipelines whose current version references the agent."""
+def _current_pipeline_versions(session: Session) -> list[PipelineVersionORM]:
+    """Fetch only the *current* version row of every non-archived pipeline.
+
+    Composite ``(pipeline_id, version)`` IN keeps the version-table scan
+    bounded by the number of non-archived pipelines, instead of every
+    historical revision.
+    """
     pipelines = session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
     if not pipelines:
         return []
-    versions = session.scalars(
-        select(PipelineVersionORM).where(
-            PipelineVersionORM.pipeline_id.in_(p.id for p in pipelines),
-        ),
-    ).all()
-    versions_by_key = {(v.pipeline_id, v.version): v for v in versions}
+    keys = [(p.id, p.current_version) for p in pipelines]
+    return list(
+        session.scalars(
+            select(PipelineVersionORM).where(
+                tuple_(PipelineVersionORM.pipeline_id, PipelineVersionORM.version).in_(keys),
+            ),
+        ).all()
+    )
+
+
+def pipelines_using_agent(session: Session, agent_id: str) -> list[tuple[str, str]]:
+    """Return (id, name) of non-archived pipelines whose current version references the agent."""
     out: list[tuple[str, str]] = []
-    for pipeline in pipelines:
-        version = versions_by_key.get((pipeline.id, pipeline.current_version))
-        if version is None:
-            continue
+    pipeline_names = {
+        p.id: p.name
+        for p in session.scalars(
+            select(PipelineORM).where(PipelineORM.archived_at.is_(None))
+        ).all()
+    }
+    for version in _current_pipeline_versions(session):
         for node in version.nodes or []:
             if node.get("agent_id") == agent_id:
-                out.append((pipeline.id, pipeline.name))
+                out.append((version.pipeline_id, pipeline_names[version.pipeline_id]))
                 break
     return out
 
@@ -284,19 +298,7 @@ def count_pipelines_using_agents(
     counts: dict[str, int] = dict.fromkeys(target, 0)
     if not target:
         return counts
-    pipelines = session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
-    if not pipelines:
-        return counts
-    versions = session.scalars(
-        select(PipelineVersionORM).where(
-            PipelineVersionORM.pipeline_id.in_(p.id for p in pipelines),
-        ),
-    ).all()
-    versions_by_key = {(v.pipeline_id, v.version): v for v in versions}
-    for pipeline in pipelines:
-        version = versions_by_key.get((pipeline.id, pipeline.current_version))
-        if version is None:
-            continue
+    for version in _current_pipeline_versions(session):
         seen: set[str] = set()
         for node in version.nodes or []:
             aid = node.get("agent_id")

@@ -14,11 +14,11 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-lifecycle-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
+    with tempfile.TemporaryDirectory(prefix="dap-lifecycle-") as tmp:
+        config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+        app = create_app(config)
+        with TestClient(app) as c:
+            yield c
 
 
 def _create_agent(client: TestClient, name: str) -> str:
