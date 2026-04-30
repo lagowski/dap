@@ -3,8 +3,15 @@
  *
  * Used by AgentForm's input/output field pickers (#61) so the user can pick
  * fields by name without having to memorise the schema. The order here
- * matches the source — group headings track the section comments in the
- * Pydantic model.
+ * matches the source so a reader scanning the picker maps it to the model.
+ *
+ * Group labels are **UI-facing** and may diverge from the section comments
+ * in the Pydantic model when a Python-flavoured name reads badly in the
+ * dashboard — e.g. when a backend section name would collide with one of
+ * the picker's section headers ("Inputs (read by the prompt)" /
+ * "Outputs (written back…)") and read as a contradiction. Keep the field
+ * *names* in lock-step with the model; group strings are dashboard-only
+ * copy. See ``Pipeline outcome`` below for the current diverging example.
  *
  * Kept in sync with the engine manually for now — there's no catalogue
  * endpoint exposing the schema at runtime yet. If the backend gains or
@@ -21,7 +28,7 @@ export type PipelineStateGroup =
   | "Execution loop"
   | "Implementation"
   | "Verification"
-  | "Final output";
+  | "Pipeline outcome";
 
 export interface PipelineStateField {
   /** Field name — matches PipelineState attribute exactly. */
@@ -32,6 +39,13 @@ export interface PipelineStateField {
   group: PipelineStateGroup;
   /** One-liner shown beneath the field name. */
   description: string;
+  /**
+   * Concrete sample value rendered next to the type so operators can
+   * see what real data looks like at a glance — much more useful
+   * than the type name alone for ``list[dict]`` etc. Plain string,
+   * displayed inline as muted monospace.
+   */
+  example: string;
   /**
    * Whether the field is required (no default) at the model level.
    * Display-only hint; the engine resolves "born satisfied" semantics
@@ -47,6 +61,7 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "str",
     group: "Metadata / control",
     description: "Unique id for this run. Engine-assigned during run creation.",
+    example: '"run_4f3a91c0"',
     required: true,
   },
   {
@@ -54,6 +69,7 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "str",
     group: "Metadata / control",
     description: "Repository identifier. Required.",
+    example: '"github.com/acme/api"',
     required: true,
   },
   {
@@ -61,6 +77,7 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "str",
     group: "Metadata / control",
     description: "Working branch. Required.",
+    example: '"feature/payment-flow"',
     required: true,
   },
   {
@@ -68,6 +85,7 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "str | None",
     group: "Metadata / control",
     description: "Optional commit SHA snapshot of the run start.",
+    example: '"a1b2c3d…" or null',
   },
 
   // ---- TASK SELECTION ----
@@ -76,12 +94,14 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "list[dict]",
     group: "Task selection",
     description: "Candidate issues seeded into the run.",
+    example: '[{ id: 42, title: "Bug: rate limit" }]',
   },
   {
     name: "selected_issue_ids",
     type: "list[int]",
     group: "Task selection",
     description: "Subset of available_issues the run will work on.",
+    example: "[42, 43]",
   },
 
   // ---- TEST GENERATION ----
@@ -90,18 +110,21 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "bool",
     group: "Test generation",
     description: "Whether the test_author has produced tests yet.",
+    example: "true / false",
   },
   {
     name: "test_files",
     type: "list[str]",
     group: "Test generation",
     description: "Generated test file paths.",
+    example: '["tests/test_rate_limit.py"]',
   },
   {
     name: "test_generation_errors",
     type: "list[str]",
     group: "Test generation",
     description: "Errors raised by the test_author (non-fatal).",
+    example: '["pytest collection timeout"]',
   },
 
   // ---- EXECUTION LOOP ----
@@ -110,24 +133,28 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "int",
     group: "Execution loop",
     description: "Retry budget for the implement→verify loop. Default 3.",
+    example: "3",
   },
   {
     name: "attempt",
     type: "int",
     group: "Execution loop",
     description: "Current retry counter (0-based; defaults to 0 before the first retry attempt).",
+    example: "0 (first try) … 2",
   },
   {
     name: "tests_passed",
     type: "bool",
     group: "Execution loop",
     description: "Whether the latest test run passed.",
+    example: "true / false",
   },
   {
     name: "last_test_output",
     type: "str",
     group: "Execution loop",
     description: "stdout/stderr from the last test invocation.",
+    example: '"5 passed, 0 failed in 1.2s"',
   },
 
   // ---- IMPLEMENTATION ----
@@ -136,12 +163,14 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: "list[str]",
     group: "Implementation",
     description: "File paths the implementer changed.",
+    example: '["src/api.py", "tests/test_api.py"]',
   },
   {
     name: "implementation_notes",
     type: "str | None",
     group: "Implementation",
     description: "Free-form notes the implementer leaves for the verifier.",
+    example: '"Used asyncio.Lock for concurrency"',
   },
 
   // ---- VERIFICATION ----
@@ -150,20 +179,25 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     type: 'Literal["pending", "approved", "rejected"]',
     group: "Verification",
     description: "Verifier's decision. Default 'pending'.",
+    example: '"approved"',
   },
   {
     name: "verification_reason",
     type: "str | None",
     group: "Verification",
     description: "Why the verifier approved or rejected.",
+    example: '"Tests pass, scope contained."',
   },
 
-  // ---- FINAL OUTPUT ----
+  // ---- PIPELINE OUTCOME ----
+  // UI-facing group name (#122) — picked so it doesn't collide with
+  // the "Outputs (written back…)" section header in the picker.
   {
     name: "final_status",
     type: 'Literal["running", "success", "failed", "aborted", "paused"]',
-    group: "Final output",
+    group: "Pipeline outcome",
     description: "Run-level outcome. Default 'running'.",
+    example: '"success"',
   },
 ] as const;
 
@@ -174,7 +208,7 @@ export const PIPELINE_STATE_GROUPS: readonly PipelineStateGroup[] = [
   "Execution loop",
   "Implementation",
   "Verification",
-  "Final output",
+  "Pipeline outcome",
 ] as const;
 
 const FIELD_NAMES = new Set(PIPELINE_STATE_FIELDS.map((f) => f.name));

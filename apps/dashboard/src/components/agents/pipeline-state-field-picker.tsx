@@ -180,16 +180,27 @@ function FieldRow({ field, checked, onToggle, disabled }: FieldRowProps) {
           className="mt-1 h-4 w-4 rounded border-input"
         />
         <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <span className="font-mono text-sm">{field.name}</span>
-            <span className="font-mono text-xs text-muted-foreground">
+          {/* ``flex-nowrap`` so the example never bumps onto a second
+              line — that would defeat the "no extra row height" goal.
+              The example span uses ``flex-1 min-w-0`` + ``truncate``
+              so it ellipsises when the viewport is narrow; the full
+              value still rides on the ``title`` attribute. */}
+          <div className="flex flex-nowrap items-baseline gap-2">
+            <span className="font-mono text-sm shrink-0">{field.name}</span>
+            <span className="font-mono text-xs text-muted-foreground shrink-0">
               {field.type}
             </span>
             {field.required ? (
-              <span className="text-[10px] font-medium uppercase text-amber-600 dark:text-amber-400">
+              <span className="text-[10px] font-medium uppercase text-amber-600 shrink-0 dark:text-amber-400">
                 required
               </span>
             ) : null}
+            <span
+              className="font-mono text-xs text-muted-foreground/70 flex-1 min-w-0 truncate"
+              title={`Example value: ${field.example}`}
+            >
+              e.g. {field.example}
+            </span>
           </div>
           <p className="text-xs text-muted-foreground">{field.description}</p>
         </div>

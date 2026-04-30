@@ -302,7 +302,7 @@ export function AgentForm({
         />
       </Field>
 
-      <Field label="Inputs">
+      <Field label="Inputs (read by the prompt)">
         <RoleDefaultsHint
           role={watchedRole}
           recommended={ROLE_DEFAULT_INPUT_SCHEMA[watchedRole]}
@@ -321,11 +321,11 @@ export function AgentForm({
         <PipelineStateFieldPicker
           value={inputSchema}
           onChange={handleInputSchemaChange}
-          description="Fields the agent's prompt template can reference via Jinja {{ field_name }}. Empty = legacy mode (template sees the full PipelineState)."
+          description="PipelineState fields the prompt can reference via Jinja {{ field_name }}. PipelineState is the shared data bag flowing through every node — this picker selects the subset your agent reads. Empty = legacy mode (template sees the full state)."
         />
       </Field>
 
-      <Field label="Outputs">
+      <Field label="Outputs (written back to PipelineState)">
         <RoleDefaultsHint
           role={watchedRole}
           recommended={ROLE_DEFAULT_OUTPUT_SCHEMA[watchedRole]}
@@ -340,7 +340,7 @@ export function AgentForm({
         <PipelineStateFieldPicker
           value={outputSchema}
           onChange={handleOutputSchemaChange}
-          description="Fields the agent's response is allowed to write back into PipelineState. Empty = legacy mode (engine falls back to ROLE_FIELDS for known roles)."
+          description="PipelineState fields this role's textual output is parsed and validated against before downstream nodes see them. Documents the expected state keys for the role's response; adapter-supplied structured telemetry (token counts, exit codes, etc.) is merged into PipelineState separately by the engine. Empty = legacy mode (engine falls back to ROLE_FIELDS for known roles)."
         />
       </Field>
 
