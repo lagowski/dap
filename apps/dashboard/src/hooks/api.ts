@@ -8,6 +8,7 @@ import type {
   AgentExport,
   AgentUpdate,
   PipelineCreate,
+  PipelineExport,
   PipelineUpdate,
   ProjectCreate,
   ProjectRunRequest,
@@ -123,6 +124,16 @@ export function useCreatePipeline() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: PipelineCreate) => api.createPipeline(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
+    },
+  });
+}
+
+export function useImportPipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: PipelineExport) => api.importPipeline(payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.pipelines });
     },

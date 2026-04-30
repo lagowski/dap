@@ -141,6 +141,39 @@ export interface AgentExport {
   agent: AgentExportPayload;
 }
 
+// ---- Pipeline import / export (#124) ----
+
+/** Stable export schema version. Bump only when the shape changes incompatibly. */
+export const PIPELINE_EXPORT_SCHEMA_VERSION = "pipeline-export/1";
+
+/**
+ * Portable subset of a pipeline — no per-installation fields. Mirrors
+ * ``PipelineExportPayload`` on the server. ``node.agent_id`` references
+ * point at agent ids in the *source* installation; importing into a
+ * different DB requires those agents to exist (or 422 from the
+ * validator). Bundling the referenced agents into the envelope so
+ * import auto-creates them is a separate follow-up.
+ */
+export interface PipelineExportPayload {
+  name: string;
+  description: string;
+  schema_version: "langgraph/1.0";
+  state_schema_ref: string;
+  entry_point: string;
+  nodes: PipelineNode[];
+  edges: PipelineEdge[];
+  defaults: {
+    max_attempts: number;
+    budget_limit_usd: number;
+    approval_required_nodes: string[];
+  };
+}
+
+export interface PipelineExport {
+  schema_version: string;
+  pipeline: PipelineExportPayload;
+}
+
 // ---- Projects (#63 / #67) ----
 
 /**

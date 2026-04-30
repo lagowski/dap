@@ -7,10 +7,18 @@ from typing import Any
 
 from dap_types import Pipeline
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_session
-from dap_engine.api.schemas import PipelineCreate, PipelineUpdate
+from dap_engine.api.schemas import (
+    PIPELINE_EXPORT_SCHEMA_VERSION,
+    PipelineCreate,
+    PipelineExport,
+    PipelineExportPayload,
+    PipelineImportRequest,
+    PipelineUpdate,
+)
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
 
@@ -125,6 +133,41 @@ def validate_pipeline(
     return validate_pipeline_dag(payload, session)
 
 
+@router.post(
+    "/import",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Pipeline,
+)
+def import_pipeline(
+    payload: PipelineImportRequest,
+    session: Session = Depends(get_session),
+) -> Pipeline:
+    """Create a new pipeline (v1) from an exported JSON payload (#124).
+
+    ``schema_version`` is validated during request parsing
+    (Pydantic ``field_validator``). The DAG validator runs via the
+    standard ``_enforce_validation`` path, so a payload that
+    references an agent which doesn't exist (or is archived) in
+    *this* DB returns 422 with the agent id in the detail —
+    exactly the cross-installation safety check operators need.
+
+    Round-trips through ``PipelineCreate`` so any future field added
+    to ``PipelineExportPayload`` / ``PipelineCreate`` flows
+    automatically rather than relying on this function staying in
+    lockstep with both.
+    """
+    try:
+        create_payload = PipelineCreate.model_validate(payload.pipeline.model_dump())
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(),
+        ) from exc
+
+    _enforce_validation(create_payload, session)
+    return repo.create_pipeline(session, create_payload)
+
+
 @router.get("/{pipeline_id}", response_model=Pipeline)
 def get_pipeline(pipeline_id: str, session: Session = Depends(get_session)) -> Pipeline:
     try:
@@ -193,3 +236,47 @@ def get_pipeline_version(
         return repo.get_pipeline_version(session, pipeline_id, version)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{pipeline_id}/export", response_model=PipelineExport)
+def export_pipeline(
+    pipeline_id: str,
+    session: Session = Depends(get_session),
+) -> PipelineExport:
+    """Return a portable JSON shape of the pipeline (#124).
+
+    Strips per-installation fields (id, version, timestamps,
+    archived_at) so the result can move between DAP installations
+    or be checked into git. ``node.agent_id`` strings still point
+    at the *source* installation's agent ids — the importer will
+    fail with 422 if they don't exist in the target DB. Bundling
+    the referenced agents into the envelope so import auto-creates
+    them is a separate follow-up.
+    """
+    try:
+        pipeline = repo.get_pipeline(session, pipeline_id)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    try:
+        payload = PipelineExportPayload(
+            name=pipeline.name,
+            description=pipeline.description,
+            schema_version=pipeline.schema_version,
+            state_schema_ref=pipeline.state_schema_ref,
+            entry_point=pipeline.entry_point,
+            nodes=list(pipeline.nodes),
+            edges=list(pipeline.edges),
+            defaults=pipeline.defaults,
+        )
+    except ValidationError as exc:
+        # Shouldn't happen — stored shape was validated on write —
+        # but if a future migration ever introduces a stored shape
+        # we can't export, surface it as 500 with details rather
+        # than crashing without context.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stored pipeline could not be re-validated for export: {exc.errors()}",
+        ) from exc
+
+    return PipelineExport(schema_version=PIPELINE_EXPORT_SCHEMA_VERSION, pipeline=payload)

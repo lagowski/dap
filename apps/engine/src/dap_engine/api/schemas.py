@@ -251,6 +251,73 @@ class PipelineUpdate(BaseModel):
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
 
 
+PIPELINE_EXPORT_SCHEMA_VERSION = "pipeline-export/1"
+
+
+class PipelineExportPayload(BaseModel):
+    """The portable subset of a pipeline — no per-installation fields.
+
+    Mirrors :class:`PipelineCreate` field-by-field minus the fields
+    the server fills in (``id``, ``version``, timestamps,
+    ``archived_at``). Reuses the same node / edge / defaults shapes
+    so an exported pipeline that's importable here is also creatable
+    directly via ``POST /pipelines``.
+
+    ``node.agent_id`` references the *source installation's* agent
+    ids. The importer doesn't rewrite them — the existing DAG
+    validator (#120) returns 422 if any referenced agent is missing
+    or archived in the target DB. Bundling the referenced agents
+    into the export envelope (so import auto-creates them and
+    rewrites the references) is a separate follow-up.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+
+    schema_version: Literal["langgraph/1.0"] = "langgraph/1.0"
+    state_schema_ref: str = Field(min_length=1)
+    entry_point: str = Field(min_length=1)
+
+    nodes: list[PipelineNode]
+    edges: list[PipelineEdge]
+    defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+
+
+class PipelineExport(BaseModel):
+    """Response shape of ``GET /pipelines/{id}/export``.
+
+    Versioned so future format changes can be detected at import
+    time rather than silently producing odd state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PIPELINE_EXPORT_SCHEMA_VERSION
+    pipeline: PipelineExportPayload
+
+
+class PipelineImportRequest(BaseModel):
+    """Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    pipeline: PipelineExportPayload
+
+    @field_validator("schema_version")
+    @classmethod
+    def _check_schema_version(cls, value: str) -> str:
+        if value != PIPELINE_EXPORT_SCHEMA_VERSION:
+            msg = (
+                f"Unsupported schema_version '{value}'. This engine accepts "
+                f"'{PIPELINE_EXPORT_SCHEMA_VERSION}'."
+            )
+            raise ValueError(msg)
+        return value
+
+
 class ProjectRunRequest(BaseModel):
     """POST /projects/{project_id}/run/{kind} body — convenience trigger.
 

@@ -16,6 +16,7 @@ import type {
   PaginatedList,
   Pipeline,
   PipelineCreate,
+  PipelineExport,
   PipelineState,
   PipelineUpdate,
   Project,
@@ -217,6 +218,14 @@ export async function validatePipeline(
     method: "POST",
     json: payload,
   });
+}
+
+export async function exportPipeline(id: string): Promise<PipelineExport> {
+  return request<PipelineExport>(`/pipelines/${encodeURIComponent(id)}/export`);
+}
+
+export async function importPipeline(payload: PipelineExport): Promise<Pipeline> {
+  return request<Pipeline>("/pipelines/import", { method: "POST", json: payload });
 }
 
 // ---------------------------------------------------------------------------
