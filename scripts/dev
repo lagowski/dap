@@ -66,38 +66,69 @@ fi
 
 # ----- run -------------------------------------------------------------------
 
+# Job control on so each backgrounded job gets its own process group with
+# pgid == job's pid. We then ``kill -- -<pgid>`` to take down the whole
+# tree (uv → python uvicorn, pnpm → node next dev), since the wrappers
+# don't reliably forward SIGTERM to their grandchildren.
+set -m
+
 ENGINE_PID=""
 DASH_PID=""
 
+kill_group() {
+  # ``kill -- -<pgid>`` signals every process in the group. Silently no-ops if
+  # the group is already gone.
+  local sig=$1 pid=$2
+  [[ -n "$pid" ]] || return 0
+  kill -"$sig" -- "-$pid" 2>/dev/null || true
+}
+
 cleanup() {
+  # Disarm — a second Ctrl+C during shutdown should hard-kill the script via
+  # the default handler instead of re-entering this function.
   trap - INT TERM EXIT
   echo
   echo "[dap] shutting down..."
-  for pid in "$ENGINE_PID" "$DASH_PID"; do
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill -TERM "$pid" 2>/dev/null || true
-    fi
-  done
-  # Give children a beat to flush, then SIGKILL anything still alive.
+
+  kill_group TERM "$ENGINE_PID"
+  kill_group TERM "$DASH_PID"
   sleep 1
-  for pid in "$ENGINE_PID" "$DASH_PID"; do
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill -KILL "$pid" 2>/dev/null || true
-    fi
-  done
-  wait 2>/dev/null || true
-  echo "[dap] done"
+  kill_group KILL "$ENGINE_PID"
+  kill_group KILL "$DASH_PID"
+
+  # Reap children and capture their exit codes so the script reflects what
+  # actually happened (Ctrl+C → 130, crash → child's rc, clean exit → 0).
+  local engine_rc=0 dash_rc=0
+  if [[ -n "$ENGINE_PID" ]]; then
+    wait "$ENGINE_PID" 2>/dev/null || engine_rc=$?
+  fi
+  if [[ -n "$DASH_PID" ]]; then
+    wait "$DASH_PID" 2>/dev/null || dash_rc=$?
+  fi
+
+  echo "[dap] done (engine=$engine_rc dashboard=$dash_rc)"
+  if [[ $engine_rc -ne 0 ]]; then
+    exit "$engine_rc"
+  elif [[ $dash_rc -ne 0 ]]; then
+    exit "$dash_rc"
+  fi
+  exit 0
 }
 trap cleanup INT TERM EXIT
 
 ENGINE_PORT="${DAP_ENGINE_PORT:-7333}"
 echo "[dap] starting engine on http://127.0.0.1:${ENGINE_PORT}"
-# awk fflush() keeps logs interactive across the pipe on both BSD and GNU awk.
-uv run dap-engine start 2>&1 | awk '{ print "[engine] " $0; fflush(); }' &
+# Process substitution (``> >(awk)``) instead of a pipeline so $! captures the
+# real engine PID, not the awk prefixer's. With ``set -m`` above, $! is also
+# the process group id we'll target in cleanup.
+# awk fflush() keeps logs interactive on both BSD and GNU awk.
+uv run dap-engine > >(awk '{ print "[engine] " $0; fflush(); }') 2>&1 &
 ENGINE_PID=$!
 
 echo "[dap] starting dashboard on http://localhost:3000"
-(cd apps/dashboard && pnpm dev 2>&1 | awk '{ print "[dashboard] " $0; fflush(); }') &
+# ``exec`` inside the cd-subshell replaces the subshell with pnpm dev so $!
+# tracks pnpm directly, not a wrapper subshell that survives kill-by-pid.
+( cd apps/dashboard && exec pnpm dev > >(awk '{ print "[dashboard] " $0; fflush(); }') 2>&1 ) &
 DASH_PID=$!
 
 # Poll both — exit (and let trap clean up) as soon as either dies, so the user
