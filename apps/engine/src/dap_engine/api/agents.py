@@ -85,8 +85,10 @@ def list_agents(
         offset=offset,
         limit=limit,
     )
+    usage = repo.count_pipelines_using_agents(session, [a.id for a in items])
+    enriched = [a.model_copy(update={"used_in_pipelines": usage.get(a.id, 0)}) for a in items]
     return {
-        "items": [a.model_dump(mode="json") for a in items],
+        "items": [a.model_dump(mode="json") for a in enriched],
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -160,6 +162,19 @@ def update_agent(
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_agent(agent_id: str, session: Session = Depends(get_session)) -> Response:
+    blocking = repo.pipelines_using_agent(session, agent_id)
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"Agent is referenced by {len(blocking)} active pipeline"
+                    f"{'s' if len(blocking) != 1 else ''}. Remove or replace the "
+                    "node(s) before archiving."
+                ),
+                "blocking_pipelines": [{"id": pid, "name": pname} for pid, pname in blocking],
+            },
+        )
     try:
         repo.archive_agent(session, agent_id)
     except repo.NotFoundError as exc:

@@ -31,6 +31,7 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   is_active: boolean;
+  used_in_pipelines?: number;
 }
 
 export interface AgentCreate {

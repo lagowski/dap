@@ -252,6 +252,60 @@ def archive_agent(session: Session, agent_id: str) -> None:
     session.flush()
 
 
+def pipelines_using_agent(session: Session, agent_id: str) -> list[tuple[str, str]]:
+    """Return (id, name) of non-archived pipelines whose current version references the agent."""
+    pipelines = session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
+    if not pipelines:
+        return []
+    versions = session.scalars(
+        select(PipelineVersionORM).where(
+            PipelineVersionORM.pipeline_id.in_(p.id for p in pipelines),
+        ),
+    ).all()
+    versions_by_key = {(v.pipeline_id, v.version): v for v in versions}
+    out: list[tuple[str, str]] = []
+    for pipeline in pipelines:
+        version = versions_by_key.get((pipeline.id, pipeline.current_version))
+        if version is None:
+            continue
+        for node in version.nodes or []:
+            if node.get("agent_id") == agent_id:
+                out.append((pipeline.id, pipeline.name))
+                break
+    return out
+
+
+def count_pipelines_using_agents(
+    session: Session,
+    agent_ids: Iterable[str],
+) -> dict[str, int]:
+    """Batch counterpart of ``pipelines_using_agent`` for the agent list endpoint."""
+    target = set(agent_ids)
+    counts: dict[str, int] = dict.fromkeys(target, 0)
+    if not target:
+        return counts
+    pipelines = session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
+    if not pipelines:
+        return counts
+    versions = session.scalars(
+        select(PipelineVersionORM).where(
+            PipelineVersionORM.pipeline_id.in_(p.id for p in pipelines),
+        ),
+    ).all()
+    versions_by_key = {(v.pipeline_id, v.version): v for v in versions}
+    for pipeline in pipelines:
+        version = versions_by_key.get((pipeline.id, pipeline.current_version))
+        if version is None:
+            continue
+        seen: set[str] = set()
+        for node in version.nodes or []:
+            aid = node.get("agent_id")
+            if aid in target and aid not in seen:
+                seen.add(aid)
+                counts[aid] += 1
+    return counts
+
+
 def get_agent(session: Session, agent_id: str) -> Agent:
     agent = session.get(AgentORM, agent_id)
     if agent is None:

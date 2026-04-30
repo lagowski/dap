@@ -152,6 +152,20 @@ export function useUpdatePipeline() {
   });
 }
 
+export function useArchivePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.archivePipeline(id),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
+      qc.invalidateQueries({ queryKey: queryKeys.pipeline(id) });
+      // Pipelines reference agents — archiving a pipeline drops its
+      // agents' usage counts, so the /agents list cache is now stale.
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
+    },
+  });
+}
+
 export function useValidatePipeline() {
   return useMutation({
     mutationFn: (payload: PipelineCreate) => api.validatePipeline(payload),

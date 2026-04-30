@@ -76,6 +76,8 @@ class Agent(BaseModel):
     updated_at: datetime
     is_active: bool = True
 
+    used_in_pipelines: int = 0
+
     @field_validator("input_schema", "output_schema", mode="before")
     @classmethod
     def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
