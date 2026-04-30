@@ -1,11 +1,13 @@
 "use client";
 
-import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PipelineDesigner } from "@/components/designer/designer";
+import { PipelineTemplatePicker } from "@/components/designer/pipeline-template-picker";
 import { Card, CardContent } from "@/components/ui/card";
+import { useImportPipeline, usePipeline } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
-import { usePipeline } from "@/hooks/api";
+import type { PipelineTemplate } from "@/lib/pipeline-templates";
 
 export default function NewPipelinePage() {
   return (
@@ -18,12 +20,28 @@ export default function NewPipelinePage() {
 }
 
 function NewPipelinePageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   // Treat empty / whitespace ``?from=`` as not-cloning so the hook
   // doesn't fire with an empty id.
   const fromIdRaw = searchParams.get("from");
   const fromId = fromIdRaw && fromIdRaw.trim() !== "" ? fromIdRaw.trim() : null;
   const sourceQuery = usePipeline(fromId);
+  const importPipeline = useImportPipeline();
+  const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+
+  const handleUseTemplate = async (template: PipelineTemplate) => {
+    setTemplateError(null);
+    setPendingTemplateId(template.id);
+    try {
+      const created = await importPipeline.mutateAsync(template.bundle);
+      router.push(`/pipelines/${created.id}/edit`);
+    } catch (err) {
+      setTemplateError(formatApiError(err));
+      setPendingTemplateId(null);
+    }
+  };
 
   if (fromId !== null && sourceQuery.isPending) {
     return <div className="p-6 text-sm text-muted-foreground">Loading source pipeline…</div>;
@@ -40,13 +58,37 @@ function NewPipelinePageContent() {
     );
   }
 
-  // Cloning path: pass the source as ``seedFromPipeline`` so the
-  // Designer pre-fills nodes/edges/name without flipping into edit
-  // mode. The save flow stays as create (no v2 of the source).
+  // Clone flow takes precedence — when ``?from=...`` is set the user
+  // explicitly asked to duplicate a specific pipeline, so the
+  // template picker would just be noise.
+  const showTemplatePicker = fromId === null;
+
   return (
-    <PipelineDesigner
-      initialPipeline={null}
-      seedFromPipeline={sourceQuery.data ?? null}
-    />
+    <div className="flex flex-col h-full">
+      {showTemplatePicker ? (
+        <div className="border-b bg-muted/20 p-4">
+          {templateError ? (
+            <p className="text-sm text-destructive mb-2" role="alert">
+              Template import failed: {templateError}
+            </p>
+          ) : null}
+          <PipelineTemplatePicker
+            onUseTemplate={handleUseTemplate}
+            disabled={importPipeline.isPending}
+            pendingTemplateId={pendingTemplateId}
+          />
+          <p className="mt-3 text-xs text-muted-foreground">
+            Or scroll down to start from a blank canvas — the empty Designer
+            below is the &quot;scratch&quot; path.
+          </p>
+        </div>
+      ) : null}
+      <div className="flex-1 min-h-0">
+        <PipelineDesigner
+          initialPipeline={null}
+          seedFromPipeline={sourceQuery.data ?? null}
+        />
+      </div>
+    </div>
   );
 }
