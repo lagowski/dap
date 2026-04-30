@@ -31,6 +31,9 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   is_active: boolean;
+  // Populated only on list responses. null on detail/create/update endpoints;
+  // undefined on responses from older engines that predate the field.
+  used_in_pipelines?: number | null;
 }
 
 export interface AgentCreate {

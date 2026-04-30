@@ -3,8 +3,13 @@
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Play, Plus, Upload } from "lucide-react";
-import { useImportPipeline, usePipelinesList, useProject } from "@/hooks/api";
+import { Archive, Play, Plus, Upload } from "lucide-react";
+import {
+  useArchivePipeline,
+  useImportPipeline,
+  usePipelinesList,
+  useProject,
+} from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -21,12 +26,24 @@ export default function PipelinesPage() {
   const { activeProjectId } = useActiveProject();
   const { data: activeProject } = useProject(activeProjectId);
   const importPipeline = useImportPipeline();
+  const archive = useArchivePipeline();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
   const handleImportClick = () => {
     setImportError(null);
     fileInputRef.current?.click();
+  };
+
+  const handleArchive = (id: string, name: string) => {
+    if (
+      !window.confirm(
+        `Archive pipeline "${name}"? Run history is preserved; the pipeline disappears from the list. Agents it used stay intact.`,
+      )
+    ) {
+      return;
+    }
+    archive.mutate(id);
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -122,6 +139,12 @@ export default function PipelinesPage() {
         </p>
       ) : null}
 
+      {archive.isError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {formatApiError(archive.error)}
+        </p>
+      ) : null}
+
       {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
       {isError && (
         <Card className="border-destructive/50">
@@ -197,6 +220,15 @@ export default function PipelinesPage() {
                     </TriggerRunDialog>
                     <Button asChild variant="outline" size="sm">
                       <Link href={`/pipelines/${pipeline.id}/edit`}>Edit</Link>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={archive.isPending}
+                      onClick={() => handleArchive(pipeline.id, pipeline.name)}
+                    >
+                      <Archive className="h-3.5 w-3.5 mr-1" />
+                      Archive
                     </Button>
                   </td>
                 </tr>

@@ -5,13 +5,40 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Archive, Pencil, Plus, Upload } from "lucide-react";
 import { useAgentsList, useArchiveAgent, useImportAgent } from "@/hooks/api";
-import { formatApiError } from "@/lib/api/client";
+import { ApiError, formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
+
+interface BlockingPipeline {
+  id: string;
+  name: string;
+}
+
+interface ArchiveBlockedDetail {
+  message: string;
+  blocking_pipelines: BlockingPipeline[];
+}
+
+function extractArchiveBlocked(error: unknown): ArchiveBlockedDetail | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const wrapper = error.detail as { detail?: unknown } | null | undefined;
+  const inner = wrapper?.detail;
+  if (!inner || typeof inner !== "object") return null;
+  const candidate = inner as Partial<ArchiveBlockedDetail>;
+  if (typeof candidate.message !== "string") return null;
+  if (!Array.isArray(candidate.blocking_pipelines)) return null;
+  return {
+    message: candidate.message,
+    blocking_pipelines: candidate.blocking_pipelines.filter(
+      (p): p is BlockingPipeline =>
+        !!p && typeof p === "object" && typeof (p as BlockingPipeline).id === "string",
+    ),
+  };
+}
 
 export default function AgentsPage() {
   const router = useRouter();
@@ -24,13 +51,15 @@ export default function AgentsPage() {
   const handleArchive = (id: string, name: string) => {
     if (
       !window.confirm(
-        `Archive agent "${name}"? Existing pipelines that reference it keep working, but it won't appear in pickers.`,
+        `Archive agent "${name}"? It will disappear from pickers and the list. Run history keeps the agent reference intact.`,
       )
     ) {
       return;
     }
     archive.mutate(id);
   };
+
+  const archiveBlocked = extractArchiveBlocked(archive.error);
 
   const handleImportClick = () => {
     setImportError(null);
@@ -102,9 +131,29 @@ export default function AgentsPage() {
       </div>
 
       {archive.isError ? (
-        <p className="text-sm text-destructive" role="alert">
-          {formatApiError(archive.error)}
-        </p>
+        archiveBlocked ? (
+          <Card className="border-destructive/50">
+            <CardContent className="pt-6 pb-4 text-sm space-y-2">
+              <p className="text-destructive">{archiveBlocked.message}</p>
+              <ul className="list-disc list-inside text-xs text-muted-foreground space-y-0.5">
+                {archiveBlocked.blocking_pipelines.map((p) => (
+                  <li key={p.id}>
+                    <Link
+                      href={`/pipelines/${p.id}/edit`}
+                      className="hover:underline font-medium text-foreground"
+                    >
+                      {p.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ) : (
+          <p className="text-sm text-destructive" role="alert">
+            {formatApiError(archive.error)}
+          </p>
+        )
       ) : null}
 
       {importError ? (
@@ -137,45 +186,64 @@ export default function AgentsPage() {
                 <th className="px-4 py-2 font-medium">Role</th>
                 <th className="px-4 py-2 font-medium">Runtime</th>
                 <th className="px-4 py-2 font-medium">Version</th>
+                <th className="px-4 py-2 font-medium">Used in</th>
                 <th className="px-4 py-2 font-medium">ID</th>
                 <th className="px-4 py-2 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((agent) => (
-                <tr key={agent.id} className="border-b last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3 font-medium">
-                    <Link href={`/agents/${agent.id}`} className="hover:underline">
-                      {agent.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant="secondary">{agent.role}</Badge>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs">{agent.runtime_id}</td>
-                  <td className="px-4 py-3 tabular-nums">v{agent.version}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    {agent.id.slice(0, ID_PREFIX)}…
-                  </td>
-                  <td className="px-4 py-3 text-right space-x-2">
-                    <Button asChild variant="outline" size="sm">
-                      <Link href={`/agents/${agent.id}/edit`}>
-                        <Pencil className="h-3.5 w-3.5 mr-1" />
-                        Edit
+              {data.items.map((agent) => {
+                const usage = agent.used_in_pipelines ?? 0;
+                const blockArchive = usage > 0;
+                return (
+                  <tr key={agent.id} className="border-b last:border-0 hover:bg-muted/30">
+                    <td className="px-4 py-3 font-medium">
+                      <Link href={`/agents/${agent.id}`} className="hover:underline">
+                        {agent.name}
                       </Link>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={archive.isPending}
-                      onClick={() => handleArchive(agent.id, agent.name)}
-                    >
-                      <Archive className="h-3.5 w-3.5 mr-1" />
-                      Archive
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="secondary">{agent.role}</Badge>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs">{agent.runtime_id}</td>
+                    <td className="px-4 py-3 tabular-nums">v{agent.version}</td>
+                    <td className="px-4 py-3 tabular-nums">
+                      {usage === 0 ? (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      ) : (
+                        <Badge variant="info">
+                          {usage} pipeline{usage === 1 ? "" : "s"}
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                      {agent.id.slice(0, ID_PREFIX)}…
+                    </td>
+                    <td className="px-4 py-3 text-right space-x-2">
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={`/agents/${agent.id}/edit`}>
+                          <Pencil className="h-3.5 w-3.5 mr-1" />
+                          Edit
+                        </Link>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={archive.isPending || blockArchive}
+                        title={
+                          blockArchive
+                            ? `Used by ${usage} pipeline${usage === 1 ? "" : "s"} — archive or detach those first`
+                            : undefined
+                        }
+                        onClick={() => handleArchive(agent.id, agent.name)}
+                      >
+                        <Archive className="h-3.5 w-3.5 mr-1" />
+                        Archive
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Card>

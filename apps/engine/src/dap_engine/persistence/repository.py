@@ -19,7 +19,7 @@ from dap_types import (
     StateSnapshot,
 )
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from dap_engine.api.schemas import (
@@ -250,6 +250,60 @@ def archive_agent(session: Session, agent_id: str) -> None:
         return  # idempotent
     agent.archived_at = _now()
     session.flush()
+
+
+def _current_pipeline_versions(session: Session) -> list[PipelineVersionORM]:
+    """Fetch only the *current* version row of every non-archived pipeline.
+
+    Composite ``(pipeline_id, version)`` IN keeps the version-table scan
+    bounded by the number of non-archived pipelines, instead of every
+    historical revision.
+    """
+    pipelines = session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
+    if not pipelines:
+        return []
+    keys = [(p.id, p.current_version) for p in pipelines]
+    return list(
+        session.scalars(
+            select(PipelineVersionORM).where(
+                tuple_(PipelineVersionORM.pipeline_id, PipelineVersionORM.version).in_(keys),
+            ),
+        ).all()
+    )
+
+
+def pipelines_using_agent(session: Session, agent_id: str) -> list[tuple[str, str]]:
+    """Return (id, name) of non-archived pipelines whose current version references the agent."""
+    out: list[tuple[str, str]] = []
+    pipeline_names = {
+        p.id: p.name
+        for p in session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
+    }
+    for version in _current_pipeline_versions(session):
+        for node in version.nodes or []:
+            if node.get("agent_id") == agent_id:
+                out.append((version.pipeline_id, pipeline_names[version.pipeline_id]))
+                break
+    return out
+
+
+def count_pipelines_using_agents(
+    session: Session,
+    agent_ids: Iterable[str],
+) -> dict[str, int]:
+    """Batch counterpart of ``pipelines_using_agent`` for the agent list endpoint."""
+    target = set(agent_ids)
+    counts: dict[str, int] = dict.fromkeys(target, 0)
+    if not target:
+        return counts
+    for version in _current_pipeline_versions(session):
+        seen: set[str] = set()
+        for node in version.nodes or []:
+            aid = node.get("agent_id")
+            if aid in target and aid not in seen:
+                seen.add(aid)
+                counts[aid] += 1
+    return counts
 
 
 def get_agent(session: Session, agent_id: str) -> Agent:

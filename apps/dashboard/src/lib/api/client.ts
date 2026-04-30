@@ -66,6 +66,13 @@ export function formatApiError(error: unknown): string {
     if (Array.isArray(detail) && detail.length > 0) {
       return detail.map((d) => (d as { msg?: string })?.msg ?? String(d)).join("; ");
     }
+    // Structured FastAPI detail: ``HTTPException(detail={"message": "...", ...})``
+    // wraps as ``{"detail": {"message": "..."}}`` on the wire. The 409 from
+    // archive_agent uses this shape.
+    if (detail && typeof detail === "object") {
+      const inner = (detail as { message?: unknown }).message;
+      if (typeof inner === "string") return inner;
+    }
     if (typeof payload?.message === "string") return payload.message;
     return error.message;
   }
@@ -236,6 +243,10 @@ export async function exportPipeline(
 
 export async function importPipeline(payload: PipelineExport): Promise<Pipeline> {
   return request<Pipeline>("/pipelines/import", { method: "POST", json: payload });
+}
+
+export async function archivePipeline(id: string): Promise<void> {
+  await request<void>(`/pipelines/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 // ---------------------------------------------------------------------------

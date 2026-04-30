@@ -76,6 +76,11 @@ class Agent(BaseModel):
     updated_at: datetime
     is_active: bool = True
 
+    # Populated only on list responses; None on detail / create / update /
+    # version endpoints, which don't compute usage. Treat None as "unknown",
+    # not "zero".
+    used_in_pipelines: int | None = None
+
     @field_validator("input_schema", "output_schema", mode="before")
     @classmethod
     def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
