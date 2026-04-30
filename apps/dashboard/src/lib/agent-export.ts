@@ -14,11 +14,16 @@ import type { Agent } from "./api/types";
 const ID_FALLBACK_PREFIX = 8;
 
 function slugFromAgent(agent: Pick<Agent, "id" | "name">): string {
+  // ``^-+|-+$`` strips *all* leading/trailing hyphens — the previous
+  // ``(^-|-$)+`` only stripped one from each side (same fix as
+  // ``pipeline-export.ts``). A name that collapses to "----" would
+  // otherwise become "-" instead of falling through to the
+  // id-prefix fallback.
   return (
     agent.name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "") || agent.id.slice(0, ID_FALLBACK_PREFIX)
+      .replace(/^-+|-+$/g, "") || agent.id.slice(0, ID_FALLBACK_PREFIX)
   );
 }
 

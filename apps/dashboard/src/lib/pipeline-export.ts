@@ -14,11 +14,15 @@ import type { Pipeline } from "./api/types";
 const ID_FALLBACK_PREFIX = 8;
 
 function slugFromPipeline(pipeline: Pick<Pipeline, "id" | "name">): string {
+  // ``^-+|-+$`` strips *all* leading/trailing hyphens — the previous
+  // ``(^-|-$)+`` only stripped one from each side, so a name that
+  // collapses to "----" would become "-" and produce "-.pipeline.json"
+  // instead of falling through to the id-prefix fallback.
   return (
     pipeline.name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "") || pipeline.id.slice(0, ID_FALLBACK_PREFIX)
+      .replace(/^-+|-+$/g, "") || pipeline.id.slice(0, ID_FALLBACK_PREFIX)
   );
 }
 

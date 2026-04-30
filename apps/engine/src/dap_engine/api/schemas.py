@@ -5,7 +5,7 @@ Response models reuse `dap_types.{Agent, Pipeline, Run, ...}` directly.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Self
+from typing import Any, Final, Literal, Self
 
 from dap_types.agent import coerce_legacy_field_list, validate_field_list
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
@@ -251,7 +251,10 @@ class PipelineUpdate(BaseModel):
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
 
 
-PIPELINE_EXPORT_SCHEMA_VERSION = "pipeline-export/1"
+# ``Final`` narrows the inferred type to ``Literal["pipeline-export/1"]``
+# so the constant is assignable to the ``Literal`` schema_version
+# fields below without mypy complaining. Same string, stronger type.
+PIPELINE_EXPORT_SCHEMA_VERSION: Final = "pipeline-export/1"
 
 
 class PipelineExportPayload(BaseModel):
@@ -289,33 +292,32 @@ class PipelineExport(BaseModel):
     """Response shape of ``GET /pipelines/{id}/export``.
 
     Versioned so future format changes can be detected at import
-    time rather than silently producing odd state.
+    time rather than silently producing odd state. The ``Literal``
+    type locks the response contract — clients reading the OpenAPI
+    schema see a single accepted value, and constructing a
+    ``PipelineExport`` instance with anything else fails Pydantic
+    validation at the call site.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: str = PIPELINE_EXPORT_SCHEMA_VERSION
+    schema_version: Literal["pipeline-export/1"] = PIPELINE_EXPORT_SCHEMA_VERSION
     pipeline: PipelineExportPayload
 
 
 class PipelineImportRequest(BaseModel):
-    """Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`."""
+    """Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`.
+
+    Pydantic enforces ``schema_version`` against the literal — a
+    different value comes back as a 422 from FastAPI's standard
+    request-validation error path with the offending value visible
+    in the detail. No custom validator needed.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: str
+    schema_version: Literal["pipeline-export/1"]
     pipeline: PipelineExportPayload
-
-    @field_validator("schema_version")
-    @classmethod
-    def _check_schema_version(cls, value: str) -> str:
-        if value != PIPELINE_EXPORT_SCHEMA_VERSION:
-            msg = (
-                f"Unsupported schema_version '{value}'. This engine accepts "
-                f"'{PIPELINE_EXPORT_SCHEMA_VERSION}'."
-            )
-            raise ValueError(msg)
-        return value
 
 
 class ProjectRunRequest(BaseModel):

@@ -170,7 +170,7 @@ export interface PipelineExportPayload {
 }
 
 export interface PipelineExport {
-  schema_version: string;
+  schema_version: typeof PIPELINE_EXPORT_SCHEMA_VERSION;
   pipeline: PipelineExportPayload;
 }
 
