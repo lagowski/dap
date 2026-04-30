@@ -3,8 +3,15 @@
  *
  * Used by AgentForm's input/output field pickers (#61) so the user can pick
  * fields by name without having to memorise the schema. The order here
- * matches the source — group headings track the section comments in the
- * Pydantic model.
+ * matches the source so a reader scanning the picker maps it to the model.
+ *
+ * Group labels are **UI-facing** and may diverge from the section comments
+ * in the Pydantic model when a Python-flavoured name reads badly in the
+ * dashboard — e.g. when a backend section name would collide with one of
+ * the picker's section headers ("Inputs (read by the prompt)" /
+ * "Outputs (written back…)") and read as a contradiction. Keep the field
+ * *names* in lock-step with the model; group strings are dashboard-only
+ * copy. See ``Pipeline outcome`` below for the current diverging example.
  *
  * Kept in sync with the engine manually for now — there's no catalogue
  * endpoint exposing the schema at runtime yet. If the backend gains or
@@ -183,8 +190,8 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
   },
 
   // ---- PIPELINE OUTCOME ----
-  // Renamed from "Final output" so the group label can't collide
-  // visually with the picker's "Outputs" section header.
+  // UI-facing group name (#122) — picked so it doesn't collide with
+  // the "Outputs (written back…)" section header in the picker.
   {
     name: "final_status",
     type: 'Literal["running", "success", "failed", "aborted", "paused"]',

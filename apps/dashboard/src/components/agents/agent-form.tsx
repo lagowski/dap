@@ -340,7 +340,7 @@ export function AgentForm({
         <PipelineStateFieldPicker
           value={outputSchema}
           onChange={handleOutputSchemaChange}
-          description="PipelineState fields the agent's response is allowed to write back. The engine merges declared keys from the agent's structured output into the shared state for downstream nodes. Empty = legacy mode (engine falls back to ROLE_FIELDS for known roles)."
+          description="PipelineState fields this role's textual output is parsed and validated against before downstream nodes see them. Documents the expected state keys for the role's response; adapter-supplied structured telemetry (token counts, exit codes, etc.) is merged into PipelineState separately by the engine. Empty = legacy mode (engine falls back to ROLE_FIELDS for known roles)."
         />
       </Field>
 
