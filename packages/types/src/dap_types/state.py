@@ -46,6 +46,15 @@ class PipelineState(BaseModel):
     # ---- FINAL OUTPUT ----
     final_status: FinalStatus = "running"
 
+    # ---- EXTENSIONS ----
+    extensions: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Per-pipeline extra state. Keys are pipeline-defined. "
+            "Values must be JSON-serializable. "
+        ),
+    )
+
 
 class StateSnapshot(BaseModel):
     """Snapshot stanu po wykonaniu konkretnego node'a."""

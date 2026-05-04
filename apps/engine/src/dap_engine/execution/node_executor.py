@@ -175,6 +175,7 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             state_diff = _merge_structured_into_state(result.structured)
             parsed_diff = _parse_agent_output(ctx, result.output)
             state_diff.update(parsed_diff)
+            state_diff = _route_extensions(state, state_diff)
 
         # Save snapshot AFTER computing diff (snapshot reflects state going forward)
         merged_state = state.model_copy(update=state_diff)
@@ -276,6 +277,25 @@ def _merge_structured_into_state(structured: dict[str, Any] | None) -> dict[str,
         return {}
     state_fields = set(PipelineState.model_fields.keys())
     return {k: v for k, v in structured.items() if k in state_fields}
+
+
+def _route_extensions(state: PipelineState, diff: dict[str, Any]) -> dict[str, Any]:
+    """Route unknown keys in *diff* into ``extensions`` instead of rejecting them.
+
+    Known top-level keys are passed through unchanged.  Unknown keys (those not
+    in ``PipelineState.model_fields``) are merged into the existing
+    ``state.extensions`` dict so callers don't need to know the field name.
+    The sentinel key ``__audit`` is silently dropped (internal bookkeeping).
+    """
+    known = set(PipelineState.model_fields.keys())
+    top_level = {k: v for k, v in diff.items() if k in known}
+    extra = {k: v for k, v in diff.items() if k not in known and k != "__audit"}
+    if not extra:
+        return top_level
+    return {
+        **top_level,
+        "extensions": {**state.extensions, **extra},
+    }
 
 
 def _parse_agent_output(ctx: NodeContext, output: str) -> dict[str, Any]:

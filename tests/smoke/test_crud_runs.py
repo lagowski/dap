@@ -44,6 +44,7 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
         "verification_status": "pending",
         "verification_reason": None,
         "final_status": "running",
+        "extensions": {},
     }
 
     with session_factory() as session:
@@ -186,3 +187,79 @@ def test_get_node_log_404(client_and_factory: tuple[TestClient, sessionmaker[Ses
 
     response = client.get(f"/runs/{run_id}/nodes/missing_node")
     assert response.status_code == 404
+
+
+def test_pipeline_state_extensions_round_trip(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """PipelineState.extensions survives a DB round-trip via the snapshot endpoint."""
+    from dap_types.state import PipelineState
+
+    client, factory = client_and_factory
+    run_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+
+    ext_data: dict[str, Any] = {
+        "issue_url": "https://github.com/rafeekpro/dap/issues/144",
+        "approved": True,
+        "score": 42,
+        "tags": ["alpha", "beta"],
+    }
+    state_with_ext: dict[str, Any] = {
+        "run_id": run_id,
+        "repo": "rafeekpro/test-repo",
+        "branch": "main",
+        "commit_sha": None,
+        "available_issues": [],
+        "selected_issue_ids": [],
+        "tests_generated": False,
+        "test_files": [],
+        "test_generation_errors": [],
+        "max_attempts": 3,
+        "attempt": 0,
+        "tests_passed": False,
+        "last_test_output": "",
+        "modified_files": [],
+        "implementation_notes": None,
+        "verification_status": "pending",
+        "verification_reason": None,
+        "final_status": "running",
+        "extensions": ext_data,
+    }
+
+    # Validate that PipelineState accepts the extensions field
+    parsed = PipelineState(**state_with_ext)
+    assert parsed.extensions == ext_data
+
+    # Seed a snapshot carrying extensions data
+    with factory() as session:
+        run = RunORM(
+            id=run_id,
+            pipeline_id="pipe-ext",
+            pipeline_version=1,
+            trigger_source="cli",
+            initial_state=state_with_ext,
+            current_node=None,
+            node_statuses={},
+            final_status="running",
+            started_at=now,
+            ended_at=None,
+            tokens_used=0,
+            cost_usd=0.0,
+        )
+        snapshot = StateSnapshotORM(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            node_id="ext_node",
+            timestamp=now,
+            state=state_with_ext,
+        )
+        session.add(run)
+        session.add(snapshot)
+        session.commit()
+
+    # Retrieve state via API and assert extensions are preserved
+    response = client.get(f"/runs/{run_id}/state")
+    assert response.status_code == 200
+    returned = response.json()
+    assert returned["extensions"] == ext_data
