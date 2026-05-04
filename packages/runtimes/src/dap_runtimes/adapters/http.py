@@ -105,7 +105,7 @@ class HttpAdapter(BaseAdapter):
         except ValueError as exc:
             return _failed(str(exc), duration_ms=0, url=url)
 
-        timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
+        timeout_seconds = max(task.timeout_ms or 60_000, 1) / MS_PER_SECOND
 
         start = time.monotonic()
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:

@@ -115,7 +115,7 @@ class GeminiCliAdapter(BaseAdapter):
             argv.extend(["--thinking-budget", str(thinking_budget)])
 
         cwd = task.working_directory or os.getcwd()
-        timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
+        timeout_seconds = max(task.timeout_ms or 60_000, 1) / MS_PER_SECOND
         new_session = hasattr(os, "setsid")
         # Three-layer env (#65): engine env (with GEMINI_API_KEY /
         # GOOGLE_API_KEY) → project env_vars → per-agent

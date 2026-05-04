@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 from dap_runtimes import PythonFuncAdapter
@@ -107,7 +108,7 @@ async def test_non_callable_attribute_returns_error(adapter: PythonFuncAdapter) 
 # ---------------------------------------------------------------------------
 
 
-async def _async_echo(state: dict, config: dict) -> dict:
+async def _async_echo(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     return {"echo": state.get("prompt_xml", ""), "from_config": config.get("extra_key")}
 
 
@@ -138,7 +139,7 @@ async def test_async_callable_happy_path(
 # ---------------------------------------------------------------------------
 
 
-def _sync_double(state: dict, config: dict) -> dict:
+def _sync_double(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     return {"doubled": 42}
 
 
@@ -165,7 +166,7 @@ async def test_sync_callable_happy_path(
 # ---------------------------------------------------------------------------
 
 
-async def _with_audit(state: dict, config: dict) -> dict:
+async def _with_audit(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     return {
         "output_field": "hello",
         "__audit": {"tokens_used": 100, "cost_usd": 0.002, "custom": "value"},
@@ -199,7 +200,7 @@ async def test_audit_key_extracted_not_in_state_delta(
 # ---------------------------------------------------------------------------
 
 
-async def _capture_state(state: dict, config: dict) -> dict:
+async def _capture_state(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     return {"captured_keys": sorted(state.keys())}
 
 
@@ -260,7 +261,7 @@ async def test_timeout_none_runs_without_limit(adapter: PythonFuncAdapter) -> No
 # ---------------------------------------------------------------------------
 
 
-async def _slow_func(state: dict, config: dict) -> dict:
+async def _slow_func(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     await asyncio.sleep(30)
     return {}
 
@@ -288,7 +289,7 @@ async def test_timeout_returns_failure(
 # ---------------------------------------------------------------------------
 
 
-async def _raises(state: dict, config: dict) -> dict:
+async def _raises(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     raise ValueError("boom from user code")
 
 
@@ -320,7 +321,7 @@ async def test_structured_shape_consistent(
     import sys
     import types
 
-    async def _ok(state: dict, config: dict) -> dict:
+    async def _ok(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         return {"x": 1}
 
     mod = types.ModuleType("_dap_test_shape_mod")
