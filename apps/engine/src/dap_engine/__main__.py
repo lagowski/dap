@@ -19,6 +19,10 @@ def main() -> None:
 
     config = EngineConfig(
         db_path=os.environ.get("DAP_DB_PATH", "./.dap/state.db"),
+        # DAP_DATABASE_URL overrides db_path when set.
+        # postgresql+asyncpg://user:pass@host:port/db → PostgreSQL backend
+        # Leave unset to keep SQLite (default for local dev).
+        database_url=os.environ.get("DAP_DATABASE_URL"),
         host=os.environ.get("DAP_ENGINE_HOST", "127.0.0.1"),
         port=int(os.environ.get("DAP_ENGINE_PORT", "7333")),
         dry_run_budget_usd=float(os.environ.get("DAP_DRY_RUN_BUDGET_USD", "0.50")),

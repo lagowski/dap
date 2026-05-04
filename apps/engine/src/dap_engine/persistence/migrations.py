@@ -152,6 +152,20 @@ def apply_migrations(engine: Engine) -> list[str]:
     half-migrated schema. The operator inspects the error, fixes
     the underlying problem, and restarts.
     """
+    # PostgreSQL uses "ON CONFLICT DO NOTHING"; SQLite uses "INSERT OR IGNORE".
+    # Both are semantically equivalent here — claim the migration name atomically
+    # before running the body so concurrent processes don't double-apply.
+    dialect = engine.dialect.name  # "sqlite" | "postgresql"
+    if dialect == "postgresql":
+        _claim_sql = text(
+            "INSERT INTO schema_migrations (name, applied_at) "
+            "VALUES (:name, :applied_at) ON CONFLICT (name) DO NOTHING"
+        )
+    else:
+        _claim_sql = text(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (:name, :applied_at)"
+        )
+
     applied: list[str] = []
     with engine.begin() as conn:
         _ensure_table(conn)
@@ -159,10 +173,7 @@ def apply_migrations(engine: Engine) -> list[str]:
     for migration in MIGRATIONS:
         with engine.begin() as conn:
             claim = conn.execute(
-                text(
-                    "INSERT OR IGNORE INTO schema_migrations "
-                    "(name, applied_at) VALUES (:name, :applied_at)",
-                ),
+                _claim_sql,
                 {
                     "name": migration.name,
                     "applied_at": datetime.now(UTC).isoformat(),

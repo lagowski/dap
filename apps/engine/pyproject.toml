@@ -1,7 +1,7 @@
 [project]
 name = "dap-engine"
 version = "0.0.1"
-description = "DAP engine — FastAPI + LangGraph + SQLAlchemy + SQLite"
+description = "DAP engine — FastAPI + LangGraph + SQLAlchemy + SQLite / PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,6 +16,10 @@ dependencies = [
     "anyio>=4.6.0",
     "langgraph>=0.2.50",
     "langgraph-checkpoint-sqlite>=2.0.0",
+    # PostgreSQL backend (optional — only used when DAP_DATABASE_URL points to pg)
+    "asyncpg>=0.30",
+    "psycopg[binary]>=3.2",
+    "langgraph-checkpoint-postgres>=2.0",
 ]
 
 [project.scripts]

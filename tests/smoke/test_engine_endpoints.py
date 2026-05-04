@@ -28,6 +28,7 @@ def test_health_endpoint(client: TestClient) -> None:
     assert body["status"] == "ok"
     assert body["service"] == "dap-engine"
     assert body["version"] == "0.0.1"
+    assert body["db_dialect"] == "sqlite"
     assert "timestamp" in body
 
 

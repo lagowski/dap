@@ -1,16 +1,56 @@
-"""SQLite (WAL mode) + SQLAlchemy 2.0 engine factory."""
+"""SQLAlchemy engine factory — SQLite (WAL mode) and PostgreSQL.
+
+Dialect selection is driven by the ``DAP_DATABASE_URL`` env var (see
+``__main__.py``).  The URL prefix determines which path is taken:
+
+* ``sqlite://`` (or bare file path via DAP_DB_PATH) → SQLite + WAL pragmas.
+  Default for local dev; no extra dependencies needed.
+* ``postgresql+asyncpg://`` → PostgreSQL via psycopg (sync engine).  Requires
+  ``asyncpg``, ``psycopg[binary]``, and ``langgraph-checkpoint-postgres``
+  (declared as optional deps in pyproject.toml).
+
+The rest of the engine (ORM models, repository, migrations) is dialect-agnostic
+and works unchanged against both backends.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.persistence.migrations import apply_migrations
 from dap_engine.persistence.models import Base
+
+# ---------------------------------------------------------------------------
+# Dialect helpers
+# ---------------------------------------------------------------------------
+
+
+def detect_dialect(url: str) -> Literal["sqlite", "postgresql"]:
+    """Return ``"postgresql"`` when *url* starts with ``postgresql``, else ``"sqlite"``."""
+    return "postgresql" if url.startswith("postgresql") else "sqlite"
+
+
+def _pg_sync_url(database_url: str) -> str:
+    """Convert ``postgresql+asyncpg://`` to ``postgresql+psycopg://`` for sync use."""
+    return database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+
+
+def pg_conn_string(database_url: str) -> str:
+    """Return a bare ``postgresql://`` conn string for psycopg (e.g. AsyncPostgresSaver)."""
+    return database_url.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
+        "postgresql+psycopg://", "postgresql://", 1
+    )
+
+
+# ---------------------------------------------------------------------------
+# SQLite
+# ---------------------------------------------------------------------------
 
 
 def _enable_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # type: ignore[no-untyped-def]
@@ -42,6 +82,46 @@ def create_engine_for_sqlite(db_path: str) -> Engine:
     apply_migrations(engine)
 
     return engine
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+
+
+def create_engine_for_postgresql(database_url: str) -> Engine:
+    """Create a synchronous SQLAlchemy engine for PostgreSQL.
+
+    Uses ``psycopg`` (v3) as the sync DBAPI driver.  The caller supplies a URL
+    with the ``postgresql+asyncpg://`` scheme (used as the canonical DAP URL);
+    this function rewrites it to ``postgresql+psycopg://`` for the sync engine.
+
+    Pool settings for a single long-running process:
+    - ``pool_size=5`` — modest default.
+    - ``max_overflow=10`` — burst headroom.
+    - ``pool_pre_ping=True`` — validate connections after idle periods
+      (k8s NodePort is behind NAT that drops idle TCP).
+    """
+    sync_url = _pg_sync_url(database_url)
+
+    engine = create_engine(
+        sync_url,
+        echo=False,
+        future=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+    )
+
+    Base.metadata.create_all(engine)
+    apply_migrations(engine)
+
+    return engine
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
