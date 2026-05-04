@@ -37,6 +37,7 @@ network confinement. The Python package must be installed in the engine's venv.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import logging
 import platform
@@ -62,7 +63,7 @@ class PythonFuncAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True, version=platform.python_version())
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912,PLR0915
         config = task.runtime_config
 
         callable_path = config.get("callable_path")
@@ -161,18 +162,12 @@ class PythonFuncAdapter(BaseAdapter):
         tokens_used: int | None = None
         cost_usd: float | None = None
         if isinstance(audit, dict):
-            raw_tokens = audit.get("tokens_used")
-            if raw_tokens is not None:
-                try:
-                    tokens_used = int(raw_tokens)
-                except (TypeError, ValueError):
-                    pass
-            raw_cost = audit.get("cost_usd")
-            if raw_cost is not None:
-                try:
-                    cost_usd = float(raw_cost)
-                except (TypeError, ValueError):
-                    pass
+            with contextlib.suppress(TypeError, ValueError):
+                if (v := audit.get("tokens_used")) is not None:
+                    tokens_used = int(v)
+            with contextlib.suppress(TypeError, ValueError):
+                if (v := audit.get("cost_usd")) is not None:
+                    cost_usd = float(v)
 
         return RuntimeResult(
             success=True,
