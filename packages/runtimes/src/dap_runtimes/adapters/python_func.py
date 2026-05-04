@@ -90,9 +90,7 @@ class PythonFuncAdapter(BaseAdapter):
         try:
             mod = importlib.import_module(module_path)
         except ImportError as exc:
-            raise RuntimeError(
-                f"python-func: cannot import '{callable_path}' — {exc}"
-            ) from exc
+            raise RuntimeError(f"python-func: cannot import '{callable_path}' — {exc}") from exc
 
         func = getattr(mod, func_name, _MISSING)
         if func is _MISSING:
@@ -119,9 +117,7 @@ class PythonFuncAdapter(BaseAdapter):
         start = time.monotonic()
         # timeout_ms=None means no timeout (run until completion).
         timeout_seconds = (
-            max(task.timeout_ms, 1) / MS_PER_SECOND
-            if task.timeout_ms is not None
-            else None
+            max(task.timeout_ms, 1) / MS_PER_SECOND if task.timeout_ms is not None else None
         )
 
         try:
@@ -151,8 +147,7 @@ class PythonFuncAdapter(BaseAdapter):
 
         if not isinstance(result, dict):
             return _failed(
-                f"python-func: '{callable_path}' must return a dict, "
-                f"got {type(result).__name__}",
+                f"python-func: '{callable_path}' must return a dict, got {type(result).__name__}",
                 duration_ms=_elapsed_ms(start),
             )
 
