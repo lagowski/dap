@@ -56,7 +56,7 @@ def test_postgresql_tables_created_on_startup(pg_client: TestClient) -> None:
     # Verify via a simple API call that touches the DB.
     response = pg_client.get("/projects")
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    assert isinstance(response.json()["items"], list)
 
 
 def test_pg_conn_string_conversion() -> None:
