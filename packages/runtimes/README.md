@@ -257,3 +257,63 @@ Przykład Ollama:
 
 Cancellation: httpx connection cancel'owane przez context manager
 (`async with`); engine pause/abort kończy request bez residue.
+
+## python-func
+
+Wykonuje dowolny Python callable (sync lub async) jako agenta DAP.
+Entrypoint rozwiązywany w momencie wywołania — instalacja pakietu
+nie wymaga restartu engine'a.
+
+### Sygnatura funkcji
+
+```python
+async def run(state: dict, config: dict) -> dict:
+    """
+    state  — dict budowany z pól przełączanych przez pass_prompt / pass_context.
+    config — runtime_config z definicji agenta.
+    returns — dict pól do scalenia z PipelineState.
+              Zarezerwowany klucz __audit: dict jest wyciągany przez adapter
+              i trafia do RuntimeResult.structured["audit"] (NIE do state_delta).
+    """
+    return {
+        "output_field": result_text,
+        "__audit": {"tokens_used": 1240, "cost_usd": 0.003},
+    }
+```
+
+Sync `def run(state, config)` też działa — adapter owija w `loop.run_in_executor(None, ...)`.
+
+`runtime_config`:
+
+| key             | type   | required | description                                                                         |
+| --------------- | ------ | :------: | ----------------------------------------------------------------------------------- |
+| `callable_path` | `str`  |    tak   | `"package.module:func_name"`. Pakiet musi być zainstalowany w venv engine'a.        |
+| `pass_prompt`   | `bool` |    no    | Czy wstrzyknąć `prompt_xml` do `state["prompt_xml"]`. Domyślnie `True`.             |
+| `pass_context`  | `bool` |    no    | Czy wstrzyknąć `RuntimeContext` do `state["context"]`. Domyślnie `False`.           |
+
+`RuntimeResult.structured`:
+
+| key           | type   | description                                                          |
+| ------------- | ------ | -------------------------------------------------------------------- |
+| `state_delta` | `dict` | Zwrot funkcji po usunięciu `__audit` — gotowy do scalenia ze statem. |
+| `audit`       | `dict` | Zawartość `__audit` z returna (tokeny, koszt, custom pola).          |
+
+### Przykład
+
+```json
+{
+  "runtime_id": "python-func",
+  "runtime_config": {
+    "callable_path": "cortex.nodes.mockup:run",
+    "pass_prompt": true
+  }
+}
+```
+
+### Model bezpieczeństwa (v0.1)
+
+**Single-user, local-trust.** Ten sam poziom zaufania co `bash` — callable
+działa z uprawnieniami procesu engine'a, **bez sandboxa, bez izolacji importów,
+bez confinementu sieci**. Pakiet musi być zainstalowany w venv engine'a.
+Multi-user setup wymaga najpierw auth (#38) i dodatkowej warstwy izolacji
+zanim ten runtime można wystawić niezaufanym definicjom agentów.
