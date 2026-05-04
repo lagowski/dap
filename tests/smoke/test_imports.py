@@ -60,7 +60,7 @@ def test_dap_runtimes_importable() -> None:
     # Registry działa
     registry = create_default_registry()
     assert isinstance(registry, RuntimeRegistry)
-    assert len(registry.list()) == 7
+    assert len(registry.list()) == 8
 
 
 def test_dap_engine_importable() -> None:

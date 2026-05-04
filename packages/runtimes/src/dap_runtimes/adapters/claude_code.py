@@ -104,7 +104,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         ]
 
         cwd = task.working_directory or os.getcwd()
-        timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
+        timeout_seconds = max(task.timeout_ms or 60_000, 1) / MS_PER_SECOND
         new_session = hasattr(os, "setsid")
         # Three-layer env (#65): engine env (with ANTHROPIC_API_KEY) →
         # project env_vars → per-agent runtime_config.env (highest).

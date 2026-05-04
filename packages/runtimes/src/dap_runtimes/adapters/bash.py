@@ -102,7 +102,7 @@ class BashAdapter(BaseAdapter):
             return _failed(env_error, duration_ms=0, command=command, shell=shell)
 
         cwd = task.working_directory or os.getcwd()
-        timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
+        timeout_seconds = max(task.timeout_ms or 60_000, 1) / MS_PER_SECOND
 
         start = time.monotonic()
         # start_new_session=True puts the subprocess in its own POSIX

@@ -96,6 +96,7 @@ export const AGENT_RUNTIME_IDS = [
   "aider",
   "bash",
   "http",
+  "python-func",
 ] as const;
 
 export type AgentRuntimeId = (typeof AGENT_RUNTIME_IDS)[number];
@@ -365,6 +366,42 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         label: "Static headers",
         kind: "json",
         description: "Optional dict of static headers sent with every request.",
+      },
+    ],
+  },
+
+  "python-func": {
+    runtime_id: "python-func",
+    fields: [
+      {
+        key: "callable_path",
+        label: "Callable path",
+        kind: "text",
+        required: true,
+        placeholder: "my_package.nodes.mockup:run",
+        description:
+          "Required. Python import path in 'module.path:func_name' format. "
+          + "The package must be installed in the engine's venv. "
+          + "Resolved at call time — no engine restart needed after install.",
+      },
+      {
+        key: "pass_prompt",
+        label: "Pass prompt_xml in state",
+        kind: "boolean",
+        default: true,
+        description:
+          "When enabled, state['prompt_xml'] is set to the rendered prompt template "
+          + "before calling the function. Disable if the function ignores the prompt.",
+      },
+      {
+        key: "pass_context",
+        label: "Pass runtime context in state",
+        kind: "boolean",
+        default: false,
+        description:
+          "When enabled, state['context'] is set to the task's RuntimeContext dict "
+          + "(run_id, pipeline_id, node_id, …). Useful for functions that need "
+          + "to write back to DAP or correlate logs.",
       },
     ],
   },

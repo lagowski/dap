@@ -37,7 +37,7 @@ def test_runtimes_list(client: TestClient) -> None:
     body = response.json()
     assert isinstance(body, list)
     ids = {a["id"] for a in body}
-    assert ids == {"bash", "http", "api-call", "claude-code", "gemini-cli", "codex", "aider"}
+    assert ids == {"bash", "http", "api-call", "claude-code", "gemini-cli", "codex", "aider", "python-func"}
     for adapter in body:
         assert "displayName" in adapter
         assert adapter["kind"] in {"cli", "api", "shell", "http"}

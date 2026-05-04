@@ -5,6 +5,7 @@ from dap_runtimes.adapters.claude_code import ClaudeCodeAdapter
 from dap_runtimes.adapters.codex import CodexAdapter
 from dap_runtimes.adapters.gemini_cli import GeminiCliAdapter
 from dap_runtimes.adapters.http import HttpAdapter
+from dap_runtimes.adapters.python_func import PythonFuncAdapter
 from dap_runtimes.registry import RuntimeRegistry, create_default_registry
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "CodexAdapter",
     "GeminiCliAdapter",
     "HttpAdapter",
+    "PythonFuncAdapter",
     "RuntimeRegistry",
     "create_default_registry",
 ]
