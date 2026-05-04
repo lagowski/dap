@@ -214,6 +214,7 @@ def _record_failure(
         duration_ms=int((ended_at - started_at).total_seconds() * 1000),
         status="failed",
         error_message=error,
+        extra_data=None,
     )
     ctx.session.add(log)
     state_diff = {
@@ -252,6 +253,14 @@ def _save_execution_log(
         duration_ms=result.duration_ms,
         status="success" if result.success else "failed",
         error_message="; ".join(result.errors) if result.errors else None,
+        # ``extra_data`` stores domain-specific audit metadata produced by
+        # python-func adapters.  A python-func node signals audit data by
+        # including an ``__audit`` key in its return dict; the adapter moves
+        # that dict to ``result.structured["audit"]`` before returning.
+        # CLI/LLM adapters never set "audit", so this evaluates to ``None``
+        # for those runtimes.  The shape is intentionally open — see
+        # ``NodeExecutionLog.extra_data`` for documented common keys.
+        extra_data=result.structured.get("audit") if result.structured else None,
     )
     ctx.session.add(log)
 
@@ -285,7 +294,9 @@ def _route_extensions(state: PipelineState, diff: dict[str, Any]) -> dict[str, A
     Known top-level keys are passed through unchanged.  Unknown keys (those not
     in ``PipelineState.model_fields``) are merged into the existing
     ``state.extensions`` dict so callers don't need to know the field name.
-    The sentinel key ``__audit`` is silently dropped (internal bookkeeping).
+    The sentinel key ``__audit`` is silently dropped here — it has already
+    been extracted into ``NodeExecutionLogORM.extra_data`` by
+    ``_save_execution_log`` and must not propagate into pipeline state.
     """
     known = set(PipelineState.model_fields.keys())
     top_level = {k: v for k, v in diff.items() if k in known}

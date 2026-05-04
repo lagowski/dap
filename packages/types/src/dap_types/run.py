@@ -66,3 +66,18 @@ class NodeExecutionLog(BaseModel):
 
     status: NodeStatus
     error_message: str | None = None
+    extra_data: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Adapter-supplied audit metadata, populated from ``result.structured['audit']`` "
+            "when a python-func node returns ``__audit`` in its output dict. "
+            "Shape is intentionally open — the engine does not validate or interpret keys. "
+            "Common keys written by python-func adapters: "
+            "``github_user`` (str), ``section`` (str), "
+            "``content_before`` / ``content_after`` (str, truncated diffs), "
+            "``operation`` (str, e.g. 'create_branch' / 'push' / 'create_pr'), "
+            "``commit_sha`` (str), ``tokens_used`` (int), ``cost_usd`` (float). "
+            "Consumers (API, dashboard) should treat every key as optional. "
+            "``None`` for CLI/LLM adapter nodes that do not produce audit data."
+        ),
+    )

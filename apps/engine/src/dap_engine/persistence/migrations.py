@@ -100,8 +100,19 @@ def _001_runs_add_project_id(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE runs ADD COLUMN project_id TEXT"))
 
 
+def _002_node_execution_logs_add_extra_data(conn: Connection) -> None:
+    """#145 — add ``node_execution_logs.extra_data`` for python-func audit payloads."""
+    if _column_exists(conn, "node_execution_logs", "extra_data"):
+        return
+    conn.execute(text("ALTER TABLE node_execution_logs ADD COLUMN extra_data TEXT"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
+    Migration(
+        name="002_node_execution_logs_add_extra_data",
+        apply=_002_node_execution_logs_add_extra_data,
+    ),
 ]
 
 
