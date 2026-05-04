@@ -256,5 +256,6 @@ class NodeExecutionLogORM(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extra_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     run: Mapped[RunORM] = relationship(back_populates="node_logs")

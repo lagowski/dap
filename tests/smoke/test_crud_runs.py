@@ -263,3 +263,85 @@ def test_pipeline_state_extensions_round_trip(
     assert response.status_code == 200
     returned = response.json()
     assert returned["extensions"] == ext_data
+
+
+def test_node_log_extra_data_round_trip(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """extra_data stored on NodeExecutionLogORM is returned by GET /runs/{id}/nodes/{node_id}."""
+    client, factory = client_and_factory
+    run_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    audit_payload: dict[str, Any] = {
+        "github_user": "Dixter999",
+        "section": "mockup",
+        "content_before": "old content",
+        "content_after": "new content",
+        "tokens_used": 1240,
+        "cost_usd": 0.003,
+    }
+    initial_state: dict[str, Any] = {
+        "run_id": run_id,
+        "repo": "rafeekpro/test-repo",
+        "branch": "main",
+        "commit_sha": None,
+        "available_issues": [],
+        "selected_issue_ids": [],
+        "tests_generated": False,
+        "test_files": [],
+        "test_generation_errors": [],
+        "max_attempts": 3,
+        "attempt": 0,
+        "tests_passed": False,
+        "last_test_output": "",
+        "modified_files": [],
+        "implementation_notes": None,
+        "verification_status": "pending",
+        "verification_reason": None,
+        "final_status": "running",
+        "extensions": {},
+    }
+    with factory() as session:
+        run = RunORM(
+            id=run_id,
+            pipeline_id="pipe-audit",
+            pipeline_version=1,
+            trigger_source="cli",
+            initial_state=initial_state,
+            current_node=None,
+            node_statuses={},
+            final_status="success",
+            started_at=now,
+            ended_at=now,
+            tokens_used=0,
+            cost_usd=0.0,
+        )
+        log = NodeExecutionLogORM(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            node_id="audit_node",
+            agent_id="agent-audit",
+            runtime_id="python-func",
+            started_at=now,
+            ended_at=now,
+            prompt_xml="<agent_prompt/>",
+            stdout="",
+            stderr="",
+            output_json={"mockup_section": "text", "audit": audit_payload},
+            tokens_used=1240,
+            cost_usd=0.003,
+            duration_ms=500,
+            status="success",
+            error_message=None,
+            extra_data=audit_payload,
+        )
+        session.add(run)
+        session.add(log)
+        session.commit()
+
+    response = client.get(f"/runs/{run_id}/nodes/audit_node")
+    assert response.status_code == 200
+    returned = response.json()
+    assert returned["extra_data"] == audit_payload
+    assert returned["extra_data"]["github_user"] == "Dixter999"
+    assert returned["extra_data"]["section"] == "mockup"

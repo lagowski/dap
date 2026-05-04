@@ -161,6 +161,7 @@ def _node_log_from_orm(log: NodeExecutionLogORM) -> NodeExecutionLog:
         duration_ms=log.duration_ms,
         status=log.status,  # type: ignore[arg-type]
         error_message=log.error_message,
+        extra_data=log.extra_data,
     )
 
 
