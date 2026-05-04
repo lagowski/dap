@@ -18,7 +18,7 @@ def _task(
     *,
     callable_path: str | None = None,
     prompt_xml: str = "<prompt>hello</prompt>",
-    timeout_ms: int = 5000,
+    timeout_ms: int | None = 5000,
     pass_prompt: bool | None = None,
     pass_context: bool | None = None,
 ) -> RuntimeTask:
@@ -64,10 +64,20 @@ async def test_missing_callable_path_returns_error(adapter: PythonFuncAdapter) -
 
 
 @pytest.mark.asyncio
-async def test_callable_path_without_colon_returns_error(adapter: PythonFuncAdapter) -> None:
-    result = await adapter.execute(_task(callable_path="no_colon_here"))
+async def test_callable_path_without_separator_returns_error(adapter: PythonFuncAdapter) -> None:
+    # No colon AND no dot — ambiguous, rejected.
+    result = await adapter.execute(_task(callable_path="nodotnocolon"))
     assert result.success is False
     assert any("callable_path" in err for err in result.errors)
+
+
+@pytest.mark.asyncio
+async def test_callable_path_dot_notation(adapter: PythonFuncAdapter) -> None:
+    # "os.path.join" resolves module="os.path", func="join".
+    # os.path.join returns a str, not a dict — adapter fails on return type.
+    result = await adapter.execute(_task(callable_path="os.path.join"))
+    assert result.success is False
+    assert any("dict" in err for err in result.errors)
 
 
 @pytest.mark.asyncio
@@ -232,6 +242,20 @@ async def test_pass_prompt_false_omits_prompt_xml(
 
 
 # ---------------------------------------------------------------------------
+# timeout=None runs without limit
+@pytest.mark.asyncio
+async def test_timeout_none_runs_without_limit(adapter: PythonFuncAdapter) -> None:
+    import sys, types
+    mod = types.ModuleType("_dap_test_notimeout_mod")
+    mod.run = lambda state, config: {"done": True}  # type: ignore[attr-defined]
+    sys.modules["_dap_test_notimeout_mod"] = mod
+    try:
+        result = await adapter.execute(_task(callable_path="_dap_test_notimeout_mod:run", timeout_ms=None))
+        assert result.success
+    finally:
+        del sys.modules["_dap_test_notimeout_mod"]
+
+
 # timeout
 # ---------------------------------------------------------------------------
 

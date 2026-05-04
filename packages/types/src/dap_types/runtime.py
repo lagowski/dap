@@ -20,7 +20,7 @@ class RuntimeTask(BaseModel):
     working_directory: str
     allowed_files: list[str] | None = None
     allowed_tools: list[str] | None = None
-    timeout_ms: int = 60_000
+    timeout_ms: int | None = 60_000
     budget_usd: float | None = None
     runtime_config: dict[str, Any] = Field(default_factory=dict)
     context: RuntimeContext = Field(default_factory=RuntimeContext)

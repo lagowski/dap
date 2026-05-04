@@ -73,14 +73,17 @@ class PythonFuncAdapter(BaseAdapter):
                 duration_ms=0,
             )
 
-        if ":" not in callable_path:
+        if ":" in callable_path:
+            module_path, func_name = callable_path.rsplit(":", 1)
+        elif "." in callable_path:
+            # Dot-notation fallback: "a.b.c" → module "a.b", func "c"
+            module_path, func_name = callable_path.rsplit(".", 1)
+        else:
             return _failed(
-                f"python-func: callable_path must be 'module.path:func_name', "
-                f"got {callable_path!r}",
+                f"python-func: callable_path must be 'module.path:func_name' "
+                f"or 'module.path.func_name', got {callable_path!r}",
                 duration_ms=0,
             )
-
-        module_path, func_name = callable_path.rsplit(":", 1)
 
         # Resolve at invocation time — allows package installs without engine restart.
         try:
@@ -113,7 +116,12 @@ class PythonFuncAdapter(BaseAdapter):
             state["context"] = task.context.model_dump()
 
         start = time.monotonic()
-        timeout_seconds = max(task.timeout_ms, 1) / MS_PER_SECOND
+        # timeout_ms=None means no timeout (run until completion).
+        timeout_seconds = (
+            max(task.timeout_ms, 1) / MS_PER_SECOND
+            if task.timeout_ms is not None
+            else None
+        )
 
         try:
             if asyncio.iscoroutinefunction(func):
@@ -122,7 +130,10 @@ class PythonFuncAdapter(BaseAdapter):
                 loop = asyncio.get_running_loop()
                 awaitable = loop.run_in_executor(None, func, state, config)
 
-            result: Any = await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+            if timeout_seconds is not None:
+                result: Any = await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+            else:
+                result = await awaitable
 
         except TimeoutError:
             return _failed(
