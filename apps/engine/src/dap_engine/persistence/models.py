@@ -171,7 +171,7 @@ class ProjectORM(Base):
 
     working_directory: Mapped[str | None] = mapped_column(String, nullable=True)
     repo_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    default_branch: Mapped[str] = mapped_column(String, nullable=False, default="main")
+    default_branch: Mapped[str] = mapped_column(String, nullable=False, default="develop")
 
     pipelines: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     env_vars: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)

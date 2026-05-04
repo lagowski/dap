@@ -182,7 +182,7 @@ class ProjectCreate(BaseModel):
 
     working_directory: str | None = None
     repo_url: str | None = None
-    default_branch: str = Field(default="main", min_length=1, max_length=200)
+    default_branch: str = Field(default="develop", min_length=1, max_length=200)
 
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)
@@ -206,7 +206,7 @@ class ProjectUpdate(BaseModel):
 
     working_directory: str | None = None
     repo_url: str | None = None
-    default_branch: str = Field(default="main", min_length=1, max_length=200)
+    default_branch: str = Field(default="develop", min_length=1, max_length=200)
 
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)

@@ -99,7 +99,7 @@ def test_create_project_minimal(client: TestClient) -> None:
     response = client.post("/projects", json={"name": "Minimal"})
     assert response.status_code == 201
     body = response.json()
-    assert body["default_branch"] == "main"
+    assert body["default_branch"] == "develop"
     assert body["pipelines"] == {}
     assert body["env_vars"] == {}
     assert body["working_directory"] is None

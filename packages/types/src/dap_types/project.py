@@ -44,7 +44,7 @@ class Project(BaseModel):
     # a single-user local-trust setup works without auth plumbing.
     working_directory: str | None = None
     repo_url: str | None = None
-    default_branch: str = "main"
+    default_branch: str = "develop"
 
     # Workflow bindings. Keys are kinds (recommended or custom),
     # values are pipeline ids. The engine validates that every value

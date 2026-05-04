@@ -74,7 +74,7 @@ def _create_project(
     *,
     pipelines: dict[str, str] | None = None,
     repo_url: str | None = None,
-    default_branch: str = "main",
+    default_branch: str = "develop",
     working_directory: str | None = None,
     env_vars: dict[str, str] | None = None,
     name: str = "Demo",
