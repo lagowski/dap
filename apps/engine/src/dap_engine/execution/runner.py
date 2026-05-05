@@ -48,6 +48,22 @@ class CheckpointNotFoundError(RunnerError):
     """Raised when no checkpoint matches the requested rewind target."""
 
 
+class RunnerInterrupt(Exception):
+    """Raised when the graph pauses at an approval-required node (interrupt_before).
+
+    This is a *normal* stop, not an error — the run should be marked as
+    ``paused`` and resumed later via ``POST /runs/{id}/resume`` or the
+    semantically clearer ``POST /runs/{id}/nodes/{node_id}/approve``.
+
+    Attributes:
+        next_nodes: LangGraph nodes staged as next when the interrupt fired.
+    """
+
+    def __init__(self, next_nodes: list[str]) -> None:
+        self.next_nodes = next_nodes
+        super().__init__(f"Pipeline paused before: {next_nodes}")
+
+
 @dataclasses.dataclass(frozen=True)
 class _ProjectContext:
     """Project context propagated into NodeContext (#65).
@@ -126,6 +142,8 @@ class PipelineRunner:
 
         invoke_input: PipelineState | None = None if resume else initial_state
 
+        approval_nodes = set(pipeline.defaults.approval_required_nodes)
+
         try:
             result = await graph.ainvoke(invoke_input, config=config)
         except PauseRequestedError:
@@ -134,6 +152,20 @@ class PipelineRunner:
             logger.exception("pipeline execution failed for run %s", run_id)
             msg = f"Execution failed: {type(exc).__name__}: {exc}"
             raise RunnerError(msg) from exc
+
+        # Detect interrupt_before pause: when approval_required_nodes is configured
+        # and the graph stopped early, aget_state().next contains the gated node.
+        # This is a normal stop — raise RunnerInterrupt so the caller marks the
+        # run as paused rather than finalized (#164).
+        if approval_nodes and self.checkpointer is not None:
+            checkpoint_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
+            snap = await graph.aget_state(checkpoint_config)
+            pending = list(snap.next) if snap.next else []
+            if pending and any(n in approval_nodes for n in pending):
+                logger.info(
+                    "run %s interrupted before approval node(s): %s", run_id, pending
+                )
+                raise RunnerInterrupt(next_nodes=pending)
 
         return PipelineState.model_validate(result)
 
@@ -268,7 +300,14 @@ class PipelineRunner:
             else:
                 _add_conditional_edges(builder, source, edges)
 
-        return builder.compile(checkpointer=self.checkpointer)
+        # approval_required_nodes drives interrupt_before so LangGraph pauses
+        # automatically before those nodes. RunnerInterrupt is raised in run()
+        # when the graph stops early at one of these gates (#164).
+        interrupt_nodes = list(pipeline.defaults.approval_required_nodes)
+        return builder.compile(
+            checkpointer=self.checkpointer,
+            interrupt_before=interrupt_nodes or [],
+        )
 
     def _load_project_context(self, run_id: str) -> _ProjectContext | None:
         """Resolve the run's project, if any, into a ``_ProjectContext``.
