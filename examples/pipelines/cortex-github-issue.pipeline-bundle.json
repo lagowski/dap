@@ -1,0 +1,249 @@
+{
+  "schema_version": "pipeline-export/1",
+  "_comment": "Cortex 13-agent GitHub Issue Pipeline expressed as a DAP bundle.\n\nARCHITECTURE\n  Phase 1 (enrichment): mockup → specify → cicd → dispatcher → finalize\n  [human gate]\n  Phase 2 (execution):  coder → designer → documenter\n  [human gate]\n  Phase 3 (merge):      code_reviewer → tester → pr_creator → reviewer\n  [human gate]\n  pr_merger\n\nSTATE CONTRACT\n  Cortex-specific fields (issue_url, repo, issue_number, run_id, …)\n  live in PipelineState.extensions so the generic schema is not polluted.\n  Each node reads extensions via the cortex.state_adapter module.\n\nDEPENDENCIES\n  cortex-project package must be installed in the DAP engine venv:\n    pip install -e /path/to/cortex-project  (or uv add via path dep)\n  Environment variables required (same as standalone cortex run):\n    CORTEX_GH_TOKEN_READ, CORTEX_GH_TOKEN_ISSUES, CORTEX_GH_TOKEN_CODE,\n    CORTEX_GH_TOKEN_MERGE, CORTEX_DATABASE_URL",
+  "pipeline": {
+    "name": "Cortex GitHub Issue Pipeline",
+    "description": "13-agent pipeline: GitHub issue → Phase 1 enrichment → Phase 2 coding → Phase 3 PR merge. Port of the standalone Cortex pipeline to a DAP bundle.",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "mockup",
+    "nodes": [
+      { "id": "mockup",       "agent_id": "cx_mockup",       "position": { "x":    0, "y":   0 } },
+      { "id": "specify",      "agent_id": "cx_specify",      "position": { "x":  220, "y":   0 } },
+      { "id": "cicd",         "agent_id": "cx_cicd",         "position": { "x":  440, "y":   0 } },
+      { "id": "dispatcher",   "agent_id": "cx_dispatcher",   "position": { "x":  660, "y":   0 } },
+      { "id": "finalize",     "agent_id": "cx_finalize",     "position": { "x":  880, "y":   0 } },
+      { "id": "phase1_gate",  "agent_id": "cx_human_gate",   "position": { "x": 1100, "y":   0 } },
+      { "id": "coder",        "agent_id": "cx_coder",        "position": { "x": 1320, "y":   0 } },
+      { "id": "designer",     "agent_id": "cx_designer",     "position": { "x": 1540, "y":   0 } },
+      { "id": "documenter",   "agent_id": "cx_documenter",   "position": { "x": 1760, "y":   0 } },
+      { "id": "phase2_gate",  "agent_id": "cx_human_gate",   "position": { "x": 1980, "y":   0 } },
+      { "id": "code_reviewer","agent_id": "cx_code_reviewer","position": { "x": 2200, "y":   0 } },
+      { "id": "tester",       "agent_id": "cx_tester",       "position": { "x": 2420, "y":   0 } },
+      { "id": "pr_creator",   "agent_id": "cx_pr_creator",   "position": { "x": 2640, "y":   0 } },
+      { "id": "reviewer",     "agent_id": "cx_reviewer",     "position": { "x": 2860, "y":   0 } },
+      { "id": "phase3_gate",  "agent_id": "cx_human_gate",   "position": { "x": 3080, "y":   0 } },
+      { "id": "pr_merger",    "agent_id": "cx_pr_merger",    "position": { "x": 3300, "y":   0 } }
+    ],
+    "edges": [
+      { "id": "e01", "source": "__start__",    "target": "mockup" },
+      { "id": "e02", "source": "mockup",       "target": "specify" },
+      { "id": "e03", "source": "specify",      "target": "cicd" },
+      { "id": "e04", "source": "cicd",         "target": "dispatcher" },
+      { "id": "e05", "source": "dispatcher",   "target": "finalize" },
+      { "id": "e06", "source": "finalize",     "target": "phase1_gate" },
+      { "id": "e07", "source": "phase1_gate",  "target": "coder" },
+      { "id": "e08", "source": "coder",        "target": "designer" },
+      { "id": "e09", "source": "designer",     "target": "documenter" },
+      { "id": "e10", "source": "documenter",   "target": "phase2_gate" },
+      { "id": "e11", "source": "phase2_gate",  "target": "code_reviewer" },
+      { "id": "e12", "source": "code_reviewer","target": "tester" },
+      { "id": "e13", "source": "tester",       "target": "pr_creator" },
+      { "id": "e14", "source": "pr_creator",   "target": "reviewer" },
+      { "id": "e15", "source": "reviewer",     "target": "phase3_gate" },
+      { "id": "e16", "source": "phase3_gate",  "target": "pr_merger" },
+      { "id": "e17", "source": "pr_merger",    "target": "__end__" }
+    ],
+    "defaults": {
+      "max_attempts": 3,
+      "budget_limit_usd": 5.0,
+      "approval_required_nodes": ["phase1_gate", "phase2_gate", "phase3_gate"]
+    }
+  },
+  "bundled_agents": {
+    "cx_mockup": {
+      "name": "Cortex Mockup",
+      "description": "Phase 1 — structures a raw GitHub issue into the standard 5-section template.",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.mockup:run"
+      },
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_specify": {
+      "name": "Cortex Specify",
+      "description": "Phase 1 — fills Technical Specification (target files, deps, arch impact, commands).",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.specify:run"
+      },
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 180000
+    },
+    "cx_cicd": {
+      "name": "Cortex CI/CD",
+      "description": "Phase 1 — fills Test Criteria (RED/GREEN/REFACTOR test cases).",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.cicd:run"
+      },
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_dispatcher": {
+      "name": "Cortex Dispatcher",
+      "description": "Phase 1 — generates Task Assignment: routes work to coder/designer/documenter with budgets.",
+      "role": "task_selector",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.dispatcher:run"
+      },
+      "input_schema": [],
+      "output_schema": ["task_assignments"],
+      "timeout_ms": 120000
+    },
+    "cx_finalize": {
+      "name": "Cortex Finalize",
+      "description": "Phase 1 — reviews all enrichment sections, sets issue_ready=True/False.",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.finalize:run"
+      },
+      "input_schema": [],
+      "output_schema": ["issue_ready"],
+      "timeout_ms": 180000
+    },
+    "cx_human_gate": {
+      "name": "Human Approval Gate",
+      "description": "Pauses the pipeline and waits for operator approval (POST /runs/{id}/resume) before continuing.",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:run"
+      },
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 86400000,
+      "_note": "timeout_ms = 24h. Operator calls POST /runs/{id}/resume to continue."
+    },
+    "cx_coder": {
+      "name": "Cortex Coder",
+      "description": "Phase 2 — executes coding tasks via Claude Code CLI. Creates branch, implements, commits, pushes.",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.coder:run"
+      },
+      "input_schema": ["task_assignments"],
+      "output_schema": ["branch_name", "commits", "files_changed"],
+      "timeout_ms": 1800000,
+      "_note": "timeout_ms = 30 min. Claude Code may run long multi-turn sessions."
+    },
+    "cx_designer": {
+      "name": "Cortex Designer",
+      "description": "Phase 2 — CSS/UI changes assigned by dispatcher. Skips if no designer tasks.",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.designer:run"
+      },
+      "input_schema": ["task_assignments"],
+      "output_schema": ["branch_name", "commits"],
+      "timeout_ms": 900000
+    },
+    "cx_documenter": {
+      "name": "Cortex Documenter",
+      "description": "Phase 2 — documentation-only changes. Skips if no documenter tasks.",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.documenter:run"
+      },
+      "input_schema": ["task_assignments"],
+      "output_schema": ["branch_name", "commits"],
+      "timeout_ms": 600000
+    },
+    "cx_code_reviewer": {
+      "name": "Cortex Code Reviewer",
+      "description": "Phase 3 — diffs branch against main; approves or routes back to coder retry loop.",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.code_reviewer:run"
+      },
+      "input_schema": ["branch_name"],
+      "output_schema": ["review_verdict"],
+      "timeout_ms": 120000
+    },
+    "cx_tester": {
+      "name": "Cortex Tester",
+      "description": "Phase 3 — runs the project test suite against the coder branch. Routes to retry_prepare on failure.",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.tester:run"
+      },
+      "input_schema": ["branch_name"],
+      "output_schema": ["test_result"],
+      "timeout_ms": 600000
+    },
+    "cx_pr_creator": {
+      "name": "Cortex PR Creator",
+      "description": "Phase 3 — creates the GitHub PR from the coder branch to main.",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.pr_creator:run"
+      },
+      "input_schema": ["branch_name"],
+      "output_schema": ["pr_url", "pr_number"],
+      "timeout_ms": 120000
+    },
+    "cx_reviewer": {
+      "name": "Cortex Reviewer",
+      "description": "Phase 3 — final code review of the PR. Produces DECISION: APPROVE or REJECT verdict.",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.reviewer:run"
+      },
+      "input_schema": ["pr_url"],
+      "output_schema": ["reviewer_verdict"],
+      "timeout_ms": 180000
+    },
+    "cx_pr_merger": {
+      "name": "Cortex PR Merger",
+      "description": "Phase 3 — merges the PR using rlagowski token (GH_TOKEN_MERGE). Different GitHub user enforces code/merge separation.",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.pr_merger:run"
+      },
+      "input_schema": ["pr_url", "pr_number"],
+      "output_schema": [],
+      "timeout_ms": 120000
+    }
+  },
+  "install_instructions": {
+    "summary": "Install cortex-project package in DAP engine venv, set env vars, import bundle.",
+    "steps": [
+      "1. Install: cd /path/to/dap && uv add --path /path/to/cortex-project",
+      "2. Set env vars in dap-engine .env.local — see LAGOVALUT/dap/!env.md for token list",
+      "3. Start dap-engine with DAP_DATABASE_URL pointing at the dap PostgreSQL database",
+      "4. Import bundle: POST /pipelines/import with this JSON as body",
+      "5. Create a run: POST /projects/{cortex_project_id}/run/github-issue with {\"issue_url\": \"https://github.com/owner/repo/issues/N\"} in extensions",
+      "6. Approve gates: POST /runs/{id}/resume after each phase completes"
+    ],
+    "env_vars": [
+      "DAP_DATABASE_URL=postgresql+asyncpg://dap:...@10.0.0.5:30432/dap",
+      "CORTEX_GH_TOKEN_READ=ghp_...",
+      "CORTEX_GH_TOKEN_ISSUES=ghp_...",
+      "CORTEX_GH_TOKEN_CODE=ghp_...",
+      "CORTEX_GH_TOKEN_MERGE=ghp_...",
+      "CORTEX_DATABASE_URL=postgresql://cortex_project:...@10.0.0.5:30432/cortex_project"
+    ],
+    "known_gaps": [
+      "human_gate (cx_human_gate) requires cortex.dap_steps.human_gate module — not yet implemented, use DAP pause/resume directly for v0.",
+      "State adapter: Cortex nodes read state['repo'], state['issue_number'] etc. directly. When running inside DAP, these must come from state['extensions']. cortex.state_adapter (Cortex #225) handles this — verify it's wired.",
+      "coder/designer/documenter use Claude Code CLI subprocess — DAP_WORKING_DIR must point to the project workspace clone."
+    ]
+  }
+}
