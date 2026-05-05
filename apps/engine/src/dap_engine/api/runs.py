@@ -35,7 +35,6 @@ from dap_engine.execution import (
     REWIND_RETRY,
     REWIND_SKIP,
     CheckpointNotFoundError,
-    PauseRequestedError,
     PipelineRunner,
     RunnerError,
     RunnerInterrupt,
@@ -204,11 +203,6 @@ async def _execute_run_background(
                     initial_state=initial_state,
                     resume=resume,
                 )
-            except PauseRequestedError:
-                logger.info("run %s paused by node via __pause sentinel", run_id)
-                repo.pause_run(bg_session, run_id)
-                bg_session.commit()
-                return
             except RunnerInterrupt:
                 # Graph paused at an approval-required node (interrupt_before).
                 # This is a normal stop — mark run as paused so the operator
@@ -609,7 +603,7 @@ async def _do_node_intervention(
     return repo.get_run(session, run_id)
 
 
-async def _execute_rewind_background(  # noqa: PLR0915
+async def _execute_rewind_background(
     *,
     run_id: str,
     pipeline_id: str,
@@ -654,11 +648,6 @@ async def _execute_rewind_background(  # noqa: PLR0915
                     target_node=target_node,
                     mode=mode,
                 )
-            except PauseRequestedError:
-                logger.info("rewind run %s paused by node via __pause sentinel", run_id)
-                repo.pause_run(bg_session, run_id)
-                bg_session.commit()
-                return
             except RunnerInterrupt:
                 repo.pause_run(bg_session, run_id)
                 bg_session.commit()

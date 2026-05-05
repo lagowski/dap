@@ -156,7 +156,6 @@ class PythonFuncAdapter(BaseAdapter):
             )
 
         duration_ms = _elapsed_ms(start)
-        pause_requested: bool = bool(result.pop("__pause", False))
         audit: dict[str, Any] = result.pop("__audit", {}) or {}
 
         tokens_used: int | None = None
@@ -177,7 +176,6 @@ class PythonFuncAdapter(BaseAdapter):
             structured={"state_delta": result, "audit": audit},
             tokens_used=tokens_used,
             cost_usd=cost_usd,
-            pause_requested=pause_requested,
         )
 
 

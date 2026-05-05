@@ -1,5 +1,4 @@
 from dap_engine.execution.conditions import evaluate_condition
-from dap_engine.execution.node_executor import PauseRequestedError
 from dap_engine.execution.run_registry import RunRegistry
 from dap_engine.execution.runner import (
     REWIND_RETRY,
@@ -15,7 +14,6 @@ __all__ = [
     "REWIND_RETRY",
     "REWIND_SKIP",
     "CheckpointNotFoundError",
-    "PauseRequestedError",
     "PipelineRunner",
     "RunRegistry",
     "RunnerError",
