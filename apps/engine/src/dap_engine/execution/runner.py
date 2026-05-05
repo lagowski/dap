@@ -162,9 +162,7 @@ class PipelineRunner:
             snap = await graph.aget_state(checkpoint_config)
             pending = list(snap.next) if snap.next else []
             if pending and any(n in approval_nodes for n in pending):
-                logger.info(
-                    "run %s interrupted before approval node(s): %s", run_id, pending
-                )
+                logger.info("run %s interrupted before approval node(s): %s", run_id, pending)
                 raise RunnerInterrupt(next_nodes=pending)
 
         return PipelineState.model_validate(result)
