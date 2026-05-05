@@ -96,3 +96,35 @@ def test_type_mismatch_returns_false() -> None:
     """Comparing string field with int → no crash, returns False."""
     cond = ComparisonCondition(field="repo", operator=">", value=42)
     assert evaluate_condition(cond, _state(repo="my-repo")) is False
+
+
+# ---------------------------------------------------------------------------
+# Dot-notation traversal (extensions.* paths)
+# ---------------------------------------------------------------------------
+
+
+def test_dot_notation_extensions_review_status_eq() -> None:
+    cond = ComparisonCondition(field="extensions.review_status", operator="==", value="clean")
+    assert evaluate_condition(cond, _state(extensions={"review_status": "clean"})) is True
+
+
+def test_dot_notation_extensions_review_status_eq_mismatch() -> None:
+    cond = ComparisonCondition(field="extensions.review_status", operator="==", value="clean")
+    assert evaluate_condition(cond, _state(extensions={"review_status": "needs_work"})) is False
+
+
+def test_dot_notation_extensions_review_attempts_lt() -> None:
+    cond = ComparisonCondition(field="extensions.review_attempts", operator="<", value=2)
+    assert evaluate_condition(cond, _state(extensions={"review_attempts": 1})) is True
+    assert evaluate_condition(cond, _state(extensions={"review_attempts": 2})) is False
+
+
+def test_dot_notation_missing_nested_key_returns_false() -> None:
+    cond = ComparisonCondition(field="extensions.nonexistent", operator="==", value="x")
+    assert evaluate_condition(cond, _state(extensions={})) is False
+
+
+def test_dot_notation_top_level_still_works() -> None:
+    """Dot-notation doesn't break plain (non-dotted) field access."""
+    cond = ComparisonCondition(field="tests_passed", operator="==", value=True)
+    assert evaluate_condition(cond, _state(tests_passed=True)) is True

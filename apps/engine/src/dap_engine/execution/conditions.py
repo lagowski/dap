@@ -37,10 +37,28 @@ def evaluate_condition(condition: EdgeCondition, state: PipelineState) -> bool:
 
 def _evaluate_comparison(condition: ComparisonCondition, state: PipelineState) -> bool:
     state_dict = state.model_dump()
-    if condition.field not in state_dict:
+    actual = _get_field(state_dict, condition.field)
+    if actual is _MISSING:
         return False
-    actual: Any = state_dict[condition.field]
     return _apply_operator(actual, condition.operator, condition.value)
+
+
+_MISSING = object()
+
+
+def _get_field(data: dict[str, Any], field: str) -> Any:
+    """Traverse *data* following dot-separated *field* path.
+
+    Returns ``_MISSING`` sentinel when any segment is absent or a
+    non-dict intermediate is encountered.
+    """
+    parts = field.split(".")
+    current: Any = data
+    for part in parts:
+        if not isinstance(current, dict) or part not in current:
+            return _MISSING
+        current = current[part]
+    return current
 
 
 _OPERATORS: dict[ComparisonOperator, Any] = {
