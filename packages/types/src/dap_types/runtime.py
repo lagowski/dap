@@ -44,6 +44,7 @@ class RuntimeResult(BaseModel):
     cost_usd: float | None = None
     duration_ms: int = 0
     errors: list[str] = Field(default_factory=list)
+    pause_requested: bool = False
 
 
 class HealthStatus(BaseModel):
