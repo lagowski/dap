@@ -7,6 +7,7 @@ from dap_engine.execution.runner import (
     CheckpointNotFoundError,
     PipelineRunner,
     RunnerError,
+    RunnerInterrupt,
 )
 from dap_engine.execution.validator import ValidationResult, validate_pipeline_dag
 
@@ -18,6 +19,7 @@ __all__ = [
     "PipelineRunner",
     "RunRegistry",
     "RunnerError",
+    "RunnerInterrupt",
     "ValidationResult",
     "evaluate_condition",
     "validate_pipeline_dag",

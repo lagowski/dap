@@ -58,6 +58,10 @@ def _enable_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # typ
     cursor.execute("PRAGMA journal_mode = WAL")
     cursor.execute("PRAGMA synchronous = NORMAL")
     cursor.execute("PRAGMA foreign_keys = ON")
+    # Allow up to 5 s of retry before raising "database is locked". Needed
+    # when the node executor opens a short-lived log session concurrently
+    # with the long-lived background session (#162).
+    cursor.execute("PRAGMA busy_timeout = 5000")
     cursor.close()
 
 
@@ -69,6 +73,10 @@ def create_engine_for_sqlite(db_path: str) -> Engine:
         f"sqlite:///{absolute}",
         echo=False,
         future=True,
+        # Allow up to 10 s of busy-wait when another connection holds a write
+        # lock. Needed when node_executor opens a short-lived log session
+        # concurrently with the long-lived background session (#162).
+        connect_args={"timeout": 10},
     )
     event.listen(engine, "connect", _enable_sqlite_pragmas)
 

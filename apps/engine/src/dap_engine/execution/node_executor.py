@@ -146,7 +146,12 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             prompt_xml=prompt_xml,
             working_directory=ctx.project_working_directory or ".",
             timeout_ms=ctx.timeout_ms,
-            runtime_config=ctx.merged_runtime_config,
+            # Inject full pipeline state so python-func callables can access
+            # top-level and extensions fields without a separate state fetch.
+            runtime_config={
+                **ctx.merged_runtime_config,
+                "__pipeline_state": state.model_dump(mode="json"),
+            },
             project_env_vars=ctx.project_env_vars,
         )
 
@@ -155,7 +160,41 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
         result: RuntimeResult = await adapter.execute(task)
         ended_at = datetime.now(UTC)
 
-        # 4. Record execution log + snapshot
+        if not result.success:
+            error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
+            state_diff: dict[str, Any] = {
+                "final_status": "failed",
+                "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
+            }
+        else:
+            # python-func adapter wraps the callable's return dict in
+            # structured["state_delta"]. When that key is present, route the
+            # full delta through _route_extensions so Cortex-specific keys
+            # (task_assignments, decisions, issue_comments, …) land in
+            # extensions instead of being silently dropped by
+            # _merge_structured_into_state (which only keeps PipelineState
+            # top-level fields).
+            #
+            # Other adapters (bash, claude_code, api-call) put state-shaped
+            # keys directly at the top level of structured — use the existing
+            # merge + per-role parse path for those.
+            state_delta = (result.structured or {}).get("state_delta")
+            if state_delta is not None:
+                state_diff = _route_extensions(state, state_delta)
+            else:
+                # Adapter-supplied structured fields + per-role output parse.
+                state_diff = _merge_structured_into_state(result.structured)
+                parsed_diff = _parse_agent_output(ctx, result.output)
+                state_diff.update(parsed_diff)
+                state_diff = _route_extensions(state, state_diff)
+
+        # 4. Record execution log + snapshot, then commit immediately.
+        # Committing per-node rather than once at the end of the run means
+        # logs survive a CancelledError (pause/abort) that would otherwise
+        # roll back the bg_session before it could commit (#162).
+        # expire_on_commit=False (set on the session factory) ensures the
+        # in-memory pipeline/agent objects remain usable after the commit.
+        merged_state = state.model_copy(update=state_diff)
         _save_execution_log(
             ctx=ctx,
             execution_id=execution_id,
@@ -164,31 +203,8 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             prompt_xml=prompt_xml,
             result=result,
         )
-
-        if not result.success:
-            error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
-            state_diff: dict[str, Any] = {
-                "final_status": "failed",
-                "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
-            }
-        else:
-            # Two paths into state, both safe to combine:
-            # 1. Adapter-supplied structured fields (e.g. bash exit_code,
-            #    api-call usage) — only keys that match PipelineState are
-            #    kept; the rest are stored on the execution log only.
-            # 2. Per-role parsing of result.output — turns raw LLM text
-            #    into a typed state diff for known roles. Wins over (1)
-            #    on conflicts since it reflects the agent's intentional
-            #    response, not adapter telemetry.
-            state_diff = _merge_structured_into_state(result.structured)
-            parsed_diff = _parse_agent_output(ctx, result.output)
-            state_diff.update(parsed_diff)
-            state_diff = _route_extensions(state, state_diff)
-
-        # Save snapshot AFTER computing diff (snapshot reflects state going forward)
-        merged_state = state.model_copy(update=state_diff)
         _save_snapshot(ctx=ctx, state=merged_state)
-        ctx.session.flush()
+        ctx.session.commit()
 
         if result.pause_requested:
             raise PauseRequestedError(f"Node {ctx.node_id} requested pause via __pause sentinel")
@@ -233,7 +249,7 @@ def _record_failure(
         "verification_reason": f"Node {ctx.node_id}: {error}",
     }
     _save_snapshot(ctx=ctx, state=state.model_copy(update=state_diff))
-    ctx.session.flush()
+    ctx.session.commit()
     logger.warning("node %s failed: %s", ctx.node_id, error)
     return state_diff
 

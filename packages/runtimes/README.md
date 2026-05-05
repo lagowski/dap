@@ -310,6 +310,17 @@ Sync `def run(state, config)` też działa — adapter owija w `loop.run_in_exec
 }
 ```
 
+### Instalacja pakietów
+
+> **Note**: The package containing the callable must be installed in the
+> engine's venv separately. It is not a build dependency of `dap-engine`.
+>
+> The `python-func` adapter resolves `callable_path` with `importlib` at
+> invocation time — the engine starts fine without the package and only
+> fails when that specific node runs. Install the package in the engine's
+> venv on the host where `dap-engine` runs (e.g. `uv pip install -e
+> /path/to/cortex-project`).
+
 ### Model bezpieczeństwa (v0.1)
 
 **Single-user, local-trust.** Ten sam poziom zaufania co `bash` — callable

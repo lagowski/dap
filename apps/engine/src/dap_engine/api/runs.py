@@ -38,6 +38,7 @@ from dap_engine.execution import (
     PauseRequestedError,
     PipelineRunner,
     RunnerError,
+    RunnerInterrupt,
     RunRegistry,
 )
 from dap_engine.persistence import repository as repo
@@ -208,6 +209,14 @@ async def _execute_run_background(
                 repo.pause_run(bg_session, run_id)
                 bg_session.commit()
                 return
+            except RunnerInterrupt:
+                # Graph paused at an approval-required node (interrupt_before).
+                # This is a normal stop — mark run as paused so the operator
+                # can resume via POST /runs/{id}/resume or approve via
+                # POST /runs/{id}/nodes/{node_id}/approve (#164).
+                repo.pause_run(bg_session, run_id)
+                bg_session.commit()
+                return
             except RunnerError as exc:
                 logger.exception("run %s failed: %s", run_id, exc)
                 repo.finalize_run(bg_session, run_id, final_status="failed")
@@ -330,6 +339,20 @@ async def resume_run_endpoint(
     409 if the run is not paused. Spawns a fresh background task using
     the same run_id (= LangGraph thread_id), so execution picks up from
     the last checkpointed node.
+
+    **Human gate behaviour**: when the run is paused via ``interrupt_before``
+    (pipeline has ``approval_required_nodes`` set), calling ``/resume``
+    correctly skips the interrupt and continues execution — no infinite loop.
+    Use ``POST /runs/{id}/nodes/{node_id}/approve`` for a semantically
+    clearer alternative that also validates the gate node is actually staged.
+
+    .. deprecated-warning::
+        If the run was paused by a *python-func* node that called
+        ``POST /runs/{id}/pause`` internally (the old ``human_gate`` pattern),
+        ``/resume`` re-executes that node and triggers a new pause.  Use
+        ``POST /runs/{id}/nodes/{node_id}/skip`` in that case.  The preferred
+        approach is ``approval_required_nodes`` + ``interrupt_before``
+        (this engine version) which makes ``/resume`` work correctly (#164).
     """
     try:
         run = repo.get_run(session, run_id)
@@ -366,6 +389,90 @@ async def resume_run_endpoint(
     )
     run_registry.register(run_id, task)
 
+    return repo.get_run(session, run_id)
+
+
+@router.post("/{run_id}/nodes/{node_id}/approve", response_model=Run)
+async def approve_gate_endpoint(
+    run_id: str,
+    node_id: str,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+    run_registry: RunRegistry = Depends(get_run_registry),
+    session_factory: sessionmaker[Session] = Depends(get_session_factory),
+    checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+) -> Run:
+    """Approve a human gate and continue pipeline execution (#164).
+
+    Semantically equivalent to ``POST /runs/{id}/resume`` but communicates
+    operator intent explicitly — "I reviewed the gate and approve". The
+    ``node_id`` path parameter documents *which* gate was reviewed; the engine
+    validates it exists in the pipeline version that produced this run.
+
+    Works correctly with pipelines that use ``approval_required_nodes`` +
+    ``interrupt_before``: ``/resume`` and ``/approve`` both call
+    ``ainvoke(None, ...)`` which skips the pending interrupt and continues.
+
+    409 if the run is not paused or ``node_id`` is not in the pipeline.
+
+    .. note::
+        For the legacy python-func ``human_gate`` pattern (where the gate node
+        itself calls ``POST /runs/{id}/pause``), use
+        ``POST /runs/{id}/nodes/{node_id}/skip`` instead — ``/approve`` and
+        ``/resume`` would re-execute the gate node and pause again.
+    """
+    try:
+        run = repo.get_run(session, run_id)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if run.final_status != "paused":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run is not paused (final_status={run.final_status})",
+        )
+
+    if run_registry.is_running(run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Run already has an active background task",
+        )
+
+    # Validate node_id exists in the pipeline version that produced this run.
+    version_orm = session.scalar(
+        select(PipelineVersionORM)
+        .where(PipelineVersionORM.pipeline_id == run.pipeline_id)
+        .where(PipelineVersionORM.version == run.pipeline_version)
+    )
+    if version_orm is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pipeline version not found: {run.pipeline_id}@v{run.pipeline_version}",
+        )
+    node_ids = {n["id"] for n in version_orm.nodes}
+    if node_id not in node_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Node '{node_id}' not in pipeline {run.pipeline_id}@v{run.pipeline_version}",
+        )
+
+    repo.resume_run(session, run_id)
+    session.commit()
+
+    task = asyncio.create_task(
+        _execute_run_background(
+            run_id=run_id,
+            pipeline_id=run.pipeline_id,
+            pipeline_version=run.pipeline_version,
+            initial_state=None,
+            session_factory=session_factory,
+            registry=registry,
+            run_registry=run_registry,
+            checkpointer=checkpointer,
+            resume=True,
+        )
+    )
+    run_registry.register(run_id, task)
     return repo.get_run(session, run_id)
 
 
@@ -549,6 +656,10 @@ async def _execute_rewind_background(  # noqa: PLR0915
                 )
             except PauseRequestedError:
                 logger.info("rewind run %s paused by node via __pause sentinel", run_id)
+                repo.pause_run(bg_session, run_id)
+                bg_session.commit()
+                return
+            except RunnerInterrupt:
                 repo.pause_run(bg_session, run_id)
                 bg_session.commit()
                 return
