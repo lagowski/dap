@@ -167,18 +167,26 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
                 "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
             }
         else:
-            # Two paths into state, both safe to combine:
-            # 1. Adapter-supplied structured fields (e.g. bash exit_code,
-            #    api-call usage) — only keys that match PipelineState are
-            #    kept; the rest are stored on the execution log only.
-            # 2. Per-role parsing of result.output — turns raw LLM text
-            #    into a typed state diff for known roles. Wins over (1)
-            #    on conflicts since it reflects the agent's intentional
-            #    response, not adapter telemetry.
-            state_diff = _merge_structured_into_state(result.structured)
-            parsed_diff = _parse_agent_output(ctx, result.output)
-            state_diff.update(parsed_diff)
-            state_diff = _route_extensions(state, state_diff)
+            # python-func adapter wraps the callable's return dict in
+            # structured["state_delta"]. When that key is present, route the
+            # full delta through _route_extensions so Cortex-specific keys
+            # (task_assignments, decisions, issue_comments, …) land in
+            # extensions instead of being silently dropped by
+            # _merge_structured_into_state (which only keeps PipelineState
+            # top-level fields).
+            #
+            # Other adapters (bash, claude_code, api-call) put state-shaped
+            # keys directly at the top level of structured — use the existing
+            # merge + per-role parse path for those.
+            state_delta = (result.structured or {}).get("state_delta")
+            if state_delta is not None:
+                state_diff = _route_extensions(state, state_delta)
+            else:
+                # Adapter-supplied structured fields + per-role output parse.
+                state_diff = _merge_structured_into_state(result.structured)
+                parsed_diff = _parse_agent_output(ctx, result.output)
+                state_diff.update(parsed_diff)
+                state_diff = _route_extensions(state, state_diff)
 
         # 4. Record execution log + snapshot, then commit immediately.
         # Committing per-node rather than once at the end of the run means
