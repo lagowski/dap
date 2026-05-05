@@ -160,16 +160,6 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
         result: RuntimeResult = await adapter.execute(task)
         ended_at = datetime.now(UTC)
 
-        # 4. Record execution log + snapshot
-        _save_execution_log(
-            ctx=ctx,
-            execution_id=execution_id,
-            started_at=started_at,
-            ended_at=ended_at,
-            prompt_xml=prompt_xml,
-            result=result,
-        )
-
         if not result.success:
             error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
             state_diff: dict[str, Any] = {
@@ -190,10 +180,23 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             state_diff.update(parsed_diff)
             state_diff = _route_extensions(state, state_diff)
 
-        # Save snapshot AFTER computing diff (snapshot reflects state going forward)
+        # 4. Record execution log + snapshot, then commit immediately.
+        # Committing per-node rather than once at the end of the run means
+        # logs survive a CancelledError (pause/abort) that would otherwise
+        # roll back the bg_session before it could commit (#162).
+        # expire_on_commit=False (set on the session factory) ensures the
+        # in-memory pipeline/agent objects remain usable after the commit.
         merged_state = state.model_copy(update=state_diff)
+        _save_execution_log(
+            ctx=ctx,
+            execution_id=execution_id,
+            started_at=started_at,
+            ended_at=ended_at,
+            prompt_xml=prompt_xml,
+            result=result,
+        )
         _save_snapshot(ctx=ctx, state=merged_state)
-        ctx.session.flush()
+        ctx.session.commit()
 
         if result.pause_requested:
             raise PauseRequestedError(f"Node {ctx.node_id} requested pause via __pause sentinel")
@@ -238,7 +241,7 @@ def _record_failure(
         "verification_reason": f"Node {ctx.node_id}: {error}",
     }
     _save_snapshot(ctx=ctx, state=state.model_copy(update=state_diff))
-    ctx.session.flush()
+    ctx.session.commit()
     logger.warning("node %s failed: %s", ctx.node_id, error)
     return state_diff
 
