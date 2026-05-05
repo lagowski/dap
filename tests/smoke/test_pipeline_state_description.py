@@ -1,14 +1,15 @@
-"""Tests for ``PipelineState.description`` field (#154)."""
+"""Tests for PipelineState.description field (#154)."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from dap_types.state import PipelineState, StateSnapshot
 
 
-def _minimal(**overrides) -> PipelineState:
-    defaults = {"run_id": "r", "repo": "r", "branch": "b"}
+def _minimal(**overrides: Any) -> PipelineState:
+    defaults: dict[str, Any] = {"run_id": "r", "repo": "r", "branch": "b"}
     defaults.update(overrides)
     return PipelineState(**defaults)
 
