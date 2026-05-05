@@ -32,8 +32,6 @@ dev-dependencies = [
 "dap-engine" = { workspace = true }
 "dap-cli" = { workspace = true }
 "dap-prompt-dsl" = { workspace = true }
-"cortex" = { path = "../cortex-project", editable = true }
-
 # --- Ruff ---
 [tool.ruff]
 line-length = 100
@@ -102,5 +100,3 @@ testpaths = ["tests", "apps", "packages"]
 python_files = ["test_*.py", "*_test.py"]
 addopts = "-q"
 
-# cortex path dep for python-func bundle resolution
-# Append to [tool.uv.sources] — this line is appended at end of file; uv merges sections
