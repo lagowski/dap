@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.execution.conditions import evaluate_condition
-from dap_engine.execution.node_executor import NodeContext, PauseRequestedError, make_node_fn
+from dap_engine.execution.node_executor import NodeContext, make_node_fn
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
@@ -146,8 +146,6 @@ class PipelineRunner:
 
         try:
             result = await graph.ainvoke(invoke_input, config=config)
-        except PauseRequestedError:
-            raise
         except Exception as exc:
             logger.exception("pipeline execution failed for run %s", run_id)
             msg = f"Execution failed: {type(exc).__name__}: {exc}"
@@ -235,8 +233,6 @@ class PipelineRunner:
 
         try:
             result = await graph.ainvoke(None, config=invoke_config)
-        except PauseRequestedError:
-            raise
         except Exception as exc:
             logger.exception("pipeline rewind/run failed for run %s", run_id)
             msg = f"Execution failed: {type(exc).__name__}: {exc}"
