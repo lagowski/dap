@@ -19,6 +19,7 @@ class PipelineState(BaseModel):
     repo: str
     branch: str
     commit_sha: str | None = None
+    description: str | None = None
 
     # ---- TASK SELECTION ----
     available_issues: list[dict[str, Any]] = Field(default_factory=list)
