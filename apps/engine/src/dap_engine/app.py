@@ -90,6 +90,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
 
         async with AsyncExitStack() as stack:
             checkpointer = await stack.enter_async_context(checkpointer_ctx)
+            # Create checkpointer tables (checkpoints, checkpoint_blobs, etc.) on
+            # first start against a fresh DB. setup() is idempotent — no-op when
+            # tables already exist. Required for both SQLite and PostgreSQL backends.
+            await checkpointer.setup()
 
             app.state.config = cfg
             app.state.db_engine = engine
