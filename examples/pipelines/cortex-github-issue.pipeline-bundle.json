@@ -8,46 +8,230 @@
     "state_schema_ref": "PipelineState.v1",
     "entry_point": "mockup",
     "nodes": [
-      { "id": "mockup",       "agent_id": "cx_mockup",       "position": { "x":    0, "y":   0 } },
-      { "id": "specify",      "agent_id": "cx_specify",      "position": { "x":  220, "y":   0 } },
-      { "id": "cicd",         "agent_id": "cx_cicd",         "position": { "x":  440, "y":   0 } },
-      { "id": "dispatcher",   "agent_id": "cx_dispatcher",   "position": { "x":  660, "y":   0 } },
-      { "id": "finalize",     "agent_id": "cx_finalize",     "position": { "x":  880, "y":   0 } },
-      { "id": "phase1_gate",  "agent_id": "cx_human_gate",   "position": { "x": 1100, "y":   0 } },
-      { "id": "coder",        "agent_id": "cx_coder",        "position": { "x": 1320, "y":   0 } },
-      { "id": "designer",     "agent_id": "cx_designer",     "position": { "x": 1540, "y":   0 } },
-      { "id": "documenter",   "agent_id": "cx_documenter",   "position": { "x": 1760, "y":   0 } },
-      { "id": "phase2_gate",  "agent_id": "cx_human_gate",   "position": { "x": 1980, "y":   0 } },
-      { "id": "code_reviewer","agent_id": "cx_code_reviewer","position": { "x": 2200, "y":   0 } },
-      { "id": "tester",       "agent_id": "cx_tester",       "position": { "x": 2420, "y":   0 } },
-      { "id": "pr_creator",   "agent_id": "cx_pr_creator",   "position": { "x": 2640, "y":   0 } },
-      { "id": "reviewer",     "agent_id": "cx_reviewer",     "position": { "x": 2860, "y":   0 } },
-      { "id": "phase3_gate",  "agent_id": "cx_human_gate",   "position": { "x": 3080, "y":   0 } },
-      { "id": "pr_merger",    "agent_id": "cx_pr_merger",    "position": { "x": 3300, "y":   0 } }
+      {
+        "id": "mockup",
+        "agent_id": "cx_mockup",
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "specify",
+        "agent_id": "cx_specify",
+        "position": {
+          "x": 220,
+          "y": 0
+        }
+      },
+      {
+        "id": "cicd",
+        "agent_id": "cx_cicd",
+        "position": {
+          "x": 440,
+          "y": 0
+        }
+      },
+      {
+        "id": "dispatcher",
+        "agent_id": "cx_dispatcher",
+        "position": {
+          "x": 660,
+          "y": 0
+        }
+      },
+      {
+        "id": "finalize",
+        "agent_id": "cx_finalize",
+        "position": {
+          "x": 880,
+          "y": 0
+        }
+      },
+      {
+        "id": "phase1_gate",
+        "agent_id": "cx_human_gate",
+        "position": {
+          "x": 1100,
+          "y": 0
+        }
+      },
+      {
+        "id": "coder",
+        "agent_id": "cx_coder",
+        "position": {
+          "x": 1320,
+          "y": 0
+        }
+      },
+      {
+        "id": "designer",
+        "agent_id": "cx_designer",
+        "position": {
+          "x": 1540,
+          "y": 0
+        }
+      },
+      {
+        "id": "documenter",
+        "agent_id": "cx_documenter",
+        "position": {
+          "x": 1760,
+          "y": 0
+        }
+      },
+      {
+        "id": "phase2_gate",
+        "agent_id": "cx_human_gate",
+        "position": {
+          "x": 1980,
+          "y": 0
+        }
+      },
+      {
+        "id": "code_reviewer",
+        "agent_id": "cx_code_reviewer",
+        "position": {
+          "x": 2200,
+          "y": 0
+        }
+      },
+      {
+        "id": "tester",
+        "agent_id": "cx_tester",
+        "position": {
+          "x": 2420,
+          "y": 0
+        }
+      },
+      {
+        "id": "pr_creator",
+        "agent_id": "cx_pr_creator",
+        "position": {
+          "x": 2640,
+          "y": 0
+        }
+      },
+      {
+        "id": "reviewer",
+        "agent_id": "cx_reviewer",
+        "position": {
+          "x": 2860,
+          "y": 0
+        }
+      },
+      {
+        "id": "phase3_gate",
+        "agent_id": "cx_human_gate",
+        "position": {
+          "x": 3080,
+          "y": 0
+        }
+      },
+      {
+        "id": "pr_merger",
+        "agent_id": "cx_pr_merger",
+        "position": {
+          "x": 3300,
+          "y": 0
+        }
+      }
     ],
     "edges": [
-      { "id": "e01", "source": "__start__",    "target": "mockup" },
-      { "id": "e02", "source": "mockup",       "target": "specify" },
-      { "id": "e03", "source": "specify",      "target": "cicd" },
-      { "id": "e04", "source": "cicd",         "target": "dispatcher" },
-      { "id": "e05", "source": "dispatcher",   "target": "finalize" },
-      { "id": "e06", "source": "finalize",     "target": "phase1_gate" },
-      { "id": "e07", "source": "phase1_gate",  "target": "coder" },
-      { "id": "e08", "source": "coder",        "target": "designer" },
-      { "id": "e09", "source": "designer",     "target": "documenter" },
-      { "id": "e10", "source": "documenter",   "target": "phase2_gate" },
-      { "id": "e11", "source": "phase2_gate",  "target": "code_reviewer" },
-      { "id": "e12", "source": "code_reviewer","target": "tester" },
-      { "id": "e13", "source": "tester",       "target": "pr_creator" },
-      { "id": "e14", "source": "pr_creator",   "target": "reviewer" },
-      { "id": "e15", "source": "reviewer",     "target": "phase3_gate" },
-      { "id": "e16", "source": "phase3_gate",  "target": "pr_merger" },
-      { "id": "e17", "source": "pr_merger",    "target": "__end__" }
+      {
+        "id": "e01",
+        "source": "__start__",
+        "target": "mockup"
+      },
+      {
+        "id": "e02",
+        "source": "mockup",
+        "target": "specify"
+      },
+      {
+        "id": "e03",
+        "source": "specify",
+        "target": "cicd"
+      },
+      {
+        "id": "e04",
+        "source": "cicd",
+        "target": "dispatcher"
+      },
+      {
+        "id": "e05",
+        "source": "dispatcher",
+        "target": "finalize"
+      },
+      {
+        "id": "e06",
+        "source": "finalize",
+        "target": "phase1_gate"
+      },
+      {
+        "id": "e07",
+        "source": "phase1_gate",
+        "target": "coder"
+      },
+      {
+        "id": "e08",
+        "source": "coder",
+        "target": "designer"
+      },
+      {
+        "id": "e09",
+        "source": "designer",
+        "target": "documenter"
+      },
+      {
+        "id": "e10",
+        "source": "documenter",
+        "target": "phase2_gate"
+      },
+      {
+        "id": "e11",
+        "source": "phase2_gate",
+        "target": "code_reviewer"
+      },
+      {
+        "id": "e12",
+        "source": "code_reviewer",
+        "target": "tester"
+      },
+      {
+        "id": "e13",
+        "source": "tester",
+        "target": "pr_creator"
+      },
+      {
+        "id": "e14",
+        "source": "pr_creator",
+        "target": "reviewer"
+      },
+      {
+        "id": "e15",
+        "source": "reviewer",
+        "target": "phase3_gate"
+      },
+      {
+        "id": "e16",
+        "source": "phase3_gate",
+        "target": "pr_merger"
+      },
+      {
+        "id": "e17",
+        "source": "pr_merger",
+        "target": "__end__"
+      }
     ],
     "defaults": {
       "max_attempts": 3,
       "budget_limit_usd": 5.0,
-      "approval_required_nodes": ["phase1_gate", "phase2_gate", "phase3_gate"]
+      "approval_required_nodes": [
+        "phase1_gate",
+        "phase2_gate",
+        "phase3_gate"
+      ]
     }
   },
   "bundled_agents": {
@@ -96,7 +280,9 @@
         "callable_path": "cortex.nodes.dispatcher:run"
       },
       "input_schema": [],
-      "output_schema": ["task_assignments"],
+      "output_schema": [
+        "task_assignments"
+      ],
       "timeout_ms": 120000
     },
     "cx_finalize": {
@@ -108,7 +294,9 @@
         "callable_path": "cortex.nodes.finalize:run"
       },
       "input_schema": [],
-      "output_schema": ["issue_ready"],
+      "output_schema": [
+        "issue_ready"
+      ],
       "timeout_ms": 180000
     },
     "cx_human_gate": {
@@ -132,8 +320,14 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.coder:run"
       },
-      "input_schema": ["task_assignments"],
-      "output_schema": ["branch_name", "commits", "files_changed"],
+      "input_schema": [
+        "task_assignments"
+      ],
+      "output_schema": [
+        "branch_name",
+        "commits",
+        "files_changed"
+      ],
       "timeout_ms": 1800000,
       "_note": "timeout_ms = 30 min. Claude Code may run long multi-turn sessions."
     },
@@ -145,8 +339,13 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.designer:run"
       },
-      "input_schema": ["task_assignments"],
-      "output_schema": ["branch_name", "commits"],
+      "input_schema": [
+        "task_assignments"
+      ],
+      "output_schema": [
+        "branch_name",
+        "commits"
+      ],
       "timeout_ms": 900000
     },
     "cx_documenter": {
@@ -157,8 +356,13 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.documenter:run"
       },
-      "input_schema": ["task_assignments"],
-      "output_schema": ["branch_name", "commits"],
+      "input_schema": [
+        "task_assignments"
+      ],
+      "output_schema": [
+        "branch_name",
+        "commits"
+      ],
       "timeout_ms": 600000
     },
     "cx_code_reviewer": {
@@ -169,8 +373,12 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.code_reviewer:run"
       },
-      "input_schema": ["branch_name"],
-      "output_schema": ["review_verdict"],
+      "input_schema": [
+        "branch_name"
+      ],
+      "output_schema": [
+        "review_verdict"
+      ],
       "timeout_ms": 120000
     },
     "cx_tester": {
@@ -181,8 +389,12 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.tester:run"
       },
-      "input_schema": ["branch_name"],
-      "output_schema": ["test_result"],
+      "input_schema": [
+        "branch_name"
+      ],
+      "output_schema": [
+        "test_result"
+      ],
       "timeout_ms": 600000
     },
     "cx_pr_creator": {
@@ -193,8 +405,13 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.pr_creator:run"
       },
-      "input_schema": ["branch_name"],
-      "output_schema": ["pr_url", "pr_number"],
+      "input_schema": [
+        "branch_name"
+      ],
+      "output_schema": [
+        "pr_url",
+        "pr_number"
+      ],
       "timeout_ms": 120000
     },
     "cx_reviewer": {
@@ -205,8 +422,12 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.reviewer:run"
       },
-      "input_schema": ["pr_url"],
-      "output_schema": ["reviewer_verdict"],
+      "input_schema": [
+        "pr_url"
+      ],
+      "output_schema": [
+        "reviewer_verdict"
+      ],
       "timeout_ms": 180000
     },
     "cx_pr_merger": {
@@ -217,7 +438,10 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.pr_merger:run"
       },
-      "input_schema": ["pr_url", "pr_number"],
+      "input_schema": [
+        "pr_url",
+        "pr_number"
+      ],
       "output_schema": [],
       "timeout_ms": 120000
     }
@@ -241,7 +465,6 @@
       "CORTEX_DATABASE_URL=postgresql://cortex_project:...@10.0.0.5:30432/cortex_project"
     ],
     "known_gaps": [
-      "human_gate (cx_human_gate) requires cortex.dap_steps.human_gate module — not yet implemented, use DAP pause/resume directly for v0.",
       "State adapter: Cortex nodes read state['repo'], state['issue_number'] etc. directly. When running inside DAP, these must come from state['extensions']. cortex.state_adapter (Cortex #225) handles this — verify it's wired.",
       "coder/designer/documenter use Claude Code CLI subprocess — DAP_WORKING_DIR must point to the project workspace clone."
     ]
