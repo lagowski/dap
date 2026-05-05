@@ -146,7 +146,12 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             prompt_xml=prompt_xml,
             working_directory=ctx.project_working_directory or ".",
             timeout_ms=ctx.timeout_ms,
-            runtime_config=ctx.merged_runtime_config,
+            # Inject full pipeline state so python-func callables can access
+            # top-level and extensions fields without a separate state fetch.
+            runtime_config={
+                **ctx.merged_runtime_config,
+                "__pipeline_state": state.model_dump(mode="json"),
+            },
             project_env_vars=ctx.project_env_vars,
         )
 

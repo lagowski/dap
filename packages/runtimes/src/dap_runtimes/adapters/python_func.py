@@ -108,7 +108,11 @@ class PythonFuncAdapter(BaseAdapter):
         pass_prompt = bool(config.get("pass_prompt", True))
         pass_context = bool(config.get("pass_context", False))
 
-        state: dict[str, Any] = {}
+        # Seed state with the full PipelineState snapshot injected by node_executor
+        # so python-func callables that use cortex.adapters.pipeline_state can resolve
+        # all fields (top-level and extensions) without a separate DB fetch.
+        pipeline_snapshot: dict[str, Any] = config.get("__pipeline_state") or {}
+        state: dict[str, Any] = dict(pipeline_snapshot)
         if pass_prompt:
             state["prompt_xml"] = task.prompt_xml
         if pass_context and task.context is not None:
