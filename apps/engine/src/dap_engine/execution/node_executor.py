@@ -40,6 +40,14 @@ logger = logging.getLogger("dap.engine.execution")
 NodeFn = Callable[[PipelineState], Coroutine[Any, Any, dict[str, Any]]]
 
 
+class PauseRequestedError(Exception):
+    """Raised when a node's RuntimeResult has pause_requested=True.
+
+    Propagates through the LangGraph graph → PipelineRunner → background
+    task handler, which catches it and transitions the run to "paused".
+    """
+
+
 class NodeContext:
     """Bound context for a single pipeline node — captured in node closure."""
 
@@ -182,6 +190,9 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
         _save_snapshot(ctx=ctx, state=merged_state)
         ctx.session.flush()
 
+        if result.pause_requested:
+            raise PauseRequestedError(f"Node {ctx.node_id} requested pause via __pause sentinel")
+
         return state_diff
 
     return node_fn
@@ -300,7 +311,7 @@ def _route_extensions(state: PipelineState, diff: dict[str, Any]) -> dict[str, A
     """
     known = set(PipelineState.model_fields.keys())
     top_level = {k: v for k, v in diff.items() if k in known}
-    extra = {k: v for k, v in diff.items() if k not in known and k != "__audit"}
+    extra = {k: v for k, v in diff.items() if k not in known and k not in {"__audit", "__pause"}}
     if not extra:
         return top_level
     return {

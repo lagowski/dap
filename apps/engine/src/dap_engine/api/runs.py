@@ -35,6 +35,7 @@ from dap_engine.execution import (
     REWIND_RETRY,
     REWIND_SKIP,
     CheckpointNotFoundError,
+    PauseRequestedError,
     PipelineRunner,
     RunnerError,
     RunRegistry,
@@ -202,6 +203,11 @@ async def _execute_run_background(
                     initial_state=initial_state,
                     resume=resume,
                 )
+            except PauseRequestedError:
+                logger.info("run %s paused by node via __pause sentinel", run_id)
+                repo.pause_run(bg_session, run_id)
+                bg_session.commit()
+                return
             except RunnerError as exc:
                 logger.exception("run %s failed: %s", run_id, exc)
                 repo.finalize_run(bg_session, run_id, final_status="failed")
@@ -496,7 +502,7 @@ async def _do_node_intervention(
     return repo.get_run(session, run_id)
 
 
-async def _execute_rewind_background(
+async def _execute_rewind_background(  # noqa: PLR0915
     *,
     run_id: str,
     pipeline_id: str,
@@ -541,6 +547,11 @@ async def _execute_rewind_background(
                     target_node=target_node,
                     mode=mode,
                 )
+            except PauseRequestedError:
+                logger.info("rewind run %s paused by node via __pause sentinel", run_id)
+                repo.pause_run(bg_session, run_id)
+                bg_session.commit()
+                return
             except CheckpointNotFoundError as exc:
                 logger.warning("rewind run %s: %s", run_id, exc)
                 repo.finalize_run(bg_session, run_id, final_status="failed")

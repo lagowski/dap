@@ -340,6 +340,90 @@ async def test_structured_shape_consistent(
 
 
 # ---------------------------------------------------------------------------
+# __pause sentinel extraction
+# ---------------------------------------------------------------------------
+
+
+async def _with_pause(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    return {"data": 1, "__pause": True}
+
+
+async def _with_pause_false(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    return {"data": 1, "__pause": False}
+
+
+async def _no_pause(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    return {"data": 1}
+
+
+@pytest.mark.asyncio
+async def test_pause_sentinel_sets_pause_requested_on_result(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+
+    mod = types.ModuleType("_dap_test_pause_mod")
+    mod.run = _with_pause  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_test_pause_mod", mod)
+
+    result = await adapter.execute(_task(callable_path="_dap_test_pause_mod:run"))
+    assert result.success is True
+    assert result.pause_requested is True
+
+
+@pytest.mark.asyncio
+async def test_pause_sentinel_stripped_from_state_delta(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+
+    mod = types.ModuleType("_dap_test_pause_strip_mod")
+    mod.run = _with_pause  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_test_pause_strip_mod", mod)
+
+    result = await adapter.execute(_task(callable_path="_dap_test_pause_strip_mod:run"))
+    assert result.structured is not None
+    assert "__pause" not in result.structured["state_delta"]
+    assert result.structured["state_delta"]["data"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pause_absent_leaves_pause_requested_false(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+
+    mod = types.ModuleType("_dap_test_nopause_mod")
+    mod.run = _no_pause  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_test_nopause_mod", mod)
+
+    result = await adapter.execute(_task(callable_path="_dap_test_nopause_mod:run"))
+    assert result.success is True
+    assert result.pause_requested is False
+
+
+@pytest.mark.asyncio
+async def test_pause_false_leaves_pause_requested_false(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+
+    mod = types.ModuleType("_dap_test_pausefalse_mod")
+    mod.run = _with_pause_false  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_test_pausefalse_mod", mod)
+
+    result = await adapter.execute(_task(callable_path="_dap_test_pausefalse_mod:run"))
+    assert result.success is True
+    assert result.pause_requested is False
+    assert result.structured is not None
+    assert "__pause" not in result.structured["state_delta"]
+
+
+# ---------------------------------------------------------------------------
 # registry integration
 # ---------------------------------------------------------------------------
 
