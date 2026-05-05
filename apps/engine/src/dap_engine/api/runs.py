@@ -502,7 +502,7 @@ async def _do_node_intervention(
     return repo.get_run(session, run_id)
 
 
-async def _execute_rewind_background(
+async def _execute_rewind_background(  # noqa: PLR0915
     *,
     run_id: str,
     pipeline_id: str,
