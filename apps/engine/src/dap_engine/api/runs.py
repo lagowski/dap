@@ -38,8 +38,8 @@ from dap_engine.execution import (
     PauseRequestedError,
     PipelineRunner,
     RunnerError,
-    RunRegistry,
     RunnerInterrupt,
+    RunRegistry,
 )
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM, ProjectORM
