@@ -128,3 +128,24 @@ def test_dot_notation_top_level_still_works() -> None:
     """Dot-notation doesn't break plain (non-dotted) field access."""
     cond = ComparisonCondition(field="tests_passed", operator="==", value=True)
     assert evaluate_condition(cond, _state(tests_passed=True)) is True
+
+
+def test_dot_notation_review_approved_bool() -> None:
+    """Bool comparisons work for extensions.review_approved (Phase 2 clean path)."""
+    cond = ComparisonCondition(field="extensions.review_approved", operator="==", value=True)
+    assert evaluate_condition(cond, _state(extensions={"review_approved": True})) is True
+    assert evaluate_condition(cond, _state(extensions={"review_approved": False})) is False
+
+
+def test_dot_notation_and_condition() -> None:
+    """Compound: review_approved==false AND review_attempts<2 (Phase 2 retry edge)."""
+    cond = LogicalCondition(
+        type="and",
+        children=[
+            ComparisonCondition(field="extensions.review_approved", operator="==", value=False),
+            ComparisonCondition(field="extensions.review_attempts", operator="<", value=2),
+        ],
+    )
+    assert evaluate_condition(cond, _state(extensions={"review_approved": False, "review_attempts": 0})) is True
+    assert evaluate_condition(cond, _state(extensions={"review_approved": True, "review_attempts": 0})) is False
+    assert evaluate_condition(cond, _state(extensions={"review_approved": False, "review_attempts": 2})) is False

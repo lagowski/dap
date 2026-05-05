@@ -59,6 +59,31 @@ def test_postgresql_tables_created_on_startup(pg_client: TestClient) -> None:
     assert isinstance(response.json()["items"], list)
 
 
+def test_checkpointer_tables_created_on_startup(pg_client: TestClient) -> None:
+    """checkpointer.setup() must be called in lifespan so LangGraph tables exist.
+
+    Before fix (#173): tables were missing on a fresh DB, causing every run to
+    fail immediately with ``UndefinedTable: relation "checkpoints" does not exist``.
+    """
+    import psycopg
+    from dap_engine.persistence.db import pg_conn_string
+
+    assert PG_URL is not None
+    conn_str = pg_conn_string(PG_URL)
+    with psycopg.connect(conn_str) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+            )
+        }
+    required = {"checkpoints", "checkpoint_blobs", "checkpoint_writes"}
+    assert required.issubset(tables), (
+        f"Missing checkpointer tables: {required - tables}. "
+        "checkpointer.setup() was not called in lifespan."
+    )
+
+
 def test_pg_conn_string_conversion() -> None:
     """pg_conn_string() strips the +asyncpg driver suffix for psycopg."""
     url = "postgresql+asyncpg://user:pass@host:5432/db"
