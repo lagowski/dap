@@ -37,10 +37,25 @@ def evaluate_condition(condition: EdgeCondition, state: PipelineState) -> bool:
 
 def _evaluate_comparison(condition: ComparisonCondition, state: PipelineState) -> bool:
     state_dict = state.model_dump()
-    if condition.field not in state_dict:
+    found, actual = _get_field(state_dict, condition.field)
+    if not found:
         return False
-    actual: Any = state_dict[condition.field]
     return _apply_operator(actual, condition.operator, condition.value)
+
+
+def _get_field(state_dict: dict[str, Any], field: str) -> tuple[bool, Any]:
+    """Resolve a field path (dot-notation) from a state dict.
+
+    Supports top-level fields ("repo") and nested paths ("extensions.review_approved").
+    Returns (True, value) when found, (False, None) when any segment is missing.
+    """
+    parts = field.split(".")
+    current: Any = state_dict
+    for part in parts:
+        if not isinstance(current, dict) or part not in current:
+            return False, None
+        current = current[part]
+    return True, current
 
 
 _OPERATORS: dict[ComparisonOperator, Any] = {
