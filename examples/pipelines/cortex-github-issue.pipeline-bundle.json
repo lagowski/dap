@@ -237,7 +237,6 @@
   "bundled_agents": {
     "cx_mockup": {
       "name": "Cortex Mockup",
-      "description": "Phase 1 — structures a raw GitHub issue into the standard 5-section template.",
       "role": "prompt_builder",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -245,11 +244,11 @@
       },
       "input_schema": [],
       "output_schema": [],
-      "timeout_ms": 120000
+      "timeout_ms": 120000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_specify": {
       "name": "Cortex Specify",
-      "description": "Phase 1 — fills Technical Specification (target files, deps, arch impact, commands).",
       "role": "prompt_builder",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -257,11 +256,11 @@
       },
       "input_schema": [],
       "output_schema": [],
-      "timeout_ms": 180000
+      "timeout_ms": 180000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_cicd": {
       "name": "Cortex CI/CD",
-      "description": "Phase 1 — fills Test Criteria (RED/GREEN/REFACTOR test cases).",
       "role": "prompt_builder",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -269,39 +268,35 @@
       },
       "input_schema": [],
       "output_schema": [],
-      "timeout_ms": 120000
+      "timeout_ms": 120000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_dispatcher": {
       "name": "Cortex Dispatcher",
-      "description": "Phase 1 — generates Task Assignment: routes work to coder/designer/documenter with budgets.",
       "role": "task_selector",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.dispatcher:run"
       },
       "input_schema": [],
-      "output_schema": [
-        "task_assignments"
-      ],
-      "timeout_ms": 120000
+      "output_schema": [],
+      "timeout_ms": 120000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_finalize": {
       "name": "Cortex Finalize",
-      "description": "Phase 1 — reviews all enrichment sections, sets issue_ready=True/False.",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.finalize:run"
       },
       "input_schema": [],
-      "output_schema": [
-        "issue_ready"
-      ],
-      "timeout_ms": 180000
+      "output_schema": [],
+      "timeout_ms": 180000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_human_gate": {
       "name": "Human Approval Gate",
-      "description": "Pauses the pipeline and waits for operator approval (POST /runs/{id}/resume) before continuing.",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -310,140 +305,103 @@
       "input_schema": [],
       "output_schema": [],
       "timeout_ms": 86400000,
-      "_note": "timeout_ms = 24h. Operator calls POST /runs/{id}/resume to continue."
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_coder": {
       "name": "Cortex Coder",
-      "description": "Phase 2 — executes coding tasks via Claude Code CLI. Creates branch, implements, commits, pushes.",
       "role": "prompt_builder",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.coder:run"
       },
-      "input_schema": [
-        "task_assignments"
-      ],
-      "output_schema": [
-        "branch_name",
-        "commits",
-        "files_changed"
-      ],
+      "input_schema": [],
+      "output_schema": [],
       "timeout_ms": 1800000,
-      "_note": "timeout_ms = 30 min. Claude Code may run long multi-turn sessions."
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_designer": {
       "name": "Cortex Designer",
-      "description": "Phase 2 — CSS/UI changes assigned by dispatcher. Skips if no designer tasks.",
       "role": "prompt_builder",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.designer:run"
       },
-      "input_schema": [
-        "task_assignments"
-      ],
-      "output_schema": [
-        "branch_name",
-        "commits"
-      ],
-      "timeout_ms": 900000
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 900000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_documenter": {
       "name": "Cortex Documenter",
-      "description": "Phase 2 — documentation-only changes. Skips if no documenter tasks.",
       "role": "prompt_builder",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.documenter:run"
       },
-      "input_schema": [
-        "task_assignments"
-      ],
-      "output_schema": [
-        "branch_name",
-        "commits"
-      ],
-      "timeout_ms": 600000
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 600000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_code_reviewer": {
       "name": "Cortex Code Reviewer",
-      "description": "Phase 3 — diffs branch against main; approves or routes back to coder retry loop.",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.code_reviewer:run"
       },
-      "input_schema": [
-        "branch_name"
-      ],
-      "output_schema": [
-        "review_verdict"
-      ],
-      "timeout_ms": 120000
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_tester": {
       "name": "Cortex Tester",
-      "description": "Phase 3 — runs the project test suite against the coder branch. Routes to retry_prepare on failure.",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.tester:run"
       },
-      "input_schema": [
-        "branch_name"
-      ],
-      "output_schema": [
-        "test_result"
-      ],
-      "timeout_ms": 600000
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 600000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_pr_creator": {
       "name": "Cortex PR Creator",
-      "description": "Phase 3 — creates the GitHub PR from the coder branch to main.",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.pr_creator:run"
       },
-      "input_schema": [
-        "branch_name"
-      ],
-      "output_schema": [
-        "pr_url",
-        "pr_number"
-      ],
-      "timeout_ms": 120000
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_reviewer": {
       "name": "Cortex Reviewer",
-      "description": "Phase 3 — final code review of the PR. Produces DECISION: APPROVE or REJECT verdict.",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.reviewer:run"
       },
-      "input_schema": [
-        "pr_url"
-      ],
-      "output_schema": [
-        "reviewer_verdict"
-      ],
-      "timeout_ms": 180000
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 180000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },
     "cx_pr_merger": {
       "name": "Cortex PR Merger",
-      "description": "Phase 3 — merges the PR using rlagowski token (GH_TOKEN_MERGE). Different GitHub user enforces code/merge separation.",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.pr_merger:run"
       },
-      "input_schema": [
-        "pr_url",
-        "pr_number"
-      ],
+      "input_schema": [],
       "output_schema": [],
-      "timeout_ms": 120000
+      "timeout_ms": 120000,
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     }
   },
   "install_instructions": {
