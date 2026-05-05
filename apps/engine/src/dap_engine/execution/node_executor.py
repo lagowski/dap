@@ -191,9 +191,7 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
         ctx.session.flush()
 
         if result.pause_requested:
-            raise PauseRequestedError(
-                f"Node {ctx.node_id} requested pause via __pause sentinel"
-            )
+            raise PauseRequestedError(f"Node {ctx.node_id} requested pause via __pause sentinel")
 
         return state_diff
 
