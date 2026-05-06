@@ -16,7 +16,7 @@ import logging
 from typing import Any
 
 from dap_runtimes import RuntimeRegistry
-from dap_types import NodeExecutionLog, PipelineState, Run, StateSnapshot
+from dap_types import NodeExecutionLog, PipelineDefaults, PipelineState, Run, StateSnapshot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
@@ -407,7 +407,15 @@ async def approve_gate_endpoint(
     ``interrupt_before``: ``/resume`` and ``/approve`` both call
     ``ainvoke(None, ...)`` which skips the pending interrupt and continues.
 
-    409 if the run is not paused or ``node_id`` is not in the pipeline.
+    Status codes:
+
+    * **404** — run not found, pipeline version vanished, or ``node_id`` does
+      not exist in the pipeline version that produced this run.
+    * **409** — run is not paused, run already has an active background task,
+      or ``node_id`` exists in the pipeline but is not declared as an
+      approval gate (``defaults.approval_required_nodes``). The last case
+      prevents audit-log spoofing: previously the path parameter was
+      decorative and any node could be approved against any gate (#184).
 
     .. note::
         For the legacy python-func ``human_gate`` pattern (where the gate node
@@ -448,6 +456,21 @@ async def approve_gate_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Node '{node_id}' not in pipeline {run.pipeline_id}@v{run.pipeline_version}",
+        )
+
+    # Reject approval against a non-gate node. Without this check, the path
+    # parameter was decorative — any existing node could "approve" any gate,
+    # so the audit log would record approved=<wrong_node> while the run
+    # actually advances at whatever LangGraph's interrupt_before paused on (#184).
+    pipeline_defaults = PipelineDefaults.model_validate(version_orm.defaults)
+    approval_nodes = set(pipeline_defaults.approval_required_nodes)
+    if node_id not in approval_nodes:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Node '{node_id}' is not an approval gate in this pipeline "
+                f"(defaults.approval_required_nodes={sorted(approval_nodes)})"
+            ),
         )
 
     repo.resume_run(session, run_id)
