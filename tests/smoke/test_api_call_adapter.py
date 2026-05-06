@@ -378,7 +378,8 @@ async def test_unexpected_exception_returns_failed_not_raised(with_api_key: None
 
     assert result.success is False
     assert any("ValueError" in e and "simulated SDK bug" in e for e in result.errors)
-    # Structured-failure shape: empty/None telemetry, non-zero duration captured.
+    # Structured-failure shape: empty/None telemetry, non-negative duration
+    # (can be 0 on fast failures due to integer truncation).
     assert result.tokens_used is None or result.tokens_used == 0
     assert result.cost_usd is None or result.cost_usd == 0.0
     assert result.duration_ms >= 0

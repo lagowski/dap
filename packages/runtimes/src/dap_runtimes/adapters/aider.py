@@ -23,7 +23,7 @@ class AiderAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=False, missing=["aider binary"])
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(self, _task: RuntimeTask) -> RuntimeResult:
         return RuntimeResult(
             success=False,
             output="",
