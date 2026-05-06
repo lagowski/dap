@@ -1,0 +1,150 @@
+name: Copilot Review Gate
+
+# Posts a `copilot-review` check_run on every open PR's head commit
+# that flips between failure ("waiting for Copilot review") and
+# success ("Copilot reviewed cleanly"), based on the PR's actual
+# review history. Branch protection requires this check to be green
+# before merge.
+#
+# Why a custom check_run instead of relying on a job's status:
+# GitHub blocks workflow runs triggered by `pull_request_review`
+# events from bot accounts (run lands as `action_required` and
+# never executes). To work around that we (a) trigger on plain
+# `pull_request` events that do execute, and (b) poll every 5 min
+# via cron so the check refreshes as Copilot's review lands without
+# requiring the user to re-push.
+#
+# Note: scheduled (cron) workflows only fire from the repository's
+# default branch. For the PR that introduces this workflow itself,
+# the only refresh path is `pull_request:synchronize` (a push to
+# the PR branch) or `workflow_dispatch`. Once merged to develop the
+# cron picks up all open PRs targeting develop/main automatically.
+#
+# Forks: `pull_request` runs on fork PRs use a read-only GITHUB_TOKEN,
+# so `checks.create` returns 403. We catch that and warn — the check
+# appears on the PR once the next cron run fires from the default
+# branch with full permissions.
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: copilot-review-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  post-copilot-review-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      checks: write
+      contents: read
+    steps:
+      - name: Post / refresh copilot-review check on relevant PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const COPILOT = 'copilot-pull-request-reviewer[bot]';
+            const CHECK_NAME = 'copilot-review';
+
+            let prs = [];
+            if (context.payload.pull_request) {
+              prs = [context.payload.pull_request];
+            } else {
+              const allOpen = await github.paginate(github.rest.pulls.list, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                per_page: 100,
+              });
+              prs = allOpen.filter(p => p.base && (p.base.ref === 'develop' || p.base.ref === 'main'));
+            }
+
+            core.info(`Evaluating Copilot review state on ${prs.length} PR(s).`);
+
+            for (const pr of prs) {
+              if (pr.draft) {
+                core.info(`PR #${pr.number} is a draft, skipping.`);
+                continue;
+              }
+
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                per_page: 100,
+              });
+              const copilotReviews = reviews.filter(r => r.user && r.user.login === COPILOT);
+
+              let conclusion;
+              let title;
+              let summary;
+
+              if (copilotReviews.length === 0) {
+                conclusion = 'failure';
+                title = 'Waiting for Copilot review';
+                summary =
+                  'The Copilot Code Review bot has not reviewed this PR yet. ' +
+                  'It usually lands within 1-3 minutes of opening; if it does ' +
+                  'not, the PR author may lack a Copilot Pro entitlement (the ' +
+                  'bot only auto-fires for authors with Code Review enabled). ' +
+                  'Workaround: a maintainer with Copilot Pro can request a ' +
+                  'review from the Copilot bot via the GitHub UI, or close + ' +
+                  'reopen the PR to retrigger the auto-request.';
+              } else {
+                const latest = copilotReviews[copilotReviews.length - 1];
+                const body = latest.body || '';
+                const state = latest.state || '';
+
+                if (body.includes('Copilot encountered an error')) {
+                  conclusion = 'failure';
+                  title = 'Copilot review errored — retry needed';
+                  summary =
+                    'The latest Copilot review on this PR is the internal-error ' +
+                    'placeholder. Retry by closing + reopening the PR — that ' +
+                    're-fires the auto-request and the bot usually succeeds on ' +
+                    'the second attempt.';
+                } else if (state === 'CHANGES_REQUESTED') {
+                  conclusion = 'failure';
+                  title = 'Copilot requested changes';
+                  summary =
+                    'Copilot requested changes on this PR. Address the inline ' +
+                    'comments and push the fix; the gate refreshes within 5 ' +
+                    'minutes (or immediately on the next push).';
+                } else {
+                  conclusion = 'success';
+                  title = 'Copilot review present';
+                  summary =
+                    `Copilot reviewed at ${latest.submitted_at} (state: ${state}). ` +
+                    'Gate satisfied.';
+                }
+              }
+
+              try {
+                await github.rest.checks.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: CHECK_NAME,
+                  head_sha: pr.head.sha,
+                  status: 'completed',
+                  conclusion: conclusion,
+                  output: { title: title, summary: summary },
+                });
+                core.info(`PR #${pr.number}: ${conclusion} — ${title}`);
+              } catch (err) {
+                if (err.status === 403) {
+                  core.warning(
+                    `PR #${pr.number}: cannot post check (likely fork PR with read-only token). ` +
+                    'Will be retried by the next cron run from the default branch.'
+                  );
+                } else {
+                  throw err;
+                }
+              }
+            }
