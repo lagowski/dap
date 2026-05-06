@@ -6,8 +6,10 @@ Dialect selection is driven by the ``DAP_DATABASE_URL`` env var (see
 * ``sqlite://`` (or bare file path via DAP_DB_PATH) → SQLite + WAL pragmas.
   Default for local dev; no extra dependencies needed.
 * ``postgresql+asyncpg://`` → PostgreSQL via psycopg (sync engine).  Requires
-  ``asyncpg``, ``psycopg[binary]``, and ``langgraph-checkpoint-postgres``
-  (declared as optional deps in pyproject.toml).
+  ``psycopg[binary]`` and ``langgraph-checkpoint-postgres`` (declared as
+  deps in pyproject.toml). The ``+asyncpg`` driver suffix is accepted for
+  legacy compatibility but rewritten to ``+psycopg`` before SQLAlchemy use;
+  the asyncpg package is not actually imported.
 
 The rest of the engine (ORM models, repository, migrations) is dialect-agnostic
 and works unchanged against both backends.
