@@ -14,11 +14,16 @@ from dap_types import RuntimeTask
 
 _PATCH_PATH = "dap_runtimes.adapters.http.httpx.AsyncClient"
 
+# Long enough (>= _MIN_SECRET_LEN) that the redaction helper actually
+# scrubs it; "test-token" works too but a clearly-fake API-key shape
+# makes the redaction tests' intent obvious.
+_BEARER_TOKEN = "sk-secret-token-123-do-not-leak"
+
 
 @pytest.fixture
 def with_ollama_key() -> Iterator[None]:
     saved = os.environ.get("OLLAMA_API_KEY")
-    os.environ["OLLAMA_API_KEY"] = "test-token"
+    os.environ["OLLAMA_API_KEY"] = _BEARER_TOKEN
     try:
         yield
     finally:
@@ -251,7 +256,7 @@ async def test_bearer_auth_attaches_token(with_ollama_key: None) -> None:
         await adapter.execute(_task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"}))
 
     headers = client.request.call_args.kwargs["headers"]
-    assert headers["Authorization"] == "Bearer test-token"
+    assert headers["Authorization"] == f"Bearer {_BEARER_TOKEN}"
 
 
 async def test_basic_auth_encodes_credentials() -> None:
@@ -390,6 +395,135 @@ async def test_http_4xx_returns_failure_with_preview() -> None:
 
     assert result.success is False
     assert any("401" in e and "Unauthorized" in e for e in result.errors)
+
+
+async def test_http_4xx_redacts_bearer_token_echoed_in_error_body(
+    with_ollama_key: None,
+) -> None:
+    """Some upstreams echo the Authorization header in their error body
+    (auth gateways, debug servers, 401 traces). The error preview must
+    redact the secret before storing it in errors[]/dashboard/logs (#212).
+    """
+    # The fixture sets OLLAMA_API_KEY to _BEARER_TOKEN (defined at module top).
+    # Upstream echoes the full Authorization header in its error body.
+    adapter = HttpAdapter()
+    response = _mock_response(
+        status_code=401,
+        text=(
+            "Unauthorized. Got header: "
+            f"Authorization: Bearer {_BEARER_TOKEN}. Please retry."
+        ),
+    )
+    client = _mock_client(response)
+
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"})
+        )
+
+    assert result.success is False
+    [error] = result.errors
+    # The token must NOT appear anywhere in the surfaced error.
+    assert _BEARER_TOKEN not in error
+    # The redaction marker SHOULD appear so callers see the body got scrubbed.
+    assert "[REDACTED]" in error
+    # And we still preserve enough context to be useful: status code,
+    # surrounding text from the upstream body.
+    assert "401" in error
+    assert "Unauthorized" in error
+
+
+async def test_http_4xx_redacts_bare_token_without_bearer_prefix(
+    with_ollama_key: None,
+) -> None:
+    """Upstream may echo just the raw token without the 'Bearer ' prefix.
+    We strip known prefixes and redact the bare secret too (#212).
+    """
+    adapter = HttpAdapter()
+    response = _mock_response(
+        status_code=403,
+        text=f"Forbidden. Token {_BEARER_TOKEN} is not authorized.",
+    )
+    client = _mock_client(response)
+
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"})
+        )
+
+    [error] = result.errors
+    assert _BEARER_TOKEN not in error
+    assert "[REDACTED]" in error
+
+
+async def test_http_4xx_redacts_custom_header_auth(with_ollama_key: None) -> None:
+    """auth.type='header' values (X-API-Key etc.) must also be redacted (#212)."""
+    adapter = HttpAdapter()
+    response = _mock_response(
+        status_code=401,
+        text=f"Bad credentials: X-API-Key={_BEARER_TOKEN} not recognized",
+    )
+    client = _mock_client(response)
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(auth={"type": "header", "name": "X-API-Key", "env": "OLLAMA_API_KEY"})
+        )
+
+    [error] = result.errors
+    assert _BEARER_TOKEN not in error
+    assert "[REDACTED]" in error
+
+
+async def test_http_4xx_redacts_user_supplied_cookie() -> None:
+    """User-supplied Cookie / X-API-Key in runtime_config.headers is also scrubbed (#212).
+
+    Headers whose name matches a sensitive pattern (Cookie / Authorization /
+    *Token* / *API-Key* / *Auth* / *Secret*) are flagged for redaction even
+    when they come from runtime_config.headers rather than from auth config.
+    """
+    adapter = HttpAdapter()
+    cookie = "session=secret-cookie-value-12345"
+    response = _mock_response(
+        status_code=403,
+        text=f"Forbidden. Got Cookie: {cookie} (unauthorized)",
+    )
+    client = _mock_client(response)
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(_task(headers={"Cookie": cookie}))
+
+    [error] = result.errors
+    assert "secret-cookie-value-12345" not in error
+    assert "[REDACTED]" in error
+
+
+async def test_http_4xx_does_not_redact_benign_headers() -> None:
+    """User-supplied benign headers (Content-Type, User-Agent) must NOT be
+    redacted from the preview — that would mangle useful diagnostic context (#212).
+    """
+    adapter = HttpAdapter()
+    # Upstream's error body legitimately mentions the Content-Type — must not
+    # be redacted just because we sent that header.
+    response = _mock_response(
+        status_code=415,
+        text="Unsupported Media Type: expected application/json got something-else",
+    )
+    client = _mock_client(response)
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "dap-engine/test",
+                    "X-Trace-Id": "trace-12345",
+                }
+            )
+        )
+
+    [error] = result.errors
+    # None of the benign headers should be redacted.
+    assert "[REDACTED]" not in error
+    assert "application/json" in error
+    assert "415" in error
 
 
 async def test_non_json_response_returns_error() -> None:
