@@ -42,10 +42,13 @@ def pg_client() -> Iterator[TestClient]:
         with TestClient(app) as c:
             yield c
     finally:
-        # Truncate application tables so re-runs against the same DB don't
-        # accumulate rows across test invocations. langgraph checkpoint tables
-        # are managed by the saver and stay between tests. Reverse FK order so
-        # children are deleted before parents.
+        # Delete rows from application tables (reverse FK order: children
+        # before parents) so re-runs against the same DB don't accumulate
+        # state across test invocations. Plain DELETE rather than TRUNCATE —
+        # avoids PG-specific syntax and identity-reset complexity, and the
+        # row counts in smoke tests are small enough that DELETE is fine.
+        # langgraph checkpoint tables are managed by the saver and stay
+        # between tests.
         from sqlalchemy import create_engine
 
         from dap_engine.persistence.db import _pg_sync_url
