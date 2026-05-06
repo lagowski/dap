@@ -353,6 +353,8 @@ async def resume_run_endpoint(
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
+    # Fast-fail with informative current status; the atomic claim below is the
+    # actual source of truth for the paused→running transition (#185).
     if run.final_status != "paused":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -365,7 +367,15 @@ async def resume_run_endpoint(
             detail="Run already has an active background task",
         )
 
-    repo.resume_run(session, run_id)
+    # Atomic paused→running transition. Two concurrent /resume requests would
+    # otherwise both pass the checks above, both spawn background tasks, and
+    # the second run_registry.register would raise with an orphan task in
+    # flight. Only one row update wins; the loser sees rowcount==0 → 409. (#185)
+    if not repo.try_claim_resume(session, run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Run state changed during processing — another request resumed it first",
+        )
     session.commit()
 
     task = asyncio.create_task(
@@ -473,7 +483,12 @@ async def approve_gate_endpoint(
             ),
         )
 
-    repo.resume_run(session, run_id)
+    # Atomic paused→running transition (#185); see /resume for rationale.
+    if not repo.try_claim_resume(session, run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Run state changed during processing — another request resumed it first",
+        )
     session.commit()
 
     task = asyncio.create_task(
@@ -604,7 +619,17 @@ async def _do_node_intervention(
             ),
         )
 
-    repo.revive_run(session, run_id)
+    # Atomic (paused|failed)→running transition (#185); same TOCTOU class as
+    # /resume and /approve, just a wider starting state to allow node-level
+    # recovery from a terminated run.
+    if not repo.try_claim_revive(session, run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Run state changed during processing — another request "
+                "retried/skipped/resumed it first"
+            ),
+        )
     session.commit()
 
     task = asyncio.create_task(
