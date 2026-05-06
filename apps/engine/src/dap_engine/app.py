@@ -37,23 +37,19 @@ from dap_engine.persistence.db import (
 logger = logging.getLogger("dap.engine")
 
 
-# Pool sizing for AsyncPostgresSaver. Conservative defaults — bump max_size if
-# checkpoint contention shows up under load. Each background run holds a
-# connection only for the duration of a checkpoint read/write, so 10 concurrent
-# slots is enough for ~10 simultaneously-checkpointing pipelines without
-# saturating Postgres connection limits. (#187)
-_PG_POOL_MIN_SIZE = 2
-_PG_POOL_MAX_SIZE = 10
-
-
 @asynccontextmanager
-async def _pg_pooled_checkpointer(conn_string: str) -> AsyncIterator[AsyncPostgresSaver]:
+async def _pg_pooled_checkpointer(
+    conn_string: str,
+    *,
+    min_size: int,
+    max_size: int,
+) -> AsyncIterator[AsyncPostgresSaver]:
     """Yield an AsyncPostgresSaver backed by a psycopg AsyncConnectionPool.
 
     Replaces ``AsyncPostgresSaver.from_conn_string`` which opens a single
     AsyncConnection — concurrent runs serialize their checkpoint reads/writes
     through that one TCP socket. With a pool, checkpoint ops can run in
-    parallel up to ``_PG_POOL_MAX_SIZE``. (#187)
+    parallel up to ``max_size``. (#187)
 
     The connection kwargs (autocommit / prepare_threshold / row_factory) mirror
     what ``from_conn_string`` configures so AsyncPostgresSaver sees the same
@@ -64,8 +60,8 @@ async def _pg_pooled_checkpointer(conn_string: str) -> AsyncIterator[AsyncPostgr
     # row_factory=dict_row in kwargs makes this true at runtime.
     pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
         conninfo=conn_string,
-        min_size=_PG_POOL_MIN_SIZE,
-        max_size=_PG_POOL_MAX_SIZE,
+        min_size=min_size,
+        max_size=max_size,
         kwargs={
             "autocommit": True,
             "prepare_threshold": 0,
@@ -94,6 +90,14 @@ class EngineConfig:
     # ``runtime_config``) exceeds this. Belt-and-suspenders against a runaway
     # form value or a forgotten zero default in the UI.
     dry_run_budget_usd: float = 0.50
+    # PostgreSQL checkpointer pool sizing (#187). Each background run holds a
+    # connection only for the duration of a checkpoint read/write, so 10
+    # concurrent slots cover ~10 simultaneously-checkpointing pipelines without
+    # saturating Postgres connection limits. Bump max if checkpoint contention
+    # shows up under load; shrink min on dev/test boxes to save resident
+    # connections. Ignored on the SQLite path.
+    pg_pool_min_size: int = 2
+    pg_pool_max_size: int = 10
 
 
 def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
@@ -110,9 +114,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
             assert db_url is not None
             engine = create_engine_for_postgresql(db_url)
             # Pooled AsyncPostgresSaver — concurrent checkpoint ops parallelize
-            # across up to _PG_POOL_MAX_SIZE psycopg connections instead of
+            # across up to cfg.pg_pool_max_size psycopg connections instead of
             # serializing through a single TCP socket. (#187)
-            checkpointer_ctx = _pg_pooled_checkpointer(pg_conn_string(db_url))
+            checkpointer_ctx = _pg_pooled_checkpointer(
+                pg_conn_string(db_url),
+                min_size=cfg.pg_pool_min_size,
+                max_size=cfg.pg_pool_max_size,
+            )
             db_label = db_url.split("@", 1)[-1] if "@" in db_url else db_url
         else:
             engine = create_engine_for_sqlite(cfg.db_path)
