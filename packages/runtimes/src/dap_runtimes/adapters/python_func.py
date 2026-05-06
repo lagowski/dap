@@ -174,24 +174,28 @@ class PythonFuncAdapter(BaseAdapter):
             )
 
         duration_ms = _elapsed_ms(start)
-        audit: dict[str, Any] = result.pop("__audit", {}) or {}
+        # Extract __audit without mutating the caller's dict — they may have
+        # retained the reference (e.g. cached it) and pop() would silently
+        # delete the key from their copy. Build a fresh state_delta instead.
+        audit_raw: Any = result.get("__audit", {})
+        audit: dict[str, Any] = audit_raw if isinstance(audit_raw, dict) else {}
+        state_delta: dict[str, Any] = {k: v for k, v in result.items() if k != "__audit"}
 
         tokens_used: int | None = None
         cost_usd: float | None = None
-        if isinstance(audit, dict):
-            with contextlib.suppress(TypeError, ValueError):
-                if (v := audit.get("tokens_used")) is not None:
-                    tokens_used = int(v)
-            with contextlib.suppress(TypeError, ValueError):
-                if (v := audit.get("cost_usd")) is not None:
-                    cost_usd = float(v)
+        with contextlib.suppress(TypeError, ValueError):
+            if (v := audit.get("tokens_used")) is not None:
+                tokens_used = int(v)
+        with contextlib.suppress(TypeError, ValueError):
+            if (v := audit.get("cost_usd")) is not None:
+                cost_usd = float(v)
 
         return RuntimeResult(
             success=True,
             output=str(result),
             duration_ms=duration_ms,
             errors=[],
-            structured={"state_delta": result, "audit": audit},
+            structured={"state_delta": state_delta, "audit": audit},
             tokens_used=tokens_used,
             cost_usd=cost_usd,
         )

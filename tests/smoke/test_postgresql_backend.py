@@ -38,8 +38,26 @@ def pg_client() -> Iterator[TestClient]:
     assert PG_URL is not None
     config = EngineConfig(database_url=PG_URL)
     app = create_app(config)
-    with TestClient(app) as c:
-        yield c
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        # Truncate application tables so re-runs against the same DB don't
+        # accumulate rows across test invocations. langgraph checkpoint tables
+        # are managed by the saver and stay between tests. Reverse FK order so
+        # children are deleted before parents.
+        from sqlalchemy import create_engine
+
+        from dap_engine.persistence.db import _pg_sync_url
+        from dap_engine.persistence.models import Base
+
+        cleanup_engine = create_engine(_pg_sync_url(PG_URL), future=True)
+        try:
+            with cleanup_engine.begin() as conn:
+                for table in reversed(Base.metadata.sorted_tables):
+                    conn.execute(table.delete())
+        finally:
+            cleanup_engine.dispose()
 
 
 def test_health_reports_postgresql_dialect(pg_client: TestClient) -> None:
