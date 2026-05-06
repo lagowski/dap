@@ -99,9 +99,10 @@ class HttpAdapter(BaseAdapter):
                 url=url,
             )
 
-        # Build auth + extra headers.
+        # Build auth + extra headers. ``secrets`` is the subset of header
+        # values that must be scrubbed from error previews (#212).
         try:
-            headers = _build_headers(config.get("auth"), config.get("headers"))
+            headers, secrets = _build_headers(config.get("auth"), config.get("headers"))
         except ValueError as exc:
             return _failed(str(exc), duration_ms=0, url=url)
 
@@ -140,7 +141,7 @@ class HttpAdapter(BaseAdapter):
             # 401 traces). Without this scrub the bearer token would land
             # in node_execution_logs, the dashboard, and any caller of
             # /runs/{id}/logs. (#212)
-            preview = _redact_secrets(response.text, headers)[:ERROR_PREVIEW_LIMIT]
+            preview = _redact_secrets(response.text, secrets)[:ERROR_PREVIEW_LIMIT]
             return _failed(
                 f"HTTP {response.status_code}: {preview}",
                 duration_ms=duration_ms,
@@ -300,28 +301,50 @@ _MIN_SECRET_LEN: Final = 8
 
 # Header-value prefixes that are not secret themselves — strip them to expose
 # the actual token, then redact both the full value AND the stripped form so
-# upstreams can echo either shape.
+# upstreams can echo either shape. Matched case-insensitively (operators
+# sometimes spell "bearer" / "basic" lowercase in custom-header configs).
 _AUTH_VALUE_PREFIXES: Final = ("Bearer ", "Basic ", "Token ", "Bot ")
 
+# Header names that almost always carry a secret. Used to flag user-supplied
+# entries in ``runtime_config.headers`` for redaction without false-positives
+# on benign headers like Content-Type / Accept / User-Agent.
+_SENSITIVE_HEADER_PATTERNS: Final = (
+    "authorization",
+    "cookie",
+    "auth",
+    "token",
+    "api-key",
+    "apikey",
+    "secret",
+)
 
-def _redact_secrets(text: str, sent_headers: dict[str, str]) -> str:
-    """Replace any header secret values present in ``text`` with ``[REDACTED]``.
 
-    Only redacts substrings we know we sent — pure substring match against the
-    actual values in ``sent_headers``, plus their post-prefix tails (so a
-    body that contains \"sk-…\" without the leading \"Bearer \" still gets
-    scrubbed). This is more robust than regex-pattern scrubbing: no false
-    positives, and it covers any auth scheme without enumeration.
+def _is_sensitive_header_name(name: str) -> bool:
+    lower = name.lower()
+    return any(pattern in lower for pattern in _SENSITIVE_HEADER_PATTERNS)
+
+
+def _redact_secrets(text: str, secrets: list[str]) -> str:
+    """Replace any value in ``secrets`` present in ``text`` with ``[REDACTED]``.
+
+    ``secrets`` is the explicit list of sensitive values that ``_build_headers``
+    identified — Authorization values, custom-auth header values, Cookies, and
+    any user-supplied header whose name matches a known-sensitive pattern.
+    Each secret is also matched against its post-prefix tail (case-insensitive)
+    so a body that contains \"sk-…\" without the leading \"Bearer \" still gets
+    scrubbed. (#212)
     """
-    if not text or not sent_headers:
+    if not text or not secrets:
         return text
     redacted = text
     seen: set[str] = set()
-    for value in sent_headers.values():
+    for value in secrets:
         candidates = {value}
+        lower = value.casefold()
         for prefix in _AUTH_VALUE_PREFIXES:
-            if value.startswith(prefix):
+            if lower.startswith(prefix.casefold()):
                 candidates.add(value[len(prefix) :])
+                break
         for candidate in candidates:
             if candidate and len(candidate) >= _MIN_SECRET_LEN and candidate not in seen:
                 redacted = redacted.replace(candidate, "[REDACTED]")
@@ -332,16 +355,21 @@ def _redact_secrets(text: str, sent_headers: dict[str, str]) -> str:
 def _build_headers(
     auth: Any,
     extra_headers: Any,
-) -> dict[str, str]:
-    """Resolve auth header from env vars, merge with any static extras.
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve auth header from env vars, merge with static extras.
+
+    Returns ``(headers, secrets)``. ``secrets`` lists every value that is
+    sensitive enough to redact from error previews (#212): all auth-derived
+    header values, plus user-supplied entries whose name matches a
+    known-sensitive pattern (Authorization, Cookie, *Token*, *API-Key*, etc.).
+    Benign user headers (Content-Type, Accept, User-Agent, …) are NOT in
+    ``secrets`` so the error preview stays readable.
 
     Raises ``ValueError`` when an env var named in ``auth`` isn't set, or
     when ``extra_headers`` contains a non-string header name or value.
-    Validation has already accepted dict[str, str] at config time, but a
-    second guard here surfaces post-validation drift (e.g. someone hand-
-    edited the row in the DB) instead of silently dropping headers.
     """
     headers: dict[str, str] = {}
+    secrets: list[str] = []
     if isinstance(extra_headers, dict):
         for key, value in extra_headers.items():
             if not isinstance(key, str) or not isinstance(value, str):
@@ -351,13 +379,15 @@ def _build_headers(
                     f"{type(value).__name__}={value!r}"
                 )
             headers[key] = value
+            if _is_sensitive_header_name(key):
+                secrets.append(value)
 
     if not isinstance(auth, dict):
-        return headers
+        return headers, secrets
 
     auth_type = auth.get("type")
     if auth_type in (None, "none"):
-        return headers
+        return headers, secrets
     if auth_type == "bearer":
         token = os.environ.get(auth["env"])
         if not token:
@@ -365,6 +395,7 @@ def _build_headers(
                 f"Auth env var {auth['env']} not set (referenced by runtime_config.auth)"
             )
         headers["Authorization"] = f"Bearer {token}"
+        secrets.append(headers["Authorization"])
     elif auth_type == "header":
         value = os.environ.get(auth["env"])
         if not value:
@@ -372,6 +403,7 @@ def _build_headers(
                 f"Auth env var {auth['env']} not set (referenced by runtime_config.auth)"
             )
         headers[auth["name"]] = value
+        secrets.append(value)
     elif auth_type == "basic":
         user = os.environ.get(auth["user_env"])
         password = os.environ.get(auth["pass_env"])
@@ -380,7 +412,9 @@ def _build_headers(
             raise ValueError(f"Auth env var {missing} not set (referenced by runtime_config.auth)")
         creds = base64.b64encode(f"{user}:{password}".encode()).decode("ascii")
         headers["Authorization"] = f"Basic {creds}"
-    return headers
+        secrets.append(headers["Authorization"])
+        secrets.append(creds)  # the bare base64 form, in case upstream echoes it without prefix
+    return headers, secrets
 
 
 def _apply_extractors(

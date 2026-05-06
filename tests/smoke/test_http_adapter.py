@@ -404,8 +404,8 @@ async def test_http_4xx_redacts_bearer_token_echoed_in_error_body(
     (auth gateways, debug servers, 401 traces). The error preview must
     redact the secret before storing it in errors[]/dashboard/logs (#212).
     """
-    # The fixture sets OLLAMA_API_KEY=sk-secret-token-123-do-not-leak (per
-    # _BEARER_TOKEN below). Upstream echoes the full Authorization header.
+    # The fixture sets OLLAMA_API_KEY to _BEARER_TOKEN (defined at module top).
+    # Upstream echoes the full Authorization header in its error body.
     adapter = HttpAdapter()
     response = _mock_response(
         status_code=401,
@@ -454,6 +454,76 @@ async def test_http_4xx_redacts_bare_token_without_bearer_prefix(
     [error] = result.errors
     assert _BEARER_TOKEN not in error
     assert "[REDACTED]" in error
+
+
+async def test_http_4xx_redacts_custom_header_auth(with_ollama_key: None) -> None:
+    """auth.type='header' values (X-API-Key etc.) must also be redacted (#212)."""
+    adapter = HttpAdapter()
+    response = _mock_response(
+        status_code=401,
+        text=f"Bad credentials: X-API-Key={_BEARER_TOKEN} not recognized",
+    )
+    client = _mock_client(response)
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(auth={"type": "header", "name": "X-API-Key", "env": "OLLAMA_API_KEY"})
+        )
+
+    [error] = result.errors
+    assert _BEARER_TOKEN not in error
+    assert "[REDACTED]" in error
+
+
+async def test_http_4xx_redacts_user_supplied_cookie() -> None:
+    """User-supplied Cookie / X-API-Key in runtime_config.headers is also scrubbed (#212).
+
+    Headers whose name matches a sensitive pattern (Cookie / Authorization /
+    *Token* / *API-Key* / *Auth* / *Secret*) are flagged for redaction even
+    when they come from runtime_config.headers rather than from auth config.
+    """
+    adapter = HttpAdapter()
+    cookie = "session=secret-cookie-value-12345"
+    response = _mock_response(
+        status_code=403,
+        text=f"Forbidden. Got Cookie: {cookie} (unauthorized)",
+    )
+    client = _mock_client(response)
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(_task(headers={"Cookie": cookie}))
+
+    [error] = result.errors
+    assert "secret-cookie-value-12345" not in error
+    assert "[REDACTED]" in error
+
+
+async def test_http_4xx_does_not_redact_benign_headers() -> None:
+    """User-supplied benign headers (Content-Type, User-Agent) must NOT be
+    redacted from the preview — that would mangle useful diagnostic context (#212).
+    """
+    adapter = HttpAdapter()
+    # Upstream's error body legitimately mentions the Content-Type — must not
+    # be redacted just because we sent that header.
+    response = _mock_response(
+        status_code=415,
+        text="Unsupported Media Type: expected application/json got something-else",
+    )
+    client = _mock_client(response)
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "dap-engine/test",
+                    "X-Trace-Id": "trace-12345",
+                }
+            )
+        )
+
+    [error] = result.errors
+    # None of the benign headers should be redacted.
+    assert "[REDACTED]" not in error
+    assert "application/json" in error
+    assert "415" in error
 
 
 async def test_non_json_response_returns_error() -> None:
