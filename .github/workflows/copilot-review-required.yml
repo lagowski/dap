@@ -31,6 +31,13 @@ name: Copilot Review Gate
 # reviewed, force a refresh without a push:
 #   `gh workflow run copilot-review-required.yml --ref develop`
 # (or the "Run workflow" button on this workflow's Actions page).
+#
+# Inspecting check status: `gh pr checks <PR>` does not list check_runs
+# created via the REST API by this workflow (it only enumerates job-status
+# checks). Branch protection sees the check fine, but for CLI inspection
+# query the raw check-runs endpoint:
+#   gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+#     --jq '.check_runs[] | {name, conclusion}'
 
 on:
   pull_request:
