@@ -34,18 +34,46 @@ from dap_engine.persistence.models import Base
 
 
 def detect_dialect(url: str) -> Literal["sqlite", "postgresql"]:
-    """Return ``"postgresql"`` when *url* starts with ``postgresql``, else ``"sqlite"``."""
-    return "postgresql" if url.startswith("postgresql") else "sqlite"
+    """Return ``"postgresql"`` for postgres-family URLs, else ``"sqlite"``.
+
+    Accepts ``postgresql+asyncpg://``, ``postgresql+psycopg://``, bare
+    ``postgresql://``, and heroku-style ``postgres://`` — all routed to the
+    PostgreSQL branch.
+    """
+    return "postgresql" if url.startswith(("postgresql", "postgres://")) else "sqlite"
+
+
+def _normalize_pg_prefix(url: str) -> str:
+    """Rewrite heroku-style ``postgres://`` to ``postgresql://`` for SQLAlchemy.
+
+    SQLAlchemy 1.4+ rejects the bare ``postgres://`` scheme; normalize at
+    consumption time so callers can pass either form.
+    """
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://") :]
+    return url
 
 
 def _pg_sync_url(database_url: str) -> str:
-    """Convert ``postgresql+asyncpg://`` to ``postgresql+psycopg://`` for sync use."""
-    return database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+    """Return a SQLAlchemy URL guaranteed to use psycopg v3 as the sync driver.
+
+    Normalizes ``postgres://`` to ``postgresql://``, rewrites ``+asyncpg`` to
+    ``+psycopg``, and forces ``+psycopg`` on bare ``postgresql://`` URLs.
+    The bare scheme is critical: SQLAlchemy defaults bare ``postgresql://``
+    to psycopg2, which is not a project dependency, so create_engine would
+    fail at runtime without this rewrite.
+    """
+    url = _normalize_pg_prefix(database_url)
+    url = url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://") :]
+    return url
 
 
 def pg_conn_string(database_url: str) -> str:
     """Return a bare ``postgresql://`` conn string for psycopg (e.g. AsyncPostgresSaver)."""
-    return database_url.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
+    url = _normalize_pg_prefix(database_url)
+    return url.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
         "postgresql+psycopg://", "postgresql://", 1
     )
 
