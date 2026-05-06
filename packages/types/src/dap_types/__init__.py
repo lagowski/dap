@@ -4,6 +4,7 @@ from dap_types.pipeline import (
     EdgeCondition,
     LogicalCondition,
     Pipeline,
+    PipelineDefaults,
     PipelineEdge,
     PipelineNode,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "NodeExecutionLog",
     "NodeStatus",
     "Pipeline",
+    "PipelineDefaults",
     "PipelineEdge",
     "PipelineNode",
     "PipelineState",

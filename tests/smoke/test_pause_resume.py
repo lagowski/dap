@@ -260,3 +260,102 @@ def test_abort_paused_run(pause_client: tuple[TestClient, CountingSlowAdapter]) 
     assert abort_response.status_code == 200
     assert abort_response.json()["final_status"] == "aborted"
     assert abort_response.json()["ended_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# /approve validation (#184 + #190)
+# ---------------------------------------------------------------------------
+
+
+def _create_gated_pipeline(client: TestClient, agent_id: str, gate_node: str = "n2") -> str:
+    """3-node pipeline n1 → n2 → n3 where ``gate_node`` is an interrupt-before gate."""
+    nodes = [
+        {"id": f"n{i + 1}", "agent_id": agent_id, "position": {"x": i * 100, "y": 0}}
+        for i in range(3)
+    ]
+    edges = [
+        {"id": "e1", "source": "n1", "target": "n2"},
+        {"id": "e2", "source": "n2", "target": "n3"},
+        {"id": "e_end", "source": "n3", "target": "__end__"},
+    ]
+    response = client.post(
+        "/pipelines",
+        json={
+            "name": "Gated Pipeline",
+            "description": "",
+            "schema_version": "langgraph/1.0",
+            "state_schema_ref": "PipelineState.v1",
+            "entry_point": "n1",
+            "nodes": nodes,
+            "edges": edges,
+            "defaults": {
+                "max_attempts": 3,
+                "budget_limit_usd": 5.0,
+                "approval_required_nodes": [gate_node],
+            },
+        },
+    )
+    assert response.status_code == 201
+    return str(response.json()["id"])
+
+
+def _trigger_and_wait_paused(client: TestClient, pipeline_id: str) -> str:
+    triggered = client.post(
+        "/runs",
+        json={"pipeline_id": pipeline_id, "initial_state": {}},
+    ).json()
+    run_id = str(triggered["id"])
+    _wait_for_status(client, run_id, {"paused"})
+    return run_id
+
+
+def test_approve_unknown_node_returns_404(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """A node_id that doesn't exist in the pipeline is a missing resource — 404 (#184/#190)."""
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    response = client.post(f"/runs/{run_id}/nodes/totally_made_up/approve")
+    assert response.status_code == 404
+    assert "not in pipeline" in response.json()["detail"]
+
+
+def test_approve_non_gate_node_returns_409(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """node_id exists but isn't in approval_required_nodes — 409 (#184).
+
+    Without this check the path parameter was decorative — any existing node
+    could "approve" any gate, so the audit log would record the wrong node.
+    """
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    # n1 exists in the pipeline but is NOT an approval gate
+    response = client.post(f"/runs/{run_id}/nodes/n1/approve")
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "not an approval gate" in detail
+    assert "'n2'" in detail  # current gate listed for diagnostic clarity
+
+
+def test_approve_gate_node_succeeds(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Approving the actual gate node resumes the run (no behavior regression)."""
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    response = client.post(f"/runs/{run_id}/nodes/n2/approve")
+    assert response.status_code == 200
+    assert response.json()["final_status"] == "running"
+
+    completed = _wait_for_status(client, run_id, {"success", "failed"})
+    assert completed["final_status"] == "success"
