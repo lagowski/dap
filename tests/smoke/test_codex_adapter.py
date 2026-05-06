@@ -445,10 +445,13 @@ async def test_non_dict_usage_returns_descriptive_error(
     assert any("usage" in e for e in result.errors)
 
 
-async def test_non_numeric_token_count_returns_descriptive_error(
+async def test_non_numeric_token_count_skipped_gracefully(
     with_api_key: None,
 ) -> None:
-    """`usage.input_tokens` returning a non-numeric — graceful failure."""
+    """Pre-#214 a non-numeric token field crashed the entire run; now it skips
+    the bad field, falls back to 0 for that key, and counts the others normally.
+    Trades hard-fail for "succeed with imperfect telemetry" — see #214 rationale.
+    """
     adapter = CodexAdapter()
     payload = json.dumps(
         {
@@ -463,8 +466,9 @@ async def test_non_numeric_token_count_returns_descriptive_error(
     ):
         result = await adapter.execute(_task())
 
-    assert result.success is False
-    assert any("token metadata" in e for e in result.errors)
+    assert result.success is True
+    # bad input_tokens skipped → 0; output_tokens counted
+    assert result.tokens_used == 50
 
 
 async def test_missing_usage_defaults_to_zero_tokens(with_api_key: None) -> None:

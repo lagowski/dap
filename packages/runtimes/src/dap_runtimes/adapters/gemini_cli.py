@@ -85,7 +85,7 @@ class GeminiCliAdapter(BaseAdapter):
         version = await _read_cli_version(binary)
         return HealthStatus(available=True, version=version)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912,PLR0915
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch obscures
         # the mapping (same rationale as ApiCallAdapter / BashAdapter).
@@ -103,6 +103,13 @@ class GeminiCliAdapter(BaseAdapter):
                 model_id=config.get("model_id"),
             )
 
+        # Mirror claude_code / codex: accept runtime_config.extra_args so the
+        # same agent template can be reused across all three CLI providers
+        # (e.g. --sandbox, tool allowlists, model parameter overrides). #213
+        extra_args, extra_args_error = _normalise_extra_args(config.get("extra_args"))
+        if extra_args_error is not None:
+            return _failed(extra_args_error, duration_ms=0)
+
         argv: list[str] = [
             binary,
             "-m",
@@ -113,6 +120,7 @@ class GeminiCliAdapter(BaseAdapter):
         thinking_budget = config.get("thinking_budget")
         if isinstance(thinking_budget, int) and thinking_budget > 0:
             argv.extend(["--thinking-budget", str(thinking_budget)])
+        argv.extend(extra_args)
 
         cwd = task.working_directory or os.getcwd()
         timeout_seconds = max(task.timeout_ms or 60_000, 1) / MS_PER_SECOND
@@ -293,6 +301,27 @@ def _validate_config(config: dict[str, Any]) -> str | None:
     return None
 
 
+def _normalise_extra_args(value: Any) -> tuple[list[str], str | None]:
+    """Coerce extra_args into a list of strings, or return a descriptive error.
+
+    Mirror of the helper in claude_code.py / codex.py. (#213)
+    """
+    if value is None:
+        return ([], None)
+    if not isinstance(value, list):
+        return ([], "runtime_config.extra_args must be a list of strings")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            return (
+                [],
+                "runtime_config.extra_args must be a list of strings; "
+                f"got element of type {type(item).__name__}",
+            )
+        out.append(item)
+    return (out, None)
+
+
 def _first_string(payload: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     """Return the first key in `keys` whose value is a non-empty string."""
     for key in keys:
@@ -305,16 +334,27 @@ def _first_string(payload: dict[str, Any], keys: tuple[str, ...]) -> str | None:
 def _first_int(payload: dict[str, Any], keys: tuple[str, ...]) -> int:
     """Return the first key in `keys` whose value coerces to int; default 0.
 
-    Raises (TypeError, ValueError) only when a present key has a value that
-    can't coerce — propagated by the caller to a descriptive _failed().
+    Tolerates stringified floats (e.g. ``"12.0"``) and skips on parse failure
+    rather than raising — CLI usage stats vary by provider/version, and one
+    odd value should not abort the run. Booleans are explicitly skipped:
+    ``isinstance(True, int)`` is True in Python, but treating ``True``/``False``
+    as token counts is almost certainly wrong shape. (#214)
     """
     for key in keys:
         if key not in payload:
             continue
         value = payload[key]
-        if value is None:
+        if value is None or isinstance(value, bool):
             continue
-        return int(value)
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            try:
+                return int(float(value))
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: int(float("inf")) / int(float("1e309")) —
+                # float() succeeds but int() can't represent infinity.
+                continue
     return 0
 
 

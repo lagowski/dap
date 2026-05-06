@@ -44,6 +44,7 @@ def _task(
     model_id: str = "gemini-3.0-pro",
     binary_path: str | None = None,
     thinking_budget: Any = None,
+    extra_args: Any = None,
     timeout_ms: int = 60_000,
     env: dict[str, str] | None = None,
     project_env_vars: dict[str, str] | None = None,
@@ -53,6 +54,8 @@ def _task(
         runtime_config["binary_path"] = binary_path
     if thinking_budget is not None:
         runtime_config["thinking_budget"] = thinking_budget
+    if extra_args is not None:
+        runtime_config["extra_args"] = extra_args
     if env is not None:
         runtime_config["env"] = env
     return RuntimeTask(
@@ -244,6 +247,41 @@ async def test_execute_with_thinking_budget(with_api_key: None) -> None:
     assert "8192" in argv
 
 
+async def test_execute_passes_extra_args_to_argv(with_api_key: None) -> None:
+    """runtime_config.extra_args is forwarded to the gemini argv (#213).
+
+    Mirrors the equivalent claude_code / codex tests so the same agent template
+    can be reused across all three CLI providers without silently dropping flags.
+    """
+    adapter = GeminiCliAdapter()
+    proc = _build_subprocess_mock(stdout=_success_payload())
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        await adapter.execute(_task(extra_args=["--sandbox=docker", "--allow-tools", "fs"]))
+
+    argv = create_mock.call_args.args
+    assert "--sandbox=docker" in argv
+    assert "--allow-tools" in argv
+    assert "fs" in argv
+
+
+async def test_execute_extra_args_must_be_list_of_strings(with_api_key: None) -> None:
+    """Non-list / non-string extra_args is rejected with a descriptive error (#213)."""
+    adapter = GeminiCliAdapter()
+    with patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"):
+        # Non-list
+        result = await adapter.execute(_task(extra_args="--not-a-list"))
+        assert result.success is False
+        assert any("must be a list of strings" in e for e in result.errors)
+
+        # List with non-string element
+        result = await adapter.execute(_task(extra_args=["--ok", 42]))
+        assert result.success is False
+        assert any("got element of type int" in e for e in result.errors)
+
+
 async def test_per_agent_env_overrides_project_env(
     with_api_key: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -384,9 +422,13 @@ async def test_non_dict_usage_returns_descriptive_error(with_api_key: None) -> N
     assert any("usage" in e for e in result.errors)
 
 
-async def test_non_numeric_token_count_returns_descriptive_error(
+async def test_non_numeric_token_count_skipped_gracefully(
     with_api_key: None,
 ) -> None:
+    """Pre-#214 a non-numeric token field crashed the entire run; now it skips
+    the bad field, falls back to 0 for that key, and counts the others normally.
+    Trades hard-fail for "succeed with imperfect telemetry" — see #214 rationale.
+    """
     adapter = GeminiCliAdapter()
     payload = json.dumps(
         {
@@ -404,8 +446,9 @@ async def test_non_numeric_token_count_returns_descriptive_error(
     ):
         result = await adapter.execute(_task())
 
-    assert result.success is False
-    assert any("token metadata" in e for e in result.errors)
+    assert result.success is True
+    # bad prompt_token_count skipped → 0; candidates_token_count counted
+    assert result.tokens_used == 50
 
 
 async def test_timeout_kills_long_running_command(with_api_key: None) -> None:
@@ -448,3 +491,45 @@ async def test_cancellation_kills_subprocess(with_api_key: None) -> None:
         exec_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await exec_task
+
+
+# ---------------------------------------------------------------------------
+# _first_int helper — robustness against varied CLI usage shapes (#214)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"tokens": 12}, 12),  # plain int
+        ({"tokens": "12"}, 12),  # stringified int
+        ({"tokens": "12.0"}, 12),  # stringified float — pre-#214 raised ValueError
+        ({"tokens": 12.7}, 12),  # raw float, truncates to int
+        ({"tokens": True}, 0),  # bool explicitly skipped
+        ({"tokens": False}, 0),  # bool explicitly skipped
+        ({"tokens": None}, 0),  # None skipped, fallback to default
+        ({"tokens": "abc"}, 0),  # unparseable, skipped, fallback to default
+        ({"tokens": "inf"}, 0),  # int(float("inf")) → OverflowError, skipped
+        ({"tokens": "1e309"}, 0),  # exponent overflows float→int, skipped
+        ({}, 0),  # missing, fallback to default
+    ],
+)
+def test_first_int_handles_varied_shapes(payload: dict[str, Any], expected: int) -> None:
+    from dap_runtimes.adapters.gemini_cli import _first_int
+
+    assert _first_int(payload, ("tokens",)) == expected
+
+
+def test_first_int_codex_and_gemini_share_behavior() -> None:
+    """Both adapters' _first_int must agree on edge cases (#214)."""
+    from dap_runtimes.adapters.codex import _first_int as codex_first_int
+    from dap_runtimes.adapters.gemini_cli import _first_int as gemini_first_int
+
+    cases: list[tuple[dict[str, Any], tuple[str, ...]]] = [
+        ({"x": "12.0"}, ("x",)),
+        ({"x": True}, ("x",)),
+        ({"x": "abc"}, ("x",)),
+        ({}, ("x",)),
+    ]
+    for payload, keys in cases:
+        assert codex_first_int(payload, keys) == gemini_first_int(payload, keys)

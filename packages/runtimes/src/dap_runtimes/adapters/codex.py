@@ -309,16 +309,27 @@ def _first_string(payload: dict[str, Any], keys: tuple[str, ...]) -> str | None:
 def _first_int(payload: dict[str, Any], keys: tuple[str, ...]) -> int:
     """Return the first key in `keys` whose value coerces to int; default 0.
 
-    Raises (TypeError, ValueError) only when a present key has a value that
-    can't coerce — propagated by the caller to a descriptive _failed().
+    Tolerates stringified floats (e.g. ``"12.0"``) and skips on parse failure
+    rather than raising — CLI usage stats vary by provider/version, and one
+    odd value should not abort the run. Booleans are explicitly skipped:
+    ``isinstance(True, int)`` is True in Python, but treating ``True``/``False``
+    as token counts is almost certainly wrong shape. (#214)
     """
     for key in keys:
         if key not in payload:
             continue
         value = payload[key]
-        if value is None:
+        if value is None or isinstance(value, bool):
             continue
-        return int(value)
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            try:
+                return int(float(value))
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: int(float("inf")) / int(float("1e309")) —
+                # float() succeeds but int() can't represent infinity.
+                continue
     return 0
 
 
