@@ -65,20 +65,55 @@ async def test_missing_callable_path_returns_error(adapter: PythonFuncAdapter) -
 
 
 @pytest.mark.asyncio
-async def test_callable_path_without_separator_returns_error(adapter: PythonFuncAdapter) -> None:
-    # No colon AND no dot — ambiguous, rejected.
+async def test_callable_path_without_colon_returns_error(adapter: PythonFuncAdapter) -> None:
+    """callable_path must use 'module:attr' form — no colon = configuration error (#192)."""
     result = await adapter.execute(_task(callable_path="nodotnocolon"))
     assert result.success is False
-    assert any("callable_path" in err for err in result.errors)
+    assert any("module.path:func_name" in err for err in result.errors)
 
 
 @pytest.mark.asyncio
-async def test_callable_path_dot_notation(adapter: PythonFuncAdapter) -> None:
-    # "os.path.join" resolves module="os.path", func="join".
-    # os.path.join returns a str, not a dict — adapter fails on return type.
+async def test_dot_only_callable_path_rejected(adapter: PythonFuncAdapter) -> None:
+    """Dot-only notation (no ':') is rejected after #192 — the fallback worked only
+    when every intermediate segment was importable as a module, which is fragile.
+    """
     result = await adapter.execute(_task(callable_path="os.path.join"))
     assert result.success is False
+    assert any("module.path:func_name" in err for err in result.errors)
+
+
+@pytest.mark.asyncio
+async def test_callable_path_with_colon_resolves(adapter: PythonFuncAdapter) -> None:
+    """Explicit 'module.path:attr' form is the only accepted shape post-#192."""
+    # os.path.join returns a str, not a dict — adapter resolves it then fails on return type.
+    result = await adapter.execute(_task(callable_path="os.path:join"))
+    assert result.success is False
     assert any("dict" in err for err in result.errors)
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        ":run",  # empty module
+        "pkg:",  # empty attr
+        ":",  # both empty
+        "  :run",  # whitespace-only module after strip
+        "pkg:  ",  # whitespace-only attr after strip
+        "  :  ",  # both whitespace
+    ],
+)
+@pytest.mark.asyncio
+async def test_callable_path_empty_segments_rejected(
+    adapter: PythonFuncAdapter, bad_path: str
+) -> None:
+    """Both sides of the ':' separator must be non-empty after stripping (#192 follow-up).
+
+    Without this check, e.g. \":run\" fell through to importlib.import_module(\"\")
+    producing a generic 'cannot import' message instead of pointing at the shape error.
+    """
+    result = await adapter.execute(_task(callable_path=bad_path))
+    assert result.success is False
+    assert any("non-empty" in err for err in result.errors)
 
 
 @pytest.mark.asyncio
