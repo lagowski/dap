@@ -560,6 +560,34 @@ def test_cohesion_unused_output_warns(client: TestClient) -> None:
     )
 
 
+def test_cohesion_terminal_node_outputs_skipped(client: TestClient) -> None:
+    """Terminal node's outputs are by design only consumed externally — no warning (#204).
+
+    Pipeline: n1 (Writer) → n2 (FinalReporter, terminal). n2 declares an
+    output but no in-pipeline node reads it because n2 is the leaf.
+    Pre-#204 this fired a noisy "no downstream reader" warning on
+    legitimate end-of-pipeline writers.
+    """
+    a = _create_agent_with_contract(
+        client, name="Writer", output_schema=["selected_issue_ids"]
+    )
+    b = _create_agent_with_contract(
+        client,
+        name="FinalReporter",
+        role="test_author",
+        input_schema=["selected_issue_ids"],
+        # tests_generated is in test_author's allow-list (ROLE_FIELDS) — terminal
+        # node's only "downstream reader" is the external /runs/{id}/state caller.
+        output_schema=["tests_generated"],
+    )
+    body = client.post("/pipelines/validate", json=_two_node_payload(a_id=a, b_id=b)).json()
+    assert body["valid"] is True
+    # n1 is satisfied by n2; n2 is terminal so its output must NOT warn.
+    assert not any("'tests_generated'" in w for w in body["warnings"]), (
+        f"Terminal node's output should not warn — got: {body['warnings']}"
+    )
+
+
 def test_cohesion_conflicting_writers_warns(client: TestClient) -> None:
     """Diamond where both branches write the same field → warning.
 
