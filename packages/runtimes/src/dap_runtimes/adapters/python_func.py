@@ -95,8 +95,7 @@ class PythonFuncAdapter(BaseAdapter):
             mod = importlib.import_module(module_path)
         except Exception as exc:
             return _failed(
-                f"python-func: cannot import '{callable_path}' "
-                f"({type(exc).__name__}: {exc})",
+                f"python-func: cannot import '{callable_path}' ({type(exc).__name__}: {exc})",
                 duration_ms=0,
             )
 
