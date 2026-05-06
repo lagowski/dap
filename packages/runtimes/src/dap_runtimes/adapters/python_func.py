@@ -87,10 +87,15 @@ class PythonFuncAdapter(BaseAdapter):
             )
 
         # Resolve at invocation time — allows package installs without engine restart.
+        # ImportError returns _failed (matches sibling adapters: bash/http/codex/...
+        # all surface configuration errors as structured failures, not raises). #191
         try:
             mod = importlib.import_module(module_path)
         except ImportError as exc:
-            raise RuntimeError(f"python-func: cannot import '{callable_path}' — {exc}") from exc
+            return _failed(
+                f"python-func: cannot import '{callable_path}' — {exc}",
+                duration_ms=0,
+            )
 
         func = getattr(mod, func_name, _MISSING)
         if func is _MISSING:

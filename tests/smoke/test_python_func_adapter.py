@@ -82,10 +82,15 @@ async def test_callable_path_dot_notation(adapter: PythonFuncAdapter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bad_import_raises_runtime_error(adapter: PythonFuncAdapter) -> None:
-    """ImportError for a nonexistent module raises RuntimeError with descriptive message."""
-    with pytest.raises(RuntimeError, match="python-func: cannot import"):
-        await adapter.execute(_task(callable_path="no_such_package.no_such_module:run"))
+async def test_bad_import_returns_failed_result(adapter: PythonFuncAdapter) -> None:
+    """ImportError for a nonexistent module returns a structured _failed result, not a raise (#191).
+
+    Matches sibling adapters (bash/http/codex) — configuration errors surface as
+    failed RuntimeResult so the engine error path stays uniform.
+    """
+    result = await adapter.execute(_task(callable_path="no_such_package.no_such_module:run"))
+    assert result.success is False
+    assert any("cannot import" in err for err in result.errors)
 
 
 @pytest.mark.asyncio
