@@ -63,7 +63,7 @@ class PythonFuncAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True, version=platform.python_version())
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912,PLR0915
         config = task.runtime_config
 
         callable_path = config.get("callable_path")
@@ -88,6 +88,14 @@ class PythonFuncAdapter(BaseAdapter):
                 duration_ms=0,
             )
         module_path, func_name = callable_path.rsplit(":", 1)
+        module_path = module_path.strip()
+        func_name = func_name.strip()
+        if not module_path or not func_name:
+            return _failed(
+                f"python-func: callable_path must have non-empty module and attr "
+                f"separated by ':' (got {callable_path!r}).",
+                duration_ms=0,
+            )
 
         # Resolve at invocation time — allows package installs without engine restart.
         # Any import-time failure (ImportError, SyntaxError, raises in module

@@ -91,6 +91,31 @@ async def test_callable_path_with_colon_resolves(adapter: PythonFuncAdapter) -> 
     assert any("dict" in err for err in result.errors)
 
 
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        ":run",  # empty module
+        "pkg:",  # empty attr
+        ":",  # both empty
+        "  :run",  # whitespace-only module after strip
+        "pkg:  ",  # whitespace-only attr after strip
+        "  :  ",  # both whitespace
+    ],
+)
+@pytest.mark.asyncio
+async def test_callable_path_empty_segments_rejected(
+    adapter: PythonFuncAdapter, bad_path: str
+) -> None:
+    """Both sides of the ':' separator must be non-empty after stripping (#192 follow-up).
+
+    Without this check, e.g. \":run\" fell through to importlib.import_module(\"\")
+    producing a generic 'cannot import' message instead of pointing at the shape error.
+    """
+    result = await adapter.execute(_task(callable_path=bad_path))
+    assert result.success is False
+    assert any("non-empty" in err for err in result.errors)
+
+
 @pytest.mark.asyncio
 async def test_bad_import_returns_failed_result(adapter: PythonFuncAdapter) -> None:
     """ImportError for a nonexistent module returns a structured _failed result, not a raise (#191).
