@@ -91,6 +91,46 @@ async def test_bad_import_returns_failed_result(adapter: PythonFuncAdapter) -> N
     result = await adapter.execute(_task(callable_path="no_such_package.no_such_module:run"))
     assert result.success is False
     assert any("cannot import" in err for err in result.errors)
+    # Structured-failure shape: empty state_delta + audit, no tokens/cost
+    assert result.structured == {"state_delta": {}, "audit": {}}
+    assert result.tokens_used is None
+    assert result.cost_usd is None
+    assert result.output == ""
+
+
+@pytest.mark.asyncio
+async def test_module_top_level_raise_returns_failed_result(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-ImportError raised during module import (e.g. RuntimeError at top level)
+    is also caught and returned as _failed, matching sibling-adapter behavior (#191).
+    """
+    # importlib raises whatever the module's top-level code raises. Simulate by
+    # registering a finder that raises RuntimeError on import.
+    import importlib.abc
+    import importlib.machinery
+    import sys
+
+    class _RaisingLoader(importlib.abc.Loader):
+        def create_module(self, spec):  # type: ignore[no-untyped-def]
+            return None
+
+        def exec_module(self, module):  # type: ignore[no-untyped-def]
+            raise RuntimeError("boom from module top level")
+
+    class _RaisingFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path, target=None):  # type: ignore[no-untyped-def]
+            if name == "_dap_test_raise_mod":
+                return importlib.machinery.ModuleSpec(name, _RaisingLoader())
+            return None
+
+    finder = _RaisingFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    result = await adapter.execute(_task(callable_path="_dap_test_raise_mod:run"))
+    assert result.success is False
+    assert any("RuntimeError" in err and "boom" in err for err in result.errors)
+    assert result.structured == {"state_delta": {}, "audit": {}}
 
 
 @pytest.mark.asyncio
