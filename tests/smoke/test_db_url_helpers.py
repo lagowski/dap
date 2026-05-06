@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dap_engine.persistence.db import (
     _normalize_pg_prefix,
+    _pg_sync_url,
     detect_dialect,
     pg_conn_string,
 )
@@ -41,4 +42,18 @@ def test_pg_conn_string_handles_postgres_scheme() -> None:
     assert (
         pg_conn_string("postgresql+psycopg://user:pw@host/db")
         == "postgresql://user:pw@host/db"
+    )
+
+
+def test_pg_sync_url_forces_psycopg_driver() -> None:
+    """_pg_sync_url always selects psycopg v3 — bare postgresql:// would default to psycopg2."""
+    assert _pg_sync_url("postgresql+asyncpg://x") == "postgresql+psycopg://x"
+    assert _pg_sync_url("postgresql://x") == "postgresql+psycopg://x"
+    assert _pg_sync_url("postgres://x") == "postgresql+psycopg://x"
+    # Already-psycopg URL passes through untouched
+    assert _pg_sync_url("postgresql+psycopg://x") == "postgresql+psycopg://x"
+    # End-to-end with a realistic URL
+    assert (
+        _pg_sync_url("postgres://user:pw@host:5432/db")
+        == "postgresql+psycopg://user:pw@host:5432/db"
     )
