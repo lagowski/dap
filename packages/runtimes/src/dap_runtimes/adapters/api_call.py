@@ -17,6 +17,7 @@ Supported providers (v0.4):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -100,6 +101,20 @@ class ApiCallAdapter(BaseAdapter):
         except ProviderError as exc:
             logger.warning("api-call provider=%s failed: %s", provider_id, exc)
             return _failed(start=start, message=str(exc))
+        except asyncio.CancelledError:
+            # Cooperative cancellation must propagate so the runner can mark
+            # the run aborted.
+            raise
+        except Exception as exc:
+            # Provider didn't wrap an unexpected error into ProviderError —
+            # SDK bug, lazy-import failure, network blip outside the typed
+            # surface. Match the family-wide _failed contract (#211) so a
+            # single SDK exception doesn't crash the worker.
+            logger.exception("api-call provider=%s unexpected error", provider_id)
+            return _failed(
+                start=start,
+                message=f"unexpected {type(exc).__name__}: {exc}",
+            )
 
         duration_ms = int((time.monotonic() - start) * 1000)
         total_tokens = (

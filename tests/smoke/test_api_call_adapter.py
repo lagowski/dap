@@ -353,6 +353,38 @@ async def test_rate_limit_error(with_api_key: None) -> None:
     assert any("Rate limited" in e for e in result.errors)
 
 
+async def test_unexpected_exception_returns_failed_not_raised(with_api_key: None) -> None:
+    """A non-ProviderError exception from provider.call must be caught (#211).
+
+    Previously only ProviderError was caught; any other exception (SDK bug,
+    lazy-import failure, network error outside the provider's typed wrappers)
+    propagated to the worker and crashed it. The fix matches the family-wide
+    _failed contract so unexpected exceptions surface as structured failures.
+    """
+    adapter = ApiCallAdapter()
+
+    with patch(_ANTHROPIC_CLIENT_PATH) as mock_cls:
+        mock_client = MagicMock()
+        # Plain ValueError — not derived from anthropic.APIError, so the
+        # provider would not wrap it into ProviderError. Pre-#211 this
+        # propagated out of execute().
+        mock_client.messages.create = AsyncMock(
+            side_effect=ValueError("simulated SDK bug"),
+        )
+        mock_client.close = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        result = await adapter.execute(_task())
+
+    assert result.success is False
+    assert any("ValueError" in e and "simulated SDK bug" in e for e in result.errors)
+    # Structured-failure shape: empty/None telemetry, non-negative duration
+    # (can be 0 on fast failures due to integer truncation).
+    assert result.tokens_used is None or result.tokens_used == 0
+    assert result.cost_usd is None or result.cost_usd == 0.0
+    assert result.duration_ms >= 0
+
+
 # ---------------------------------------------------------------------------
 # Cost calculation unit tests (Anthropic pricing)
 # ---------------------------------------------------------------------------
