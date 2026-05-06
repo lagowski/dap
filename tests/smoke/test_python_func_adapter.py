@@ -22,6 +22,7 @@ def _task(
     timeout_ms: int | None = 5000,
     pass_prompt: bool | None = None,
     pass_context: bool | None = None,
+    pipeline_state: dict[str, Any] | None = None,
 ) -> RuntimeTask:
     config: dict[str, object] = {}
     if callable_path is not None:
@@ -30,6 +31,10 @@ def _task(
         config["pass_prompt"] = pass_prompt
     if pass_context is not None:
         config["pass_context"] = pass_context
+    if pipeline_state is not None:
+        # Mirrors what node_executor injects (#165) — full pipeline state
+        # snapshot keyed under "__pipeline_state".
+        config["__pipeline_state"] = pipeline_state
     return RuntimeTask(
         execution_id="exec-test",
         prompt_xml=prompt_xml,
@@ -320,6 +325,87 @@ async def test_pass_prompt_false_omits_prompt_xml(
     assert result.success is True
     assert result.structured is not None
     assert "prompt_xml" not in result.structured["state_delta"]["captured_keys"]
+
+
+# ---------------------------------------------------------------------------
+# __pipeline_state injection — the runtime_config key node_executor uses to
+# forward the full PipelineState snapshot so python-func callables can read
+# top-level fields and extensions without a separate state fetch (#165, #186).
+# ---------------------------------------------------------------------------
+
+
+async def _return_state(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """Echo the state dict the adapter passed in — used to inspect injection."""
+    # Drop prompt_xml (covered by pass_prompt tests) so assertions focus on
+    # the __pipeline_state-derived keys.
+    return {"received_state": {k: v for k, v in state.items() if k != "prompt_xml"}}
+
+
+@pytest.mark.asyncio
+async def test_pipeline_state_injected_into_callable_state(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """runtime_config['__pipeline_state'] becomes the seed of the callable's state arg (#186).
+
+    node_executor injects the full PipelineState snapshot under this key
+    (apps/engine/src/dap_engine/execution/node_executor.py:145). The adapter
+    is expected to forward those fields into the user callable's ``state``
+    argument so the callable can resolve top-level + extensions without a
+    separate DB fetch — that's the contract that #165 introduced.
+    """
+    import sys
+    import types
+
+    mod = types.ModuleType("_dap_test_pipeline_state_mod")
+    mod.run = _return_state  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_test_pipeline_state_mod", mod)
+
+    snapshot = {
+        "run_id": "abc-123",
+        "repo": "rafeekpro/dap",
+        "branch": "develop",
+        "extensions": {"review_approved": True, "review_attempts": 2},
+    }
+    result = await adapter.execute(
+        _task(
+            callable_path="_dap_test_pipeline_state_mod:run",
+            pipeline_state=snapshot,
+            pass_prompt=False,
+        )
+    )
+
+    assert result.success is True
+    assert result.structured is not None
+    received = result.structured["state_delta"]["received_state"]
+    assert received["run_id"] == "abc-123"
+    assert received["repo"] == "rafeekpro/dap"
+    assert received["branch"] == "develop"
+    assert received["extensions"] == {"review_approved": True, "review_attempts": 2}
+
+
+@pytest.mark.asyncio
+async def test_pipeline_state_missing_yields_empty_seed(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No '__pipeline_state' in runtime_config → callable's state is empty (#186).
+
+    Backward-compat path: pre-#165 callers that don't inject the snapshot
+    must still run without error; the callable simply sees an empty state
+    seed (plus prompt_xml when pass_prompt=True).
+    """
+    import sys
+    import types
+
+    mod = types.ModuleType("_dap_test_no_pipeline_state_mod")
+    mod.run = _return_state  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_test_no_pipeline_state_mod", mod)
+
+    result = await adapter.execute(
+        _task(callable_path="_dap_test_no_pipeline_state_mod:run", pass_prompt=False)
+    )
+    assert result.success is True
+    assert result.structured is not None
+    assert result.structured["state_delta"]["received_state"] == {}
 
 
 # ---------------------------------------------------------------------------
