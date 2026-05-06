@@ -1,0 +1,37 @@
+name: Copilot Review Gate
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+concurrency:
+  group: copilot-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  copilot-review:
+    name: Copilot review required
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require non-dismissed Copilot review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          count=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+            --jq '[.[] | select(.user.login == "copilot-pull-request-reviewer" and .state != "DISMISSED")] | length')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No Copilot review on this PR. Merge is blocked until copilot-pull-request-reviewer leaves a review."
+            exit 1
+          fi
+          echo "Copilot review present ($count non-dismissed)."
