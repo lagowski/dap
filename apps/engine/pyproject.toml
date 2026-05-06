@@ -17,7 +17,7 @@ dependencies = [
     "langgraph>=0.2.50",
     "langgraph-checkpoint-sqlite>=2.0.0",
     # PostgreSQL backend (optional — only used when DAP_DATABASE_URL points to pg)
-    "psycopg[binary]>=3.2",
+    "psycopg[binary,pool]>=3.2",
     "langgraph-checkpoint-postgres>=2.0",
 ]
 

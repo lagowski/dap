@@ -13,6 +13,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from psycopg import AsyncConnection
+from psycopg.rows import DictRow, dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from dap_engine.api.agents import router as agents_router
 from dap_engine.api.health import router as health_router
@@ -32,6 +35,48 @@ from dap_engine.persistence.db import (
 )
 
 logger = logging.getLogger("dap.engine")
+
+
+# Pool sizing for AsyncPostgresSaver. Conservative defaults — bump max_size if
+# checkpoint contention shows up under load. Each background run holds a
+# connection only for the duration of a checkpoint read/write, so 10 concurrent
+# slots is enough for ~10 simultaneously-checkpointing pipelines without
+# saturating Postgres connection limits. (#187)
+_PG_POOL_MIN_SIZE = 2
+_PG_POOL_MAX_SIZE = 10
+
+
+@asynccontextmanager
+async def _pg_pooled_checkpointer(conn_string: str) -> AsyncIterator[AsyncPostgresSaver]:
+    """Yield an AsyncPostgresSaver backed by a psycopg AsyncConnectionPool.
+
+    Replaces ``AsyncPostgresSaver.from_conn_string`` which opens a single
+    AsyncConnection — concurrent runs serialize their checkpoint reads/writes
+    through that one TCP socket. With a pool, checkpoint ops can run in
+    parallel up to ``_PG_POOL_MAX_SIZE``. (#187)
+
+    The connection kwargs (autocommit / prepare_threshold / row_factory) mirror
+    what ``from_conn_string`` configures so AsyncPostgresSaver sees the same
+    DBAPI behavior whether it's holding one connection or borrowing from a pool.
+    """
+    # Annotate as AsyncConnectionPool[AsyncConnection[DictRow]] so
+    # AsyncPostgresSaver (which expects DictRow connections) typechecks; the
+    # row_factory=dict_row in kwargs makes this true at runtime.
+    pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
+        conninfo=conn_string,
+        min_size=_PG_POOL_MIN_SIZE,
+        max_size=_PG_POOL_MAX_SIZE,
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        },
+        # Defer opening to the async-context-manager entry; avoids the
+        # "implicit pool open in __init__" deprecation warning.
+        open=False,
+    )
+    async with pool:
+        yield AsyncPostgresSaver(conn=pool)
 
 
 @dataclass
@@ -64,8 +109,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         if dialect == "postgresql":
             assert db_url is not None
             engine = create_engine_for_postgresql(db_url)
-            # AsyncPostgresSaver needs a psycopg (v3) connection string.
-            checkpointer_ctx = AsyncPostgresSaver.from_conn_string(pg_conn_string(db_url))
+            # Pooled AsyncPostgresSaver — concurrent checkpoint ops parallelize
+            # across up to _PG_POOL_MAX_SIZE psycopg connections instead of
+            # serializing through a single TCP socket. (#187)
+            checkpointer_ctx = _pg_pooled_checkpointer(pg_conn_string(db_url))
             db_label = db_url.split("@", 1)[-1] if "@" in db_url else db_url
         else:
             engine = create_engine_for_sqlite(cfg.db_path)
