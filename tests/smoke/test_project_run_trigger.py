@@ -268,10 +268,10 @@ def test_trigger_unknown_project_returns_404(
     assert "Project not found" in str(response.json()["detail"])
 
 
-def test_trigger_archived_project_returns_409(
+def test_trigger_archived_project_returns_422(
     client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
 ) -> None:
-    """Spec says 409 Conflict for archived (resource state forbids action)."""
+    """422 — aligned with POST /runs's archived-project response (#205)."""
     client, _registry, _stub = client_with_stub
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
@@ -281,7 +281,7 @@ def test_trigger_archived_project_returns_409(
     assert archive.status_code == 204
 
     response = client.post(f"/projects/{project_id}/run/develop", json={})
-    assert response.status_code == 409
+    assert response.status_code == 422
     assert "archived" in str(response.json()["detail"])
 
 
