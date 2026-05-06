@@ -359,3 +359,132 @@ def test_approve_gate_node_succeeds(
 
     completed = _wait_for_status(client, run_id, {"success", "failed"})
     assert completed["final_status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# /resume + /approve atomic claim — TOCTOU regression coverage (#185)
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_resume_only_one_wins(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Two concurrent /resume calls: exactly one returns 200, the other 409.
+
+    Regression test for the TOCTOU race where both requests passed the
+    Python-side ``final_status == "paused"`` check, both spawned background
+    tasks, and the second ``run_registry.register`` raised with an orphan
+    asyncio.Task already in flight. With the atomic UPDATE … WHERE
+    final_status='paused' claim, only one row update wins. (#185)
+    """
+    import concurrent.futures
+
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id, num_nodes=3)
+
+    triggered = client.post(
+        "/runs",
+        json={"pipeline_id": pipeline_id, "initial_state": {}},
+    ).json()
+    run_id = triggered["id"]
+
+    time.sleep(0.1)
+    client.post(f"/runs/{run_id}/pause")
+    _wait_for_status(client, run_id, {"paused"})
+
+    # Fire two /resume calls in parallel via threads. TestClient is sync and
+    # the FastAPI app dispatches requests on a worker thread pool, so two
+    # concurrent client.post calls actually race in the handler.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(client.post, f"/runs/{run_id}/resume") for _ in range(2)]
+        responses = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [200, 409], (
+        f"Expected exactly one 200 and one 409 from concurrent /resume, got {statuses}"
+    )
+
+    # Loser's 409 detail can come from any of three layers depending on
+    # interleaving: the fast-fail final_status check, the is_running fast-fail,
+    # or the atomic-claim mismatch. Any of them is correct — the only forbidden
+    # outcome is a 500 (which would indicate the orphan-task / register
+    # ValueError that this PR fixes).
+    loser = next(r for r in responses if r.status_code == 409)
+    detail = loser.json()["detail"]
+    assert (
+        "not paused" in detail
+        or "no longer paused" in detail
+        or "active background task" in detail
+    ), f"Unexpected 409 detail: {detail!r}"
+
+    # Run still completes (winner's task ran).
+    completed = _wait_for_status(client, run_id, {"success", "failed", "aborted"})
+    assert completed["final_status"] == "success"
+
+
+def test_try_claim_resume_atomic(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Direct repository test: try_claim_resume succeeds once, second call returns False (#185)."""
+    from dap_engine.persistence import repository as repo
+
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id, num_nodes=3)
+    triggered = client.post(
+        "/runs",
+        json={"pipeline_id": pipeline_id, "initial_state": {}},
+    ).json()
+    run_id = triggered["id"]
+
+    time.sleep(0.1)
+    client.post(f"/runs/{run_id}/pause")
+    _wait_for_status(client, run_id, {"paused"})
+
+    session_factory = client.app.state.session_factory  # type: ignore[attr-defined]
+    with session_factory() as s1, session_factory() as s2:
+        first = repo.try_claim_resume(s1, run_id)
+        s1.commit()
+        second = repo.try_claim_resume(s2, run_id)
+        s2.commit()
+
+    assert first is True
+    assert second is False  # Already claimed by s1 — no row matches WHERE paused.
+
+
+def test_try_claim_revive_accepts_paused_and_failed() -> None:
+    """try_claim_revive WHERE clause covers both 'paused' and 'failed' (#185)."""
+    import datetime as dt
+    import uuid
+
+    from dap_engine.persistence import repository as repo
+    from dap_engine.persistence.db import make_session_factory
+    from dap_engine.persistence.models import Base, RunORM
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+
+    with factory() as s:
+        for state in ("paused", "failed", "running", "success"):
+            run_id = str(uuid.uuid4())
+            s.add(
+                RunORM(
+                    id=run_id,
+                    pipeline_id="pipe",
+                    pipeline_version=1,
+                    trigger_source="api",
+                    final_status=state,
+                    initial_state={},
+                    started_at=dt.datetime.now(dt.UTC),
+                )
+            )
+            s.commit()
+            claimed = repo.try_claim_revive(s, run_id)
+            s.commit()
+            if state in {"paused", "failed"}:
+                assert claimed is True, f"revive should claim {state}"
+            else:
+                assert claimed is False, f"revive must NOT claim {state}"

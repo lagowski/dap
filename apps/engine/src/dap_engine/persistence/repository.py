@@ -19,7 +19,7 @@ from dap_types import (
     StateSnapshot,
 )
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.orm import Session
 
 from dap_engine.api.schemas import (
@@ -869,35 +869,49 @@ def pause_run(session: Session, run_id: str) -> None:
     session.flush()
 
 
-def resume_run(session: Session, run_id: str) -> None:
-    """Reset a paused run back to running so the background task can take over."""
-    run = session.get(RunORM, run_id)
-    if run is None:
-        raise NotFoundError(f"Run not found: {run_id}")
-    if run.final_status != "paused":
-        msg = f"Run is not paused (final_status={run.final_status})"
-        raise ValueError(msg)
-    run.final_status = "running"
-    run.ended_at = None
-    session.flush()
+def try_claim_resume(session: Session, run_id: str) -> bool:
+    """Atomically transition a paused run to running. Returns True on success.
 
+    Used by ``/runs/{id}/resume`` and ``/runs/{id}/nodes/{n}/approve`` to
+    prevent the TOCTOU race where two concurrent requests both pass a
+    Python-side ``final_status == "paused"`` check, both spawn background
+    tasks, and the second ``run_registry.register`` raises with an orphan
+    asyncio.Task already in flight. (#185)
 
-def revive_run(session: Session, run_id: str) -> None:
-    """Reset a paused or failed run back to running (for retry/skip-node).
-
-    Unlike resume_run, accepts `failed` as a starting state so a node-level
-    intervention can put a terminated run back into motion. Also clears the
-    diagnostic fields that may have been set by the previous failure.
+    Returns ``False`` if no row matched — either the run id doesn't exist or
+    its ``final_status`` is no longer ``"paused"`` (a concurrent caller won
+    the claim, or the run was finalized between request validation and here).
+    The caller distinguishes those cases with a separate existence check
+    when it matters; for the resume path, both produce a 409 response.
     """
-    run = session.get(RunORM, run_id)
-    if run is None:
-        raise NotFoundError(f"Run not found: {run_id}")
-    if run.final_status not in {"paused", "failed"}:
-        msg = f"Run is not paused or failed (final_status={run.final_status})"
-        raise ValueError(msg)
-    run.final_status = "running"
-    run.ended_at = None
-    session.flush()
+    stmt = (
+        update(RunORM)
+        .where(RunORM.id == run_id, RunORM.final_status == "paused")
+        .values(final_status="running", ended_at=None)
+    )
+    # session.execute(update(...)) returns CursorResult at runtime — only
+    # CursorResult exposes .rowcount, which the static Result[Any] type does not.
+    result = session.execute(stmt)
+    return bool(result.rowcount == 1)  # type: ignore[attr-defined]
+
+
+def try_claim_revive(session: Session, run_id: str) -> bool:
+    """Atomically transition a paused-or-failed run to running. Returns True on success.
+
+    Used by ``/runs/{id}/nodes/{n}/retry`` and ``.../skip`` — same TOCTOU
+    safety as ``try_claim_resume`` (#185), but accepts ``failed`` as a
+    starting state so a node-level intervention can put a terminated run
+    back into motion.
+    """
+    stmt = (
+        update(RunORM)
+        .where(RunORM.id == run_id, RunORM.final_status.in_(("paused", "failed")))
+        .values(final_status="running", ended_at=None)
+    )
+    # session.execute(update(...)) returns CursorResult at runtime — only
+    # CursorResult exposes .rowcount, which the static Result[Any] type does not.
+    result = session.execute(stmt)
+    return bool(result.rowcount == 1)  # type: ignore[attr-defined]
 
 
 def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
