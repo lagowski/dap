@@ -6,5 +6,5 @@
 
 
 def smoke_test():
-    print("debug output")  # noqa: T201 — intentional, triggers code_reviewer rejection
+    print("debug output")  # intentional debug print — triggers code_reviewer rejection
     return "ok"
