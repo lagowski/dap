@@ -348,10 +348,12 @@ def _first_int(payload: dict[str, Any], keys: tuple[str, ...]) -> int:
             continue
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             try:
                 return int(float(value))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: int(float("inf")) / int(float("1e309")) —
+                # float() succeeds but int() can't represent infinity.
                 continue
     return 0
 

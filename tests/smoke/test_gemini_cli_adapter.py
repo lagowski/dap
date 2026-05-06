@@ -509,6 +509,8 @@ async def test_cancellation_kills_subprocess(with_api_key: None) -> None:
         ({"tokens": False}, 0),  # bool explicitly skipped
         ({"tokens": None}, 0),  # None skipped, fallback to default
         ({"tokens": "abc"}, 0),  # unparseable, skipped, fallback to default
+        ({"tokens": "inf"}, 0),  # int(float("inf")) → OverflowError, skipped
+        ({"tokens": "1e309"}, 0),  # exponent overflows float→int, skipped
         ({}, 0),  # missing, fallback to default
     ],
 )
