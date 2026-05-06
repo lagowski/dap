@@ -361,6 +361,90 @@ def test_approve_gate_node_succeeds(
     assert completed["final_status"] == "success"
 
 
+def test_approve_after_first_succeeds_returns_409(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """A second /approve on the same run returns 409 — atomic claim path (#186).
+
+    First /approve transitions the run paused → running. The second call hits
+    the existing fast-fail (or the atomic claim if it slips past) and gets a
+    409 instead of starting another background task.
+    """
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    first = client.post(f"/runs/{run_id}/nodes/n2/approve")
+    assert first.status_code == 200
+
+    second = client.post(f"/runs/{run_id}/nodes/n2/approve")
+    assert second.status_code == 409
+    detail = second.json()["detail"]
+    # Either fast-fail "Run is not paused (final_status=running|success)"
+    # or atomic-claim "Run is no longer paused" — both are valid.
+    assert "not paused" in detail or "no longer paused" in detail
+
+
+def test_approve_on_completed_run_returns_409(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """An /approve on a finished run returns 409, never resumes a terminal run (#186)."""
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    # Approve and let the run complete
+    client.post(f"/runs/{run_id}/nodes/n2/approve")
+    completed = _wait_for_status(client, run_id, {"success", "failed"})
+    assert completed["final_status"] == "success"
+
+    # Re-approve on a terminal run
+    response = client.post(f"/runs/{run_id}/nodes/n2/approve")
+    assert response.status_code == 409
+    assert "not paused" in response.json()["detail"]
+
+
+def test_concurrent_approve_only_one_wins(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Two concurrent /approve calls on the same gate: exactly one 200, one 409 (#186).
+
+    Sister of test_concurrent_resume_only_one_wins — same TOCTOU class but on
+    the gate-validating endpoint specifically. Forbidden outcome is a 500
+    (the orphan-task / register ValueError that #185 prevents).
+    """
+    import concurrent.futures
+
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(client.post, f"/runs/{run_id}/nodes/n2/approve") for _ in range(2)
+        ]
+        responses = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [200, 409], (
+        f"Expected exactly one 200 and one 409 from concurrent /approve, got {statuses}"
+    )
+
+    loser = next(r for r in responses if r.status_code == 409)
+    detail = loser.json()["detail"]
+    assert (
+        "not paused" in detail
+        or "no longer paused" in detail
+        or "active background task" in detail
+    ), f"Unexpected 409 detail: {detail!r}"
+
+    completed = _wait_for_status(client, run_id, {"success", "failed", "aborted"})
+    assert completed["final_status"] == "success"
+
+
 # ---------------------------------------------------------------------------
 # /resume + /approve atomic claim — TOCTOU regression coverage (#185)
 # ---------------------------------------------------------------------------
