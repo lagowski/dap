@@ -132,13 +132,11 @@ async def trigger_project_run(
             detail=f"Project not found: {project_id}",
         )
     if project.archived_at is not None:
-        # 409 Conflict — the resource exists but its current state
-        # forbids the action. Distinct from the 422 ``trigger_run``
-        # uses for ``POST /runs`` because here the caller targeted
-        # the project explicitly (path param), not as an optional
-        # body field.
+        # 422 — same status as POST /runs returns when an archived project_id
+        # is in the payload. Aligning the two trigger paths so clients can
+        # share error-handling logic regardless of which endpoint they used. (#205)
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Project is archived: {project_id}",
         )
 
