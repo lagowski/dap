@@ -26,6 +26,9 @@ def main() -> None:
         host=os.environ.get("DAP_ENGINE_HOST", "127.0.0.1"),
         port=int(os.environ.get("DAP_ENGINE_PORT", "7333")),
         dry_run_budget_usd=float(os.environ.get("DAP_DRY_RUN_BUDGET_USD", "0.50")),
+        # PG checkpointer pool sizing — only used when DAP_DATABASE_URL is set.
+        pg_pool_min_size=int(os.environ.get("DAP_PG_POOL_MIN_SIZE", "2")),
+        pg_pool_max_size=int(os.environ.get("DAP_PG_POOL_MAX_SIZE", "10")),
     )
 
     app = create_app(config)
