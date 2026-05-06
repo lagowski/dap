@@ -374,7 +374,10 @@ async def resume_run_endpoint(
     if not repo.try_claim_resume(session, run_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Run state changed during processing — another request resumed it first",
+            detail=(
+                "Run is no longer paused — another request may have resumed it, "
+                "or the run was aborted/finalized between validation and here"
+            ),
         )
     session.commit()
 
@@ -487,7 +490,10 @@ async def approve_gate_endpoint(
     if not repo.try_claim_resume(session, run_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Run state changed during processing — another request resumed it first",
+            detail=(
+                "Run is no longer paused — another request may have resumed it, "
+                "or the run was aborted/finalized between validation and here"
+            ),
         )
     session.commit()
 
@@ -626,8 +632,9 @@ async def _do_node_intervention(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Run state changed during processing — another request "
-                "retried/skipped/resumed it first"
+                "Run is no longer paused or failed — another request may have "
+                "retried/skipped/resumed it, or the run was aborted/finalized "
+                "between validation and here"
             ),
         )
     session.commit()

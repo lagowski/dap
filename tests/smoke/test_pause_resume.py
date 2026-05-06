@@ -405,10 +405,18 @@ def test_concurrent_resume_only_one_wins(
         f"Expected exactly one 200 and one 409 from concurrent /resume, got {statuses}"
     )
 
-    # Loser's body should mention the race or the not-paused state — never 500.
+    # Loser's 409 detail can come from any of three layers depending on
+    # interleaving: the fast-fail final_status check, the is_running fast-fail,
+    # or the atomic-claim mismatch. Any of them is correct — the only forbidden
+    # outcome is a 500 (which would indicate the orphan-task / register
+    # ValueError that this PR fixes).
     loser = next(r for r in responses if r.status_code == 409)
     detail = loser.json()["detail"]
-    assert "not paused" in detail or "another request" in detail
+    assert (
+        "not paused" in detail
+        or "no longer paused" in detail
+        or "active background task" in detail
+    ), f"Unexpected 409 detail: {detail!r}"
 
     # Run still completes (winner's task ran).
     completed = _wait_for_status(client, run_id, {"success", "failed", "aborted"})
