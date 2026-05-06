@@ -24,6 +24,20 @@ name: Copilot Review Gate
 # so `checks.create` returns 403. We catch that and warn — the check
 # appears on the PR once the next cron run fires from the default
 # branch with full permissions.
+#
+# Cron lag: GitHub treats `*/5` as best-effort and can delay scheduled
+# workflows by 30+ minutes during high platform load. If the
+# `copilot-review` check is still red on a PR that Copilot already
+# reviewed, force a refresh without a push:
+#   `gh workflow run copilot-review-required.yml --ref develop`
+# (or the "Run workflow" button on this workflow's Actions page).
+#
+# Inspecting check status: `gh pr checks <PR>` does not list check_runs
+# created via the REST API by this workflow (it only enumerates job-status
+# checks). Branch protection sees the check fine, but for CLI inspection
+# query the raw check-runs endpoint:
+#   gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+#     --jq '.check_runs[] | {name, conclusion}'
 
 on:
   pull_request:
