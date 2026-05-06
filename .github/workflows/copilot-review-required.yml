@@ -13,9 +13,21 @@ name: Copilot Review Gate
 # `pull_request` events that do execute, and (b) poll every 5 min
 # via cron so the check refreshes as Copilot's review lands without
 # requiring the user to re-push.
+#
+# Note: scheduled (cron) workflows only fire from the repository's
+# default branch. For the PR that introduces this workflow itself,
+# the only refresh path is `pull_request:synchronize` (a push to
+# the PR branch) or `workflow_dispatch`. Once merged to develop the
+# cron picks up all open PRs targeting develop/main automatically.
+#
+# Forks: `pull_request` runs on fork PRs use a read-only GITHUB_TOKEN,
+# so `checks.create` returns 403. We catch that and warn — the check
+# appears on the PR once the next cron run fires from the default
+# branch with full permissions.
 
 on:
   pull_request:
+    branches: [develop, main]
     types: [opened, reopened, synchronize, ready_for_review]
   schedule:
     - cron: "*/5 * * * *"
@@ -45,13 +57,13 @@ jobs:
             if (context.payload.pull_request) {
               prs = [context.payload.pull_request];
             } else {
-              const { data } = await github.rest.pulls.list({
+              const allOpen = await github.paginate(github.rest.pulls.list, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 state: 'open',
-                per_page: 50,
+                per_page: 100,
               });
-              prs = data;
+              prs = allOpen.filter(p => p.base && (p.base.ref === 'develop' || p.base.ref === 'main'));
             }
 
             core.info(`Evaluating Copilot review state on ${prs.length} PR(s).`);
@@ -62,7 +74,7 @@ jobs:
                 continue;
               }
 
-              const { data: reviews } = await github.rest.pulls.listReviews({
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: pr.number,
@@ -114,15 +126,25 @@ jobs:
                 }
               }
 
-              await github.rest.checks.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: CHECK_NAME,
-                head_sha: pr.head.sha,
-                status: 'completed',
-                conclusion: conclusion,
-                output: { title: title, summary: summary },
-              });
-
-              core.info(`PR #${pr.number}: ${conclusion} — ${title}`);
+              try {
+                await github.rest.checks.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: CHECK_NAME,
+                  head_sha: pr.head.sha,
+                  status: 'completed',
+                  conclusion: conclusion,
+                  output: { title: title, summary: summary },
+                });
+                core.info(`PR #${pr.number}: ${conclusion} — ${title}`);
+              } catch (err) {
+                if (err.status === 403) {
+                  core.warning(
+                    `PR #${pr.number}: cannot post check (likely fork PR with read-only token). ` +
+                    'Will be retried by the next cron run from the default branch.'
+                  );
+                } else {
+                  throw err;
+                }
+              }
             }
