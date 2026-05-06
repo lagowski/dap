@@ -63,7 +63,7 @@ class PythonFuncAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True, version=platform.python_version())
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912,PLR0915
+    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912
         config = task.runtime_config
 
         callable_path = config.get("callable_path")
@@ -74,17 +74,20 @@ class PythonFuncAdapter(BaseAdapter):
                 duration_ms=0,
             )
 
-        if ":" in callable_path:
-            module_path, func_name = callable_path.rsplit(":", 1)
-        elif "." in callable_path:
-            # Dot-notation fallback: "a.b.c" → module "a.b", func "c"
-            module_path, func_name = callable_path.rsplit(".", 1)
-        else:
+        # Require explicit `module:attr` separator. Dot-notation was previously
+        # accepted as a fallback but only worked when every intermediate segment
+        # was importable as a module — e.g. `os.path.join` worked because
+        # `os.path` is a module, but `pkg.helpers.run` failed confusingly when
+        # `helpers` was a function. Always require `:` so the boundary between
+        # module and attribute is unambiguous. #192
+        if ":" not in callable_path:
             return _failed(
-                f"python-func: callable_path must be 'module.path:func_name' "
-                f"or 'module.path.func_name', got {callable_path!r}",
+                f"python-func: callable_path must use 'module.path:func_name' "
+                f"format (got {callable_path!r}). Dot-only notation was removed "
+                f"in #192 — use ':' to separate module from attribute.",
                 duration_ms=0,
             )
+        module_path, func_name = callable_path.rsplit(":", 1)
 
         # Resolve at invocation time — allows package installs without engine restart.
         # Any import-time failure (ImportError, SyntaxError, raises in module
