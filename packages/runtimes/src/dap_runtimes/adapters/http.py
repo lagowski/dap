@@ -134,7 +134,13 @@ class HttpAdapter(BaseAdapter):
         duration_ms = _elapsed_ms(start)
 
         if response.status_code >= HTTP_ERROR_THRESHOLD:
-            preview = response.text[:ERROR_PREVIEW_LIMIT]
+            # Redact any header secret values we sent before truncating.
+            # Some upstreams echo the Authorization / X-API-Key / Cookie
+            # value back in their error body (auth gateways, debug servers,
+            # 401 traces). Without this scrub the bearer token would land
+            # in node_execution_logs, the dashboard, and any caller of
+            # /runs/{id}/logs. (#212)
+            preview = _redact_secrets(response.text, headers)[:ERROR_PREVIEW_LIMIT]
             return _failed(
                 f"HTTP {response.status_code}: {preview}",
                 duration_ms=duration_ms,
@@ -286,6 +292,41 @@ def _render_template(template: Any, env: SandboxedEnvironment, ctx: dict[str, An
     if isinstance(template, dict):
         return {k: _render_template(v, env, ctx) for k, v in template.items()}
     return template
+
+
+# Minimum secret length to redact. Below this, false-positive matches on
+# generic short header values (e.g. "v1", "json") would mangle the preview.
+_MIN_SECRET_LEN: Final = 8
+
+# Header-value prefixes that are not secret themselves — strip them to expose
+# the actual token, then redact both the full value AND the stripped form so
+# upstreams can echo either shape.
+_AUTH_VALUE_PREFIXES: Final = ("Bearer ", "Basic ", "Token ", "Bot ")
+
+
+def _redact_secrets(text: str, sent_headers: dict[str, str]) -> str:
+    """Replace any header secret values present in ``text`` with ``[REDACTED]``.
+
+    Only redacts substrings we know we sent — pure substring match against the
+    actual values in ``sent_headers``, plus their post-prefix tails (so a
+    body that contains \"sk-…\" without the leading \"Bearer \" still gets
+    scrubbed). This is more robust than regex-pattern scrubbing: no false
+    positives, and it covers any auth scheme without enumeration.
+    """
+    if not text or not sent_headers:
+        return text
+    redacted = text
+    seen: set[str] = set()
+    for value in sent_headers.values():
+        candidates = {value}
+        for prefix in _AUTH_VALUE_PREFIXES:
+            if value.startswith(prefix):
+                candidates.add(value[len(prefix) :])
+        for candidate in candidates:
+            if candidate and len(candidate) >= _MIN_SECRET_LEN and candidate not in seen:
+                redacted = redacted.replace(candidate, "[REDACTED]")
+                seen.add(candidate)
+    return redacted
 
 
 def _build_headers(
