@@ -482,13 +482,25 @@ def _check_unused_outputs(
     payload: PipelineCreate,
     contracts: dict[str, _AgentContract],
 ) -> list[str]:
-    """Warn when a declared output isn't read by any descendant — likely a wiring bug."""
+    """Warn when a declared output isn't read by any descendant — likely a wiring bug.
+
+    Terminal nodes (no descendants in the real-node graph — their only
+    successor is ``__end__`` or none) are skipped: their outputs are by
+    design consumed only by the final PipelineState snapshot or external
+    callers reading via ``/runs/{id}/state``. Warning on them produces
+    noise on legitimate final-reporter agents (e.g. ``finalize``,
+    ``pr_creator``) and trains operators to ignore the warning class. (#204)
+    """
     out: list[str] = []
     node_ids = {n.id for n in payload.nodes}
     descendants = _compute_descendants(payload, node_ids)
     nodes_by_id = {n.id: n for n in payload.nodes}
 
     for node_id in sorted(node_ids):
+        # Terminal node — no real-node descendants → nothing in-pipeline can
+        # read its outputs, but that's by design for end-of-pipeline writers.
+        if not descendants[node_id]:
+            continue
         node = nodes_by_id[node_id]
         contract = contracts.get(node.agent_id)
         if contract is None:
