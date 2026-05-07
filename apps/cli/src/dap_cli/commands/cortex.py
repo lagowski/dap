@@ -399,14 +399,10 @@ def poll_and_handle(
     last_status = "running"
 
     while True:
-        last_status, last_run = _poll_until_settled(
-            engine_url, run_id, "Running pipeline..."
-        )
+        last_status, last_run = _poll_until_settled(engine_url, run_id, "Running pipeline...")
         if last_status != "paused":
             break
-        should_continue = _handle_gate(
-            engine_url, run_id, last_run, watch_only, no_interactive
-        )
+        should_continue = _handle_gate(engine_url, run_id, last_run, watch_only, no_interactive)
         if not should_continue:
             return
         time.sleep(3)
