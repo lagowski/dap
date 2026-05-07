@@ -7,7 +7,7 @@ from cortex.adapters.pipeline_state import (
 )
 
 
-def _base_cortex_state() -> dict:
+def _base_cortex_state() -> dict[str, object]:
     return {
         "issue_url": "https://github.com/test/repo/issues/1",
         "repo": "test/repo",

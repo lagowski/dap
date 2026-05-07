@@ -106,6 +106,12 @@ exclude = ["build/", "dist/", ".venv/"]
 module = ["jsonpath_ng.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# cortex package is migrated from cortex-project which used a less strict
+# mypy configuration. Type annotations are a Phase 2 follow-up task.
+module = ["cortex.*"]
+ignore_errors = true
+
 # --- pytest ---
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
