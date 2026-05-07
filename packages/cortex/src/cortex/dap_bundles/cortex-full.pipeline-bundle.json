@@ -511,10 +511,7 @@
         "callable_path": "cortex.nodes.coder:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "repo",
-        "branch"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 60000
     },
@@ -526,10 +523,7 @@
         "callable_path": "cortex.nodes.designer:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "repo",
-        "branch"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 60000
     },
@@ -541,10 +535,7 @@
         "callable_path": "cortex.nodes.documenter:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "repo",
-        "branch"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 60000
     },
@@ -556,9 +547,7 @@
         "callable_path": "cortex.nodes.code_reviewer:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "branch"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 300000
     },
@@ -582,10 +571,7 @@
         "callable_path": "cortex.nodes.tester:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "repo",
-        "branch"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 300000
     },
@@ -597,10 +583,7 @@
         "callable_path": "cortex.nodes.pr_creator:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "repo",
-        "branch"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 120000
     },
@@ -612,9 +595,7 @@
         "callable_path": "cortex.nodes.reviewer:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "repo"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 180000
     },
@@ -641,9 +622,7 @@
         }
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": [
-        "repo"
-      ],
+      "input_schema": [],
       "output_schema": [],
       "timeout_ms": 120000
     }
