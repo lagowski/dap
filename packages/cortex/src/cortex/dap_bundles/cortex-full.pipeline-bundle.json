@@ -266,8 +266,9 @@
         "source": "code-reviewer",
         "target": "gate-phase2",
         "condition": {
+          "type": "comparison",
           "field": "extensions.review_approved",
-          "op": "eq",
+          "operator": "==",
           "value": true
         }
       },
@@ -276,14 +277,21 @@
         "source": "code-reviewer",
         "target": "coder",
         "condition": {
-          "field": "extensions.review_approved",
-          "op": "eq",
-          "value": false,
-          "and": {
-            "field": "extensions.review_attempts",
-            "op": "lt",
-            "value": 2
-          }
+          "type": "and",
+          "children": [
+            {
+              "type": "comparison",
+              "field": "extensions.review_approved",
+              "operator": "==",
+              "value": false
+            },
+            {
+              "type": "comparison",
+              "field": "extensions.review_attempts",
+              "operator": "<",
+              "value": 2
+            }
+          ]
         }
       },
       {
@@ -291,8 +299,9 @@
         "source": "code-reviewer",
         "target": "gate-phase2",
         "condition": {
+          "type": "comparison",
           "field": "extensions.review_attempts",
-          "op": "gte",
+          "operator": ">=",
           "value": 2
         }
       },
@@ -507,7 +516,7 @@
         "branch"
       ],
       "output_schema": [],
-      "timeout_ms": null
+      "timeout_ms": 60000
     },
     "cx_p2_designer": {
       "name": "Cortex Phase 2 \u2014 Designer",
@@ -522,7 +531,7 @@
         "branch"
       ],
       "output_schema": [],
-      "timeout_ms": null
+      "timeout_ms": 60000
     },
     "cx_p2_documenter": {
       "name": "Cortex Phase 2 \u2014 Documenter",
@@ -537,7 +546,7 @@
         "branch"
       ],
       "output_schema": [],
-      "timeout_ms": null
+      "timeout_ms": 60000
     },
     "cx_p2_code_reviewer": {
       "name": "Cortex Phase 2 \u2014 Code Reviewer",
