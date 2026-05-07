@@ -30,12 +30,12 @@ class TestParseIssueUrl:
     def test_standard_url(self) -> None:
         repo, num = parse_issue_url("https://github.com/Dixter999/cortex-project/issues/332")
         assert repo == "Dixter999/cortex-project"
-        assert num == 332  # noqa: PLR2004
+        assert num == 332
 
     def test_trailing_slash(self) -> None:
         repo, num = parse_issue_url("https://github.com/owner/repo/issues/42/")
         assert repo == "owner/repo"
-        assert num == 42  # noqa: PLR2004
+        assert num == 42
 
     def test_invalid_url_raises(self) -> None:
         with pytest.raises(ValueError, match="Cannot parse GitHub issue URL"):

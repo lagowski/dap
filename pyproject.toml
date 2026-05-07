@@ -60,6 +60,10 @@ ignore = [
     "PLR2004",                  # magic values in tests OK
     "PLC0415",                  # local imports in tests are intentional (per-test isolation)
 ]
+"**/tests/**" = [
+    "PLR2004",                  # magic values in tests OK (apps/cli/tests, apps/dashboard/*, etc.)
+    "PLC0415",                  # local imports in tests are intentional (per-test isolation)
+]
 "packages/cortex/**" = [
     "PLC0415",   # inline imports intentional (lazy loading / circular-import avoidance)
     "PLR2004",   # HTTP status codes and protocol constants are self-documenting

@@ -12,6 +12,8 @@ import json
 import os
 import re
 import time
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -551,9 +553,6 @@ def _state_to_dict(run: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
 
 def _json_default(obj: object) -> str:
     """Fallback serialiser for json.dumps — handles datetime & Decimal."""
-    from datetime import date, datetime
-    from decimal import Decimal
-
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if isinstance(obj, Decimal):
