@@ -210,6 +210,11 @@ def from_pipeline_state(pipeline_state: dict[str, Any]) -> dict[str, Any]:
         if key in extensions:
             cortex[key] = extensions[key]
 
+    # Fallback: when CLI sets repo only in extensions (not top-level PipelineState),
+    # promote it so nodes find cortex_state["repo"] and resolve the workspace path.
+    if not cortex.get("repo") and extensions.get("repo"):
+        cortex["repo"] = extensions["repo"]
+
     return cortex
 
 
