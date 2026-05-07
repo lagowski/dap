@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
-from typer.testing import CliRunner
-
 from dap_cli.__main__ import app
 from dap_cli.commands.cortex import (
     cortex_approve,
     cortex_reject,
-    cortex_run,
     cortex_state,
     default_workspace_path,
     ensure_pipeline_imported,
     load_cortex_bundle,
     parse_issue_url,
 )
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -34,12 +30,12 @@ class TestParseIssueUrl:
     def test_standard_url(self) -> None:
         repo, num = parse_issue_url("https://github.com/Dixter999/cortex-project/issues/332")
         assert repo == "Dixter999/cortex-project"
-        assert num == 332
+        assert num == 332  # noqa: PLR2004
 
     def test_trailing_slash(self) -> None:
         repo, num = parse_issue_url("https://github.com/owner/repo/issues/42/")
         assert repo == "owner/repo"
-        assert num == 42
+        assert num == 42  # noqa: PLR2004
 
     def test_invalid_url_raises(self) -> None:
         with pytest.raises(ValueError, match="Cannot parse GitHub issue URL"):
@@ -79,7 +75,7 @@ class TestLoadCortexBundle:
     def test_raises_import_error_when_package_missing(self) -> None:
         with patch("importlib.resources.files") as mock_files:
             mock_files.side_effect = ModuleNotFoundError("No module named 'cortex'")
-            with pytest.raises(ImportError, match="cortex.*package must be installed"):
+            with pytest.raises(ImportError, match=r"cortex.*package must be installed"):
                 load_cortex_bundle()
 
     def test_returns_parsed_json(self) -> None:
@@ -95,30 +91,13 @@ class TestLoadCortexBundle:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline import — idempotent
+# Pipeline import - idempotent
 # ---------------------------------------------------------------------------
-
-
-def _make_transport(responses: list[dict[str, Any]]) -> httpx.MockTransport:
-    """Build a MockTransport that returns responses in order."""
-    calls: list[dict[str, Any]] = list(responses)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if not calls:
-            return httpx.Response(500, json={"detail": "no more mock responses"})
-        resp = calls.pop(0)
-        return httpx.Response(
-            resp.get("status_code", 200),
-            json=resp.get("json", {}),
-        )
-
-    return httpx.MockTransport(handler)
 
 
 class TestEnsurePipelineImported:
     def test_reuses_existing_pipeline(self) -> None:
         existing = {"items": [{"id": "pipe-123", "name": "cortex-full"}], "total": 1}
-        transport = _make_transport([{"json": existing}])
 
         with patch("httpx.Client") as mock_client_cls:
             mock_client = MagicMock()
@@ -169,22 +148,24 @@ class TestEnsurePipelineImported:
 
 
 # ---------------------------------------------------------------------------
-# CLI smoke tests — project run/approve/reject/state
+# CLI smoke tests - project run/approve/reject/state
 # ---------------------------------------------------------------------------
 
 
 class TestCliProjectCommands:
-    """Smoke tests for the Typer CLI layer — verify routing and argument parsing."""
+    """Smoke tests for the Typer CLI layer - verify routing and argument parsing."""
 
     def test_project_no_args_shows_help(self) -> None:
         result = runner.invoke(app, ["project"])
-        # no_args_is_help=True — may return 0 or 2 depending on Typer version
+        # no_args_is_help=True - may return 0 or 2 depending on Typer version
         assert result.exit_code in (0, 2)
         assert "run" in result.output
         assert "approve" in result.output
 
     def test_project_run_unknown_pipeline(self) -> None:
-        result = runner.invoke(app, ["project", "run", "unknown-pipeline", "https://github.com/o/r/issues/1"])
+        result = runner.invoke(
+            app, ["project", "run", "unknown-pipeline", "https://github.com/o/r/issues/1"]
+        )
         assert result.exit_code != 0
         assert "Unknown pipeline type" in result.output
 
@@ -229,20 +210,22 @@ class TestCliProjectCommands:
 
     def test_project_run_cortex_no_bundle(self) -> None:
         """Should fail with helpful ImportError when cortex package not installed."""
-        with patch("dap_cli.commands.cortex.check_engine"):
-            with patch(
+        with (
+            patch("dap_cli.commands.cortex.check_engine"),
+            patch(
                 "dap_cli.commands.cortex.load_cortex_bundle",
                 side_effect=ImportError("cortex package must be installed"),
-            ):
-                result = runner.invoke(
-                    app,
-                    [
-                        "project",
-                        "run",
-                        "cortex",
-                        "https://github.com/Dixter999/cortex-project/issues/1",
-                    ],
-                )
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "project",
+                    "run",
+                    "cortex",
+                    "https://github.com/Dixter999/cortex-project/issues/1",
+                ],
+            )
         assert result.exit_code == 1
         assert "cortex" in result.output.lower()
 
@@ -254,40 +237,48 @@ class TestCliProjectCommands:
 
 class TestCortexApprove:
     def test_not_paused_exits(self) -> None:
-        with patch("dap_cli.commands.cortex._get_run", return_value={"final_status": "running"}):
-            with pytest.raises(SystemExit):
-                cortex_approve("run-abc", "http://localhost:7333")
+        with (
+            patch("dap_cli.commands.cortex._get_run", return_value={"final_status": "running"}),
+            pytest.raises(SystemExit),
+        ):
+            cortex_approve("run-abc", "http://localhost:7333")
 
     def test_approves_paused_run(self) -> None:
-        with patch(
-            "dap_cli.commands.cortex._get_run",
-            return_value={"final_status": "paused"},
+        mock_approve = MagicMock()
+        with (
+            patch(
+                "dap_cli.commands.cortex._get_run",
+                return_value={"final_status": "paused"},
+            ),
+            patch("dap_cli.commands.cortex._find_pending_gate", return_value="gate-phase1"),
+            patch("dap_cli.commands.cortex._approve_gate", mock_approve),
         ):
-            with patch("dap_cli.commands.cortex._find_pending_gate", return_value="gate-phase1"):
-                with patch("dap_cli.commands.cortex._approve_gate") as mock_approve:
-                    cortex_approve("run-abc", "http://localhost:7333")
-                    mock_approve.assert_called_once_with(
-                        "http://localhost:7333", "run-abc", "gate-phase1"
-                    )
+            cortex_approve("run-abc", "http://localhost:7333")
+        mock_approve.assert_called_once_with("http://localhost:7333", "run-abc", "gate-phase1")
 
 
 class TestCortexReject:
     def test_not_paused_exits(self) -> None:
-        with patch("dap_cli.commands.cortex._get_run", return_value={"final_status": "running"}):
-            with pytest.raises(SystemExit):
-                cortex_reject("run-abc", "reason", "http://localhost:7333")
+        with (
+            patch("dap_cli.commands.cortex._get_run", return_value={"final_status": "running"}),
+            pytest.raises(SystemExit),
+        ):
+            cortex_reject("run-abc", "reason", "http://localhost:7333")
 
     def test_rejects_paused_run(self) -> None:
-        with patch(
-            "dap_cli.commands.cortex._get_run",
-            return_value={"final_status": "paused"},
+        mock_reject = MagicMock()
+        with (
+            patch(
+                "dap_cli.commands.cortex._get_run",
+                return_value={"final_status": "paused"},
+            ),
+            patch("dap_cli.commands.cortex._find_pending_gate", return_value="gate-phase1"),
+            patch("dap_cli.commands.cortex._reject_gate", mock_reject),
         ):
-            with patch("dap_cli.commands.cortex._find_pending_gate", return_value="gate-phase1"):
-                with patch("dap_cli.commands.cortex._reject_gate") as mock_reject:
-                    cortex_reject("run-abc", "not good enough", "http://localhost:7333")
-                    mock_reject.assert_called_once_with(
-                        "http://localhost:7333", "run-abc", "gate-phase1", "not good enough"
-                    )
+            cortex_reject("run-abc", "not good enough", "http://localhost:7333")
+        mock_reject.assert_called_once_with(
+            "http://localhost:7333", "run-abc", "gate-phase1", "not good enough"
+        )
 
 
 class TestCortexState:

@@ -275,7 +275,9 @@ def _reject_gate(engine_url: str, run_id: str, node_id: str, reason: str) -> Non
         if resp.status_code not in (200, 409):
             resp.raise_for_status()
     console.print(f"[yellow]  Feedback: {reason}[/yellow]")
-    console.print("[dim]  Run aborted. Comment on the GitHub issue with the rejection reason.[/dim]")
+    console.print(
+        "[dim]  Run aborted. Comment on the GitHub issue with the rejection reason.[/dim]"
+    )
 
 
 def _find_pending_gate(engine_url: str, run_id: str) -> str | None:
@@ -315,6 +317,77 @@ def _known_gate_for_node(node_id: str) -> str:
     return gate_map.get(node_id, node_id)
 
 
+def _poll_until_settled(
+    engine_url: str,
+    run_id: str,
+    label: str,
+) -> tuple[str, dict]:
+    """Poll GET /runs/{run_id} until status is terminal or paused.
+
+    Returns (final_status, last_run_dict).
+    """
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+        console=console,
+    ) as progress:
+        task = progress.add_task(label, total=None)
+        last_status = "running"
+        last_run: dict = {}
+        while True:
+            time.sleep(POLL_INTERVAL_SECONDS)
+            try:
+                last_run = _get_run(engine_url, run_id)
+            except httpx.HTTPError as exc:
+                console.print(f"[red]✗ Could not fetch run status: {exc}[/red]")
+                raise SystemExit(1) from exc
+            last_status = last_run.get("final_status", "running")
+            style = _STATUS_STYLE.get(last_status, "white")
+            progress.update(
+                task,
+                description=f"[{style}]{last_status.upper()}[/{style}] — run {run_id[:8]}",
+            )
+            if last_status in ("success", "failed", "aborted", "paused"):
+                break
+    return last_status, last_run
+
+
+def _handle_gate(
+    engine_url: str,
+    run_id: str,
+    run: dict,
+    watch_only: bool,
+    no_interactive: bool,
+) -> bool:
+    """Handle a paused gate. Returns True to continue polling, False to stop."""
+    gate_node = _find_pending_gate(engine_url, run_id)
+    if not gate_node:
+        gate_node = run.get("current_node") or "gate-phase1"
+    gate_node = _known_gate_for_node(gate_node)
+
+    if watch_only:
+        console.print(
+            f"\n[yellow]⏸  Paused at:[/yellow] [bold]{gate_node}[/bold]  "
+            f"(--watch mode — not approving)"
+        )
+        console.print(f"  Approve with: dap project run cortex --run-id {run_id} approve")
+        return False
+
+    approved, reason = _prompt_gate_approval(gate_node, no_interactive)
+    if not approved:
+        _reject_gate(engine_url, run_id, gate_node, reason)
+        return False
+
+    console.print(f"[green]✓ Approving gate {gate_node}...[/green]")
+    try:
+        _approve_gate(engine_url, run_id, gate_node)
+    except httpx.HTTPError as exc:
+        console.print(f"[red]✗ Approve failed: {exc}[/red]")
+        raise SystemExit(1) from exc
+    return True
+
+
 def poll_and_handle(
     engine_url: str,
     run_id: str,
@@ -322,113 +395,31 @@ def poll_and_handle(
     watch_only: bool,
 ) -> None:
     """Poll run status and handle gates until completion or failure."""
-    last_status: str | None = None
     start_time = time.monotonic()
+    last_status = "running"
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        transient=True,
-        console=console,
-    ) as progress:
-        task = progress.add_task("Running pipeline...", total=None)
-
-        while True:
-            time.sleep(POLL_INTERVAL_SECONDS)
-
-            try:
-                run = _get_run(engine_url, run_id)
-            except httpx.HTTPError as exc:
-                console.print(f"[red]✗ Could not fetch run status: {exc}[/red]")
-                raise SystemExit(1) from exc
-
-            status = run.get("final_status", "running")
-
-            if status != last_status:
-                last_status = status
-                style = _STATUS_STYLE.get(status, "white")
-                progress.update(
-                    task, description=f"[{style}]{status.upper()}[/{style}] — run {run_id[:8]}"
-                )
-
-            if status in ("success", "failed", "aborted"):
-                break
-
-            if status == "paused":
-                progress.stop()
-
-                # Find the pending gate node
-                gate_node = _find_pending_gate(engine_url, run_id)
-                if not gate_node:
-                    # Try to infer from run metadata
-                    gate_node = run.get("current_node") or "gate-phase1"
-
-                gate_node = _known_gate_for_node(gate_node)
-
-                if watch_only:
-                    console.print(
-                        f"\n[yellow]⏸  Paused at:[/yellow] [bold]{gate_node}[/bold]  "
-                        f"(--watch mode — not approving)"
-                    )
-                    console.print(
-                        f"  Approve with: dap project run cortex --run-id {run_id} approve"
-                    )
-                    return
-
-                approved, reason = _prompt_gate_approval(gate_node, no_interactive)
-
-                if approved:
-                    console.print(f"[green]✓ Approving gate {gate_node}...[/green]")
-                    try:
-                        _approve_gate(engine_url, run_id, gate_node)
-                    except httpx.HTTPError as exc:
-                        console.print(f"[red]✗ Approve failed: {exc}[/red]")
-                        raise SystemExit(1) from exc
-                else:
-                    _reject_gate(engine_url, run_id, gate_node, reason)
-                    return
-
-                # Resume polling
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    transient=True,
-                    console=console,
-                ) as progress2:
-                    task2 = progress2.add_task("Resuming...", total=None)
-                    # Brief wait for the engine to pick up the approval
-                    time.sleep(3)
-                    while True:
-                        time.sleep(POLL_INTERVAL_SECONDS)
-                        try:
-                            run = _get_run(engine_url, run_id)
-                        except httpx.HTTPError as exc:
-                            console.print(f"[red]✗ Could not fetch run status: {exc}[/red]")
-                            raise SystemExit(1) from exc
-                        status = run.get("final_status", "running")
-                        style = _STATUS_STYLE.get(status, "white")
-                        progress2.update(
-                            task2,
-                            description=f"[{style}]{status.upper()}[/{style}] — run {run_id[:8]}",
-                        )
-                        if status in ("success", "failed", "aborted"):
-                            last_status = status
-                            break
-                        if status == "paused":
-                            last_status = status
-                            break
-                    if status == "paused":
-                        continue  # outer while — handle next gate
+    while True:
+        last_status, last_run = _poll_until_settled(
+            engine_url, run_id, "Running pipeline..."
+        )
+        if last_status != "paused":
+            break
+        should_continue = _handle_gate(
+            engine_url, run_id, last_run, watch_only, no_interactive
+        )
+        if not should_continue:
+            return
+        time.sleep(3)
 
     # Final report
     elapsed = int(time.monotonic() - start_time)
-    style = _STATUS_STYLE.get(last_status or "failed", "white")
+    style = _STATUS_STYLE.get(last_status, "white")
     icon = "✅" if last_status == "success" else "❌"
     console.print(
         f"\n{icon} [{style}]Pipeline {last_status or 'done'}[/{style}]  "
         f"run {run_id[:8]}  duration {elapsed}s"
     )
-    if last_status not in ("success",):
+    if last_status != "success":
         raise SystemExit(1)
 
 
