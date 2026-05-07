@@ -256,10 +256,15 @@ export async function archivePipeline(id: string): Promise<void> {
 export async function listAgents(params: {
   role?: string;
   archived?: boolean;
+  limit?: number;
 } = {}): Promise<PaginatedList<Agent>> {
   const search = new URLSearchParams();
   if (params.role) search.set("role", params.role);
   if (params.archived !== undefined) search.set("archived", String(params.archived));
+  // Default to 500 so bundled pipeline agents (13+ per import) are always
+  // included — the default engine page size of 50 causes "Agent not found"
+  // in the inspector when >50 agents exist (#228).
+  search.set("limit", String(params.limit ?? 500));
   const qs = search.toString();
   return request<PaginatedList<Agent>>(`/agents${qs ? `?${qs}` : ""}`);
 }

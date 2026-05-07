@@ -232,6 +232,7 @@ class PipelineCreate(BaseModel):
     nodes: list[PipelineNode]
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+    ui_metadata: dict[str, Any] | None = None
 
 
 class PipelineUpdate(BaseModel):
@@ -249,6 +250,7 @@ class PipelineUpdate(BaseModel):
     nodes: list[PipelineNode]
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+    ui_metadata: dict[str, Any] | None = None
 
 
 # ``Final`` narrows the inferred type to ``Literal["pipeline-export/1"]``
@@ -286,6 +288,9 @@ class PipelineExportPayload(BaseModel):
     nodes: list[PipelineNode]
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+    # Dashboard-private layout metadata (node positions, etc.). Included in
+    # exports so positions survive round-trips through export/import (#226).
+    ui_metadata: dict[str, Any] | None = None
 
 
 class PipelineExport(BaseModel):

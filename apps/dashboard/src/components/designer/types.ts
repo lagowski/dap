@@ -32,6 +32,7 @@ export interface PipelineFormPayload {
     budget_limit_usd: number;
     approval_required_nodes: string[];
   };
+  ui_metadata?: Record<string, unknown>;
 }
 
 export const DEFAULT_DEFAULTS = {
