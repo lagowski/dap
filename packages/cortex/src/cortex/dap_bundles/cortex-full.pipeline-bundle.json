@@ -494,7 +494,7 @@
       "role": "setup",
       "runtime_id": "bash",
       "runtime_config": {},
-      "prompt_template": "<agent_prompt><command>cd {{ extensions.workspace_path }}; git fetch origin; git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main</command></agent_prompt>",
+      "prompt_template": "<agent_prompt><command>\ncd {{ extensions.workspace_path }} && git fetch origin && git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main\n</command></agent_prompt>",
       "input_schema": [],
       "output_schema": [
         "branch"
