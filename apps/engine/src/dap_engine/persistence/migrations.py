@@ -107,11 +107,22 @@ def _002_node_execution_logs_add_extra_data(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE node_execution_logs ADD COLUMN extra_data TEXT"))
 
 
+def _003_pipeline_versions_add_ui_metadata(conn: Connection) -> None:
+    """#226 — add ``pipeline_versions.ui_metadata`` for dashboard node positions."""
+    if _column_exists(conn, "pipeline_versions", "ui_metadata"):
+        return
+    conn.execute(text("ALTER TABLE pipeline_versions ADD COLUMN ui_metadata TEXT"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
         name="002_node_execution_logs_add_extra_data",
         apply=_002_node_execution_logs_add_extra_data,
+    ),
+    Migration(
+        name="003_pipeline_versions_add_ui_metadata",
+        apply=_003_pipeline_versions_add_ui_metadata,
     ),
 ]
 

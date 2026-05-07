@@ -94,9 +94,18 @@ export function PipelineDesigner({
   const [description, setDescription] = useState(seed?.description ?? "");
   const [entryPoint, setEntryPoint] = useState(seed?.entry_point ?? "");
 
-  const [nodes, setNodes] = useState<Node[]>(() =>
-    (seed?.nodes ?? []).map(toReactFlowNode),
-  );
+  const [nodes, setNodes] = useState<Node[]>(() => {
+    // Prefer positions stored in ui_metadata.node_positions (saved by
+    // buildPayload on every Save). Falls back to PipelineNode.position for
+    // older pipelines / first-load before any Save (#226).
+    const savedPositions = seed?.ui_metadata?.node_positions as
+      | Record<string, { x: number; y: number }>
+      | undefined;
+    return (seed?.nodes ?? []).map((n) => {
+      const pos = savedPositions?.[n.id];
+      return toReactFlowNode(pos ? { ...n, position: pos } : n);
+    });
+  });
   const [edges, setEdges] = useState<Edge[]>(() =>
     (seed?.edges ?? []).map(toReactFlowEdge),
   );
@@ -250,17 +259,33 @@ export function PipelineDesigner({
   );
 
   const buildPayload = useCallback(
-    (): PipelineFormPayload => ({
-      name,
-      description,
-      schema_version: "langgraph/1.0",
-      state_schema_ref: STATE_SCHEMA_REF,
-      entry_point: entryPoint,
-      nodes: designerNodes,
-      edges: designerEdges,
-      defaults: DEFAULT_DEFAULTS,
-    }),
-    [name, description, entryPoint, designerNodes, designerEdges],
+    (): PipelineFormPayload => {
+      // Snapshot current node positions into ui_metadata so they survive
+      // page refresh. PipelineNode.position is the authoritative storage;
+      // node_positions here is an explicit UI-layer copy that the designer
+      // applies on load before ReactFlow's fitView can shift things (#226).
+      const nodePositions: Record<string, { x: number; y: number }> = {};
+      for (const n of designerNodes) {
+        nodePositions[n.id] = { x: n.position.x, y: n.position.y };
+      }
+      const existingMeta =
+        initialPipeline?.ui_metadata &&
+        typeof initialPipeline.ui_metadata === "object"
+          ? (initialPipeline.ui_metadata as Record<string, unknown>)
+          : {};
+      return {
+        name,
+        description,
+        schema_version: "langgraph/1.0",
+        state_schema_ref: STATE_SCHEMA_REF,
+        entry_point: entryPoint,
+        nodes: designerNodes,
+        edges: designerEdges,
+        defaults: DEFAULT_DEFAULTS,
+        ui_metadata: { ...existingMeta, node_positions: nodePositions },
+      };
+    },
+    [name, description, entryPoint, designerNodes, designerEdges, initialPipeline?.ui_metadata],
   );
 
   const validate = useValidatePipeline();

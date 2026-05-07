@@ -119,6 +119,13 @@ function NodePanel({
                 v{agent.version}
               </Badge>
             </div>
+            {/* For python-func agents, surface the callable_path prominently */}
+            {agent.runtime_id === "python-func" &&
+              typeof agent.runtime_config?.callable_path === "string" ? (
+              <code className="text-[11px] font-mono text-muted-foreground block">
+                {agent.runtime_config.callable_path as string}
+              </code>
+            ) : null}
             <div className="flex gap-1.5 pt-1">
               <Button asChild variant="outline" size="sm" className="flex-1 h-7 text-xs">
                 <Link href={`/agents/${agent.id}/edit`} target="_blank" rel="noopener noreferrer">
@@ -141,9 +148,7 @@ function NodePanel({
             </div>
           </div>
         ) : (
-          <span className="text-xs text-destructive">
-            Agent not found: {node.agent_id}
-          </span>
+          <BundledAgentFallback agentId={node.agent_id} />
         )}
       </Field>
 
@@ -190,6 +195,27 @@ function NodePanel({
   );
 }
 
+/**
+ * Shown when the agent UUID lookup fails (e.g., agents list is still loading
+ * or the agent was imported as a bundle and hasn't appeared yet). Avoids the
+ * red "Agent not found" error for legitimate bundled python-func nodes (#228).
+ */
+function BundledAgentFallback({ agentId }: { agentId: string }) {
+  return (
+    <div className="space-y-1">
+      <Badge variant="secondary" className="text-[10px]">
+        Bundled agent
+      </Badge>
+      <p className="text-[11px] text-muted-foreground italic">
+        Agent not in local list — may be a bundled pipeline agent still loading.
+      </p>
+      <code className="text-[10px] font-mono text-muted-foreground break-all block">
+        {agentId}
+      </code>
+    </div>
+  );
+}
+
 function AgentDetailsCollapse({ agent }: { agent: Agent }) {
   const isPromptLong = agent.prompt_template.length > PROMPT_PREVIEW_LIMIT;
   return (
@@ -221,8 +247,16 @@ function AgentDetailsCollapse({ agent }: { agent: Agent }) {
           </pre>
         </div>
 
-        <SchemaList label="input_schema" fields={agent.input_schema} />
-        <SchemaList label="output_schema" fields={agent.output_schema} />
+        <SchemaList
+          label="input_schema"
+          fields={agent.input_schema}
+          runtimeId={agent.runtime_id}
+        />
+        <SchemaList
+          label="output_schema"
+          fields={agent.output_schema}
+          runtimeId={agent.runtime_id}
+        />
 
         {agent.constraints.length > 0 ? (
           <SchemaList label="constraints" fields={agent.constraints} />
@@ -232,14 +266,30 @@ function AgentDetailsCollapse({ agent }: { agent: Agent }) {
   );
 }
 
-function SchemaList({ label, fields }: { label: string; fields: string[] }) {
+function SchemaList({
+  label,
+  fields,
+  runtimeId,
+}: {
+  label: string;
+  fields: string[];
+  runtimeId?: string;
+}) {
+  const isPythonFunc = runtimeId === "python-func";
   return (
     <div className="space-y-1">
       <Label className="text-[10px] uppercase text-muted-foreground">{label}</Label>
       {fields.length === 0 ? (
-        <p className="italic text-muted-foreground text-[11px]">
-          (empty — legacy mode, full state visible)
-        </p>
+        isPythonFunc ? (
+          <p className="italic text-muted-foreground text-[11px]">
+            python-func runtime — full{" "}
+            <code className="font-mono">PipelineState</code> passthrough
+          </p>
+        ) : (
+          <p className="italic text-muted-foreground text-[11px]">
+            (empty — legacy mode, full state visible)
+          </p>
+        )
       ) : (
         <div className="flex flex-wrap gap-1">
           {fields.map((f) => (
@@ -256,11 +306,20 @@ function SchemaList({ label, fields }: { label: string; fields: string[] }) {
 interface StateAfterNodeFields {
   fields: string[];
   selfIsLegacy: boolean;
+  selfIsPythonFunc: boolean;
   legacyAncestorIds: string[];
 }
 
 function StateAfterNodeView({ fields }: { fields: StateAfterNodeFields }) {
   const hasUpstreamLegacy = fields.legacyAncestorIds.length > 0;
+  if (fields.selfIsPythonFunc && fields.fields.length === 0 && !hasUpstreamLegacy) {
+    return (
+      <p className="italic text-muted-foreground text-[11px]">
+        python-func runtime — full{" "}
+        <code className="font-mono">PipelineState</code> passthrough
+      </p>
+    );
+  }
   if (fields.fields.length === 0 && !hasUpstreamLegacy && !fields.selfIsLegacy) {
     return (
       <p className="italic text-muted-foreground text-[11px]">
@@ -332,11 +391,22 @@ function computeStateAfterNode(
   const fieldUnion = new Set<string>();
   const legacyAncestorIds: string[] = [];
   let selfIsLegacy = false;
+  let selfIsPythonFunc = false;
   for (const nodeId of visited) {
     const node = nodeById.get(nodeId);
     if (!node) continue;
     const agent = agentById.get(node.agent_id);
     if (!agent) continue;
+    // python-func nodes intentionally have no output_schema — they do a
+    // full PipelineState passthrough, which is different from "legacy mode"
+    // (an old-style agent that simply omitted the schema). Don't mark them
+    // as legacy; the UI surfaces a separate "python-func passthrough" note (#229).
+    if (agent.runtime_id === "python-func") {
+      if (nodeId === targetNodeId) {
+        selfIsPythonFunc = true;
+      }
+      continue;
+    }
     if (agent.output_schema.length === 0) {
       if (nodeId === targetNodeId) {
         selfIsLegacy = true;
@@ -351,6 +421,7 @@ function computeStateAfterNode(
   return {
     fields: Array.from(fieldUnion).sort(),
     selfIsLegacy,
+    selfIsPythonFunc,
     legacyAncestorIds: legacyAncestorIds.sort(),
   };
 }

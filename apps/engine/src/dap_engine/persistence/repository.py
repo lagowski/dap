@@ -96,6 +96,7 @@ def _pipeline_from_orm(
         created_at=pipeline.created_at,
         updated_at=pipeline.updated_at if is_current else version.created_at,
         is_active=pipeline.archived_at is None,
+        ui_metadata=version.ui_metadata,
     )
 
 
@@ -454,6 +455,7 @@ def create_pipeline(session: Session, payload: PipelineCreate) -> Pipeline:
         nodes=[n.model_dump(mode="json") for n in payload.nodes],
         edges=[e.model_dump(mode="json") for e in payload.edges],
         defaults=payload.defaults.model_dump(mode="json"),
+        ui_metadata=payload.ui_metadata,
         created_at=now,
     )
     session.add(pipeline)
@@ -489,6 +491,7 @@ def update_pipeline(session: Session, pipeline_id: str, payload: PipelineUpdate)
         nodes=[n.model_dump(mode="json") for n in payload.nodes],
         edges=[e.model_dump(mode="json") for e in payload.edges],
         defaults=payload.defaults.model_dump(mode="json"),
+        ui_metadata=payload.ui_metadata,
         created_at=now,
     )
     session.add(version)

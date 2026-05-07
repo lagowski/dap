@@ -232,6 +232,7 @@ class PipelineCreate(BaseModel):
     nodes: list[PipelineNode]
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+    ui_metadata: dict[str, Any] | None = None
 
 
 class PipelineUpdate(BaseModel):
@@ -249,6 +250,7 @@ class PipelineUpdate(BaseModel):
     nodes: list[PipelineNode]
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+    ui_metadata: dict[str, Any] | None = None
 
 
 # ``Final`` narrows the inferred type to ``Literal["pipeline-export/1"]``

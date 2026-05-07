@@ -366,6 +366,8 @@ export interface Pipeline {
   created_at: string;
   updated_at: string;
   is_active: boolean;
+  /** Dashboard-private layout metadata (node positions, etc.). Not used by the engine. */
+  ui_metadata?: Record<string, unknown>;
 }
 
 export type FinalStatus = "running" | "success" | "failed" | "aborted" | "paused";
@@ -472,6 +474,7 @@ export interface PipelineCreate {
     budget_limit_usd: number;
     approval_required_nodes: string[];
   };
+  ui_metadata?: Record<string, unknown>;
 }
 
 export interface PipelineUpdate {
@@ -487,6 +490,7 @@ export interface PipelineUpdate {
     budget_limit_usd: number;
     approval_required_nodes: string[];
   };
+  ui_metadata?: Record<string, unknown>;
 }
 
 export interface ValidationResult {
