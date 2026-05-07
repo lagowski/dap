@@ -140,6 +140,122 @@ def test_get_run(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -
     assert body["pipeline_id"] == "pipe-1"
 
 
+def test_get_run_node_statuses_from_logs(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """GET /runs/{id} must return node_statuses derived from node_execution_logs.
+
+    python-func pipelines never write back to runs.node_statuses — the column
+    stays {} after every run.  The fix (#233) joins node_execution_logs on the
+    detail endpoint so the dashboard graph can show per-node state.
+    """
+    client, factory = client_and_factory
+    run_id = _seed_run(factory)  # seeds one log: node_id="select_task" status="success"
+
+    body = client.get(f"/runs/{run_id}").json()
+    assert body["id"] == run_id
+    # node_statuses must be populated from the execution log, not from the
+    # runs.node_statuses column (which is always {}).
+    assert body["node_statuses"] == {"select_task": "success"}
+
+
+def test_get_run_node_statuses_multiple_nodes(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """node_statuses includes every node in execution order, including failures."""
+    client, factory = client_and_factory
+    run_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    initial_state: dict[str, Any] = {
+        "run_id": run_id, "repo": "r/r", "branch": "main", "commit_sha": None,
+        "available_issues": [], "selected_issue_ids": [], "tests_generated": False,
+        "test_files": [], "test_generation_errors": [], "max_attempts": 3,
+        "attempt": 0, "tests_passed": False, "last_test_output": "",
+        "modified_files": [], "implementation_notes": None,
+        "verification_status": "pending", "verification_reason": None,
+        "final_status": "failed", "extensions": {},
+    }
+
+    def _make_log(node_id: str, status: str, offset_ms: int) -> NodeExecutionLogORM:
+        from datetime import timedelta
+        t = now + timedelta(milliseconds=offset_ms)
+        return NodeExecutionLogORM(
+            id=str(uuid.uuid4()), run_id=run_id, node_id=node_id,
+            agent_id="agent-1", runtime_id="python-func",
+            started_at=t, ended_at=t,
+            prompt_xml="", stdout="", stderr="",
+            output_json=None, tokens_used=0, cost_usd=0.0,
+            duration_ms=10, status=status, error_message=None,
+        )
+
+    with factory() as session:
+        session.add(RunORM(
+            id=run_id, pipeline_id="pipe-1", pipeline_version=1,
+            trigger_source="cli", initial_state=initial_state,
+            current_node=None, node_statuses={},
+            final_status="failed", started_at=now, ended_at=now,
+            tokens_used=0, cost_usd=0.0,
+        ))
+        session.add(_make_log("node-a", "success", 0))
+        session.add(_make_log("node-b", "success", 100))
+        session.add(_make_log("node-c", "failed", 200))
+        session.commit()
+
+    body = client.get(f"/runs/{run_id}").json()
+    assert body["node_statuses"] == {
+        "node-a": "success",
+        "node-b": "success",
+        "node-c": "failed",
+    }
+
+
+def test_get_run_node_statuses_empty_when_no_logs(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """node_statuses stays {} when no execution logs exist yet (run just started)."""
+    client, factory = client_and_factory
+    run_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    initial_state: dict[str, Any] = {
+        "run_id": run_id, "repo": "r/r", "branch": "main", "commit_sha": None,
+        "available_issues": [], "selected_issue_ids": [], "tests_generated": False,
+        "test_files": [], "test_generation_errors": [], "max_attempts": 3,
+        "attempt": 0, "tests_passed": False, "last_test_output": "",
+        "modified_files": [], "implementation_notes": None,
+        "verification_status": "pending", "verification_reason": None,
+        "final_status": "running", "extensions": {},
+    }
+    with factory() as session:
+        session.add(RunORM(
+            id=run_id, pipeline_id="pipe-1", pipeline_version=1,
+            trigger_source="cli", initial_state=initial_state,
+            current_node=None, node_statuses={},
+            final_status="running", started_at=now, ended_at=None,
+            tokens_used=0, cost_usd=0.0,
+        ))
+        session.commit()
+
+    body = client.get(f"/runs/{run_id}").json()
+    assert body["node_statuses"] == {}
+
+
+def test_list_runs_does_not_join_node_logs(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """list_runs must NOT join node_execution_logs (performance guard).
+
+    The detail endpoint joins logs; the list endpoint must stay lean and
+    return whatever is stored in runs.node_statuses ({} for python-func runs).
+    """
+    client, factory = client_and_factory
+    _seed_run(factory)  # run with one log: select_task=success
+
+    items = client.get("/runs").json()["items"]
+    assert len(items) == 1
+    # List endpoint returns the stored {} — node_statuses join is detail-only.
+    assert items[0]["node_statuses"] == {}
+
+
 def test_get_run_404(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -> None:
     client, _ = client_and_factory
     response = client.get("/runs/nope")
