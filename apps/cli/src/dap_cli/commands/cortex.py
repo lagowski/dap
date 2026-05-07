@@ -250,14 +250,14 @@ def _get_run(engine_url: str, run_id: str) -> dict[str, Any]:
     with _client(engine_url) as client:
         resp = client.get(f"/runs/{run_id}")
         resp.raise_for_status()
-        return dict(resp.json())  # type: ignore[arg-type]
+        return dict(resp.json())
 
 
 def _get_run_state(engine_url: str, run_id: str) -> dict[str, Any]:
     with _client(engine_url) as client:
         resp = client.get(f"/runs/{run_id}/state")
         resp.raise_for_status()
-        return dict(resp.json())  # type: ignore[arg-type]
+        return dict(resp.json())
 
 
 def _approve_gate(engine_url: str, run_id: str, node_id: str) -> None:
