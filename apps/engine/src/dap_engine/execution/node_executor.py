@@ -32,6 +32,7 @@ from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
     NodeExecutionLogORM,
+    RunORM,
     StateSnapshotORM,
 )
 
@@ -196,11 +197,23 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             result=result,
         )
         _save_snapshot(ctx=ctx, state=merged_state)
+        _update_run_node_status(
+            ctx, "success" if result.success else "failed",
+        )
         ctx.session.commit()
 
         return state_diff
 
     return node_fn
+
+
+def _update_run_node_status(ctx: NodeContext, status: str) -> None:
+    """Write-through: keep RunORM.node_statuses warm during execution."""
+    run = ctx.session.get(RunORM, ctx.run_id)
+    if run is not None:
+        updated = dict(run.node_statuses or {})
+        updated[ctx.node_id] = status
+        run.node_statuses = updated
 
 
 def _record_failure(
@@ -233,6 +246,7 @@ def _record_failure(
         extra_data=None,
     )
     ctx.session.add(log)
+    _update_run_node_status(ctx, "failed")
     state_diff = {
         "final_status": "failed",
         "verification_reason": f"Node {ctx.node_id}: {error}",

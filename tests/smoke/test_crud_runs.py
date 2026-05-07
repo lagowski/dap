@@ -22,7 +22,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
-    """Insert a run + 1 snapshot + 1 node log directly. Returns run_id."""
+    """Insert a run + 1 snapshot + 1 node log directly. Returns run_id.
+
+    Accepts optional ``node_statuses`` override to seed specific column values.
+    """
     run_id = str(uuid.uuid4())
     now = datetime.now(UTC)
     initial_state: dict[str, Any] = {
@@ -55,7 +58,7 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
             trigger_source=str(overrides.get("trigger_source", "cli")),
             initial_state=initial_state,
             current_node=None,
-            node_statuses={},
+            node_statuses=overrides.get("node_statuses", {}),
             final_status=str(overrides.get("final_status", "running")),
             started_at=now,
             ended_at=None,

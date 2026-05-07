@@ -20,7 +20,7 @@ from dap_types import (
 )
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from sqlalchemy import func, select, tuple_, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from dap_engine.api.schemas import (
     AgentCreate,
@@ -100,7 +100,26 @@ def _pipeline_from_orm(
     )
 
 
+def _node_statuses_from_logs(run: RunORM) -> dict[str, str]:
+    """Compute per-node statuses from the run's node_logs relationship.
+
+    When multiple logs exist for the same node_id, the latest (by started_at)
+    wins — the relationship is already ordered by started_at.
+    """
+    statuses: dict[str, str] = {}
+    for log in run.node_logs:
+        # Last write wins since node_logs is ordered by started_at ascending.
+        statuses[log.node_id] = log.status
+    return statuses
+
+
 def _run_from_orm(run: RunORM) -> Run:
+    # Compute node_statuses from execution logs rather than trusting the
+    # (potentially stale) JSON column.  Falls back to the column when no
+    # logs are loaded/available.
+    computed = _node_statuses_from_logs(run)
+    node_statuses = computed if computed else run.node_statuses
+
     return Run(
         id=run.id,
         project_id=run.project_id,
@@ -109,7 +128,7 @@ def _run_from_orm(run: RunORM) -> Run:
         trigger_source=run.trigger_source,  # type: ignore[arg-type]
         initial_state=PipelineState.model_validate(run.initial_state),
         current_node=run.current_node,
-        node_statuses=run.node_statuses,  # type: ignore[arg-type]
+        node_statuses=node_statuses,  # type: ignore[arg-type]
         final_status=run.final_status,  # type: ignore[arg-type]
         started_at=run.started_at,
         ended_at=run.ended_at,
@@ -731,7 +750,7 @@ def list_runs(
     (ad-hoc / legacy). Mutually exclusive with ``project_id``; the
     router enforces the mapping from query string to one of these.
     """
-    base = select(RunORM)
+    base = select(RunORM).options(selectinload(RunORM.node_logs))
     count_q = select(func.count()).select_from(RunORM)
 
     if pipeline_id is not None:
@@ -756,7 +775,11 @@ def list_runs(
 
 
 def get_run(session: Session, run_id: str) -> Run:
-    run = session.get(RunORM, run_id)
+    run = session.scalars(
+        select(RunORM)
+        .where(RunORM.id == run_id)
+        .options(selectinload(RunORM.node_logs))
+    ).first()
     if run is None:
         raise NotFoundError(f"Run not found: {run_id}")
     return _run_from_orm(run)
@@ -838,6 +861,23 @@ def _aggregate_run_metrics(session: Session, run: RunORM) -> None:
     run.cost_usd = float(totals[1])
 
 
+def _persist_node_statuses(session: Session, run: RunORM) -> None:
+    """Snapshot computed node_statuses onto the RunORM column.
+
+    This keeps the JSON column warm so list-endpoint queries (which may
+    skip the selectinload) still return accurate data.
+    """
+    logs = session.scalars(
+        select(NodeExecutionLogORM)
+        .where(NodeExecutionLogORM.run_id == run.id)
+        .order_by(NodeExecutionLogORM.started_at)
+    ).all()
+    statuses: dict[str, str] = {}
+    for log in logs:
+        statuses[log.node_id] = log.status
+    run.node_statuses = statuses
+
+
 def finalize_run(
     session: Session,
     run_id: str,
@@ -852,6 +892,7 @@ def finalize_run(
     run.final_status = final_status
     run.ended_at = _now()
     _aggregate_run_metrics(session, run)
+    _persist_node_statuses(session, run)
 
     if final_state is not None:
         # Persist final state by overwriting the run's recorded final_status
