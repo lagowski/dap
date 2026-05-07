@@ -6,7 +6,6 @@ Free, fast, private. Primary backend for issue pipeline and orchestration.
 
 from __future__ import annotations
 
-import json
 import logging
 
 import httpx

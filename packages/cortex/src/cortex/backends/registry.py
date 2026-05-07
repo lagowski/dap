@@ -32,8 +32,8 @@ from cortex.backends.base import (
     BackendTimeoutError,  # noqa: F401
     BackendType,
     BackendUnavailableError,  # noqa: F401
-    LLMRequest,  # noqa: F401
-    LLMResponse,  # noqa: F401
+    LLMRequest,
+    LLMResponse,
 )
 from cortex.backends.claude_cli import ClaudeCLIBackend
 from cortex.backends.ollama import OllamaBackend
@@ -90,8 +90,7 @@ def create_backend(config: dict) -> Backend:
         )
 
     raise ValueError(
-        f"Unknown backend type: '{backend_type}'. "
-        f"Must be one of: ollama, claude_cli, api"
+        f"Unknown backend type: '{backend_type}'. Must be one of: ollama, claude_cli, api"
     )
 
 
@@ -121,7 +120,9 @@ class FallbackBackend(Backend):
             primary_label = getattr(self.primary, "backend_type", type(self.primary).__name__)
             logger.warning(
                 "Primary backend %s failed: %s — trying %d fallback(s)",
-                primary_label, primary_err, len(self.fallbacks),
+                primary_label,
+                primary_err,
+                len(self.fallbacks),
             )
             for i, fb in enumerate(self.fallbacks):
                 try:
@@ -129,7 +130,10 @@ class FallbackBackend(Backend):
                 except Exception as fb_err:
                     fb_label = getattr(fb, "backend_type", type(fb).__name__)
                     logger.warning(
-                        "Fallback %d (%s) failed: %s", i, fb_label, fb_err,
+                        "Fallback %d (%s) failed: %s",
+                        i,
+                        fb_label,
+                        fb_err,
                     )
                     continue
                 # Mark the response so audit can distinguish fallback usage

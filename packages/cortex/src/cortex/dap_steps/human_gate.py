@@ -42,7 +42,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["run", "noop"]
+__all__ = ["noop", "run"]
 
 _RUN_ID_RE = re.compile(r"<run_id>\s*(.*?)\s*</run_id>", re.DOTALL)
 

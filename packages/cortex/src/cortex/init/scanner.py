@@ -58,6 +58,7 @@ class ProjectScan:
 # Top-level orchestrator                                                      #
 # --------------------------------------------------------------------------- #
 
+
 def scan_project(path: Path, repo: str = "") -> ProjectScan:
     """Inspect ``path`` and produce a ProjectScan.
 
@@ -92,6 +93,7 @@ def scan_project(path: Path, repo: str = "") -> ProjectScan:
 # --------------------------------------------------------------------------- #
 # Detectors                                                                   #
 # --------------------------------------------------------------------------- #
+
 
 def detect_language(path: Path) -> str:
     """Identify the primary language by package-manifest presence."""
@@ -135,9 +137,8 @@ def detect_package_manager(path: Path, language: str) -> str:
             return "pip"
         if (path / "setup.py").is_file():
             return "pip"
-    if language == "node":
-        if (path / "package.json").is_file():
-            return "npm"
+    if language == "node" and (path / "package.json").is_file():
+        return "npm"
     if language == "go":
         return "go-mod"
     if language == "rust":
@@ -155,9 +156,8 @@ def detect_test_framework(path: Path, language: str) -> str:
         return _detect_node_test_framework(path)
     if language == "go":
         return "go-test"
-    if language == "ruby":
-        if (path / ".rspec").is_file():
-            return "rspec"
+    if language == "ruby" and (path / ".rspec").is_file():
+        return "rspec"
     if language == "rust":
         return "cargo-test"
     return ""
@@ -236,9 +236,8 @@ def detect_entry_point(path: Path, language: str) -> str:
         for candidate in ("index.js", "src/index.js", "server.js"):
             if (path / candidate).is_file():
                 return candidate
-    if language == "go":
-        if (path / "main.go").is_file():
-            return "main.go"
+    if language == "go" and (path / "main.go").is_file():
+        return "main.go"
     return ""
 
 
@@ -275,6 +274,7 @@ def count_files(path: Path) -> int:
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
+
 
 def _has_github_actions(path: Path) -> bool:
     workflows = path / ".github" / "workflows"

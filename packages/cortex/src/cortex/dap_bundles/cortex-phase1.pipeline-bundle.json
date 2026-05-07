@@ -155,7 +155,7 @@
       "runtime_config": {
         "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
         "agent_name": "cicd",
-        "section_name": "CI/CD"
+        "section_name": "Test Criteria"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [],
@@ -181,7 +181,7 @@
       "runtime_config": {
         "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
         "agent_name": "dispatcher",
-        "section_name": "Task Assignments"
+        "section_name": "Task Assignment"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [],
@@ -207,7 +207,7 @@
       "runtime_config": {
         "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
         "agent_name": "finalize",
-        "section_name": "Finalize"
+        "section_name": "Review Notes"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [],

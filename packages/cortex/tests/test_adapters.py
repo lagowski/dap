@@ -1,4 +1,5 @@
 """Round-trip tests for cortex_to_dap / dap_to_cortex adapters."""
+
 from cortex.adapters.pipeline_state import (
     cortex_to_dap,
     dap_to_cortex,

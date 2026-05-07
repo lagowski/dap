@@ -6,7 +6,6 @@ Each node reads what it needs and writes its outputs.
 
 from __future__ import annotations
 
-import operator
 from typing import Annotated, TypedDict
 
 
@@ -71,8 +70,8 @@ class CortexState(TypedDict):
     tests_to_write: list[dict[str, str]]  # [{path, covers}]
 
     # --- Implement output ---
-    branch_name: str       # last execution agent's branch (goes into the PR)
-    coder_branch_name: str # coder's branch specifically — stable across retries (#161)
+    branch_name: str  # last execution agent's branch (goes into the PR)
+    coder_branch_name: str  # coder's branch specifically — stable across retries (#161)
     commits: list[dict[str, str]]  # [{sha, message}]
     files_changed: Annotated[list[str], _files_changed_reducer]
 

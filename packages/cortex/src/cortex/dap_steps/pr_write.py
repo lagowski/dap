@@ -34,11 +34,13 @@ def run_side_effects(state: dict, audit: dict) -> dict:
     settings = load_settings()
     code_token = settings.get_github_token("code")
 
-    create_issue_comment.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "body": f"PR created: {pr_url}",
-        "token": code_token,
-    })
+    create_issue_comment.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "body": f"PR created: {pr_url}",
+            "token": code_token,
+        }
+    )
 
     return {}

@@ -25,17 +25,18 @@ async def run(state: dict, config: dict) -> dict:
         "pr_merger_retry_count": retry_count,
         "current_phase": "retry_prepare",
         "files_changed": None,  # reset accumulator; next coder round starts clean
-        "decisions": state.get("decisions", []) + [{
-            "node": "retry_prepare",
-            "action": "retry",
-            "reasoning": (
-                f"attempt {retry_count}: looping back to coder with "
+        "decisions": [
+            *state.get("decisions", []),
+            {
+                "node": "retry_prepare",
+                "action": "retry",
+                "reasoning": f"attempt {retry_count}: looping back to coder with "
                 f"{failed} failed + {errors} errors "
-                f"({len(failed_tests)} named test failures)"
-            ),
-            "backend": "",
-            "model": "",
-            "tokens": "",
-            "timestamp": datetime.now(UTC).isoformat(),
-        }],
+                f"({len(failed_tests)} named test failures)",
+                "backend": "",
+                "model": "",
+                "tokens": "",
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        ],
     }

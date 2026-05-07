@@ -39,17 +39,17 @@ _SECRET_PATTERNS: list[re.Pattern[str]] = [
 
 # Debug print/log statements.
 _DEBUG_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r'\bprint\('),
-    re.compile(r'\bconsole\.log\('),
+    re.compile(r"\bprint\("),
+    re.compile(r"\bconsole\.log\("),
 ]
 
 # TODO / FIXME / XXX comments.
 _TODO_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r'#\s*TODO\b', re.IGNORECASE),
-    re.compile(r'#\s*FIXME\b', re.IGNORECASE),
-    re.compile(r'#\s*XXX\b', re.IGNORECASE),
-    re.compile(r'//\s*TODO\b', re.IGNORECASE),
-    re.compile(r'//\s*FIXME\b', re.IGNORECASE),
+    re.compile(r"#\s*TODO\b", re.IGNORECASE),
+    re.compile(r"#\s*FIXME\b", re.IGNORECASE),
+    re.compile(r"#\s*XXX\b", re.IGNORECASE),
+    re.compile(r"//\s*TODO\b", re.IGNORECASE),
+    re.compile(r"//\s*FIXME\b", re.IGNORECASE),
 ]
 
 
@@ -64,9 +64,7 @@ def _check_secrets(line: str, lineno: int, findings: list[str]) -> None:
     for pattern in _SECRET_PATTERNS:
         m = pattern.search(content)
         if m:
-            findings.append(
-                f"hardcoded secret at line {lineno}: {content.strip()[:80]}"
-            )
+            findings.append(f"hardcoded secret at line {lineno}: {content.strip()[:80]}")
             return  # one finding per line is enough
 
 
@@ -75,9 +73,7 @@ def _check_debug(line: str, lineno: int, findings: list[str]) -> None:
     content = line[1:]
     for pattern in _DEBUG_PATTERNS:
         if pattern.search(content):
-            findings.append(
-                f"debug print at line {lineno}: {content.strip()[:80]}"
-            )
+            findings.append(f"debug print at line {lineno}: {content.strip()[:80]}")
             return
 
 
@@ -86,9 +82,7 @@ def _check_todo(line: str, lineno: int, findings: list[str]) -> None:
     content = line[1:]
     for pattern in _TODO_PATTERNS:
         if pattern.search(content):
-            findings.append(
-                f"TODO/FIXME/XXX comment at line {lineno}: {content.strip()[:80]}"
-            )
+            findings.append(f"TODO/FIXME/XXX comment at line {lineno}: {content.strip()[:80]}")
             return
 
 
@@ -101,17 +95,14 @@ def _check_untested_api(diff: str, files_changed: list[str]) -> list[str]:
       - AND no file in files_changed matches `test_` or `_test`
     """
     has_new_def = any(
-        re.search(r'^\+\s*def\s+\w+\(', line)
+        re.search(r"^\+\s*def\s+\w+\(", line)
         for line in diff.splitlines()
         if _is_added_line(line) and not line.startswith("+++")
     )
     if not has_new_def:
         return []
 
-    test_file_present = any(
-        ("test_" in f or "_test" in f)
-        for f in (files_changed or [])
-    )
+    test_file_present = any(("test_" in f or "_test" in f) for f in (files_changed or []))
     if test_file_present:
         return []
 
@@ -138,7 +129,7 @@ def _run_git_diff(workspace: str, branch: str) -> str | None:
             )
             if result.returncode == 0:
                 return result.stdout
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     return None
 
@@ -167,11 +158,13 @@ def _get_changed_files(workspace: str, branch: str) -> list[str] | None:
             timeout=30,
         )
         return result.stdout.splitlines()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
-def _with_extensions(delta: dict, original_extensions: dict, review_attempts: int, audit: dict) -> dict:
+def _with_extensions(
+    delta: dict, original_extensions: dict, review_attempts: int, audit: dict
+) -> dict:
     """Merge original_extensions + review_attempts into a cortex_to_dap delta.
 
     Also re-attaches ``__audit`` (stripped by cortex_to_dap) so the DAP
@@ -181,7 +174,11 @@ def _with_extensions(delta: dict, original_extensions: dict, review_attempts: in
     fields that the code_reviewer didn't write (e.g. task_assignments,
     issue_number).  See cortex-project#303.
     """
-    merged = {**original_extensions, **delta.get("extensions", {}), "review_attempts": review_attempts}
+    merged = {
+        **original_extensions,
+        **delta.get("extensions", {}),
+        "review_attempts": review_attempts,
+    }
     delta["extensions"] = merged
     delta["__audit"] = audit
     return delta
@@ -216,16 +213,37 @@ async def run(state: dict, config: dict) -> dict:
 
         if not repo or not branch:
             # Missing state — approve and continue.
-            return _with_extensions(cortex_to_dap(_approved_result(state, findings, timestamp, reason="missing repo/branch_name")), original_extensions, current_attempts, {"tokens_used": 0, "cost_usd": 0.0, "section": "code_reviewer"})
+            return _with_extensions(
+                cortex_to_dap(
+                    _approved_result(state, findings, timestamp, reason="missing repo/branch_name")
+                ),
+                original_extensions,
+                current_attempts,
+                {"tokens_used": 0, "cost_usd": 0.0, "section": "code_reviewer"},
+            )
 
         workspace = str(repo_clone_path(repo))
         if not workspace:
-            return _with_extensions(cortex_to_dap(_approved_result(state, findings, timestamp, reason="missing workspace")), original_extensions, current_attempts, {"tokens_used": 0, "cost_usd": 0.0, "section": "code_reviewer"})
+            return _with_extensions(
+                cortex_to_dap(
+                    _approved_result(state, findings, timestamp, reason="missing workspace")
+                ),
+                original_extensions,
+                current_attempts,
+                {"tokens_used": 0, "cost_usd": 0.0, "section": "code_reviewer"},
+            )
 
         diff = _run_git_diff(workspace, branch)
         if diff is None:
             # git failed — approve and continue.
-            return _with_extensions(cortex_to_dap(_approved_result(state, findings, timestamp, reason="git diff failed")), original_extensions, current_attempts, {"tokens_used": 0, "cost_usd": 0.0, "section": "code_reviewer"})
+            return _with_extensions(
+                cortex_to_dap(
+                    _approved_result(state, findings, timestamp, reason="git diff failed")
+                ),
+                original_extensions,
+                current_attempts,
+                {"tokens_used": 0, "cost_usd": 0.0, "section": "code_reviewer"},
+            )
 
         lines = diff.splitlines()
         for lineno, line in enumerate(lines, start=1):
@@ -239,7 +257,7 @@ async def run(state: dict, config: dict) -> dict:
         if files_changed is not None:
             findings.extend(_check_untested_api(diff, files_changed))
 
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Never block the pipeline on reviewer errors.
         findings = []
 
@@ -258,46 +276,52 @@ async def run(state: dict, config: dict) -> dict:
         else f"{len(effective_findings)} issue(s): {'; '.join(effective_findings[:3])}"
     )
 
-    decisions = list(state.get("decisions") or []) + [{
-        "node": "code_reviewer",
-        "action": action,
-        "reasoning": reasoning,
-        "backend": "",
-        "model": "",
-        "tokens": "",
-        "timestamp": timestamp,
-    }]
+    decisions = [
+        *list(state.get("decisions") or []),
+        {
+            "node": "code_reviewer",
+            "action": action,
+            "reasoning": reasoning,
+            "backend": "",
+            "model": "",
+            "tokens": "",
+            "timestamp": timestamp,
+        },
+    ]
 
     new_attempts = current_attempts + (0 if approved else 1)
 
     _audit = {"tokens_used": 0, "cost_usd": 0.0, "section": "code_reviewer"}
     return _with_extensions(
-        cortex_to_dap({
-            "review_findings": effective_findings,
-            "review_approved": approved,
-            "review_attempts": new_attempts,
-            "current_phase": "code_reviewer",
-            "decisions": decisions,
-        }),
+        cortex_to_dap(
+            {
+                "review_findings": effective_findings,
+                "review_approved": approved,
+                "review_attempts": new_attempts,
+                "current_phase": "code_reviewer",
+                "decisions": decisions,
+            }
+        ),
         original_extensions,
         new_attempts,
         _audit,
     )
 
 
-def _approved_result(
-    state: CortexState, findings: list[str], timestamp: str, reason: str
-) -> dict:
+def _approved_result(state: CortexState, findings: list[str], timestamp: str, reason: str) -> dict:
     """Return an approved result with an audit decision explaining why."""
-    decisions = list(state.get("decisions") or []) + [{
-        "node": "code_reviewer",
-        "action": "approved",
-        "reasoning": f"skipped ({reason}) — approving by default",
-        "backend": "",
-        "model": "",
-        "tokens": "",
-        "timestamp": timestamp,
-    }]
+    decisions = [
+        *list(state.get("decisions") or []),
+        {
+            "node": "code_reviewer",
+            "action": "approved",
+            "reasoning": f"skipped ({reason}) — approving by default",
+            "backend": "",
+            "model": "",
+            "tokens": "",
+            "timestamp": timestamp,
+        },
+    ]
     return {
         "review_findings": [],
         "review_approved": True,

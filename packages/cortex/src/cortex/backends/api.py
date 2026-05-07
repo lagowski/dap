@@ -34,7 +34,9 @@ class APIBackend(Backend):
 
     backend_type = "api"  # type: ignore[assignment]
 
-    def __init__(self, provider: str = "deepseek", api_key: str = "", base_url: str = "", model: str = ""):
+    def __init__(
+        self, provider: str = "deepseek", api_key: str = "", base_url: str = "", model: str = ""
+    ):
         self.provider = provider
         self.api_key = api_key
         self.base_url = base_url or _PROVIDER_URLS.get(provider, "")
@@ -56,9 +58,16 @@ class APIBackend(Backend):
         with httpx.Client(timeout=120.0) as client:
             resp = client.post(
                 f"{self.base_url}/chat/completions",
-                json={"model": self.model, "messages": messages,
-                      "temperature": request.temperature, "max_tokens": request.max_tokens},
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": request.temperature,
+                    "max_tokens": request.max_tokens,
+                },
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
             )
             resp.raise_for_status()
             data = resp.json()
@@ -75,26 +84,38 @@ class APIBackend(Backend):
         )
 
     def _invoke_anthropic(self, request: LLMRequest) -> LLMResponse:
-        payload = {"model": self.model, "max_tokens": request.max_tokens,
-                   "messages": [{"role": "user", "content": request.user_prompt}]}
+        payload = {
+            "model": self.model,
+            "max_tokens": request.max_tokens,
+            "messages": [{"role": "user", "content": request.user_prompt}],
+        }
         if request.system_prompt:
             payload["system"] = request.system_prompt
 
         with httpx.Client(timeout=120.0) as client:
             resp = client.post(
-                f"{self.base_url}/messages", json=payload,
-                headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01",
-                         "Content-Type": "application/json"},
+                f"{self.base_url}/messages",
+                json=payload,
+                headers={
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
             )
             resp.raise_for_status()
             data = resp.json()
 
-        content = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+        content = "".join(
+            b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
+        )
         usage = data.get("usage", {})
         return LLMResponse(
-            content=content, model=data.get("model", self.model),
-            input_tokens=usage.get("input_tokens", 0), output_tokens=usage.get("output_tokens", 0),
-            backend="api:anthropic", raw=data,
+            content=content,
+            model=data.get("model", self.model),
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            backend="api:anthropic",
+            raw=data,
         )
 
     def _invoke_gemini(self, request: LLMRequest) -> LLMResponse:
@@ -157,8 +178,9 @@ class APIBackend(Backend):
                 return False
         try:
             with httpx.Client(timeout=10.0) as client:
-                resp = client.get(f"{self.base_url}/models",
-                                  headers={"Authorization": f"Bearer {self.api_key}"})
+                resp = client.get(
+                    f"{self.base_url}/models", headers={"Authorization": f"Bearer {self.api_key}"}
+                )
                 return resp.status_code in (200, 401)
         except Exception:
             return False

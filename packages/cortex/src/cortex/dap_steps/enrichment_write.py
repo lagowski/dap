@@ -63,29 +63,34 @@ async def run_side_effects(
     section_content = audit.get("content_after", "")
 
     # Re-read current issue body for update
-    issue_data = read_issue.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "token": token,
-    })
+    issue_data = read_issue.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "token": token,
+        }
+    )
     current_body = issue_data.get("body", "")
     issue_comments = issue_data.get("comments", [])
     content_before = get_issue_section(current_body, section_name)
 
     # Update the section in the issue body
     new_body = update_issue_section(current_body, section_name, section_content)
-    update_result = update_issue_body.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "body": new_body,
-        "token": token,
-    })
+    update_result = update_issue_body.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "body": new_body,
+            "token": token,
+        }
+    )
     update_failed = isinstance(update_result, dict) and "error" in update_result
     if update_failed:
         logger.error(
             "dap_steps/enrichment_write: %s failed to update_issue_body for "
             "section %r (token role=%s): %s",
-            agent_name, section_name,
+            agent_name,
+            section_name,
             agent_config.get("github_token_role", "?"),
             update_result.get("error", "unknown"),
         )
@@ -94,23 +99,23 @@ async def run_side_effects(
     words_before = len(content_before.split()) if content_before else 0
     words_after = len(section_content.split()) if section_content else 0
     enrichment_comment = (
-        f"**{agent_name}** completed {section_name} "
-        f"({words_before} → {words_after} words)"
+        f"**{agent_name}** completed {section_name} ({words_before} → {words_after} words)"
     )
-    comment_url = create_issue_comment.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "body": enrichment_comment,
-        "token": token,
-    })
-    comment_failed = (
-        isinstance(comment_url, str) and comment_url.startswith("error:")
+    comment_url = create_issue_comment.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "body": enrichment_comment,
+            "token": token,
+        }
     )
+    comment_failed = isinstance(comment_url, str) and comment_url.startswith("error:")
     if comment_failed:
         logger.warning(
-            "dap_steps/enrichment_write: %s failed to post completion comment "
-            "(token role=%s): %s",
-            agent_name, agent_config.get("github_token_role", "?"), comment_url,
+            "dap_steps/enrichment_write: %s failed to post completion comment (token role=%s): %s",
+            agent_name,
+            agent_config.get("github_token_role", "?"),
+            comment_url,
         )
 
     # Audit logging

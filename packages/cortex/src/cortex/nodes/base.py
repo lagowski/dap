@@ -97,10 +97,13 @@ def _format_comments_block(comments: list[dict[str, str]]) -> str:
     """
     if not comments:
         return ""
-    lines = ["## Comments (chronological)",
-             "_Comments may clarify or narrow the body's scope. "
-             "If they conflict with the body, surface this in your output "
-             "and prefer the most recent direction._", ""]
+    lines = [
+        "## Comments (chronological)",
+        "_Comments may clarify or narrow the body's scope. "
+        "If they conflict with the body, surface this in your output "
+        "and prefer the most recent direction._",
+        "",
+    ]
     for c in comments:
         lines.append(f"**{c.get('author', 'unknown')}** ({c.get('created_at', '')}):")
         lines.append(c.get("body", ""))
@@ -185,17 +188,20 @@ def _llm_call(
     # from_pipeline_state() maps it back to CortexState keys transparently;
     # it is a no-op when state is already CortexState-shaped (#286).
     from cortex.adapters.pipeline_state import from_pipeline_state
+
     state = from_pipeline_state(state)
 
     settings = load_settings()
     agent_config = get_agent_backend_config(agent_name)
     token = settings.get_github_token(agent_config["github_token_role"])
 
-    issue_data = read_issue.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "token": token,
-    })
+    issue_data = read_issue.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "token": token,
+        }
+    )
     current_body = issue_data.get("body", "")
     issue_comments = issue_data.get("comments", [])
 
@@ -205,6 +211,7 @@ def _llm_call(
     # nodes call _llm_call directly — the enrichment_step path is not used.
     try:
         from cortex.init.profile import context_path
+
         _ctx_file = context_path(state["repo"])
         if _ctx_file.is_file():
             _ctx = _ctx_file.read_text(encoding="utf-8", errors="replace")
@@ -228,8 +235,7 @@ def _llm_call(
     original_block = ""
     if original_body and original_body.strip() != current_body.strip():
         original_block = (
-            "\n\n---\n**Original issue body (before Phase 1 enrichment):**\n"
-            + original_body
+            "\n\n---\n**Original issue body (before Phase 1 enrichment):**\n" + original_body
         )
 
     user_prompt = (
@@ -248,12 +254,14 @@ def _llm_call(
 
     backend = create_backend(agent_config)
     start_ms = time.monotonic_ns() // 1_000_000
-    response = backend.invoke(LLMRequest(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=agent_config.get("temperature", 0.1),
-        max_tokens=agent_config.get("max_tokens", 4000),
-    ))
+    response = backend.invoke(
+        LLMRequest(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=agent_config.get("temperature", 0.1),
+            max_tokens=agent_config.get("max_tokens", 4000),
+        )
+    )
     duration_ms = (time.monotonic_ns() // 1_000_000) - start_ms
 
     validation = validate_response(agent_name, section_name, response.content)
@@ -290,6 +298,7 @@ def enrichment_step(
     """
     # Normalise state shape for DAP python-func compatibility (#286).
     from cortex.adapters.pipeline_state import from_pipeline_state
+
     state = from_pipeline_state(state)
 
     settings = load_settings()
@@ -297,11 +306,13 @@ def enrichment_step(
     token = settings.get_github_token(agent_config["github_token_role"])
 
     # 1. Read current issue from GitHub
-    issue_data = read_issue.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "token": token,
-    })
+    issue_data = read_issue.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "token": token,
+        }
+    )
     current_body = issue_data.get("body", "")
     issue_comments = issue_data.get("comments", [])
     content_before = get_issue_section(current_body, section_name)
@@ -313,6 +324,7 @@ def enrichment_step(
     # conventions instead of guessing from the issue text alone.
     try:
         from cortex.init.profile import context_path
+
         _ctx_file = context_path(state["repo"])
         if _ctx_file.is_file():
             _ctx = _ctx_file.read_text(encoding="utf-8", errors="replace")
@@ -349,8 +361,7 @@ def enrichment_step(
     original_block = ""
     if original_body and original_body.strip() != current_body.strip():
         original_block = (
-            "\n\n---\n**Original issue body (before Phase 1 enrichment):**\n"
-            + original_body
+            "\n\n---\n**Original issue body (before Phase 1 enrichment):**\n" + original_body
         )
 
     user_prompt = (
@@ -370,12 +381,14 @@ def enrichment_step(
 
     backend = create_backend(agent_config)
     start_ms = time.monotonic_ns() // 1_000_000
-    response = backend.invoke(LLMRequest(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=agent_config.get("temperature", 0.1),
-        max_tokens=agent_config.get("max_tokens", 4000),
-    ))
+    response = backend.invoke(
+        LLMRequest(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=agent_config.get("temperature", 0.1),
+            max_tokens=agent_config.get("max_tokens", 4000),
+        )
+    )
     duration_ms = (time.monotonic_ns() // 1_000_000) - start_ms
 
     # 2b. Validate + clean the response (issue #27)
@@ -383,26 +396,32 @@ def enrichment_step(
     if not validation.valid:
         logger.warning(
             "Agent %s response failed validation for %s: %s",
-            agent_name, section_name, validation.reason,
+            agent_name,
+            section_name,
+            validation.reason,
         )
     # Use the cleaned content (preamble stripped) when available, else raw
     section_content = validation.cleaned or response.content
 
     # 3. Update the section in the issue body — fail loud (issue #43)
     new_body = update_issue_section(current_body, section_name, section_content)
-    update_result = update_issue_body.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "body": new_body,
-        "token": token,
-    })
+    update_result = update_issue_body.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "body": new_body,
+            "token": token,
+        }
+    )
     update_failed = isinstance(update_result, dict) and "error" in update_result
     if update_failed:
         err_msg = update_result.get("error", "unknown error")
         logger.error(
             "Agent %s failed to update_issue_body for section %r (token role=%s): %s",
-            agent_name, section_name,
-            agent_config.get("github_token_role", "?"), err_msg,
+            agent_name,
+            section_name,
+            agent_config.get("github_token_role", "?"),
+            err_msg,
         )
         raise RuntimeError(
             f"{agent_name}: GitHub write failed for section {section_name!r}: {err_msg}"
@@ -412,22 +431,23 @@ def enrichment_step(
     words_before = len(content_before.split()) if content_before else 0
     words_after = len(section_content.split()) if section_content else 0
     enrichment_comment = (
-        f"**{agent_name}** completed {section_name} "
-        f"({words_before} → {words_after} words)"
+        f"**{agent_name}** completed {section_name} ({words_before} → {words_after} words)"
     )
-    comment_url = create_issue_comment.invoke({
-        "repo": state["repo"],
-        "issue_number": state["issue_number"],
-        "body": enrichment_comment,
-        "token": token,
-    })
-    comment_failed = (
-        isinstance(comment_url, str) and comment_url.startswith("error:")
+    comment_url = create_issue_comment.invoke(
+        {
+            "repo": state["repo"],
+            "issue_number": state["issue_number"],
+            "body": enrichment_comment,
+            "token": token,
+        }
     )
+    comment_failed = isinstance(comment_url, str) and comment_url.startswith("error:")
     if comment_failed:
         logger.warning(
             "Agent %s failed to post completion comment (token role=%s): %s",
-            agent_name, agent_config.get("github_token_role", "?"), comment_url,
+            agent_name,
+            agent_config.get("github_token_role", "?"),
+            comment_url,
         )
 
     # 5. Audit logging (skip if no run_id, OR if the issue update failed —
@@ -462,20 +482,24 @@ def enrichment_step(
 
     # 6. Return state updates
     action_label = (
-        f"enriched {section_name}" if not update_failed
+        f"enriched {section_name}"
+        if not update_failed
         else f"FAILED to enrich {section_name} (update_issue_body 403)"
     )
     state_update: dict = {
         "issue_comments": issue_comments,
-        "decisions": state.get("decisions", []) + [{
-            "node": agent_name,
-            "action": action_label,
-            "reasoning": response.content[:200],
-            "backend": response.backend,
-            "model": response.model,
-            "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
-            "timestamp": datetime.now(UTC).isoformat(),
-        }],
+        "decisions": [
+            *state.get("decisions", []),
+            {
+                "node": agent_name,
+                "action": action_label,
+                "reasoning": response.content[:200],
+                "backend": response.backend,
+                "model": response.model,
+                "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        ],
         # Full LLM output for callers that need to parse structured content
         # (e.g. dispatcher reads the assignment table). The `reasoning` field
         # above is truncated to 200 chars for audit storage. Issue #70.

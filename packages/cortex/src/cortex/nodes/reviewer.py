@@ -13,9 +13,8 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from datetime import UTC, datetime
-
 import time
+from datetime import UTC, datetime
 
 from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
 from cortex.backends.base import LLMRequest
@@ -102,8 +101,7 @@ def _parse_review(text: str) -> tuple[bool | None, str]:
     # rather than silently defaulting to False.
     if approved is None:
         logger.warning(
-            "reviewer: no DECISION:/VERDICT: line found in response "
-            "(%d chars)", len(text)
+            "reviewer: no DECISION:/VERDICT: line found in response (%d chars)", len(text)
         )
         # Surface the likely intent so operators see the reviewer's verdict
         # at the gate without DB queries (#184).
@@ -142,9 +140,7 @@ def _diff_files(diff_output: str) -> set[str]:
     """Extract the set of file paths from a unified diff."""
     files: set[str] = set()
     for line in diff_output.split("\n"):
-        if line.startswith("+++ b/"):
-            files.add(line[6:])
-        elif line.startswith("--- a/"):
+        if line.startswith("+++ b/") or line.startswith("--- a/"):
             files.add(line[6:])
     # Remove /dev/null (new/deleted files show this)
     files.discard("/dev/null")
@@ -159,11 +155,13 @@ def _build_contradictions(
     contradictions: list[dict] = []
     for path, line_num in target_files:
         if path not in diff_files_set:
-            contradictions.append({
-                "path": path,
-                "line": line_num,
-                "reason": "listed in Target Files but not touched in diff",
-            })
+            contradictions.append(
+                {
+                    "path": path,
+                    "line": line_num,
+                    "reason": "listed in Target Files but not touched in diff",
+                }
+            )
     return contradictions
 
 
@@ -204,9 +202,7 @@ async def run(state: dict, config: dict) -> dict:
     target_files = parse_target_files(spec_section)
     changed_files = _diff_files(diff_content) if diff_content else set()
     contradictions = (
-        _build_contradictions(target_files, changed_files)
-        if target_files and changed_files
-        else []
+        _build_contradictions(target_files, changed_files) if target_files and changed_files else []
     )
 
     # Build prompt with diff content included
@@ -224,15 +220,15 @@ async def run(state: dict, config: dict) -> dict:
 
     user_prompt = f"""Review PR #{pr_number}: {pr_url}
 
-Original issue #{state['issue_number']}: {issue_data.get('title', '')}
+Original issue #{state["issue_number"]}: {issue_data.get("title", "")}
 
 Issue body:
 {issue_body}
 
 Branch: {branch_name}
-Files changed: {', '.join(state.get('files_changed') or [])}
-Tests passed: {state.get('tests_passed', False)}
-Test output: {state.get('test_output', 'N/A')}{diff_block}{acknowledged_block}
+Files changed: {", ".join(state.get("files_changed") or [])}
+Tests passed: {state.get("tests_passed", False)}
+Test output: {state.get("test_output", "N/A")}{diff_block}{acknowledged_block}
 
 Review this PR and decide whether to approve or reject."""
 
@@ -241,12 +237,14 @@ Review this PR and decide whether to approve or reject."""
     system_prompt = agent_config.get("system_prompt", SYSTEM_PROMPT)
 
     start_ms = int(time.monotonic() * 1000)
-    response = backend.invoke(LLMRequest(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=agent_config.get("temperature", 0.1),
-        max_tokens=agent_config.get("max_tokens", 4000),
-    ))
+    response = backend.invoke(
+        LLMRequest(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=agent_config.get("temperature", 0.1),
+            max_tokens=agent_config.get("max_tokens", 4000),
+        )
+    )
     duration_ms = int(time.monotonic() * 1000) - start_ms
 
     approved, comments = _parse_review(response.content)
@@ -259,13 +257,15 @@ Review this PR and decide whether to approve or reject."""
             "Respond with only: DECISION: APPROVE or DECISION: REJECT"
         )
         start_ms2 = int(time.monotonic() * 1000)
-        response2 = backend.invoke(LLMRequest(
-            system_prompt=system_prompt,
-            user_prompt=reprompt_text,
-            temperature=0.0,
-            max_tokens=50,
-        ))
-        duration_ms2 = int(time.monotonic() * 1000) - start_ms2
+        response2 = backend.invoke(
+            LLMRequest(
+                system_prompt=system_prompt,
+                user_prompt=reprompt_text,
+                temperature=0.0,
+                max_tokens=50,
+            )
+        )
+        int(time.monotonic() * 1000) - start_ms2
 
         approved2, comments2 = _parse_review(response2.content)
 
@@ -275,8 +275,7 @@ Review this PR and decide whether to approve or reject."""
         else:
             approved = False
             logger.warning(
-                "reviewer: second-chance re-prompt also returned no DECISION "
-                "— defaulting to REJECT"
+                "reviewer: second-chance re-prompt also returned no DECISION — defaulting to REJECT"
             )
 
     # Append contradictions subsection if any
@@ -284,29 +283,35 @@ Review this PR and decide whether to approve or reject."""
     if contradictions:
         review_output += "\n\n" + _format_contradictions(contradictions)
 
-    return preserve_extensions(cortex_to_dap({
-        "review_approved": approved,
-        "review_output": review_output,
-        "current_phase": "reviewer_complete",
-        "__audit": {
-            "tokens_used": (
-                (response.input_tokens or 0) + (response.output_tokens or 0)
-            ),
-            "cost_usd": response.cost_usd,
-            "section": "reviewer",
-            "backend": response.backend,
-            "model": response.model,
-            "input_tokens": response.input_tokens,
-            "output_tokens": response.output_tokens,
-            "duration_ms": duration_ms,
-        },
-        "decisions": state.get("decisions", []) + [{
-            "node": "reviewer",
-            "action": "reviewed",
-            "reasoning": f"{'APPROVED' if approved else 'REJECTED'}: {comments}",
-            "backend": response.backend,
-            "model": response.model,
-            "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
-            "timestamp": datetime.now(UTC).isoformat(),
-        }],
-    }), original_extensions)
+    return preserve_extensions(
+        cortex_to_dap(
+            {
+                "review_approved": approved,
+                "review_output": review_output,
+                "current_phase": "reviewer_complete",
+                "__audit": {
+                    "tokens_used": ((response.input_tokens or 0) + (response.output_tokens or 0)),
+                    "cost_usd": response.cost_usd,
+                    "section": "reviewer",
+                    "backend": response.backend,
+                    "model": response.model,
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                    "duration_ms": duration_ms,
+                },
+                "decisions": [
+                    *state.get("decisions", []),
+                    {
+                        "node": "reviewer",
+                        "action": "reviewed",
+                        "reasoning": f"{'APPROVED' if approved else 'REJECTED'}: {comments}",
+                        "backend": response.backend,
+                        "model": response.model,
+                        "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    },
+                ],
+            }
+        ),
+        original_extensions,
+    )

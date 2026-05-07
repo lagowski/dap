@@ -60,6 +60,17 @@ ignore = [
     "PLR2004",                  # magic values in tests OK
     "PLC0415",                  # local imports in tests are intentional (per-test isolation)
 ]
+"packages/cortex/**" = [
+    "PLC0415",   # inline imports intentional (lazy loading / circular-import avoidance)
+    "PLR2004",   # HTTP status codes and protocol constants are self-documenting
+    "PLW1510",   # subprocess.run without check= — errors handled by caller try/except
+    "PLR0911",   # complex node functions have many early-return paths by design
+    "PLR0912",   # same
+    "PLR0915",   # same
+    "RUF002",    # EN DASH in docstrings — inherited from cortex-project style
+    "RUF003",    # EN DASH in comments — same
+    "E741",      # ambiguous variable name — lambda shorthand in one function
+]
 # Pydantic models need runtime access to types — TC* rules don't apply
 
 [tool.ruff.lint.flake8-bugbear]

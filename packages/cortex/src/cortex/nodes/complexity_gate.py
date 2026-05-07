@@ -79,16 +79,15 @@ def _rate_complexity(issue_body: str) -> int:
         if word in body_lower:
             score += 1
 
-    bullets = sum(
-        1 for line in issue_body.split("\n") if line.lstrip().startswith("-")
-    )
+    bullets = sum(1 for line in issue_body.split("\n") if line.lstrip().startswith("-"))
     if bullets >= 20:  # was > 20 — boundary miss caught by #175 gate test
         score += 1
 
     # Acceptance-criteria checkboxes: "- [ ]" lines are concrete deliverables.
     # More than 5 is a strong signal the issue spans multiple work streams.
     ac_checkboxes = sum(
-        1 for line in issue_body.split("\n")
+        1
+        for line in issue_body.split("\n")
         if line.lstrip().startswith("- [ ]") or line.lstrip().startswith("- [x]")
     )
     if ac_checkboxes > 5:
@@ -142,24 +141,24 @@ async def run(state: dict, config: dict) -> dict:
     score = _rate_complexity(issue_body)
     blocked = score >= threshold and not force
 
-    decision_action = (
-        "blocked" if blocked
-        else ("forced_pass" if score >= threshold else "passed")
-    )
+    decision_action = "blocked" if blocked else ("forced_pass" if score >= threshold else "passed")
     reasoning_bits = [f"score={score}/10", f"threshold={threshold}"]
     if force and score >= threshold:
         reasoning_bits.append("force=True (operator override)")
     reasoning = " ".join(reasoning_bits)
 
-    decisions = state.get("decisions", []) + [{
-        "node": "complexity_gate",
-        "action": decision_action,
-        "reasoning": reasoning,
-        "backend": "",
-        "model": "",
-        "tokens": "",
-        "timestamp": datetime.now(UTC).isoformat(),
-    }]
+    decisions = [
+        *state.get("decisions", []),
+        {
+            "node": "complexity_gate",
+            "action": decision_action,
+            "reasoning": reasoning,
+            "backend": "",
+            "model": "",
+            "tokens": "",
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    ]
 
     result: dict = {
         "complexity_score": score,
@@ -169,6 +168,8 @@ async def run(state: dict, config: dict) -> dict:
     }
     if blocked:
         result["error"] = _format_recommendation(
-            state.get("issue_number", 0), score, threshold,
+            state.get("issue_number", 0),
+            score,
+            threshold,
         )
     return result

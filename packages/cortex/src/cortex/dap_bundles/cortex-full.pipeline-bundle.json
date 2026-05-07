@@ -408,7 +408,7 @@
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
-        "section_name": "CI/CD",
+        "section_name": "Test Criteria",
         "agent_name": "cicd"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
@@ -434,7 +434,7 @@
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
-        "section_name": "Task Assignments",
+        "section_name": "Task Assignment",
         "agent_name": "dispatcher"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
@@ -460,7 +460,7 @@
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
-        "section_name": "Finalize",
+        "section_name": "Review Notes",
         "agent_name": "finalize"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
@@ -488,10 +488,7 @@
         "shell": "/bin/bash"
       },
       "prompt_template": "<agent_prompt><command>cd {{ extensions.workspace_path }}; git fetch origin; git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main</command></agent_prompt>",
-      "input_schema": [
-        "workspace_path",
-        "issue_number"
-      ],
+      "input_schema": [],
       "output_schema": [
         "branch"
       ],
@@ -506,15 +503,10 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "issue_url",
-        "issue_number",
         "repo",
         "branch"
       ],
-      "output_schema": [
-        "files_changed",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": null
     },
     "cx_p2_designer": {
@@ -526,15 +518,10 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "issue_url",
-        "issue_number",
         "repo",
         "branch"
       ],
-      "output_schema": [
-        "files_changed",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": null
     },
     "cx_p2_documenter": {
@@ -546,15 +533,10 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "issue_url",
-        "issue_number",
         "repo",
         "branch"
       ],
-      "output_schema": [
-        "files_changed",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": null
     },
     "cx_p2_code_reviewer": {
@@ -566,14 +548,9 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "branch",
-        "files_changed"
+        "branch"
       ],
-      "output_schema": [
-        "review_status",
-        "review_attempts",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": 300000
     },
     "cx_p2_gate": {
@@ -597,15 +574,10 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "issue_url",
-        "issue_number",
         "repo",
         "branch"
       ],
-      "output_schema": [
-        "test_passed",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": 300000
     },
     "cx_p3_pr_creator": {
@@ -617,15 +589,10 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "issue_url",
-        "issue_number",
         "repo",
         "branch"
       ],
-      "output_schema": [
-        "pr_url",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": 120000
     },
     "cx_p3_reviewer": {
@@ -637,15 +604,9 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "issue_url",
-        "issue_number",
-        "repo",
-        "pr_url"
+        "repo"
       ],
-      "output_schema": [
-        "review_decision",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": 180000
     },
     "cx_p3_gate": {
@@ -672,15 +633,9 @@
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
-        "issue_url",
-        "issue_number",
-        "repo",
-        "pr_url"
+        "repo"
       ],
-      "output_schema": [
-        "merged",
-        "__audit"
-      ],
+      "output_schema": [],
       "timeout_ms": 120000
     }
   },

@@ -96,9 +96,18 @@ def log_decision(
             RETURNING id
             """,
             (
-                run_id, agent, backend, model, phase,
-                system_prompt, user_prompt, response,
-                input_tokens, output_tokens, cost_usd, duration_ms,
+                run_id,
+                agent,
+                backend,
+                model,
+                phase,
+                system_prompt,
+                user_prompt,
+                response,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                duration_ms,
                 project_id,
             ),
         ).fetchone()
@@ -128,8 +137,13 @@ def log_issue_update(
             RETURNING id
             """,
             (
-                run_id, agent, issue_number, section,
-                content_before, content_after, github_comment_url,
+                run_id,
+                agent,
+                issue_number,
+                section,
+                content_before,
+                content_after,
+                github_comment_url,
             ),
         ).fetchone()
     return str(row[0])
@@ -160,8 +174,14 @@ def log_git_op(
             RETURNING id
             """,
             (
-                run_id, agent, operation, repo, branch,
-                commit_sha, pr_number, github_user,
+                run_id,
+                agent,
+                operation,
+                repo,
+                branch,
+                commit_sha,
+                pr_number,
+                github_user,
                 psycopg.types.json.Json(details) if details else None,
             ),
         ).fetchone()
@@ -169,8 +189,6 @@ def log_git_op(
 
 
 # --- Agent registry ---
-
-
 
 
 def register_agent(
@@ -399,29 +417,28 @@ def list_runs(all: bool = False, project_id: str | None = None) -> list[dict]:
                     ORDER BY started_at DESC
                     """
                 ).fetchall()
-        else:
-            # psycopg can't expand a tuple into SQL `IN` — use array + ANY instead
-            if project_id is not None:
-                rows = conn.execute(
-                    """
+        # psycopg can't expand a tuple into SQL `IN` — use array + ANY instead
+        elif project_id is not None:
+            rows = conn.execute(
+                """
                     SELECT id, thread_id, repo, issue_number, status, started_at
                     FROM cortex_runs
                     WHERE NOT (status = ANY(%s))
                       AND project_id = %s
                     ORDER BY started_at DESC
                     """,
-                    (list(_TERMINAL_STATUSES), project_id),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
+                (list(_TERMINAL_STATUSES), project_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
                     SELECT id, thread_id, repo, issue_number, status, started_at
                     FROM cortex_runs
                     WHERE NOT (status = ANY(%s))
                     ORDER BY started_at DESC
                     """,
-                    (list(_TERMINAL_STATUSES),),
-                ).fetchall()
+                (list(_TERMINAL_STATUSES),),
+            ).fetchall()
     return [
         {
             "id": str(r[0]),
@@ -496,12 +513,20 @@ def list_decisions(
         rows = conn.execute(query, params).fetchall()
 
     columns = [
-        "id", "agent", "backend", "model", "phase",
-        "input_tokens", "output_tokens", "cost_usd", "duration_ms", "created_at",
+        "id",
+        "agent",
+        "backend",
+        "model",
+        "phase",
+        "input_tokens",
+        "output_tokens",
+        "cost_usd",
+        "duration_ms",
+        "created_at",
     ]
     if include_full:
         columns.extend(["system_prompt", "user_prompt", "response"])
-    return [dict(zip(columns, row)) for row in rows]
+    return [dict(zip(columns, row, strict=False)) for row in rows]
 
 
 def _build_run_filter(
@@ -606,9 +631,7 @@ def summarize_runs(
             """,
             params,
         ).fetchall()
-        failure_shapes = [
-            {"shape": shape, "count": cnt} for shape, cnt in failure_rows
-        ]
+        failure_shapes = [{"shape": shape, "count": cnt} for shape, cnt in failure_rows]
 
     return {
         "total_runs": total_runs,

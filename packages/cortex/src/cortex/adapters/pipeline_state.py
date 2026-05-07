@@ -21,7 +21,7 @@ Usage in a node::
 Field mapping
 -------------
 Direct (same key, same meaning):
-    repo, commit_sha, tests_passed, test_output, final_status
+    repo, commit_sha, tests_passed, last_test_output, final_status
 
 Renamed:
     branch_name  →  branch   (and back)
@@ -51,7 +51,7 @@ _DIRECT_FIELDS: tuple[str, ...] = (
     "repo",
     "commit_sha",
     "tests_passed",
-    "test_output",
+    "last_test_output",
     "final_status",
 )
 
@@ -110,9 +110,6 @@ _EXTENSION_FIELDS: tuple[str, ...] = (
     "docker_build_log",
     "project_id",
     "github_user_per_agent",
-    # last_test_output is a DAP alias — kept in extensions when originating
-    # from Cortex so it round-trips cleanly.
-    "last_test_output",
     # __audit carries per-node token/cost metadata — must survive round-trip.
     "__audit",
     # _full_response_content carries full LLM response for finalize contradiction check.
@@ -154,10 +151,7 @@ def to_pipeline_state(cortex_state: dict[str, Any]) -> dict[str, Any]:
     # Merge with any existing extensions already in the incoming state so we
     # don't clobber DAP-side extension keys Cortex doesn't know about.
     existing_extensions = cortex_state.get("extensions", {})
-    if existing_extensions:
-        merged_extensions = {**existing_extensions, **extensions}
-    else:
-        merged_extensions = extensions
+    merged_extensions = {**existing_extensions, **extensions} if existing_extensions else extensions
 
     if merged_extensions:
         pipeline["extensions"] = merged_extensions

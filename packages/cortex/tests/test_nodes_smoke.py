@@ -3,6 +3,7 @@
 Does NOT execute node logic — just verifies the module loads cleanly
 and `run` is a callable (coroutine function).
 """
+
 import importlib
 import inspect
 
@@ -59,13 +60,12 @@ def test_dap_step_modules_import_cleanly() -> None:
 def test_node_run_are_coroutines() -> None:
     for module_path in NODE_MODULES:
         mod = importlib.import_module(module_path)
-        assert inspect.iscoroutinefunction(mod.run), (
-            f"{module_path}.run must be async"
-        )
+        assert inspect.iscoroutinefunction(mod.run), f"{module_path}.run must be async"
 
 
 def test_enrichment_write_run_side_effects_is_async() -> None:
     from cortex.dap_steps.enrichment_write import run_side_effects
+
     assert inspect.iscoroutinefunction(run_side_effects)
 
 

@@ -3,6 +3,7 @@
 Same pattern as test_dap_bundles_import.py — ensures the engine can
 import every node.run referenced in the pipeline bundles.
 """
+
 import importlib
 
 
@@ -56,7 +57,7 @@ def test_adapters_importable() -> None:
 
 
 def test_config_importable() -> None:
-    from cortex.config.settings import load_settings, load_agent_configs  # noqa: F401
+    from cortex.config.settings import load_agent_configs, load_settings  # noqa: F401
 
 
 def test_backends_importable() -> None:

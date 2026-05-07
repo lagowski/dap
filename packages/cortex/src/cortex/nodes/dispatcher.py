@@ -10,11 +10,10 @@ Backend: ollama/gemma4. Token: ISSUES.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from typing import Literal
-
-import logging
 
 from cortex.config.settings import get_agent_backend_config
 
@@ -137,7 +136,8 @@ def _parse_assignments(
             if agent_lower not in _EXECUTION_AGENTS:
                 logger.warning(
                     "dispatcher: skipping row with unknown agent %r (task=%r)",
-                    agent_lower, task[:60],
+                    agent_lower,
+                    task[:60],
                 )
                 continue
             assignment: dict[str, str | int] = {
@@ -195,7 +195,7 @@ async def run(state: dict, config: dict) -> dict:
     """
     from datetime import UTC, datetime
 
-    from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions, preserve_extensions
+    from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
     from cortex.nodes.base import _llm_call
 
     original_extensions = dict(state.get("extensions") or {})
@@ -204,18 +204,27 @@ async def run(state: dict, config: dict) -> dict:
     assignments = _parse_assignments(section_content)
 
     from cortex.dap_steps.enrichment_write import run_side_effects
+
     side = await run_side_effects(state, audit, "dispatcher", "Task Assignment")
-    return preserve_extensions(cortex_to_dap({
-        **side,
-        "__audit": audit,
-        "task_assignments": assignments,
-        "decisions": state.get("decisions", []) + [{
-            "node": "dispatcher",
-            "action": "enriched Task Assignment",
-            "reasoning": section_content[:200],
-            "backend": audit["backend"],
-            "model": audit["model"],
-            "tokens": f"{audit['input_tokens']}in/{audit['output_tokens']}out",
-            "timestamp": datetime.now(UTC).isoformat(),
-        }],
-    }), original_extensions)
+    return preserve_extensions(
+        cortex_to_dap(
+            {
+                **side,
+                "__audit": audit,
+                "task_assignments": assignments,
+                "decisions": [
+                    *state.get("decisions", []),
+                    {
+                        "node": "dispatcher",
+                        "action": "enriched Task Assignment",
+                        "reasoning": section_content[:200],
+                        "backend": audit["backend"],
+                        "model": audit["model"],
+                        "tokens": f"{audit['input_tokens']}in/{audit['output_tokens']}out",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    },
+                ],
+            }
+        ),
+        original_extensions,
+    )

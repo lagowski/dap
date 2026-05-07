@@ -195,9 +195,7 @@ def compose_claude_md(repo: str, agent: str) -> str:
     if agent in AGENT_NAMES:
         agent_memory = load_agent_memory(repo, agent)
         if agent_memory:
-            sections.append(
-                f"# === {agent} agent memory ===\n\n" + agent_memory
-            )
+            sections.append(f"# === {agent} agent memory ===\n\n" + agent_memory)
 
     return "\n\n".join(sections)
 
@@ -252,7 +250,7 @@ def list_workspaces(profiles_dir: Path, db_url: str) -> list[dict[str, Any]]:
             with profile_file.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
             repo = data.get("repo", "")
-        except Exception:  # noqa: BLE001
+        except Exception:
             repo = ""
         entries.append({"workspace": workspace_name, "repo": repo, "last_run": None})
 
@@ -268,7 +266,7 @@ def list_workspaces(profiles_dir: Path, db_url: str) -> list[dict[str, Any]]:
                 "SELECT repo, MAX(started_at) FROM cortex_runs GROUP BY repo"
             ).fetchall()
         last_run_by_repo: dict[str, Any] = {r[0]: r[1] for r in rows}
-    except Exception:  # noqa: BLE001
+    except Exception:
         last_run_by_repo = {}
 
     for entry in entries:
@@ -352,7 +350,10 @@ def _default_branch(workspace_path: Path) -> str:
     try:
         result = subprocess.run(
             ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-            cwd=str(workspace_path), capture_output=True, text=True, timeout=5,
+            cwd=str(workspace_path),
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             return result.stdout.strip().split("/")[-1]
@@ -382,9 +383,7 @@ def reset_workspace(workspace_path: Path, discard: bool) -> None:
         subprocess.run(["git", "checkout", "--", "."], cwd=cwd, check=True)
         subprocess.run(["git", "clean", "-fd"], cwd=cwd, check=True)
     else:
-        subprocess.run(
-            ["git", "stash", "push", "-m", "cortex-reset"], cwd=cwd, check=True
-        )
+        subprocess.run(["git", "stash", "push", "-m", "cortex-reset"], cwd=cwd, check=True)
 
     branch = _default_branch(workspace_path)
     subprocess.run(["git", "fetch", "origin"], cwd=cwd, check=True)
@@ -421,26 +420,33 @@ def prune_branches(
     # Current HEAD — never delete the checked-out branch.
     cp = subprocess.run(
         ["git", "symbolic-ref", "--short", "HEAD"],
-        capture_output=True, text=True, check=False, cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
     )
     current_head = cp.stdout.strip()
 
     # All local branches.
     cp = subprocess.run(
         ["git", "for-each-ref", "refs/heads/", "--format=%(refname:short)"],
-        capture_output=True, text=True, check=False, cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
     )
     all_branches = [b for b in cp.stdout.splitlines() if b]
 
     # Branches already merged into main.
     cp = subprocess.run(
         ["git", "branch", "--merged", "main"],
-        capture_output=True, text=True, check=False, cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
     )
     merged: set[str] = {
-        line.strip().lstrip("* ")
-        for line in cp.stdout.splitlines()
-        if line.strip()
+        line.strip().lstrip("* ") for line in cp.stdout.splitlines() if line.strip()
     }
 
     protected = _PRUNE_PROTECTED | {current_head}
@@ -457,26 +463,33 @@ def prune_branches(
         if not is_merged:
             cp = subprocess.run(
                 ["git", "log", "-1", "--format=%ct", f"refs/heads/{branch}"],
-                capture_output=True, text=True, check=False, cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=cwd,
             )
             ts_str = cp.stdout.strip()
             if ts_str:
-                try:
+                with contextlib.suppress(ValueError):
                     is_old = int(ts_str) < cutoff
-                except ValueError:
-                    pass
 
         if not (is_merged or is_old):
             continue
 
         subprocess.run(
             ["git", "branch", "-D", branch],
-            capture_output=True, text=True, check=False, cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=cwd,
         )
         if remote:
             subprocess.run(
                 ["git", "push", "origin", "--delete", branch],
-                capture_output=True, text=True, check=False, cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=cwd,
             )
         deleted.append(branch)
 

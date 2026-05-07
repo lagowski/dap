@@ -59,7 +59,9 @@ class CortexSettings(BaseSettings):
     # API keys (only needed for 'api' backend type)
     deepseek_api_key: str = Field(default="", description="DeepSeek API key")
     openai_api_key: str = Field(default="", description="OpenAI API key")
-    anthropic_api_key: str = Field(default="", description="Anthropic API key (only if using api backend)")
+    anthropic_api_key: str = Field(
+        default="", description="Anthropic API key (only if using api backend)"
+    )
 
     # Non-prefixed API keys (read directly from .env without CORTEX_ prefix)
     gemini_api_key: str = Field(

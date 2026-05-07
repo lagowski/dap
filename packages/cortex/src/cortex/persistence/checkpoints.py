@@ -34,7 +34,7 @@ def delete_thread_checkpoints(thread_id: str) -> dict[str, int]:
                 cursor = conn.execute(
                     # nosec: table names are a fixed module-level constant,
                     # not user input — psycopg can't parametrize identifiers.
-                    f"DELETE FROM {table} WHERE thread_id = %s",  # noqa: S608
+                    f"DELETE FROM {table} WHERE thread_id = %s",
                     (thread_id,),
                 )
                 counts[table] = cursor.rowcount

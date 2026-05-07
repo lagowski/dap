@@ -29,101 +29,143 @@ async def run(state: dict, config: dict) -> dict:
 
     # Gate: refuse to merge unless both conditions are met
     if not tests_passed:
-        return preserve_extensions(cortex_to_dap({
-            "merged": False,
-            "merge_sha": "",
-            "current_phase": "pr_merger_refused",
-            "error": "Cannot merge: tests did not pass",
-            "__audit": _audit_base,
-            "decisions": state.get("decisions", []) + [{
-                "node": "pr_merger",
-                "action": "refused",
-                "reasoning": "Tests did not pass — merge blocked",
-                "backend": "",
-                "model": "",
-                "tokens": "",
-                "timestamp": now,
-            }],
-        }), original_extensions)
+        return preserve_extensions(
+            cortex_to_dap(
+                {
+                    "merged": False,
+                    "merge_sha": "",
+                    "current_phase": "pr_merger_refused",
+                    "error": "Cannot merge: tests did not pass",
+                    "__audit": _audit_base,
+                    "decisions": [
+                        *state.get("decisions", []),
+                        {
+                            "node": "pr_merger",
+                            "action": "refused",
+                            "reasoning": "Tests did not pass — merge blocked",
+                            "backend": "",
+                            "model": "",
+                            "tokens": "",
+                            "timestamp": now,
+                        },
+                    ],
+                }
+            ),
+            original_extensions,
+        )
 
     if not review_approved:
-        return preserve_extensions(cortex_to_dap({
-            "merged": False,
-            "merge_sha": "",
-            "current_phase": "pr_merger_refused",
-            "error": "Cannot merge: reviewer did not approve",
-            "__audit": _audit_base,
-            "decisions": state.get("decisions", []) + [{
-                "node": "pr_merger",
-                "action": "refused",
-                "reasoning": "Reviewer did not approve — merge blocked",
-                "backend": "",
-                "model": "",
-                "tokens": "",
-                "timestamp": now,
-            }],
-        }), original_extensions)
+        return preserve_extensions(
+            cortex_to_dap(
+                {
+                    "merged": False,
+                    "merge_sha": "",
+                    "current_phase": "pr_merger_refused",
+                    "error": "Cannot merge: reviewer did not approve",
+                    "__audit": _audit_base,
+                    "decisions": [
+                        *state.get("decisions", []),
+                        {
+                            "node": "pr_merger",
+                            "action": "refused",
+                            "reasoning": "Reviewer did not approve — merge blocked",
+                            "backend": "",
+                            "model": "",
+                            "tokens": "",
+                            "timestamp": now,
+                        },
+                    ],
+                }
+            ),
+            original_extensions,
+        )
 
     if not pr_number:
-        return preserve_extensions(cortex_to_dap({
-            "merged": False,
-            "merge_sha": "",
-            "current_phase": "pr_merger_failed",
-            "error": "No PR number in state",
-            "__audit": _audit_base,
-            "decisions": state.get("decisions", []) + [{
-                "node": "pr_merger",
-                "action": "failed",
-                "reasoning": "No PR number available in state",
-                "backend": "",
-                "model": "",
-                "tokens": "",
-                "timestamp": now,
-            }],
-        }), original_extensions)
+        return preserve_extensions(
+            cortex_to_dap(
+                {
+                    "merged": False,
+                    "merge_sha": "",
+                    "current_phase": "pr_merger_failed",
+                    "error": "No PR number in state",
+                    "__audit": _audit_base,
+                    "decisions": [
+                        *state.get("decisions", []),
+                        {
+                            "node": "pr_merger",
+                            "action": "failed",
+                            "reasoning": "No PR number available in state",
+                            "backend": "",
+                            "model": "",
+                            "tokens": "",
+                            "timestamp": now,
+                        },
+                    ],
+                }
+            ),
+            original_extensions,
+        )
 
     # Use MERGE token (rlagowski — different user from code token)
     settings = load_settings()
     merge_token = settings.get_github_token("merge")
 
-    merge_result = merge_pull_request.invoke({
-        "repo": repo,
-        "pr_number": pr_number,
-        "token": merge_token,
-    })
+    merge_result = merge_pull_request.invoke(
+        {
+            "repo": repo,
+            "pr_number": pr_number,
+            "token": merge_token,
+        }
+    )
 
     if "error" in merge_result:
-        return preserve_extensions(cortex_to_dap({
-            "merged": False,
-            "merge_sha": "",
-            "current_phase": "pr_merger_failed",
-            "error": merge_result["error"],
-            "__audit": _audit_base,
-            "decisions": state.get("decisions", []) + [{
-                "node": "pr_merger",
-                "action": "failed",
-                "reasoning": merge_result["error"],
-                "backend": "",
-                "model": "",
-                "tokens": "",
-                "timestamp": now,
-            }],
-        }), original_extensions)
+        return preserve_extensions(
+            cortex_to_dap(
+                {
+                    "merged": False,
+                    "merge_sha": "",
+                    "current_phase": "pr_merger_failed",
+                    "error": merge_result["error"],
+                    "__audit": _audit_base,
+                    "decisions": [
+                        *state.get("decisions", []),
+                        {
+                            "node": "pr_merger",
+                            "action": "failed",
+                            "reasoning": merge_result["error"],
+                            "backend": "",
+                            "model": "",
+                            "tokens": "",
+                            "timestamp": now,
+                        },
+                    ],
+                }
+            ),
+            original_extensions,
+        )
 
     merge_sha = merge_result.get("sha", "")
 
-    return preserve_extensions(cortex_to_dap({
-        "merged": True,
-        "merge_sha": merge_sha,
-        "current_phase": "pr_merger_complete",
-        "__audit": _audit_base,
-        "decisions": state.get("decisions", []) + [{
-            "node": "pr_merger",
-            "action": "merged",
-            "reasoning": f"PR #{pr_number} merged with sha {merge_sha}",
-            "backend": "",
-            "model": "",
-            "tokens": "",
-            "timestamp": now,
-        }],
-    }), original_extensions)
+    return preserve_extensions(
+        cortex_to_dap(
+            {
+                "merged": True,
+                "merge_sha": merge_sha,
+                "current_phase": "pr_merger_complete",
+                "__audit": _audit_base,
+                "decisions": [
+                    *state.get("decisions", []),
+                    {
+                        "node": "pr_merger",
+                        "action": "merged",
+                        "reasoning": f"PR #{pr_number} merged with sha {merge_sha}",
+                        "backend": "",
+                        "model": "",
+                        "tokens": "",
+                        "timestamp": now,
+                    },
+                ],
+            }
+        ),
+        original_extensions,
+    )

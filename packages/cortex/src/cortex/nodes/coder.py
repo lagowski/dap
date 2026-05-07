@@ -5,7 +5,7 @@ Phase 2 execution agent. Uses GH_TOKEN_CODE (Dixter999).
 
 from __future__ import annotations
 
-from cortex.adapters.pipeline_state import dap_to_cortex, cortex_to_dap, preserve_extensions
+from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
 from cortex.nodes.execution import run_execution_node
 
 __all__ = ["run"]

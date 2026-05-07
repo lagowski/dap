@@ -101,16 +101,14 @@ def _validate_cicd(text: str) -> ValidationResult:
     required = ("red", "green", "refactor")
     missing = [name for name in required if name not in lower]
     if missing:
-        return ValidationResult(
-            False, f"Missing RED/GREEN/REFACTOR sections: {', '.join(missing)}"
-        )
+        return ValidationResult(False, f"Missing RED/GREEN/REFACTOR sections: {', '.join(missing)}")
     return ValidationResult(True, cleaned=text)
 
 
 # Canonical set of Phase 2 execution agents that the dispatcher may assign to.
 # Source of truth: cortex/config/agents.yaml Phase 2 keys wired in graph.py.
 # Update here if new execution agents are added to the graph.
-_DISPATCHER_VALID_AGENTS: set[str] = {"coder", "designer", "documenter"}
+_DISPATCHER_VALID_AGENTS: set[str] = {"coder", "designer", "documenter", "specialist"}
 
 
 def _validate_dispatcher(text: str) -> ValidationResult:
@@ -128,16 +126,14 @@ def _validate_dispatcher(text: str) -> ValidationResult:
     """
     # Collect all markdown table rows (including header + separator)
     table_rows = [
-        line for line in text.split("\n")
-        if line.strip().startswith("|") and line.count("|") >= 3
+        line for line in text.split("\n") if line.strip().startswith("|") and line.count("|") >= 3
     ]
     if len(table_rows) < 2:
         return ValidationResult(False, "Missing markdown task table")
 
     # Drop header + separator (first two rows) to inspect data rows
     data_rows = [
-        r for r in table_rows[2:]
-        if not all(c.strip() in ("", "-", ":") for c in r.split("|"))
+        r for r in table_rows[2:] if not all(c.strip() in ("", "-", ":") for c in r.split("|"))
     ]
 
     # Check for the empty-Agent column failure mode.
@@ -167,8 +163,9 @@ def _validate_dispatcher(text: str) -> ValidationResult:
     # Check for the repetition failure mode (≥3 identical data rows)
     if len(data_rows) >= 3:
         from collections import Counter
+
         counts = Counter(r.strip() for r in data_rows)
-        most_common, count = counts.most_common(1)[0]
+        _most_common, count = counts.most_common(1)[0]
         if count >= 3:
             return ValidationResult(
                 False, f"Detected {count} duplicate rows — looks like a repetition loop"
@@ -218,8 +215,8 @@ def validate_response(
 
 
 __all__ = [
-    "ValidationResult",
     "_DISPATCHER_VALID_AGENTS",
+    "ValidationResult",
     "strip_preamble",
     "validate_response",
 ]

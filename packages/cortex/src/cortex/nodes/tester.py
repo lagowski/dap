@@ -99,19 +99,27 @@ def _collect_branch_diagnostics(workspace, base_branch: str) -> dict:
         # current origin, not stale local refs.
         subprocess.run(
             ["git", "fetch", "origin", base_branch],
-            cwd=str(workspace), check=True,
-            capture_output=True, timeout=60,
+            cwd=str(workspace),
+            check=True,
+            capture_output=True,
+            timeout=60,
         )
         head = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(workspace), check=True,
-            capture_output=True, text=True, timeout=15,
+            cwd=str(workspace),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         sha = (head.stdout or "").strip()
         count = subprocess.run(
             ["git", "rev-list", "--count", f"origin/{base_branch}..HEAD"],
-            cwd=str(workspace), check=True,
-            capture_output=True, text=True, timeout=15,
+            cwd=str(workspace),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         count_str = (count.stdout or "").strip()
         # Empty stdout is treated as failure rather than zero — git either
@@ -119,9 +127,7 @@ def _collect_branch_diagnostics(workspace, base_branch: str) -> dict:
         # through to ahead=-1 lets the caller proceed cautiously instead
         # of mistreating "missing data" as "no commits, short-circuit".
         if not count_str or not sha:
-            raise ValueError(
-                f"incomplete diagnostics: sha={sha!r} count={count_str!r}"
-            )
+            raise ValueError(f"incomplete diagnostics: sha={sha!r} count={count_str!r}")
         ahead = int(count_str)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as e:
         stderr = getattr(e, "stderr", b"") or b""
@@ -129,13 +135,17 @@ def _collect_branch_diagnostics(workspace, base_branch: str) -> dict:
             stderr = stderr.decode("utf-8", errors="replace")
         logger.warning(
             "branch diagnostics failed in %s vs origin/%s: %s",
-            workspace, base_branch, stderr[:200] or e,
+            workspace,
+            base_branch,
+            stderr[:200] or e,
         )
     return {"sha": sha, "ahead": ahead}
 
 
 def _run_tests(
-    workspace, test_command: str, timeout_sec: int = 600,
+    workspace,
+    test_command: str,
+    timeout_sec: int = 600,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[bool, str, dict]:
     """Run ``test_command`` in ``workspace``. Return ``(passed, tail, result)``.
@@ -165,9 +175,16 @@ def _run_tests(
         tail = "\n".join(partial.splitlines()[-50:])
         # Timeout is unambiguously a failure — surface as an error in the
         # structured result so the retry router treats it like any other fail.
-        return False, f"TIMEOUT after {timeout_sec}s\n{tail}", {
-            "passed": 0, "failed": 0, "errors": 1, "failed_tests": [],
-        }
+        return (
+            False,
+            f"TIMEOUT after {timeout_sec}s\n{tail}",
+            {
+                "passed": 0,
+                "failed": 0,
+                "errors": 1,
+                "failed_tests": [],
+            },
+        )
 
     combined = (result.stdout or "") + (result.stderr or "")
     tail = "\n".join(combined.splitlines()[-50:])
@@ -186,28 +203,39 @@ async def run(state: dict, config: dict) -> dict:
 
     def _fail(reason: str) -> dict:
         """Build a failure result with a consistent shape."""
-        return preserve_extensions(cortex_to_dap({
-            "tests_passed": False,
-            "test_output": reason,
-            # Empty structured result so the post-tester router falls into
-            # the "errors > 0" branch and treats setup failures as test
-            # failures (which they functionally are — we can't even check).
-            "tester_result": {
-                "passed": 0, "failed": 0, "errors": 1, "failed_tests": [],
-            },
-            "current_phase": "tester_complete",
-            "error": f"tester: {reason}",
-            "__audit": {"tokens_used": 0, "cost_usd": 0.0, "section": "tester"},
-            "decisions": decisions + [{
-                "node": "tester",
-                "action": "failed",
-                "reasoning": reason,
-                "backend": "",
-                "model": "",
-                "tokens": "",
-                "timestamp": now,
-            }],
-        }), original_extensions)
+        return preserve_extensions(
+            cortex_to_dap(
+                {
+                    "tests_passed": False,
+                    "test_output": reason,
+                    # Empty structured result so the post-tester router falls into
+                    # the "errors > 0" branch and treats setup failures as test
+                    # failures (which they functionally are — we can't even check).
+                    "tester_result": {
+                        "passed": 0,
+                        "failed": 0,
+                        "errors": 1,
+                        "failed_tests": [],
+                    },
+                    "current_phase": "tester_complete",
+                    "error": f"tester: {reason}",
+                    "__audit": {"tokens_used": 0, "cost_usd": 0.0, "section": "tester"},
+                    "decisions": [
+                        *decisions,
+                        {
+                            "node": "tester",
+                            "action": "failed",
+                            "reasoning": reason,
+                            "backend": "",
+                            "model": "",
+                            "tokens": "",
+                            "timestamp": now,
+                        },
+                    ],
+                }
+            ),
+            original_extensions,
+        )
 
     if not profile_exists(repo):
         return _fail(f"no project profile for {repo} — run `cortex init {repo}`")
@@ -215,9 +243,7 @@ async def run(state: dict, config: dict) -> dict:
     profile = load_profile(repo)
     test_cmd = profile.test_command
     if not test_cmd:
-        return _fail(
-            f"no test_command in profile for {repo} — set it via `cortex init --edit`"
-        )
+        return _fail(f"no test_command in profile for {repo} — set it via `cortex init --edit`")
 
     workspace = repo_clone_path(repo)
     if not workspace.exists():
@@ -246,6 +272,7 @@ async def run(state: dict, config: dict) -> dict:
     extra_env: dict[str, str] = {}
     try:
         from cortex.config.settings import load_settings as _load
+
         extra_env["CORTEX_DATABASE_URL"] = _load().database_url
     except Exception:
         pass
@@ -268,19 +295,27 @@ async def run(state: dict, config: dict) -> dict:
         f"{parsed['errors']} errors"
     )
 
-    return preserve_extensions(cortex_to_dap({
-        "tests_passed": passed,
-        "test_output": output_tail,
-        "tester_result": parsed,
-        "current_phase": "tester_complete",
-        "__audit": {"tokens_used": 0, "cost_usd": 0.0, "section": "tester"},
-        "decisions": decisions + [{
-            "node": "tester",
-            "action": "tested",
-            "reasoning": reasoning,
-            "backend": "subprocess",
-            "model": "",
-            "tokens": "",
-            "timestamp": now,
-        }],
-    }), original_extensions)
+    return preserve_extensions(
+        cortex_to_dap(
+            {
+                "tests_passed": passed,
+                "test_output": output_tail,
+                "tester_result": parsed,
+                "current_phase": "tester_complete",
+                "__audit": {"tokens_used": 0, "cost_usd": 0.0, "section": "tester"},
+                "decisions": [
+                    *decisions,
+                    {
+                        "node": "tester",
+                        "action": "tested",
+                        "reasoning": reasoning,
+                        "backend": "subprocess",
+                        "model": "",
+                        "tokens": "",
+                        "timestamp": now,
+                    },
+                ],
+            }
+        ),
+        original_extensions,
+    )

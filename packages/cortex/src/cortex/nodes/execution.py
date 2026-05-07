@@ -34,7 +34,7 @@ from cortex.tools.github import (
     create_branch,
     read_issue,
 )
-from cortex.workspace import workspace_lock, _default_branch
+from cortex.workspace import _default_branch, workspace_lock
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +106,12 @@ def _save_execution_memory(
             return
 
         from datetime import UTC, datetime
-        summary = (
-            f"## Session summary ({datetime.now(UTC).strftime('%Y-%m-%d')})\n\n"
-            + "\n".join(lines)
+
+        summary = f"## Session summary ({datetime.now(UTC).strftime('%Y-%m-%d')})\n\n" + "\n".join(
+            lines
         )
         save_agent_memory(repo, agent_name, summary)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -120,13 +120,15 @@ def _save_execution_memory(
 # any of these strings (case-insensitive) are flagged by
 # `_assert_append_only`. Kept as a module-level constant so tests can
 # iterate the patterns without re-declaring them. (#185)
-_REWRITE_REFLOG_PATTERNS: frozenset[str] = frozenset({
-    "forced-update",
-    "updating ref",
-    "reset: moving to",
-    "rebase",
-    "amend",
-})
+_REWRITE_REFLOG_PATTERNS: frozenset[str] = frozenset(
+    {
+        "forced-update",
+        "updating ref",
+        "reset: moving to",
+        "rebase",
+        "amend",
+    }
+)
 
 
 def _snapshot_branch_sha(workspace, branch_name: str) -> str | None:
@@ -197,9 +199,7 @@ def _assert_append_only(reflog_text: str, pre_sha: str | None) -> str | None:
         lowered = line.lower()
         for pat in _REWRITE_REFLOG_PATTERNS:
             if pat in lowered:
-                return (
-                    f"rewrote branch history: reflog shows '{pat}'"
-                )
+                return f"rewrote branch history: reflog shows '{pat}'"
     return None
 
 
@@ -223,22 +223,27 @@ def _clean_workspace_for_agent(workspace) -> None:
         # Unstage anything that was staged by a prior agent
         subprocess.run(
             ["git", "restore", "--staged", "."],
-            cwd=str(workspace), capture_output=True, timeout=15,
+            cwd=str(workspace),
+            capture_output=True,
+            timeout=15,
         )
         # Restore modified tracked files to the checked-out branch HEAD
         subprocess.run(
             ["git", "restore", "."],
-            cwd=str(workspace), capture_output=True, timeout=15,
+            cwd=str(workspace),
+            capture_output=True,
+            timeout=15,
         )
         # Remove untracked files and directories (respects .gitignore)
         result = subprocess.run(
             ["git", "clean", "-fd"],
-            cwd=str(workspace), capture_output=True, text=True, timeout=30,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.stdout.strip():
-            logger.debug(
-                "Cleaned workspace before agent run: %s", result.stdout.strip()
-            )
+            logger.debug("Cleaned workspace before agent run: %s", result.stdout.strip())
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         # Non-fatal — log and continue. Worst case: agent sees extra files and
         # the cross-task-dependency warning fires as before.
@@ -259,24 +264,34 @@ def checkout_agent_branch(workspace, branch_name: str, base_branch: str) -> bool
         # Pull the new ref from origin so it's known locally
         subprocess.run(
             ["git", "fetch", "origin", branch_name],
-            cwd=str(workspace), check=True, capture_output=True, timeout=60,
+            cwd=str(workspace),
+            check=True,
+            capture_output=True,
+            timeout=60,
         )
         # `-B` creates or resets the local branch; tracks origin/<branch>
         subprocess.run(
             ["git", "checkout", "-B", branch_name, f"origin/{branch_name}"],
-            cwd=str(workspace), check=True, capture_output=True, timeout=30,
+            cwd=str(workspace),
+            check=True,
+            capture_output=True,
+            timeout=30,
         )
         return True
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or b"").decode("utf-8", errors="replace")[:300]
         logger.error(
             "Failed to checkout agent branch %s in %s: %s",
-            branch_name, workspace, stderr,
+            branch_name,
+            workspace,
+            stderr,
         )
         return False
     except subprocess.TimeoutExpired:
         logger.error(
-            "Timeout while checking out branch %s in %s", branch_name, workspace,
+            "Timeout while checking out branch %s in %s",
+            branch_name,
+            workspace,
         )
         return False
 
@@ -285,13 +300,10 @@ def _get_assigned_tasks(
     task_assignments: list[dict[str, str | int]], agent_name: str
 ) -> list[dict[str, str | int]]:
     """Filter task_assignments to find tasks for this agent."""
-    return [
-        t for t in task_assignments
-        if str(t.get("agent", "")).lower() == agent_name
-    ]
+    return [t for t in task_assignments if str(t.get("agent", "")).lower() == agent_name]
 
 
-_FILE_PATH_RE = re.compile(r'[\w./\-]+/[\w./\-]+')
+_FILE_PATH_RE = re.compile(r"[\w./\-]+/[\w./\-]+")
 
 
 def _detect_cross_task_file_references(
@@ -327,7 +339,11 @@ def _detect_cross_task_file_references(
                     "cross-task dependency detected: agent '%s' references "
                     "'%s' owned by agent '%s' — %s cannot see %s's commits; "
                     "consider consolidating both tasks under one agent",
-                    agent, path, owner, agent, owner,
+                    agent,
+                    path,
+                    owner,
+                    agent,
+                    owner,
                 )
 
 
@@ -348,8 +364,11 @@ def _collect_commits(
     try:
         log = subprocess.run(
             ["git", "log", "--format=%H::%s", rev_range],
-            cwd=str(workspace), capture_output=True, text=True,
-            timeout=15, check=True,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
         )
         for line in log.stdout.splitlines():
             sha, _, msg = line.partition("::")
@@ -359,24 +378,23 @@ def _collect_commits(
         stderr = getattr(e, "stderr", b"") or b""
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", errors="replace")
-        logger.warning(
-            "git log %s failed in %s: %s", rev_range, workspace, stderr[:200]
-        )
+        logger.warning("git log %s failed in %s: %s", rev_range, workspace, stderr[:200])
 
     try:
         diff = subprocess.run(
             ["git", "diff", "--name-only", rev_range],
-            cwd=str(workspace), capture_output=True, text=True,
-            timeout=15, check=True,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
         )
         files_changed = [f for f in diff.stdout.splitlines() if f]
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         stderr = getattr(e, "stderr", b"") or b""
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", errors="replace")
-        logger.warning(
-            "git diff %s failed in %s: %s", rev_range, workspace, stderr[:200]
-        )
+        logger.warning("git diff %s failed in %s: %s", rev_range, workspace, stderr[:200])
 
     return commits, files_changed
 
@@ -429,8 +447,10 @@ def _push_branch(workspace, repo: str, branch_name: str, token: str) -> str:
     try:
         subprocess.run(
             ["git", "push", auth_url, branch_name],
-            cwd=str(workspace), capture_output=True,
-            timeout=60, check=True,
+            cwd=str(workspace),
+            capture_output=True,
+            timeout=60,
+            check=True,
         )
         return ""
     except subprocess.CalledProcessError as e:
@@ -490,9 +510,7 @@ _MAX_TURNS_CAP = 100
 _TIMEOUT_SEC_CAP = 1800  # 30 min — matches Claude CLI's practical ceiling
 
 
-def _apply_task_budgets(
-    agent_config: dict, my_tasks: list[dict[str, str | int]]
-) -> dict:
+def _apply_task_budgets(agent_config: dict, my_tasks: list[dict[str, str | int]]) -> dict:
     """Override agent_config max_turns/timeout_sec from per-task budgets (#49, #133).
 
     Execution agents pick up batched tasks one at a time within a single
@@ -552,20 +570,18 @@ def run_execution_node(
     issue_number = state["issue_number"]
 
     # 1. Read the issue for context
-    issue_data = read_issue.invoke(
-        {"repo": repo, "issue_number": issue_number, "token": token}
-    )
+    issue_data = read_issue.invoke({"repo": repo, "issue_number": issue_number, "token": token})
     if "error" in issue_data:
         return {
             "error": f"{agent_name}: failed to read issue: {issue_data['error']}",
-            "decisions": state.get("decisions", [])
-            + [
+            "decisions": [
+                *state.get("decisions", []),
                 {
                     "node": agent_name,
                     "action": "error",
                     "reasoning": issue_data["error"],
                     "timestamp": datetime.now(UTC).isoformat(),
-                }
+                },
             ],
         }
 
@@ -578,7 +594,9 @@ def run_execution_node(
     # Use origin/HEAD to determine the repo's default branch (e.g. "develop"
     # for repos where "main" is not the primary branch).
     _workspace_for_branch = repo_clone_path(repo)
-    _repo_default = _default_branch(_workspace_for_branch) if _workspace_for_branch.exists() else "main"
+    _repo_default = (
+        _default_branch(_workspace_for_branch) if _workspace_for_branch.exists() else "main"
+    )
     retry_count = int(state.get("retry_count", 0) or 0)
     if agent_name == "coder" and retry_count >= 1:
         base_branch = branch_name  # preserve existing commits on retry
@@ -589,13 +607,13 @@ def run_execution_node(
     branch_result = create_branch.invoke(
         {"repo": repo, "branch_name": branch_name, "base": base_branch, "token": token}
     )
-    branch_failed = (
-        isinstance(branch_result, str) and branch_result.startswith("error:")
-    )
+    branch_failed = isinstance(branch_result, str) and branch_result.startswith("error:")
     if branch_failed:
         logger.error(
             "Agent %s failed to create branch %s (token role=code): %s",
-            agent_name, branch_name, branch_result,
+            agent_name,
+            branch_name,
+            branch_result,
         )
         err_msg = f"{agent_name}: branch creation failed: {branch_result}"
         return {
@@ -603,16 +621,19 @@ def run_execution_node(
             "current_phase": "execution",
             "commits": [],
             "files_changed": [],
-            "decisions": state.get("decisions", []) + [{
-                "node": agent_name,
-                "action": "failed (branch creation 403)",
-                "reasoning": str(branch_result),
-                "backend": "",
-                "model": "",
-                "tokens": "",
-                "cost_usd": "0",
-                "timestamp": datetime.now(UTC).isoformat(),
-            }],
+            "decisions": [
+                *state.get("decisions", []),
+                {
+                    "node": agent_name,
+                    "action": "failed (branch creation 403)",
+                    "reasoning": str(branch_result),
+                    "backend": "",
+                    "model": "",
+                    "tokens": "",
+                    "cost_usd": "0",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            ],
             "error": err_msg,
         }
 
@@ -640,12 +661,11 @@ def run_execution_node(
             # can ignore pre-existing history (#185).
             pre_sha = _snapshot_branch_sha(workspace, branch_name)
 
-        run_id = state.get("run_id", "")
+        state.get("run_id", "")
 
         # 3. Build prompt from assigned tasks
         task_descriptions = "\n".join(
-            f"- [{t.get('priority', 'normal')}] {t.get('task', 'unnamed task')}"
-            for t in my_tasks
+            f"- [{t.get('priority', 'normal')}] {t.get('task', 'unnamed task')}" for t in my_tasks
         )
 
         # Retry context (#89): if this invocation is a retry after tester failed,
@@ -669,7 +689,10 @@ def run_execution_node(
         # the agent's workspace clone.
         agent_config = get_agent_backend_config(agent_name)
         agent_config, user_prompt = _apply_workspace_context(
-            agent_config, agent_name, repo, user_prompt,
+            agent_config,
+            agent_name,
+            repo,
+            user_prompt,
         )
         # Per-task budgets (#49): override agent_config max_turns/timeout_sec
         # from values the dispatcher attached to this task. Falls through to the
@@ -699,7 +722,9 @@ def run_execution_node(
             backend_name = getattr(e, "backend", "") or agent_config.get("backend", "")
             logger.error(
                 "Agent %s backend invocation failed (%s): %s",
-                agent_name, backend_name, err_msg,
+                agent_name,
+                backend_name,
+                err_msg,
             )
             return {
                 "branch_name": branch_name,
@@ -712,16 +737,19 @@ def run_execution_node(
                     "cost_usd": 0.0,
                     "section": agent_name,
                 },
-                "decisions": state.get("decisions", []) + [{
-                    "node": agent_name,
-                    "action": "failed (backend error)",
-                    "reasoning": err_msg[:200],
-                    "backend": backend_name,
-                    "model": "",
-                    "tokens": "0in/0out",
-                    "cost_usd": "0.0",
-                    "timestamp": datetime.now(UTC).isoformat(),
-                }],
+                "decisions": [
+                    *state.get("decisions", []),
+                    {
+                        "node": agent_name,
+                        "action": "failed (backend error)",
+                        "reasoning": err_msg[:200],
+                        "backend": backend_name,
+                        "model": "",
+                        "tokens": "0in/0out",
+                        "cost_usd": "0.0",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    },
+                ],
             }
         duration_ms = int((time.monotonic() - start) * 1000)
 
@@ -744,18 +772,20 @@ def run_execution_node(
             if rewrite_error:
                 logger.error(
                     "Agent %s rewrote branch %s history: %s",
-                    agent_name, branch_name, rewrite_error,
+                    agent_name,
+                    branch_name,
+                    rewrite_error,
                 )
             else:
-                new_commits, files_changed = _collect_commits(
-                    workspace, branch_name, base_branch
-                )
+                new_commits, files_changed = _collect_commits(workspace, branch_name, base_branch)
                 if new_commits:
                     push_error = _push_branch(workspace, repo, branch_name, token)
                     if push_error:
                         logger.error(
                             "Push failed for %s in %s: %s",
-                            branch_name, repo, push_error,
+                            branch_name,
+                            repo,
+                            push_error,
                         )
 
     # 5c. Persist a compact session summary to agent memory so retries start
@@ -772,9 +802,7 @@ def run_execution_node(
     )
     existing_section = ""
     # Preserve existing status lines from other agents
-    section_match = re.search(
-        r"## Execution Status\s*\n(.*?)(?=\n## |\Z)", current_body, re.DOTALL
-    )
+    section_match = re.search(r"## Execution Status\s*\n(.*?)(?=\n## |\Z)", current_body, re.DOTALL)
     if section_match:
         existing_section = section_match.group(1).strip()
 
@@ -822,11 +850,9 @@ def run_execution_node(
         "current_phase": "execution",
         "commits": new_commits,
         "files_changed": files_changed,
-        "decisions": state.get("decisions", []) + [decision_entry],
+        "decisions": [*state.get("decisions", []), decision_entry],
         "__audit": {
-            "tokens_used": (
-                (response.input_tokens or 0) + (response.output_tokens or 0)
-            ),
+            "tokens_used": ((response.input_tokens or 0) + (response.output_tokens or 0)),
             "cost_usd": response.cost_usd,
             "section": agent_name,
             "backend": response.backend,
@@ -848,13 +874,11 @@ def run_execution_node(
         # #185: silent data-loss guard. Out-of-band commits operators push
         # between rounds get wiped if the agent force-pushes/rebases.
         result["error"] = (
-            f"{agent_name}: rewrote branch history "
-            f"(force-push or reset detected) — aborting"
+            f"{agent_name}: rewrote branch history (force-push or reset detected) — aborting"
         )
     elif update_failed:
         result["error"] = (
-            f"{agent_name}: update Execution Status failed: "
-            f"{write_result.get('error', '?')}"
+            f"{agent_name}: update Execution Status failed: {write_result.get('error', '?')}"
         )
     elif push_error:
         # Surface push failures as state.error so Phase 3 doesn't proceed

@@ -112,7 +112,11 @@ class ClaudeCLIBackend(Backend):
 
     def _build_args(self, resume_session: str = "") -> list[str]:
         args = [
-            "--print", "-", "--output-format", "stream-json", "--verbose",
+            "--print",
+            "-",
+            "--output-format",
+            "stream-json",
+            "--verbose",
         ]
         # --dangerously-skip-permissions bypasses all permission checks in
         # non-interactive mode. More reliable than --permission-mode
@@ -173,7 +177,8 @@ class ClaudeCLIBackend(Backend):
             # wrapper used to treat the sentinel string as success and route
             # past the human gate without any commits.
             raise BackendTimeoutError(
-                backend="claude_cli", timeout_sec=self.timeout_sec,
+                backend="claude_cli",
+                timeout_sec=self.timeout_sec,
             ) from e
         except FileNotFoundError as e:
             raise BackendUnavailableError(
@@ -204,7 +209,9 @@ class ClaudeCLIBackend(Backend):
         try:
             result = subprocess.run(
                 [self.command, "--version"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return result.returncode == 0
         except Exception as e:

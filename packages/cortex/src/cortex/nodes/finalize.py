@@ -37,24 +37,26 @@ def validate_target_paths(
     for file_path, line_num in paths:
         full = workspace_root / file_path
         if not full.exists():
-            contradictions.append({
-                "path": file_path,
-                "line": line_num,
-                "reason": "file does not exist on disk",
-            })
+            contradictions.append(
+                {
+                    "path": file_path,
+                    "line": line_num,
+                    "reason": "file does not exist on disk",
+                }
+            )
         elif line_num is not None:
             try:
                 line_count = len(full.read_text().splitlines())
             except OSError:
                 continue
             if line_num > line_count:
-                contradictions.append({
-                    "path": file_path,
-                    "line": line_num,
-                    "reason": (
-                        f"line {line_num} exceeds file length ({line_count} lines)"
-                    ),
-                })
+                contradictions.append(
+                    {
+                        "path": file_path,
+                        "line": line_num,
+                        "reason": (f"line {line_num} exceeds file length ({line_count} lines)"),
+                    }
+                )
     return contradictions
 
 
@@ -73,11 +75,13 @@ async def run(state: dict, config: dict) -> dict:
     Pure: calls _llm_call only — no GitHub writes (update_issue_body),
     no audit DB calls (log_decision). Side effects handled by dap_steps.
     """
-    from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions, preserve_extensions
+    from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
+
     original_extensions = dict(state.get("extensions") or {})
     state = dap_to_cortex(state)
     section_content, audit = _llm_call(state, "finalize", "Review Notes")
     from cortex.dap_steps.enrichment_write import run_side_effects
+
     side = await run_side_effects(state, audit, "finalize", "Review Notes")
     reasoning = section_content[:200].lower()
     full_response = section_content
@@ -89,11 +93,13 @@ async def run(state: dict, config: dict) -> dict:
     if workspace.exists():
         settings = load_settings()
         token = settings.get_github_token("issues")
-        issue_data = read_issue.invoke({
-            "repo": state["repo"],
-            "issue_number": state["issue_number"],
-            "token": token,
-        })
+        issue_data = read_issue.invoke(
+            {
+                "repo": state["repo"],
+                "issue_number": state["issue_number"],
+                "token": token,
+            }
+        )
         issue_body = issue_data.get("body", "")
         spec_section = get_issue_section(issue_body, "Technical Specification")
         target_files = parse_target_files(spec_section)
@@ -109,15 +115,18 @@ async def run(state: dict, config: dict) -> dict:
         "__audit": audit,
         "_full_response_content": full_response,
         "issue_ready": "ready" in reasoning and "needs_work" not in reasoning,
-        "decisions": state.get("decisions", []) + [{
-            "node": "finalize",
-            "action": "enriched Review Notes",
-            "reasoning": section_content[:200],
-            "backend": audit["backend"],
-            "model": audit["model"],
-            "tokens": f"{audit['input_tokens']}in/{audit['output_tokens']}out",
-            "timestamp": datetime.now(UTC).isoformat(),
-        }],
+        "decisions": [
+            *state.get("decisions", []),
+            {
+                "node": "finalize",
+                "action": "enriched Review Notes",
+                "reasoning": section_content[:200],
+                "backend": audit["backend"],
+                "model": audit["model"],
+                "tokens": f"{audit['input_tokens']}in/{audit['output_tokens']}out",
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        ],
     }
 
     # Clear consumed operator feedback (#108). Phase 1 agents have just had

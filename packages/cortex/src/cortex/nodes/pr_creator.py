@@ -48,14 +48,14 @@ async def run(state: dict, config: dict) -> dict:
         {"repo": repo, "issue_number": issue_number, "token": read_token}
     )
 
-    user_prompt = f"""Issue #{issue_number}: {issue_data.get('title', '')}
+    user_prompt = f"""Issue #{issue_number}: {issue_data.get("title", "")}
 
-{issue_data.get('body', '')}
+{issue_data.get("body", "")}
 
 Branch: {branch_name}
-Files changed: {', '.join(state.get('files_changed') or [])}
-Tests passed: {state.get('tests_passed', False)}
-Test output: {state.get('test_output', 'N/A')}
+Files changed: {", ".join(state.get("files_changed") or [])}
+Tests passed: {state.get("tests_passed", False)}
+Test output: {state.get("test_output", "N/A")}
 
 Write a PR title and body."""
 
@@ -63,12 +63,14 @@ Write a PR title and body."""
     backend = create_backend(agent_config)
     system_prompt = agent_config.get("system_prompt", SYSTEM_PROMPT)
 
-    response = backend.invoke(LLMRequest(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=agent_config.get("temperature", 0.1),
-        max_tokens=agent_config.get("max_tokens", 2000),
-    ))
+    response = backend.invoke(
+        LLMRequest(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=agent_config.get("temperature", 0.1),
+            max_tokens=agent_config.get("max_tokens", 2000),
+        )
+    )
 
     # Parse title/body from LLM response
     content = response.content
@@ -82,14 +84,16 @@ Write a PR title and body."""
             body = parts[1].strip()
 
     # Create the PR with CODE token (Dixter999)
-    pr_result = create_pull_request.invoke({
-        "repo": repo,
-        "title": title,
-        "body": body,
-        "head": branch_name,
-        "base": "main",
-        "token": code_token,
-    })
+    pr_result = create_pull_request.invoke(
+        {
+            "repo": repo,
+            "title": title,
+            "body": body,
+            "head": branch_name,
+            "base": "main",
+            "token": code_token,
+        }
+    )
 
     audit = {
         "tokens_used": (response.input_tokens or 0) + (response.output_tokens or 0),
@@ -111,20 +115,28 @@ Write a PR title and body."""
         # into state.error.
         existing = find_open_pr_for_branch(repo, branch_name, code_token)
         if existing is None:
-            return preserve_extensions(cortex_to_dap({
-                "error": pr_result["error"],
-                "current_phase": "pr_creator_failed",
-                "__audit": audit,
-                "decisions": state.get("decisions", []) + [{
-                    "node": "pr_creator",
-                    "action": "failed",
-                    "reasoning": pr_result["error"],
-                    "backend": response.backend,
-                    "model": response.model,
-                    "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
-                    "timestamp": datetime.now(UTC).isoformat(),
-                }],
-            }), original_extensions)
+            return preserve_extensions(
+                cortex_to_dap(
+                    {
+                        "error": pr_result["error"],
+                        "current_phase": "pr_creator_failed",
+                        "__audit": audit,
+                        "decisions": [
+                            *state.get("decisions", []),
+                            {
+                                "node": "pr_creator",
+                                "action": "failed",
+                                "reasoning": pr_result["error"],
+                                "backend": response.backend,
+                                "model": response.model,
+                                "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
+                                "timestamp": datetime.now(UTC).isoformat(),
+                            },
+                        ],
+                    }
+                ),
+                original_extensions,
+            )
         # Recovery succeeded — fall through to the success path with the
         # existing PR's number/url.
         pr_number = int(existing["number"])
@@ -137,18 +149,26 @@ Write a PR title and body."""
     # cortex/dap_steps/pr_write.py so this node stays side-effect-free.
     audit["pr_url"] = pr_url
 
-    return preserve_extensions(cortex_to_dap({
-        "pr_number": pr_number,
-        "pr_url": pr_url,
-        "current_phase": "pr_creator_complete",
-        "__audit": audit,
-        "decisions": state.get("decisions", []) + [{
-            "node": "pr_creator",
-            "action": "pr_created",
-            "reasoning": f"PR #{pr_number} created: {pr_url}",
-            "backend": response.backend,
-            "model": response.model,
-            "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
-            "timestamp": datetime.now(UTC).isoformat(),
-        }],
-    }), original_extensions)
+    return preserve_extensions(
+        cortex_to_dap(
+            {
+                "pr_number": pr_number,
+                "pr_url": pr_url,
+                "current_phase": "pr_creator_complete",
+                "__audit": audit,
+                "decisions": [
+                    *state.get("decisions", []),
+                    {
+                        "node": "pr_creator",
+                        "action": "pr_created",
+                        "reasoning": f"PR #{pr_number} created: {pr_url}",
+                        "backend": response.backend,
+                        "model": response.model,
+                        "tokens": f"{response.input_tokens}in/{response.output_tokens}out",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    },
+                ],
+            }
+        ),
+        original_extensions,
+    )

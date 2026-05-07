@@ -146,8 +146,7 @@ def load_plugins(
             before_cfg = configs[attach_before]
             if "runs_after" in before_cfg:
                 before_cfg["runs_after"] = [
-                    final_last_agent if v == attach_after else v
-                    for v in before_cfg["runs_after"]
+                    final_last_agent if v == attach_after else v for v in before_cfg["runs_after"]
                 ]
 
     return configs

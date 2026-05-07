@@ -146,10 +146,7 @@ def generate_context_md(clone_path: Path, repo: str) -> str:
 
     # Top-level structure
     try:
-        entries = sorted(
-            p.name for p in clone_path.iterdir()
-            if not p.name.startswith(".")
-        )
+        entries = sorted(p.name for p in clone_path.iterdir() if not p.name.startswith("."))
         if entries:
             parts.append("## Top-level structure\n" + "\n".join(f"- {e}" for e in entries[:30]))
     except OSError:
@@ -168,7 +165,10 @@ def generate_context_md(clone_path: Path, repo: str) -> str:
     try:
         result = _sp.run(
             ["git", "log", "--oneline", "-10"],
-            cwd=str(clone_path), capture_output=True, text=True, timeout=10,
+            cwd=str(clone_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
             parts.append("## Recent commits\n```\n" + result.stdout.strip() + "\n```")

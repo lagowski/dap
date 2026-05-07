@@ -9,7 +9,7 @@ Backend: ollama/gemma4. Token: ISSUES.
 
 from __future__ import annotations
 
-from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions, preserve_extensions, preserve_extensions
+from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
 from cortex.nodes.base import _llm_call
 from cortex.templates import load_template, parse_issue_sections
 
@@ -31,6 +31,7 @@ async def run(state: dict, config: dict) -> dict:
     cortex_state = _ensure_template_in_state(cortex_state)
     _section_content, audit = _llm_call(cortex_state, "mockup", "Description")
     from cortex.dap_steps.enrichment_write import run_side_effects
+
     side = await run_side_effects(cortex_state, audit, "mockup", "Description")
     return preserve_extensions(cortex_to_dap({**side, "__audit": audit}), original_extensions)
 

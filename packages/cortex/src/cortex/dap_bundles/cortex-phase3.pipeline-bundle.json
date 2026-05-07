@@ -1,9 +1,9 @@
 {
   "schema_version": "pipeline-export/1",
-  "_comment": "Cortex Phase 3 merge & verify pipeline — 5 nodes total.\n\nPhase 3 runs after Phase 2 execution agents pass the human gate. It\nverifies the code (tester runs pytest), creates a PR (pr_creator),\nreviews it (reviewer issues APPROVE/REJECT), pauses at a human gate\n(gate-phase3), then merges (pr_merger).\n\nCritical: pr_merger uses GH_TOKEN_MERGE (rlagowski) — a different\nGitHub user from the code authors — enforcing token separation per\nproject design. This is passed via runtime_config.env.\n\nThe gate node (gate-phase3) uses cortex.dap_steps.human_gate:noop — a\npass-through that does nothing. The actual pause is driven by the engine\nvia interrupt_before when approval_required_nodes includes 'gate-phase3'.\nThe operator approves with:\n  POST /runs/{id}/nodes/gate-phase3/approve\nor simply:\n  POST /runs/{id}/resume\n\nRef: rafeekpro/dap#164 (interrupt_before + /approve endpoint)",
+  "_comment": "Cortex Phase 3 merge & verify pipeline \u2014 5 nodes total.\n\nPhase 3 runs after Phase 2 execution agents pass the human gate. It\nverifies the code (tester runs pytest), creates a PR (pr_creator),\nreviews it (reviewer issues APPROVE/REJECT), pauses at a human gate\n(gate-phase3), then merges (pr_merger).\n\nCritical: pr_merger uses GH_TOKEN_MERGE (rlagowski) \u2014 a different\nGitHub user from the code authors \u2014 enforcing token separation per\nproject design. This is passed via runtime_config.env.\n\nThe gate node (gate-phase3) uses cortex.dap_steps.human_gate:noop \u2014 a\npass-through that does nothing. The actual pause is driven by the engine\nvia interrupt_before when approval_required_nodes includes 'gate-phase3'.\nThe operator approves with:\n  POST /runs/{id}/nodes/gate-phase3/approve\nor simply:\n  POST /runs/{id}/resume\n\nRef: rafeekpro/dap#164 (interrupt_before + /approve endpoint)",
   "pipeline": {
-    "name": "Cortex Phase 3 — Merge & Verify",
-    "description": "Phase 3 pipeline: tester → pr-creator → reviewer → gate-phase3 → pr-merger. Verifies code, creates PR, reviews, gates for human approval, then merges with a separate token (GH_TOKEN_MERGE).",
+    "name": "Cortex Phase 3 \u2014 Merge & Verify",
+    "description": "Phase 3 pipeline: tester \u2192 pr-creator \u2192 reviewer \u2192 gate-phase3 \u2192 pr-merger. Verifies code, creates PR, reviews, gates for human approval, then merges with a separate token (GH_TOKEN_MERGE).",
     "schema_version": "langgraph/1.0",
     "state_schema_ref": "PipelineState.v1",
     "entry_point": "tester",
@@ -11,81 +11,126 @@
       {
         "id": "tester",
         "agent_id": "cx_p3_tester",
-        "position": {"x": 0, "y": 0}
+        "position": {
+          "x": 0,
+          "y": 0
+        }
       },
       {
         "id": "pr-creator",
         "agent_id": "cx_p3_pr_creator",
-        "position": {"x": 100, "y": 0}
+        "position": {
+          "x": 100,
+          "y": 0
+        }
       },
       {
         "id": "reviewer",
         "agent_id": "cx_p3_reviewer",
-        "position": {"x": 200, "y": 0}
+        "position": {
+          "x": 200,
+          "y": 0
+        }
       },
       {
         "id": "gate-phase3",
         "agent_id": "cx_p3_gate",
-        "position": {"x": 300, "y": 0}
+        "position": {
+          "x": 300,
+          "y": 0
+        }
       },
       {
         "id": "pr-merger",
         "agent_id": "cx_p3_pr_merger",
-        "position": {"x": 400, "y": 0}
+        "position": {
+          "x": 400,
+          "y": 0
+        }
       }
     ],
     "edges": [
-      {"id": "e1", "source": "tester",      "target": "pr-creator"},
-      {"id": "e2", "source": "pr-creator",   "target": "reviewer"},
-      {"id": "e3", "source": "reviewer",     "target": "gate-phase3"},
-      {"id": "e4", "source": "gate-phase3",  "target": "pr-merger"},
-      {"id": "e5", "source": "pr-merger",    "target": "__end__"}
+      {
+        "id": "e1",
+        "source": "tester",
+        "target": "pr-creator"
+      },
+      {
+        "id": "e2",
+        "source": "pr-creator",
+        "target": "reviewer"
+      },
+      {
+        "id": "e3",
+        "source": "reviewer",
+        "target": "gate-phase3"
+      },
+      {
+        "id": "e4",
+        "source": "gate-phase3",
+        "target": "pr-merger"
+      },
+      {
+        "id": "e5",
+        "source": "pr-merger",
+        "target": "__end__"
+      }
     ],
     "defaults": {
       "max_attempts": 3,
       "budget_limit_usd": 10.0,
-      "approval_required_nodes": ["gate-phase3"]
+      "approval_required_nodes": [
+        "gate-phase3"
+      ]
     }
   },
   "bundled_agents": {
     "cx_p3_tester": {
-      "name": "Cortex Phase 3 — Tester",
+      "name": "Cortex Phase 3 \u2014 Tester",
       "role": "verifier",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.tester:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": ["issue_url", "issue_number", "repo", "branch"],
-      "output_schema": ["test_passed", "__audit"],
+      "input_schema": [
+        "repo",
+        "branch"
+      ],
+      "output_schema": [],
       "timeout_ms": 300000
     },
     "cx_p3_pr_creator": {
-      "name": "Cortex Phase 3 — PR Creator",
+      "name": "Cortex Phase 3 \u2014 PR Creator",
       "role": "executor",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.pr_creator:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": ["issue_url", "issue_number", "repo", "branch"],
-      "output_schema": ["pr_url", "__audit"],
+      "input_schema": [
+        "repo",
+        "branch"
+      ],
+      "output_schema": [],
       "timeout_ms": 120000
     },
     "cx_p3_reviewer": {
-      "name": "Cortex Phase 3 — Reviewer",
+      "name": "Cortex Phase 3 \u2014 Reviewer",
       "role": "reviewer",
       "runtime_id": "python-func",
       "runtime_config": {
         "callable_path": "cortex.nodes.reviewer:run"
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": ["issue_url", "issue_number", "repo", "pr_url"],
-      "output_schema": ["review_decision", "__audit"],
+      "input_schema": [
+        "repo"
+      ],
+      "output_schema": [],
       "timeout_ms": 180000
     },
     "cx_p3_gate": {
-      "name": "Cortex Phase 3 — Approval Gate",
+      "name": "Cortex Phase 3 \u2014 Approval Gate",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -97,7 +142,7 @@
       "timeout_ms": 60000
     },
     "cx_p3_pr_merger": {
-      "name": "Cortex Phase 3 — PR Merger",
+      "name": "Cortex Phase 3 \u2014 PR Merger",
       "role": "executor",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -107,8 +152,10 @@
         }
       },
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
-      "input_schema": ["issue_url", "issue_number", "repo", "pr_url"],
-      "output_schema": ["merged", "__audit"],
+      "input_schema": [
+        "repo"
+      ],
+      "output_schema": [],
       "timeout_ms": 120000
     }
   },
@@ -122,7 +169,7 @@
       "5. Phase 3 starts with tester (runs pytest against agent branch), then pr-creator opens a GitHub PR",
       "6. reviewer issues APPROVE/REJECT, then run pauses at gate-phase3 for human approval",
       "7. Approve: POST /runs/{id}/nodes/gate-phase3/approve  (or /resume)",
-      "8. pr-merger merges the PR using GH_TOKEN_MERGE (rlagowski — separate user from code authors)"
+      "8. pr-merger merges the PR using GH_TOKEN_MERGE (rlagowski \u2014 separate user from code authors)"
     ],
     "env_vars": [
       "CORTEX_GH_TOKEN_READ=ghp_...",

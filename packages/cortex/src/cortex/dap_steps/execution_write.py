@@ -62,7 +62,8 @@ def run_side_effects(
     if update_failed:
         logger.error(
             "Agent %s failed to update Execution Status (token role=code): %s",
-            agent_name, update_result.get("error"),
+            agent_name,
+            update_result.get("error"),
         )
         result["error"] = update_result.get("error", "update failed")
 
@@ -85,7 +86,8 @@ def run_side_effects(
     if isinstance(comment_result, str) and comment_result.startswith("error:"):
         logger.warning(
             "Agent %s failed to post execution comment (token role=code): %s",
-            agent_name, comment_result,
+            agent_name,
+            comment_result,
         )
 
     return result

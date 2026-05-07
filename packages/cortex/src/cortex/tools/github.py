@@ -124,10 +124,7 @@ def update_issue_body(repo: str, issue_number: int, body: str, token: str) -> di
         msg = e.data.get("message", str(e)) if isinstance(e.data, dict) else str(e)
         if e.status == 403:
             return {
-                "error": (
-                    f"Permission denied (403): {msg}. "
-                    f"Token lacks write access to {repo}."
-                ),
+                "error": (f"Permission denied (403): {msg}. Token lacks write access to {repo}."),
                 "status_code": "403",
             }
         return {"error": f"GitHub API error: {msg}"}
@@ -241,9 +238,7 @@ def create_pull_request(
         return {"error": f"GitHub API error: {e.data.get('message', str(e))}"}
 
 
-def find_open_pr_for_branch(
-    repo: str, branch: str, token: str
-) -> dict[str, int | str] | None:
+def find_open_pr_for_branch(repo: str, branch: str, token: str) -> dict[str, int | str] | None:
     """Find an open PR whose head matches ``branch``. Returns
     ``{"number": int, "url": str}`` or ``None``.
 
@@ -264,7 +259,7 @@ def find_open_pr_for_branch(
     """
     try:
         gh = _get_client(token)
-        owner = repo.split("/")[0]
+        owner = repo.split("/", maxsplit=1)[0]
         # PyGithub's get_pulls(head=...) expects "owner:branch" format
         for pr in gh.get_repo(repo).get_pulls(state="open", head=f"{owner}:{branch}"):
             return {"number": pr.number, "url": pr.html_url}
