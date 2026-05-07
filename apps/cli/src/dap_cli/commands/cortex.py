@@ -529,9 +529,57 @@ def cortex_reject(run_id: str, reason: str, engine_url: str) -> None:
     console.print(f"[green]✓ Run {run_id[:8]} aborted[/green]")
 
 
-def cortex_state(run_id: str, engine_url: str) -> None:
+def _state_to_dict(run: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Build a JSON-serialisable dict from run + run-state data."""
+    extensions = state.get("extensions") or {}
+    decisions_raw = extensions.get("decisions") or []
+    return {
+        "run_id": run.get("id", ""),
+        "status": run.get("final_status", "unknown"),
+        "issue_title": extensions.get("issue_title", ""),
+        "current_phase": extensions.get("current_phase", ""),
+        "pipeline_id": run.get("pipeline_id", ""),
+        "pipeline_version": run.get("pipeline_version", ""),
+        "project_id": run.get("project_id", ""),
+        "started_at": run.get("started_at"),
+        "ended_at": run.get("ended_at"),
+        "next_nodes": extensions.get("next_nodes") or [],
+        "task_assignments": extensions.get("task_assignments") or {},
+        "decisions": decisions_raw[-5:],
+    }
+
+
+def _json_default(obj: object) -> str:
+    """Fallback serialiser for json.dumps — handles datetime & Decimal."""
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def cortex_state(run_id: str, engine_url: str, fmt: str = "table") -> None:
     """Implement `dap project state cortex <run-id>`."""
-    run = _get_run(engine_url, run_id)
+    try:
+        run = _get_run(engine_url, run_id)
+    except (httpx.HTTPError, SystemExit):
+        if fmt == "json":
+            print(json.dumps({"error": "not_found", "run_id": run_id}))
+            return
+        raise
+
+    if fmt == "json":
+        try:
+            state = _get_run_state(engine_url, run_id)
+        except httpx.HTTPError:
+            state = {}
+        result = _state_to_dict(run, state)
+        print(json.dumps(result, indent=2, default=_json_default))
+        return
+
     status = run.get("final_status", "unknown")
     style = _STATUS_STYLE.get(status, "white")
     console.print(f"Run [bold]{run_id}[/bold]")
