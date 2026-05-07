@@ -13,6 +13,7 @@ members = [
     "packages/types",
     "packages/runtimes",
     "packages/prompt-dsl",
+    "packages/cortex",
 ]
 
 [tool.uv]
@@ -32,6 +33,7 @@ dev-dependencies = [
 "dap-engine" = { workspace = true }
 "dap-cli" = { workspace = true }
 "dap-prompt-dsl" = { workspace = true }
+"cortex" = { workspace = true }
 # --- Ruff ---
 [tool.ruff]
 line-length = 100
@@ -57,6 +59,17 @@ ignore = [
 "tests/**" = [
     "PLR2004",                  # magic values in tests OK
     "PLC0415",                  # local imports in tests are intentional (per-test isolation)
+]
+"packages/cortex/**" = [
+    "PLC0415",   # inline imports intentional (lazy loading / circular-import avoidance)
+    "PLR2004",   # HTTP status codes and protocol constants are self-documenting
+    "PLW1510",   # subprocess.run without check= — errors handled by caller try/except
+    "PLR0911",   # complex node functions have many early-return paths by design
+    "PLR0912",   # same
+    "PLR0915",   # same
+    "RUF002",    # EN DASH in docstrings — inherited from cortex-project style
+    "RUF003",    # EN DASH in comments — same
+    "E741",      # ambiguous variable name — lambda shorthand in one function
 ]
 # Pydantic models need runtime access to types — TC* rules don't apply
 
@@ -92,6 +105,12 @@ exclude = ["build/", "dist/", ".venv/"]
 # jsonpath-ng has no py.typed marker. Used by the http runtime adapter.
 module = ["jsonpath_ng.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# cortex package is migrated from cortex-project which used a less strict
+# mypy configuration. Type annotations are a Phase 2 follow-up task.
+module = ["cortex.*"]
+ignore_errors = true
 
 # --- pytest ---
 [tool.pytest.ini_options]
