@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -294,3 +296,55 @@ async def test_structured_shape_is_consistent_across_outcomes(
     missing_cmd = await adapter.execute(_task())
     assert missing_cmd.structured is not None
     assert set(missing_cmd.structured.keys()) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# Bundle regression tests — git-branch node must NOT hard-code a shell (#223)
+# ---------------------------------------------------------------------------
+
+BASH_SPECIFIC_PATTERNS = re.compile(r"\[\[|\(\(|declare\s|local\s|shopt\s|select\s")
+
+_BUNDLES_DIR = Path(__file__).resolve().parents[2] / "packages" / "cortex" / "src" / "cortex" / "dap_bundles"
+
+
+def _load_bundle(name: str) -> dict:
+    return json.loads((_BUNDLES_DIR / name).read_text(encoding="utf-8"))
+
+
+def test_phase2_bundle_git_branch_omits_explicit_shell() -> None:
+    bundle = _load_bundle("cortex-phase2.pipeline-bundle.json")
+    rc = bundle["bundled_agents"]["cx_p2_git_branch"]["runtime_config"]
+    assert "shell" not in rc, "cx_p2_git_branch must not hard-code a shell"
+
+
+def test_full_bundle_git_branch_omits_explicit_shell() -> None:
+    bundle = _load_bundle("cortex-full.pipeline-bundle.json")
+    rc = bundle["bundled_agents"]["cx_p2_git_branch"]["runtime_config"]
+    assert "shell" not in rc, "cx_p2_git_branch must not hard-code a shell"
+
+
+@pytest.mark.asyncio
+async def test_resolve_shell_falls_through_to_env_var_when_key_absent(
+    adapter: BashAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAP_BASH_SHELL", "/bin/sh")
+    bundle = _load_bundle("cortex-phase2.pipeline-bundle.json")
+    rc = bundle["bundled_agents"]["cx_p2_git_branch"]["runtime_config"]
+    task = _task(command="echo shell-fallback")
+    task.runtime_config.update(rc)
+    result = await adapter.execute(task)
+    assert result.success is True
+    assert result.structured is not None
+    assert result.structured["shell"] == "/bin/sh"
+
+
+@pytest.mark.parametrize("bundle_name", [
+    "cortex-phase2.pipeline-bundle.json",
+    "cortex-full.pipeline-bundle.json",
+])
+def test_git_branch_prompt_is_posix_sh_compatible(bundle_name: str) -> None:
+    bundle = _load_bundle(bundle_name)
+    template = bundle["bundled_agents"]["cx_p2_git_branch"]["prompt_template"]
+    assert BASH_SPECIFIC_PATTERNS.search(template) is None, (
+        f"prompt_template in {bundle_name} contains bash-specific syntax"
+    )

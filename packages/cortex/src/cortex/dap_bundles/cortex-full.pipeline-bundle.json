@@ -493,9 +493,7 @@
       "name": "Cortex Phase 2 \u2014 Git Branch",
       "role": "setup",
       "runtime_id": "bash",
-      "runtime_config": {
-        "shell": "/bin/bash"
-      },
+      "runtime_config": {},
       "prompt_template": "<agent_prompt><command>cd {{ extensions.workspace_path }}; git fetch origin; git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main</command></agent_prompt>",
       "input_schema": [],
       "output_schema": [
