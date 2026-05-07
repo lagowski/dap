@@ -116,7 +116,7 @@ def _run_from_orm(
         node_statuses=(
             node_statuses_override  # type: ignore[arg-type]
             if node_statuses_override is not None
-            else run.node_statuses  # type: ignore[arg-type]
+            else run.node_statuses
         ),
         final_status=run.final_status,  # type: ignore[arg-type]
         started_at=run.started_at,
