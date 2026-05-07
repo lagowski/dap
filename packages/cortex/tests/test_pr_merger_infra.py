@@ -1,6 +1,9 @@
 """Tests for pr_merger infra-only failure bypass (#222)."""
 
+from __future__ import annotations
+
 import asyncio
+from typing import Any
 
 import pytest
 from cortex.nodes.pr_merger import _is_infra_only_failure, run
@@ -56,7 +59,7 @@ def test_none_like_output_is_not_infra() -> None:
 # pr_merger.run integration tests
 # ---------------------------------------------------------------------------
 
-_INFRA_OUTPUT = (
+_INFRA_OUTPUT: str = (
     'psycopg.OperationalError: connection to server at "10.0.0.5", '
     "port 30432 failed: Connection refused"
 )
@@ -64,7 +67,7 @@ _INFRA_OUTPUT = (
 # tests_passed / repo are PipelineState direct fields (top-level).
 # Cortex-specific fields (pr_number, review_approved, test_output …) live
 # in extensions and are unpacked by dap_to_cortex inside pr_merger.run.
-_BASE_STATE = {
+_BASE_STATE: dict[str, Any] = {
     "repo": "Dixter999/cortex-project",
     "tests_passed": False,
     "extensions": {
@@ -79,15 +82,15 @@ _BASE_STATE = {
 }
 
 
-def _run_merger(state: dict) -> dict:
+def _run_merger(state: dict[str, Any]) -> dict[str, Any]:
     return asyncio.run(run(state, {}))
 
 
 def test_pr_merger_proceeds_on_infra_only_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     """When tests_passed=False but output has infrastructure errors, merge proceeds."""
-    merge_calls: list[dict] = []
+    merge_calls: list[dict[str, Any]] = []
 
-    def _fake_merge(inputs: dict) -> dict:
+    def _fake_merge(inputs: dict[str, Any]) -> dict[str, Any]:
         merge_calls.append(inputs)
         return {"sha": "abc123def456"}
 
@@ -120,9 +123,9 @@ def test_pr_merger_blocks_on_real_test_failures(monkeypatch: pytest.MonkeyPatch)
         },
     }
 
-    merge_calls: list[dict] = []
+    merge_calls: list[dict[str, Any]] = []
 
-    def _fake_merge(inputs: dict) -> dict:  # pragma: no cover
+    def _fake_merge(inputs: dict[str, Any]) -> dict[str, Any]:  # pragma: no cover
         merge_calls.append(inputs)
         return {"sha": "abc123"}
 
@@ -153,9 +156,9 @@ def test_pr_merger_blocks_when_review_not_approved(monkeypatch: pytest.MonkeyPat
         },
     }
 
-    merge_calls: list[dict] = []
+    merge_calls: list[dict[str, Any]] = []
 
-    def _fake_merge(inputs: dict) -> dict:  # pragma: no cover
+    def _fake_merge(inputs: dict[str, Any]) -> dict[str, Any]:  # pragma: no cover
         merge_calls.append(inputs)
         return {"sha": "abc123"}
 
