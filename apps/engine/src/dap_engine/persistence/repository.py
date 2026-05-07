@@ -100,7 +100,11 @@ def _pipeline_from_orm(
     )
 
 
-def _run_from_orm(run: RunORM) -> Run:
+def _run_from_orm(
+    run: RunORM,
+    *,
+    node_statuses_override: dict[str, str] | None = None,
+) -> Run:
     return Run(
         id=run.id,
         project_id=run.project_id,
@@ -109,7 +113,11 @@ def _run_from_orm(run: RunORM) -> Run:
         trigger_source=run.trigger_source,  # type: ignore[arg-type]
         initial_state=PipelineState.model_validate(run.initial_state),
         current_node=run.current_node,
-        node_statuses=run.node_statuses,  # type: ignore[arg-type]
+        node_statuses=(
+            node_statuses_override  # type: ignore[arg-type]
+            if node_statuses_override is not None
+            else run.node_statuses
+        ),
         final_status=run.final_status,  # type: ignore[arg-type]
         started_at=run.started_at,
         ended_at=run.ended_at,
@@ -773,9 +781,12 @@ def get_run(session: Session, run_id: str) -> Run:
         .where(NodeExecutionLogORM.run_id == run_id)
         .order_by(NodeExecutionLogORM.started_at)
     ).all()
-    if logs:
-        run.node_statuses = {log.node_id: log.status for log in logs}
-    return _run_from_orm(run)
+    # Compute into a local dict — do NOT mutate run.node_statuses.
+    # The session is committed on success in get_session() so any ORM
+    # attribute write would turn this read endpoint into a DB write,
+    # causing unexpected churn during polling.
+    node_statuses_override = {log.node_id: log.status for log in logs} if logs else None
+    return _run_from_orm(run, node_statuses_override=node_statuses_override)
 
 
 def get_run_state(session: Session, run_id: str) -> PipelineState:
