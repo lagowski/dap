@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 __all__ = ["run"]
 
 
-# Pytest summary lines look like
-#   "===== 378 passed, 14 skipped in 4.57s ====="
-#   "===== 2 failed, 376 passed in 5.12s ====="
-#   "===== 1 error, 376 passed in 5.12s ====="
-# The summary always lives near the end of stdout.
+# Pytest summary line: "===== N failed, N passed, N error in N.NNs ====="
+# We match the WHOLE summary line first so counts are extracted only from
+# that line — not from error messages that happen to contain patterns like
+# "port 30432 failed: Connection refused" (psycopg3 connection errors).
+_PYTEST_SUMMARY_LINE_RE = re.compile(r"={2,}[^=\n]+ in \d+\.?\d*s[^=\n]*={2,}")
 _PYTEST_PASSED_RE = re.compile(r"(\d+) passed")
 _PYTEST_FAILED_RE = re.compile(r"(\d+) failed")
 _PYTEST_ERROR_RE = re.compile(r"(\d+) error(?:s)?")
@@ -52,10 +52,23 @@ def _parse_pytest_output(combined_output: str, returncode: int) -> dict:
     other than pytest (e.g. ``npm test``), counts default to 0/0/0 and
     ``failed_tests`` is empty — but ``returncode != 0`` still drives
     ``tests_passed=False``, so the binary gate keeps working.
+
+    Counts are extracted only from the pytest summary line
+    (``"===== N failed … in N.NNs ===="``) to avoid matching port numbers
+    inside psycopg3 connection-error messages such as
+    ``"connection to server … port 30432 failed: Connection refused"``.
     """
-    passed_match = _PYTEST_PASSED_RE.search(combined_output)
-    failed_match = _PYTEST_FAILED_RE.search(combined_output)
-    errors_match = _PYTEST_ERROR_RE.search(combined_output)
+    # Find the LAST pytest summary line using finditer so that runs with
+    # multiple pytest invocations (or aggregated project output) always parse
+    # the final summary, not an earlier intermediate one.
+    # Fall back to full output so the error-count heuristic still fires for
+    # non-pytest runners that produce no summary line at all.
+    summary_matches = list(_PYTEST_SUMMARY_LINE_RE.finditer(combined_output))
+    summary_text = summary_matches[-1].group(0) if summary_matches else combined_output
+
+    passed_match = _PYTEST_PASSED_RE.search(summary_text)
+    failed_match = _PYTEST_FAILED_RE.search(summary_text)
+    errors_match = _PYTEST_ERROR_RE.search(summary_text)
     failed_tests = _PYTEST_FAILED_NAME_RE.findall(combined_output)
 
     passed = int(passed_match.group(1)) if passed_match else 0

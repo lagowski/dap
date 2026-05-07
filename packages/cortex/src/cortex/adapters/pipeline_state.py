@@ -110,6 +110,15 @@ _EXTENSION_FIELDS: tuple[str, ...] = (
     "docker_build_log",
     "project_id",
     "github_user_per_agent",
+    # test_output: raw tester stdout/stderr tail written by tester.py.
+    # PipelineState uses last_test_output for the canonical field; keeping
+    # test_output in extensions ensures pr_merger.run can read it after
+    # dap_to_cortex without a separate _RENAMED_FIELDS entry.
+    "test_output",
+    # tests_infra_bypass / tests_bypass_reason: set by pr_merger when the
+    # test gate is bypassed due to infrastructure-only failures (#222).
+    "tests_infra_bypass",
+    "tests_bypass_reason",
     # __audit carries per-node token/cost metadata — must survive round-trip.
     "__audit",
     # _full_response_content carries full LLM response for finalize contradiction check.
