@@ -66,6 +66,13 @@ async def _pg_pooled_checkpointer(
             "autocommit": True,
             "prepare_threshold": 0,
             "row_factory": dict_row,
+            # TCP keepalives so k8s NodePort NAT doesn't silently drop
+            # idle connections (causes "server closed connection unexpectedly"
+            # when the first checkpoint read hits a dead socket).
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
         },
         # Defer opening to the async-context-manager entry; avoids the
         # "implicit pool open in __init__" deprecation warning.
