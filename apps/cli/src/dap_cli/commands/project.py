@@ -114,7 +114,11 @@ def cmd_state(
     ] = _ENGINE_DEFAULT,
     fmt: Annotated[
         str,
-        typer.Option("--format", help="Output format: table (default) or json"),
+        typer.Option(
+            "--format",
+            help="Output format: table (default) or json",
+            click_type=__import__("click").Choice(["table", "json"], case_sensitive=False),
+        ),
     ] = "table",
 ) -> None:
     """Show current state of a pipeline run.

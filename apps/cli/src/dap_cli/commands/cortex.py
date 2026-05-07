@@ -564,10 +564,14 @@ def cortex_state(run_id: str, engine_url: str, fmt: str = "table") -> None:
     """Implement `dap project state cortex <run-id>`."""
     try:
         run = _get_run(engine_url, run_id)
-    except (httpx.HTTPError, SystemExit):
-        if fmt == "json":
+    except httpx.HTTPStatusError as exc:
+        # Only treat 404 as "not found" — other status codes are real errors
+        # that should surface rather than be swallowed as "not_found".
+        if exc.response.status_code == 404 and fmt == "json":  # noqa: PLR2004
             print(json.dumps({"error": "not_found", "run_id": run_id}))
             return
+        raise
+    except (httpx.HTTPError, SystemExit):
         raise
 
     if fmt == "json":
