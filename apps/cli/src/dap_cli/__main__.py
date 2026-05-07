@@ -6,6 +6,7 @@ import typer
 
 from dap_cli import __version__
 from dap_cli.commands.init import init_command
+from dap_cli.commands.project import project_app
 from dap_cli.commands.start import start_command
 from dap_cli.commands.status import status_command
 from dap_cli.commands.stop import stop_command
@@ -17,6 +18,8 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+app.add_typer(project_app, name="project")
 
 
 def _version_callback(value: bool) -> None:
