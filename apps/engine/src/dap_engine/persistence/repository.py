@@ -759,6 +759,22 @@ def get_run(session: Session, run_id: str) -> Run:
     run = session.get(RunORM, run_id)
     if run is None:
         raise NotFoundError(f"Run not found: {run_id}")
+    # Populate node_statuses from execution logs on every detail fetch (#233).
+    #
+    # python-func pipelines never write back to runs.node_statuses (the runner
+    # only updates that column for LangGraph-native pipelines); all completed
+    # nodes land in node_execution_logs instead.  We join the logs table here
+    # so GET /runs/{id} always reflects the true per-node state regardless of
+    # pipeline runtime.  list_runs intentionally skips this join — the per-run
+    # overhead would be too expensive for bulk queries and node-level detail
+    # is not shown in the list view.
+    logs = session.scalars(
+        select(NodeExecutionLogORM)
+        .where(NodeExecutionLogORM.run_id == run_id)
+        .order_by(NodeExecutionLogORM.started_at)
+    ).all()
+    if logs:
+        run.node_statuses = {log.node_id: log.status for log in logs}
     return _run_from_orm(run)
 
 

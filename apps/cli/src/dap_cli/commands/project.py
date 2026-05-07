@@ -112,14 +112,19 @@ def cmd_state(
         str,
         typer.Option("--engine", help="DAP engine base URL", envvar="DAP_ENGINE_URL"),
     ] = _ENGINE_DEFAULT,
+    fmt: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table (default) or json"),
+    ] = "table",
 ) -> None:
     """Show current state of a pipeline run.
 
     Example:
 
         dap project state cortex <run-id>
+        dap project state cortex <run-id> --format json
     """
     if pipeline != "cortex":
         typer.echo(f"Unknown pipeline type: {pipeline!r}. Supported: cortex", err=True)
         raise typer.Exit(1)
-    _cortex.cortex_state(run_id=run_id, engine_url=engine)
+    _cortex.cortex_state(run_id=run_id, engine_url=engine, fmt=fmt)
