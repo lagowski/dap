@@ -65,9 +65,13 @@ def _patch_run_not_found() -> Any:
 
 class TestStateHelpShowsFormatOption:
     def test_state_help_shows_format_option(self) -> None:
-        result = runner.invoke(app, ["project", "state", "--help"])
+        result = runner.invoke(app, ["project", "state", "cortex", "--help"])
         assert result.exit_code == 0
-        assert "--format" in result.output
+        # Strip ANSI escape codes before asserting (Rich adds them in CI)
+        import re
+
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--format" in plain
 
 
 class TestStateFormatJsonOutputsValidJson:
