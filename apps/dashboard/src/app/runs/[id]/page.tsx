@@ -97,6 +97,7 @@ export default function RunDetailPage({
           nodeStatuses={run.node_statuses}
           currentNode={run.current_node}
           onNodeClick={(nodeId) => setSelectedNode(nodeId)}
+          autoLayout
         />
       ) : (
         <Card>
