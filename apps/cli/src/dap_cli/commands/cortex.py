@@ -80,7 +80,7 @@ def load_cortex_bundle() -> dict[str, Any]:
             "(This depends on packages/cortex/ being present in the DAP monorepo — "
             "see Etapa 2 / dap#170 for the migration status.)"
         ) from exc
-    return json.loads(bundle_text)
+    return dict(json.loads(bundle_text))
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +250,14 @@ def _get_run(engine_url: str, run_id: str) -> dict[str, Any]:
     with _client(engine_url) as client:
         resp = client.get(f"/runs/{run_id}")
         resp.raise_for_status()
-        return resp.json()
+        return dict(resp.json())  # type: ignore[arg-type]
 
 
 def _get_run_state(engine_url: str, run_id: str) -> dict[str, Any]:
     with _client(engine_url) as client:
         resp = client.get(f"/runs/{run_id}/state")
         resp.raise_for_status()
-        return resp.json()
+        return dict(resp.json())  # type: ignore[arg-type]
 
 
 def _approve_gate(engine_url: str, run_id: str, node_id: str) -> None:
@@ -321,7 +321,7 @@ def _poll_until_settled(
     engine_url: str,
     run_id: str,
     label: str,
-) -> tuple[str, dict]:
+) -> tuple[str, dict[str, Any]]:
     """Poll GET /runs/{run_id} until status is terminal or paused.
 
     Returns (final_status, last_run_dict).
@@ -334,7 +334,7 @@ def _poll_until_settled(
     ) as progress:
         task = progress.add_task(label, total=None)
         last_status = "running"
-        last_run: dict = {}
+        last_run: dict[str, Any] = {}
         while True:
             time.sleep(POLL_INTERVAL_SECONDS)
             try:
@@ -356,7 +356,7 @@ def _poll_until_settled(
 def _handle_gate(
     engine_url: str,
     run_id: str,
-    run: dict,
+    run: dict[str, Any],
     watch_only: bool,
     no_interactive: bool,
 ) -> bool:
