@@ -1,0 +1,171 @@
+{
+  "schema_version": "pipeline-export/1",
+  "_comment": "Cortex Phase 2 execution pipeline — 6 nodes total.\n\nPhase 2 runs three execution agents (coder, designer, documenter) that\nbranch from main and make code/design/doc changes. Each agent delegates\nwrites internally via run_execution_node — no separate write nodes needed\n(unlike Phase 1 enrichment agents which update the issue body).\n\nAfter the three execution agents, code-reviewer diffs each agent's branch\nagainst main and returns extensions.review_status:\n  - \"clean\"      → advance to gate-phase2\n  - \"needs_work\" → retry from coder (max 2 attempts via extensions.review_attempts)\n  - attempts ≥ 2 → fallback to gate-phase2 (prevents infinite retry)\n\nThe gate node (gate-phase2) uses cortex.dap_steps.human_gate:noop — a\npass-through that does nothing. The actual pause is driven by the engine\nvia interrupt_before when approval_required_nodes includes 'gate-phase2'.\nThe operator approves with:\n  POST /runs/{id}/nodes/gate-phase2/approve\nor simply:\n  POST /runs/{id}/resume\n\nVocabulary note: code_reviewer.py returns review_approved (bool) and\naction (\"approved\"/\"needs_work\"). The state adapter\n(cortex/adapters/pipeline_state.py) translates review_approved=True →\nextensions.review_status=\"clean\". This bundle uses the DAP-side\nvocabulary (\"clean\"/\"needs_work\").\n\nRef: rafeekpro/dap#164 (interrupt_before + /approve endpoint)",
+  "pipeline": {
+    "name": "Cortex Phase 2 — Execution",
+    "description": "Phase 2 pipeline: git-branch → coder → designer → documenter → code-reviewer (conditional retry) → gate-phase2. Execution agents branch from main and make code changes; code-reviewer validates and can retry up to 2 times.",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "git-branch",
+    "nodes": [
+      {
+        "id": "git-branch",
+        "agent_id": "cx_p2_git_branch",
+        "position": {"x": 0, "y": 0}
+      },
+      {
+        "id": "coder",
+        "agent_id": "cx_p2_coder",
+        "position": {"x": 100, "y": 0}
+      },
+      {
+        "id": "designer",
+        "agent_id": "cx_p2_designer",
+        "position": {"x": 200, "y": 0}
+      },
+      {
+        "id": "documenter",
+        "agent_id": "cx_p2_documenter",
+        "position": {"x": 300, "y": 0}
+      },
+      {
+        "id": "code-reviewer",
+        "agent_id": "cx_p2_code_reviewer",
+        "position": {"x": 400, "y": 0}
+      },
+      {
+        "id": "gate-phase2",
+        "agent_id": "cx_p2_gate",
+        "position": {"x": 500, "y": 0}
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "git-branch",     "target": "coder"},
+      {"id": "e2", "source": "coder",           "target": "designer"},
+      {"id": "e3", "source": "designer",        "target": "documenter"},
+      {"id": "e4", "source": "documenter",      "target": "code-reviewer"},
+      {
+        "id": "e5",
+        "source": "code-reviewer",
+        "target": "gate-phase2",
+        "condition": {"field": "extensions.review_approved", "op": "eq", "value": true}
+      },
+      {
+        "id": "e6",
+        "source": "code-reviewer",
+        "target": "coder",
+        "condition": {
+          "field": "extensions.review_approved", "op": "eq", "value": false,
+          "and": {"field": "extensions.review_attempts", "op": "lt", "value": 2}
+        }
+      },
+      {
+        "id": "e7",
+        "source": "code-reviewer",
+        "target": "gate-phase2",
+        "condition": {"field": "extensions.review_attempts", "op": "gte", "value": 2}
+      },
+      {"id": "e8", "source": "gate-phase2",     "target": "__end__"}
+    ],
+    "defaults": {
+      "max_attempts": 3,
+      "budget_limit_usd": 10.0,
+      "approval_required_nodes": ["gate-phase2"]
+    }
+  },
+  "bundled_agents": {
+    "cx_p2_git_branch": {
+      "name": "Cortex Phase 2 — Git Branch",
+      "role": "setup",
+      "runtime_id": "bash",
+      "runtime_config": {
+        "shell": "/bin/bash"
+      },
+      "prompt_template": "<agent_prompt><command>cd {{ extensions.workspace_path }} && git fetch origin && git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main</command></agent_prompt>",
+      "input_schema": ["workspace_path", "issue_number"],
+      "output_schema": ["branch"],
+      "timeout_ms": 30000
+    },
+    "cx_p2_coder": {
+      "name": "Cortex Phase 2 — Coder",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.coder:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": ["issue_url", "issue_number", "repo", "branch"],
+      "output_schema": ["files_changed", "__audit"],
+      "timeout_ms": null
+    },
+    "cx_p2_designer": {
+      "name": "Cortex Phase 2 — Designer",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.designer:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": ["issue_url", "issue_number", "repo", "branch"],
+      "output_schema": ["files_changed", "__audit"],
+      "timeout_ms": null
+    },
+    "cx_p2_documenter": {
+      "name": "Cortex Phase 2 — Documenter",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.documenter:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": ["issue_url", "issue_number", "repo", "branch"],
+      "output_schema": ["files_changed", "__audit"],
+      "timeout_ms": null
+    },
+    "cx_p2_code_reviewer": {
+      "name": "Cortex Phase 2 — Code Reviewer",
+      "role": "reviewer",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.code_reviewer:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": ["branch", "files_changed"],
+      "output_schema": ["review_status", "review_attempts", "__audit"],
+      "timeout_ms": 300000
+    },
+    "cx_p2_gate": {
+      "name": "Cortex Phase 2 — Approval Gate",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    }
+  },
+  "install_instructions": {
+    "summary": "Import this bundle into a DAP engine that has cortex-project installed.",
+    "steps": [
+      "1. Ensure cortex-project is installed in the DAP engine venv: uv add --path /path/to/cortex-project",
+      "2. Set CORTEX_ env vars (GH_TOKEN_READ, GH_TOKEN_ISSUES, GH_TOKEN_CODE, GH_TOKEN_MERGE, DATABASE_URL)",
+      "3. Strip _comment and install_instructions before importing: POST /pipelines/import with {schema_version, pipeline, bundled_agents}",
+      "4. Create a run: POST /runs with pipeline_id and initial_state.extensions={issue_url, issue_number, repo, workspace_path, ...}",
+      "5. Phase 2 starts with git-branch (creates working branch), then runs coder → designer → documenter sequentially",
+      "6. code-reviewer validates the diff; on 'needs_work' the loop retries from coder (max 2 attempts)",
+      "7. When complete (or retries exhausted), run pauses at gate-phase2",
+      "8. Approve: POST /runs/{id}/nodes/gate-phase2/approve  (or /resume)"
+    ],
+    "env_vars": [
+      "CORTEX_GH_TOKEN_READ=ghp_...",
+      "CORTEX_GH_TOKEN_ISSUES=ghp_...",
+      "CORTEX_GH_TOKEN_CODE=ghp_...",
+      "CORTEX_GH_TOKEN_MERGE=ghp_...",
+      "CORTEX_DATABASE_URL=postgresql://cortex_project:...@host:5432/cortex_project"
+    ],
+    "gate_design": "gate-phase2 uses interrupt_before (approval_required_nodes) NOT a python-func that calls POST /pause. This avoids the infinite pause loop described in rafeekpro/dap#164. The gate-phase2 node itself is a no-op (cortex.dap_steps.human_gate:noop) that executes only after the operator approves."
+  }
+}

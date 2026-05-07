@@ -1,0 +1,250 @@
+{
+  "schema_version": "pipeline-export/1",
+  "_comment": "Cortex Phase 1 enrichment pipeline — 11 nodes total.\n\nEach Phase 1 agent is split into two nodes:\n  1. python-func node calling cortex.nodes.<name>:run() — pure LLM call\n  2. python-func write node calling cortex.dap_steps.enrichment_write:run_side_effects — GitHub write + audit\n\nThis separation lets DAP retry the LLM call without duplicating external writes.\n\nThe gate node (gate-phase1) uses cortex.dap_steps.human_gate:noop — a\npass-through that does nothing. The actual pause is driven by the engine\nvia interrupt_before when approval_required_nodes includes 'gate-phase1'.\nThe operator approves with:\n  POST /runs/{id}/nodes/gate-phase1/approve\nor simply:\n  POST /runs/{id}/resume\n\nRef: rafeekpro/dap#164 (interrupt_before + /approve endpoint)",
+  "pipeline": {
+    "name": "Cortex Phase 1 — Issue Enrichment",
+    "description": "5-agent Phase 1 pipeline: mockup → specify → cicd → dispatcher → finalize, each followed by a write node that updates the GitHub issue. Final gate-phase1 node pauses for human approval before Phase 2.",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "mockup",
+    "nodes": [
+      {
+        "id": "mockup",
+        "agent_id": "cx_p1_mockup",
+        "position": {"x": 0, "y": 0}
+      },
+      {
+        "id": "mockup-write",
+        "agent_id": "cx_p1_mockup_write",
+        "position": {"x": 100, "y": 0}
+      },
+      {
+        "id": "specify",
+        "agent_id": "cx_p1_specify",
+        "position": {"x": 200, "y": 0}
+      },
+      {
+        "id": "specify-write",
+        "agent_id": "cx_p1_specify_write",
+        "position": {"x": 300, "y": 0}
+      },
+      {
+        "id": "cicd",
+        "agent_id": "cx_p1_cicd",
+        "position": {"x": 400, "y": 0}
+      },
+      {
+        "id": "cicd-write",
+        "agent_id": "cx_p1_cicd_write",
+        "position": {"x": 500, "y": 0}
+      },
+      {
+        "id": "dispatcher",
+        "agent_id": "cx_p1_dispatcher",
+        "position": {"x": 600, "y": 0}
+      },
+      {
+        "id": "dispatcher-write",
+        "agent_id": "cx_p1_dispatcher_write",
+        "position": {"x": 700, "y": 0}
+      },
+      {
+        "id": "finalize",
+        "agent_id": "cx_p1_finalize",
+        "position": {"x": 800, "y": 0}
+      },
+      {
+        "id": "finalize-write",
+        "agent_id": "cx_p1_finalize_write",
+        "position": {"x": 900, "y": 0}
+      },
+      {
+        "id": "gate-phase1",
+        "agent_id": "cx_p1_gate",
+        "position": {"x": 1000, "y": 0}
+      }
+    ],
+    "edges": [
+      {"id": "e1",  "source": "mockup",          "target": "mockup-write"},
+      {"id": "e2",  "source": "mockup-write",     "target": "specify"},
+      {"id": "e3",  "source": "specify",          "target": "specify-write"},
+      {"id": "e4",  "source": "specify-write",    "target": "cicd"},
+      {"id": "e5",  "source": "cicd",             "target": "cicd-write"},
+      {"id": "e6",  "source": "cicd-write",       "target": "dispatcher"},
+      {"id": "e7",  "source": "dispatcher",       "target": "dispatcher-write"},
+      {"id": "e8",  "source": "dispatcher-write",  "target": "finalize"},
+      {"id": "e9",  "source": "finalize",         "target": "finalize-write"},
+      {"id": "e10", "source": "finalize-write",    "target": "gate-phase1"},
+      {"id": "e11", "source": "gate-phase1",       "target": "__end__"}
+    ],
+    "defaults": {
+      "max_attempts": 3,
+      "budget_limit_usd": 5.0,
+      "approval_required_nodes": ["gate-phase1"]
+    }
+  },
+  "bundled_agents": {
+    "cx_p1_mockup": {
+      "name": "Cortex Phase 1 — Mockup",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.mockup:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_p1_mockup_write": {
+      "name": "Cortex Phase 1 — Mockup Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "agent_name": "mockup",
+        "section_name": "Description"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_specify": {
+      "name": "Cortex Phase 1 — Specify",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.specify:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 180000
+    },
+    "cx_p1_specify_write": {
+      "name": "Cortex Phase 1 — Specify Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "agent_name": "specify",
+        "section_name": "Technical Specification"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_cicd": {
+      "name": "Cortex Phase 1 — CI/CD",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.cicd:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_p1_cicd_write": {
+      "name": "Cortex Phase 1 — CI/CD Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "agent_name": "cicd",
+        "section_name": "CI/CD"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_dispatcher": {
+      "name": "Cortex Phase 1 — Dispatcher",
+      "role": "task_selector",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.dispatcher:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_p1_dispatcher_write": {
+      "name": "Cortex Phase 1 — Dispatcher Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "agent_name": "dispatcher",
+        "section_name": "Task Assignments"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_finalize": {
+      "name": "Cortex Phase 1 — Finalize",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.finalize:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 180000
+    },
+    "cx_p1_finalize_write": {
+      "name": "Cortex Phase 1 — Finalize Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "agent_name": "finalize",
+        "section_name": "Finalize"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_gate": {
+      "name": "Cortex Phase 1 — Approval Gate",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    }
+  },
+  "install_instructions": {
+    "summary": "Import this bundle into a DAP engine that has cortex-project installed.",
+    "steps": [
+      "1. Ensure cortex-project is installed in the DAP engine venv: uv add --path /path/to/cortex-project",
+      "2. Set CORTEX_ env vars (GH_TOKEN_READ, GH_TOKEN_ISSUES, GH_TOKEN_CODE, GH_TOKEN_MERGE, DATABASE_URL)",
+      "3. Strip _comment and install_instructions before importing: POST /pipelines/import with {schema_version, pipeline, bundled_agents}",
+      "4. Create a run: POST /runs with pipeline_id and initial_state.extensions={issue_url, issue_number, repo, ...}",
+      "5. Phase 1 runs automatically; each agent node is followed by a write node that updates the GitHub issue",
+      "6. When complete, run pauses at gate-phase1",
+      "7. Approve: POST /runs/{id}/nodes/gate-phase1/approve  (or /resume)"
+    ],
+    "env_vars": [
+      "CORTEX_GH_TOKEN_READ=ghp_...",
+      "CORTEX_GH_TOKEN_ISSUES=ghp_...",
+      "CORTEX_GH_TOKEN_CODE=ghp_...",
+      "CORTEX_GH_TOKEN_MERGE=ghp_...",
+      "CORTEX_DATABASE_URL=postgresql://cortex_project:...@host:5432/cortex_project"
+    ],
+    "gate_design": "gate-phase1 uses interrupt_before (approval_required_nodes) NOT a python-func that calls POST /pause. This avoids the infinite pause loop described in rafeekpro/dap#164. The gate-phase1 node itself is a no-op (cortex.dap_steps.human_gate:noop) that executes only after the operator approves."
+  }
+}
