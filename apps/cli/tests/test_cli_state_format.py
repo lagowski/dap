@@ -32,9 +32,7 @@ _SAMPLE_STATE = {
         "current_phase": "phase-1",
         "next_nodes": ["coder", "reviewer"],
         "task_assignments": {"coder": "agent-1", "reviewer": "agent-2"},
-        "decisions": [
-            {"node": f"node-{i}", "action": "approve"} for i in range(10)
-        ],
+        "decisions": [{"node": f"node-{i}", "action": "approve"} for i in range(10)],
     }
 }
 
@@ -49,6 +47,7 @@ def _patch_state(state: dict = _SAMPLE_STATE):
 
 def _patch_run_not_found():
     import httpx
+
     return patch(
         "dap_cli.commands.cortex._get_run",
         side_effect=httpx.HTTPStatusError(
@@ -92,8 +91,13 @@ class TestStateFormatJsonIncludesRequiredKeys:
             )
         parsed = json.loads(result.output)
         required = {
-            "issue_title", "current_phase", "run_id",
-            "status", "next_nodes", "task_assignments", "decisions",
+            "issue_title",
+            "current_phase",
+            "run_id",
+            "status",
+            "next_nodes",
+            "task_assignments",
+            "decisions",
         }
         assert required.issubset(parsed.keys())
 
@@ -185,13 +189,16 @@ class TestStateToDictUnit:
 class TestJsonDefault:
     def test_datetime(self) -> None:
         from datetime import datetime
+
         assert _json_default(datetime(2026, 1, 1, 12, 0)) == "2026-01-01T12:00:00"
 
     def test_decimal(self) -> None:
         from decimal import Decimal
+
         assert _json_default(Decimal("3.14")) == "3.14"
 
     def test_unsupported_raises(self) -> None:
         import pytest
+
         with pytest.raises(TypeError):
             _json_default(set())
