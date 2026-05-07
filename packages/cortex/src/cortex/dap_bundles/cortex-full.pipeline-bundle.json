@@ -268,7 +268,7 @@
         "condition": {
           "type": "comparison",
           "field": "extensions.review_approved",
-          "operator": "eq",
+          "operator": "==",
           "value": true
         }
       },
@@ -282,13 +282,13 @@
             {
               "type": "comparison",
               "field": "extensions.review_approved",
-              "operator": "eq",
+              "operator": "==",
               "value": false
             },
             {
               "type": "comparison",
               "field": "extensions.review_attempts",
-              "operator": "lt",
+              "operator": "<",
               "value": 2
             }
           ]
@@ -301,7 +301,7 @@
         "condition": {
           "type": "comparison",
           "field": "extensions.review_attempts",
-          "operator": "gte",
+          "operator": ">=",
           "value": 2
         }
       },
