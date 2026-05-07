@@ -14,6 +14,8 @@ import {
   formatEdgeLabel,
   type EdgeAnnotation,
 } from "@/lib/edge-annotations";
+import { getLayoutedElements } from "@/lib/graph-layout";
+import { getEdgeColor, getEdgeLabel } from "@/lib/edge-color";
 import type { Agent, NodeStatus, Pipeline } from "@/lib/api/types";
 
 interface PipelineGraphProps {
@@ -28,6 +30,12 @@ interface PipelineGraphProps {
   nodeStatuses?: Record<string, NodeStatus>;
   currentNode?: string | null;
   onNodeClick?: (nodeId: string) => void;
+  /**
+   * When true, applies dagre LR auto-layout instead of using saved node
+   * positions (#225). Set in the run detail view (read-only); leave false
+   * in the pipeline designer so manual positioning is preserved.
+   */
+  autoLayout?: boolean;
 }
 
 const STATUS_COLORS: Record<NodeStatus, string> = {
@@ -39,7 +47,6 @@ const STATUS_COLORS: Record<NodeStatus, string> = {
 };
 
 const EDGE_WARNING_STROKE = "#dc2626"; // red-600
-const EDGE_CONDITION_STROKE = "#3b82f6"; // blue-500
 const EDGE_DEFAULT_STROKE = "#94a3b8"; // slate-400
 
 export function PipelineGraph({
@@ -48,8 +55,9 @@ export function PipelineGraph({
   nodeStatuses = {},
   currentNode,
   onNodeClick,
+  autoLayout = false,
 }: PipelineGraphProps) {
-  const nodes = useMemo<Node[]>(() => {
+  const rawNodes = useMemo<Node[]>(() => {
     return pipeline.nodes.map((n, idx) => {
       const status: NodeStatus = nodeStatuses[n.id] ?? "pending";
       const isCurrent = n.id === currentNode;
@@ -85,7 +93,7 @@ export function PipelineGraph({
     [pipeline, agents],
   );
 
-  const edges = useMemo<Edge[]>(() => {
+  const rawEdges = useMemo<Edge[]>(() => {
     return pipeline.edges.map((e) => {
       const annotation: EdgeAnnotation = annotations.get(e.id) ?? {
         fields: [],
@@ -93,13 +101,28 @@ export function PipelineGraph({
         unknown: false,
       };
       const hasCondition = e.condition != null;
-      const label = formatEdgeLabel(annotation, hasCondition);
+
+      // Derive colour and label from structured condition (#227).
+      // Warning overrides condition colour to keep the contract-error
+      // signal prominent.
+      const conditionStroke =
+        e.condition != null ? getEdgeColor(e.condition) : EDGE_DEFAULT_STROKE;
+      const stroke = annotation.warning ? EDGE_WARNING_STROKE : conditionStroke;
+
+      // Build edge label (#227): semantic condition label ("✓ approved" etc.)
+      // combined with the field-flow annotation chip when fields exist.
+      // Use formatEdgeLabel with hasCondition=false so we get just the chip
+      // without the bare "if" prefix (which would shadow conditionLabel).
+      const fieldChip =
+        annotation.fields.length > 0 || annotation.warning
+          ? formatEdgeLabel(annotation, false)
+          : undefined;
+      const conditionLabel =
+        e.condition != null ? getEdgeLabel(e.condition) : "";
+      const labelParts = [conditionLabel, fieldChip].filter(Boolean);
+      const label = labelParts.length > 0 ? labelParts.join(" · ") : undefined;
+
       const tooltip = annotationTooltip(annotation);
-      const stroke = annotation.warning
-        ? EDGE_WARNING_STROKE
-        : hasCondition
-          ? EDGE_CONDITION_STROKE
-          : EDGE_DEFAULT_STROKE;
       return {
         id: e.id,
         source: e.source === "__start__" ? pipeline.entry_point : e.source,
@@ -107,30 +130,36 @@ export function PipelineGraph({
         label,
         labelStyle: annotation.warning
           ? { fill: EDGE_WARNING_STROKE, fontWeight: 600 }
-          : undefined,
+          : conditionLabel
+            ? { fill: stroke, fontWeight: 500, fontSize: 11 }
+            : undefined,
         labelBgStyle: annotation.warning
           ? { fill: "#fee2e2" /* red-100 */ }
           : undefined,
         type: hasCondition ? "step" : "default",
         animated: hasCondition,
         style: { stroke, strokeWidth: annotation.warning ? 2 : 1 },
-        // React Flow forwards `data` to custom edge components; for the
-        // default renderer we tuck the tooltip text here so other code
-        // (e.g. inspector, snapshots) can read it without re-computing.
         data: { tooltip, annotation },
       };
     });
   }, [pipeline.edges, pipeline.entry_point, annotations]);
 
-  const validEdges = edges.filter(
-    (e) => e.source && e.target && e.target !== "__end__",
-  );
+  // Filter sentinel targets and optionally apply dagre layout (#225).
+  // Both steps live in the same useMemo so the filter doesn't create a
+  // new array reference on every render (which would re-trigger dagre).
+  const { nodes, edges } = useMemo(() => {
+    const validEdges = rawEdges.filter(
+      (e) => e.source && e.target && e.target !== "__end__",
+    );
+    if (!autoLayout) return { nodes: rawNodes, edges: validEdges };
+    return getLayoutedElements(rawNodes, validEdges);
+  }, [autoLayout, rawNodes, rawEdges]);
 
   return (
     <div className="h-[500px] w-full rounded-md border bg-background">
       <ReactFlow
         nodes={nodes}
-        edges={validEdges}
+        edges={edges}
         fitView
         proOptions={{ hideAttribution: true }}
         nodesDraggable={false}
