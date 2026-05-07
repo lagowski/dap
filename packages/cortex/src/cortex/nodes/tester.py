@@ -58,10 +58,13 @@ def _parse_pytest_output(combined_output: str, returncode: int) -> dict:
     inside psycopg3 connection-error messages such as
     ``"connection to server … port 30432 failed: Connection refused"``.
     """
-    # Find the last pytest summary line; fall back to full output so the
-    # error-count heuristic at the end still fires for non-pytest runners.
-    summary_match = _PYTEST_SUMMARY_LINE_RE.search(combined_output)
-    summary_text = summary_match.group(0) if summary_match else combined_output
+    # Find the LAST pytest summary line using finditer so that runs with
+    # multiple pytest invocations (or aggregated project output) always parse
+    # the final summary, not an earlier intermediate one.
+    # Fall back to full output so the error-count heuristic still fires for
+    # non-pytest runners that produce no summary line at all.
+    summary_matches = list(_PYTEST_SUMMARY_LINE_RE.finditer(combined_output))
+    summary_text = summary_matches[-1].group(0) if summary_matches else combined_output
 
     passed_match = _PYTEST_PASSED_RE.search(summary_text)
     failed_match = _PYTEST_FAILED_RE.search(summary_text)

@@ -34,20 +34,44 @@ _INFRA_FAILURE_PATTERNS = [
 
 
 def _is_infra_only_failure(test_output: str) -> bool:
-    """Return True when every test failure visible in the output is caused
-    by a missing infrastructure dependency (DB, network service, etc.).
+    """Return True when EVERY explicit test failure is caused by a missing
+    infrastructure dependency (DB, network service, etc.).
 
-    Only called when ``tests_passed=False``. A conservative check: if the
-    output contains ANY infrastructure-error pattern AND the failed-test
-    names (``FAILED …``) appear alongside those patterns in a plausible way,
-    we assume the failures are pre-existing infra issues, not regressions.
+    Strategy:
+    1. Extract ``FAILED <name>`` lines from the output.  These are the
+       ground-truth failure list that pytest emits in the short-summary
+       section (one per failing test).
+    2. For each failed-test name, check whether an infra-error pattern
+       appears anywhere in the block of text between that ``FAILED`` line
+       and the next ``FAILED`` line (or end of output).  If every block
+       contains at least one infra pattern the function returns True.
+    3. If no ``FAILED`` lines are found at all, fall back to checking the
+       full output for any infra pattern — this covers environments where
+       pytest summary lines are absent (e.g. ``pytest -q``).
 
-    Returns False (block merge) when the output shows no infra patterns —
-    meaning the failures are likely real code defects.
+    Returns False (block merge) if:
+    - The output is empty.
+    - Any failure block contains no infra pattern (real code defect).
+    - A mix of infra and non-infra failures exists.
     """
     if not test_output:
         return False
-    return any(pat.search(test_output) for pat in _INFRA_FAILURE_PATTERNS)
+
+    _FAILED_LINE_RE = re.compile(r"^FAILED \S+", re.MULTILINE)
+    failed_positions = [m.start() for m in _FAILED_LINE_RE.finditer(test_output)]
+
+    if not failed_positions:
+        # No explicit FAILED lines — fall back to whole-output scan.
+        return any(pat.search(test_output) for pat in _INFRA_FAILURE_PATTERNS)
+
+    # Slice the output into per-failure blocks and verify each one.
+    boundaries = [*failed_positions, len(test_output)]
+    for i, start in enumerate(failed_positions):
+        block = test_output[start : boundaries[i + 1]]
+        if not any(pat.search(block) for pat in _INFRA_FAILURE_PATTERNS):
+            return False  # at least one failure is NOT infra-related
+
+    return True
 
 
 async def run(state: dict, config: dict) -> dict:
@@ -66,11 +90,13 @@ async def run(state: dict, config: dict) -> dict:
     # Gate: refuse to merge unless tests passed OR all failures are
     # infrastructure-only (pre-existing DB/network issues unrelated to the
     # change under review — #222).
+    infra_bypass = not tests_passed and _is_infra_only_failure(test_output)
+
     if not tests_passed:
-        if _is_infra_only_failure(test_output):
+        if infra_bypass:
             logger.warning(
-                "pr_merger: tests_passed=False but failures look infrastructure-only "
-                "(connection refused / OperationalError) — proceeding with merge"
+                "pr_merger: bypassing test gate — infra-only failures detected "
+                "(connection refused / OperationalError); tests_passed=False"
             )
             # Fall through to the merge path; do not block.
         else:
@@ -191,26 +217,35 @@ async def run(state: dict, config: dict) -> dict:
 
     merge_sha = merge_result.get("sha", "")
 
-    return preserve_extensions(
-        cortex_to_dap(
+    # Build the reasoning string — flag when test gate was bypassed so the
+    # audit trail makes the bypass visible to operators (#222 fix 2).
+    merge_reasoning = f"PR #{pr_number} merged with sha {merge_sha}"
+    if infra_bypass:
+        merge_reasoning += (
+            " [tests_infra_bypass=True: pre-existing infrastructure "
+            "failures were detected and skipped]"
+        )
+
+    result: dict = {
+        "merged": True,
+        "merge_sha": merge_sha,
+        "current_phase": "pr_merger_complete",
+        "__audit": _audit_base,
+        "decisions": [
+            *state.get("decisions", []),
             {
-                "merged": True,
-                "merge_sha": merge_sha,
-                "current_phase": "pr_merger_complete",
-                "__audit": _audit_base,
-                "decisions": [
-                    *state.get("decisions", []),
-                    {
-                        "node": "pr_merger",
-                        "action": "merged",
-                        "reasoning": f"PR #{pr_number} merged with sha {merge_sha}",
-                        "backend": "",
-                        "model": "",
-                        "tokens": "",
-                        "timestamp": now,
-                    },
-                ],
-            }
-        ),
-        original_extensions,
-    )
+                "node": "pr_merger",
+                "action": "merged",
+                "reasoning": merge_reasoning,
+                "backend": "",
+                "model": "",
+                "tokens": "",
+                "timestamp": now,
+            },
+        ],
+    }
+    if infra_bypass:
+        result["tests_infra_bypass"] = True
+        result["tests_bypass_reason"] = "pre-existing infrastructure failures detected"
+
+    return preserve_extensions(cortex_to_dap(result), original_extensions)

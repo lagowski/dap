@@ -131,3 +131,24 @@ def test_various_db_ports_not_parsed_as_failures(port: int, expected_failed: int
     )
     result = _parse_pytest_output(output, returncode=1)
     assert result["failed"] == expected_failed
+
+
+# ---------------------------------------------------------------------------
+# finditer last-match fix: multiple pytest runs in one output
+# ---------------------------------------------------------------------------
+
+
+def test_last_summary_line_used_when_multiple_runs() -> None:
+    """With multiple pytest summary lines, the LAST one must be parsed (#222 fix 3)."""
+    output = (
+        # First run (sub-project A): 1 failure
+        "============================= 1 failed, 10 passed in 0.50s =============================\n"
+        # ... more output between runs ...
+        "collecting ...\n"
+        # Final run (sub-project B): 0 failures
+        "============================= 5 passed in 0.30s ============================="
+    )
+    result = _parse_pytest_output(output, returncode=0)
+    # Must use the last summary (5 passed, 0 failed), not the first (1 failed)
+    assert result["failed"] == 0
+    assert result["passed"] == 5

@@ -55,6 +55,26 @@ def test_none_like_output_is_not_infra() -> None:
     assert _is_infra_only_failure("   ") is False
 
 
+def test_mixed_infra_and_real_failure_is_not_infra() -> None:
+    """A mix of infra and real failures must NOT bypass the gate (#222 tightening)."""
+    output = (
+        "FAILED tests/test_audit.py::test_db_write - OperationalError: connection refused\n"
+        "FAILED tests/test_cli.py::test_format_json - AssertionError: expected json got table\n"
+        "============================== 2 failed in 1.23s =============================="
+    )
+    assert _is_infra_only_failure(output) is False
+
+
+def test_all_infra_failures_is_infra() -> None:
+    """All FAILED blocks containing infra patterns → bypass allowed."""
+    output = (
+        "FAILED tests/test_a.py::test_one - OperationalError: connection refused\n"
+        "FAILED tests/test_b.py::test_two - could not connect to server\n"
+        "============================== 2 failed in 0.50s =============================="
+    )
+    assert _is_infra_only_failure(output) is True
+
+
 # ---------------------------------------------------------------------------
 # pr_merger.run integration tests
 # ---------------------------------------------------------------------------
@@ -111,6 +131,9 @@ def test_pr_merger_proceeds_on_infra_only_failures(monkeypatch: pytest.MonkeyPat
     assert merge_calls, "merge_pull_request should have been called"
     assert state_out.get("merged") is True
     assert state_out.get("merge_sha") == "abc123def456"
+    # Bypass must be recorded in state for audit trail (#222 fix 2)
+    assert state_out.get("tests_infra_bypass") is True
+    assert state_out.get("tests_bypass_reason") is not None
 
 
 def test_pr_merger_blocks_on_real_test_failures(monkeypatch: pytest.MonkeyPatch) -> None:
