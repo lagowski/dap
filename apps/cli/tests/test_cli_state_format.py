@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 from dap_cli.__main__ import app
 from dap_cli.commands.cortex import _json_default, _state_to_dict
 from typer.testing import CliRunner
@@ -37,17 +39,15 @@ _SAMPLE_STATE = {
 }
 
 
-def _patch_run(run: dict = _SAMPLE_RUN):
+def _patch_run(run: dict[str, Any] = _SAMPLE_RUN) -> Any:
     return patch("dap_cli.commands.cortex._get_run", return_value=run)
 
 
-def _patch_state(state: dict = _SAMPLE_STATE):
+def _patch_state(state: dict[str, Any] = _SAMPLE_STATE) -> Any:
     return patch("dap_cli.commands.cortex._get_run_state", return_value=state)
 
 
-def _patch_run_not_found():
-    import httpx
-
+def _patch_run_not_found() -> Any:
     return patch(
         "dap_cli.commands.cortex._get_run",
         side_effect=httpx.HTTPStatusError(
