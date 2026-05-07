@@ -108,10 +108,17 @@ def _002_node_execution_logs_add_extra_data(conn: Connection) -> None:
 
 
 def _003_pipeline_versions_add_ui_metadata(conn: Connection) -> None:
-    """#226 — add ``pipeline_versions.ui_metadata`` for dashboard node positions."""
+    """#226 — add ``pipeline_versions.ui_metadata`` for dashboard node positions.
+
+    SQLite stores JSON as TEXT (the JSON ORM type is a thin wrapper around
+    TEXT on SQLite).  PostgreSQL has a native JSON/JSONB type; use JSONB so
+    the column type matches the ORM mapping and enables native JSON queries.
+    """
     if _column_exists(conn, "pipeline_versions", "ui_metadata"):
         return
-    conn.execute(text("ALTER TABLE pipeline_versions ADD COLUMN ui_metadata TEXT"))
+    dialect = conn.dialect.name
+    col_type = "JSONB" if dialect == "postgresql" else "TEXT"
+    conn.execute(text(f"ALTER TABLE pipeline_versions ADD COLUMN ui_metadata {col_type}"))
 
 
 MIGRATIONS: list[Migration] = [

@@ -351,6 +351,7 @@ def export_pipeline(
             nodes=list(pipeline.nodes),
             edges=list(pipeline.edges),
             defaults=pipeline.defaults,
+            ui_metadata=pipeline.ui_metadata,
         )
     except ValidationError as exc:
         # Shouldn't happen — stored shape was validated on write —

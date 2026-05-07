@@ -312,12 +312,25 @@ interface StateAfterNodeFields {
 
 function StateAfterNodeView({ fields }: { fields: StateAfterNodeFields }) {
   const hasUpstreamLegacy = fields.legacyAncestorIds.length > 0;
-  if (fields.selfIsPythonFunc && fields.fields.length === 0 && !hasUpstreamLegacy) {
+  // python-func nodes read/write arbitrary PipelineState — show passthrough
+  // note regardless of whether upstream nodes declared specific fields (#229).
+  if (fields.selfIsPythonFunc) {
     return (
-      <p className="italic text-muted-foreground text-[11px]">
-        python-func runtime — full{" "}
-        <code className="font-mono">PipelineState</code> passthrough
-      </p>
+      <div className="space-y-1.5">
+        {fields.fields.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {fields.fields.map((f) => (
+              <Badge key={f} variant="outline" className="font-mono text-[10px]">
+                {f}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+        <p className="italic text-muted-foreground text-[11px]">
+          python-func runtime — full{" "}
+          <code className="font-mono">PipelineState</code> passthrough
+        </p>
+      </div>
     );
   }
   if (fields.fields.length === 0 && !hasUpstreamLegacy && !fields.selfIsLegacy) {

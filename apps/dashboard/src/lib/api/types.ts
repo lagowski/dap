@@ -170,6 +170,8 @@ export interface PipelineExportPayload {
     budget_limit_usd: number;
     approval_required_nodes: string[];
   };
+  /** Dashboard layout metadata (node positions etc.) — preserved through export/import (#226). */
+  ui_metadata?: Record<string, unknown>;
 }
 
 export interface PipelineExport {
