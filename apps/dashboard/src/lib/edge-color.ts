@@ -8,8 +8,10 @@ import type { EdgeCondition } from "@/lib/api/types";
 
 export type EdgeCategory = "pass" | "fail" | "retry" | "max_attempts" | "neutral";
 
-const PASS_STRINGS = ["approved", "pass", "success", "clean", "true"];
-const FAIL_STRINGS = ["rejected", "fail", "needs_work", "false"];
+// Exact-match sets for string condition values — avoids substring false
+// positives like "not_approved" → pass or "fallback" → fail.
+const PASS_STRINGS = new Set(["approved", "pass", "success", "clean", "true"]);
+const FAIL_STRINGS = new Set(["rejected", "fail", "needs_work", "false"]);
 const RETRY_FIELDS = ["retry", "attempt"];
 
 /** Recursively classify a condition into a semantic category. */
@@ -28,11 +30,11 @@ export function classifyCondition(condition: EdgeCondition): EdgeCategory {
       if (operator === ">=" || operator === ">") return "max_attempts";
     }
 
-    // String value checks
+    // String value checks — exact match to avoid "not_approved" → pass etc.
     if (typeof value === "string") {
       const v = value.toLowerCase();
-      if (PASS_STRINGS.some((s) => v.includes(s))) return "pass";
-      if (FAIL_STRINGS.some((s) => v.includes(s))) return "fail";
+      if (PASS_STRINGS.has(v)) return "pass";
+      if (FAIL_STRINGS.has(v)) return "fail";
     }
 
     return "neutral";

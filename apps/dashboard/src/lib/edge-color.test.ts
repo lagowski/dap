@@ -53,12 +53,22 @@ describe("classifyCondition", () => {
     expect(classifyCondition(cmp("attempt", "<=", 3))).toBe("retry");
   });
 
-  it("classifies string value containing 'approved' as pass", () => {
+  it("classifies exact string value 'approved' as pass", () => {
     expect(classifyCondition(cmp("status", "==", "approved"))).toBe("pass");
   });
 
-  it("classifies string value containing 'rejected' as fail", () => {
+  it("classifies exact string value 'rejected' as fail", () => {
     expect(classifyCondition(cmp("status", "==", "rejected"))).toBe("fail");
+  });
+
+  it("does not misclassify 'not_approved' as pass (substring false positive guard)", () => {
+    expect(classifyCondition(cmp("status", "==", "not_approved"))).toBe(
+      "neutral",
+    );
+  });
+
+  it("does not misclassify 'fallback' as fail (substring false positive guard)", () => {
+    expect(classifyCondition(cmp("status", "==", "fallback"))).toBe("neutral");
   });
 
   it("returns neutral for unrecognised comparison", () => {

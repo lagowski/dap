@@ -109,11 +109,18 @@ export function PipelineGraph({
         e.condition != null ? getEdgeColor(e.condition) : EDGE_DEFAULT_STROKE;
       const stroke = annotation.warning ? EDGE_WARNING_STROKE : conditionStroke;
 
-      // Short centre label: annotation fields chip first, then condition label.
-      const annotationLabel = formatEdgeLabel(annotation, hasCondition);
+      // Build edge label (#227): semantic condition label ("✓ approved" etc.)
+      // combined with the field-flow annotation chip when fields exist.
+      // Use formatEdgeLabel with hasCondition=false so we get just the chip
+      // without the bare "if" prefix (which would shadow conditionLabel).
+      const fieldChip =
+        annotation.fields.length > 0 || annotation.warning
+          ? formatEdgeLabel(annotation, false)
+          : undefined;
       const conditionLabel =
         e.condition != null ? getEdgeLabel(e.condition) : "";
-      const label = annotationLabel || conditionLabel || undefined;
+      const labelParts = [conditionLabel, fieldChip].filter(Boolean);
+      const label = labelParts.length > 0 ? labelParts.join(" · ") : undefined;
 
       const tooltip = annotationTooltip(annotation);
       return {
@@ -123,7 +130,7 @@ export function PipelineGraph({
         label,
         labelStyle: annotation.warning
           ? { fill: EDGE_WARNING_STROKE, fontWeight: 600 }
-          : conditionLabel && !annotationLabel
+          : conditionLabel
             ? { fill: stroke, fontWeight: 500, fontSize: 11 }
             : undefined,
         labelBgStyle: annotation.warning
@@ -137,16 +144,16 @@ export function PipelineGraph({
     });
   }, [pipeline.edges, pipeline.entry_point, annotations]);
 
-  const validEdges = rawEdges.filter(
-    (e) => e.source && e.target && e.target !== "__end__",
-  );
-
-  // Apply dagre LR layout when requested (#225). Memoised so it only
-  // reruns when nodes or edges change, not on every render.
+  // Filter sentinel targets and optionally apply dagre layout (#225).
+  // Both steps live in the same useMemo so the filter doesn't create a
+  // new array reference on every render (which would re-trigger dagre).
   const { nodes, edges } = useMemo(() => {
+    const validEdges = rawEdges.filter(
+      (e) => e.source && e.target && e.target !== "__end__",
+    );
     if (!autoLayout) return { nodes: rawNodes, edges: validEdges };
     return getLayoutedElements(rawNodes, validEdges);
-  }, [autoLayout, rawNodes, validEdges]);
+  }, [autoLayout, rawNodes, rawEdges]);
 
   return (
     <div className="h-[500px] w-full rounded-md border bg-background">
