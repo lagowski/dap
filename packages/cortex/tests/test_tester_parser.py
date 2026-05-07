@@ -3,7 +3,6 @@
 import pytest
 from cortex.nodes.tester import _parse_pytest_output
 
-
 # ---------------------------------------------------------------------------
 # Port-number artifact regression tests
 # ---------------------------------------------------------------------------
@@ -44,9 +43,10 @@ def test_failed_test_names_extracted() -> None:
     result = _parse_pytest_output(_PYTEST_INFRA_OUTPUT, returncode=1)
     # pytest lists FAILED names twice: once with error detail, once in summary section
     assert len(result["failed_tests"]) >= 3
-    assert "tests/test_audit.py::TestLogDecision::test_log_decision_inserts_row" in result[
-        "failed_tests"
-    ]
+    assert (
+        "tests/test_audit.py::TestLogDecision::test_log_decision_inserts_row"
+        in result["failed_tests"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +122,12 @@ def test_socket_error_count_not_bloated() -> None:
         (27017, 2),
     ],
 )
-def test_various_db_ports_not_parsed_as_failures(
-    port: int, expected_failed: int
-) -> None:
+def test_various_db_ports_not_parsed_as_failures(port: int, expected_failed: int) -> None:
     output = (
         f"FAILED tests/test_a.py::test_one - OperationalError: port {port} failed: refused\n"
         f"FAILED tests/test_a.py::test_two - OperationalError: port {port} failed: refused\n"
-        f"============================== {expected_failed} failed, 100 passed in 1.00s =============================="
+        f"============================== {expected_failed} failed, 100 passed in 1.00s "
+        "=============================="
     )
     result = _parse_pytest_output(output, returncode=1)
     assert result["failed"] == expected_failed

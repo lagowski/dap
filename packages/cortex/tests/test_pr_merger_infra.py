@@ -5,7 +5,6 @@ import asyncio
 import pytest
 from cortex.nodes.pr_merger import _is_infra_only_failure, run
 
-
 # ---------------------------------------------------------------------------
 # _is_infra_only_failure unit tests
 # ---------------------------------------------------------------------------
@@ -98,7 +97,7 @@ def test_pr_merger_proceeds_on_infra_only_failures(monkeypatch: pytest.MonkeyPat
     )
     monkeypatch.setattr(
         "cortex.nodes.pr_merger.load_settings",
-        lambda: type("S", (), {"get_github_token": lambda self, r: "tok"})(),
+        type("S", (), {"get_github_token": lambda self, r: "tok"}),
     )
 
     result = _run_merger(_BASE_STATE)
@@ -166,7 +165,7 @@ def test_pr_merger_blocks_when_review_not_approved(monkeypatch: pytest.MonkeyPat
     )
     monkeypatch.setattr(
         "cortex.nodes.pr_merger.load_settings",
-        lambda: type("S", (), {"get_github_token": lambda self, r: "tok"})(),
+        type("S", (), {"get_github_token": lambda self, r: "tok"}),
     )
 
     result = _run_merger(state)
