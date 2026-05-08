@@ -17,6 +17,8 @@ import pytest
 from dap_runtimes import GeminiCliAdapter
 from dap_types import RuntimeTask
 
+from .conftest import build_subprocess_mock
+
 _PATCH_PATH = "dap_runtimes.adapters.gemini_cli.asyncio.create_subprocess_exec"
 _WHICH_PATH = "dap_runtimes.adapters.gemini_cli.shutil.which"
 
@@ -89,23 +91,8 @@ def _success_payload(
     ).encode("utf-8")
 
 
-def _build_subprocess_mock(
-    *,
-    stdout: bytes = b"",
-    stderr: bytes = b"",
-    returncode: int = 0,
-    side_effect: Exception | None = None,
-) -> MagicMock:
-    process = MagicMock()
-    process.returncode = returncode
-    process.pid = 54321
-    if side_effect is not None:
-        process.communicate = AsyncMock(side_effect=side_effect)
-    else:
-        process.communicate = AsyncMock(return_value=(stdout, stderr))
-    process.wait = AsyncMock(return_value=returncode)
-    process.kill = MagicMock()
-    return process
+# _build_subprocess_mock moved to tests/smoke/conftest.py — shared across
+# claude_code / codex / gemini_cli tests (audit refactor #7).
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +115,7 @@ async def test_healthcheck_available_without_api_keys() -> None:
     saved_google = os.environ.pop("GOOGLE_API_KEY", None)
     try:
         adapter = GeminiCliAdapter()
-        proc = _build_subprocess_mock(stdout=b"gemini 0.10.0\n")
+        proc = build_subprocess_mock(stdout=b"gemini 0.10.0\n")
         with (
             patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
             patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -145,7 +132,7 @@ async def test_healthcheck_available_without_api_keys() -> None:
 
 async def test_healthcheck_available(with_api_key: None) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=b"gemini 0.10.0\n")
+    proc = build_subprocess_mock(stdout=b"gemini 0.10.0\n")
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -193,7 +180,7 @@ async def test_execute_success_extracts_response_and_usage(
     with_api_key: None,
 ) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(
+    proc = build_subprocess_mock(
         stdout=_success_payload(text="hi", prompt_token_count=200, candidates_token_count=80)
     )
     with (
@@ -222,7 +209,7 @@ async def test_execute_success_extracts_response_and_usage(
 
 async def test_execute_passes_prompt_via_stdin(with_api_key: None) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -235,7 +222,7 @@ async def test_execute_passes_prompt_via_stdin(with_api_key: None) -> None:
 
 async def test_execute_with_thinking_budget(with_api_key: None) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
@@ -254,7 +241,7 @@ async def test_execute_passes_extra_args_to_argv(with_api_key: None) -> None:
     can be reused across all three CLI providers without silently dropping flags.
     """
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
@@ -288,7 +275,7 @@ async def test_per_agent_env_overrides_project_env(
     """#65 layering: runtime_config.env (highest) > project_env_vars > engine env."""
     monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
@@ -309,7 +296,7 @@ async def test_project_env_overrides_engine_env(
 ) -> None:
     monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
@@ -343,7 +330,7 @@ async def test_camelcase_token_keys_are_supported(with_api_key: None) -> None:
             "finishReason": "STOP",
         }
     ).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -363,7 +350,7 @@ async def test_camelcase_token_keys_are_supported(with_api_key: None) -> None:
 
 async def test_non_zero_exit_marks_failure(with_api_key: None) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(
+    proc = build_subprocess_mock(
         returncode=2,
         stdout=b"",
         stderr=b"Auth failed",
@@ -382,7 +369,7 @@ async def test_unparseable_json_returns_descriptive_error(
     with_api_key: None,
 ) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=b"not json", returncode=0)
+    proc = build_subprocess_mock(stdout=b"not json", returncode=0)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -397,7 +384,7 @@ async def test_non_object_payload_returns_descriptive_error(
     with_api_key: None,
 ) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(stdout=b'"plain string"')
+    proc = build_subprocess_mock(stdout=b'"plain string"')
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -411,7 +398,7 @@ async def test_non_object_payload_returns_descriptive_error(
 async def test_non_dict_usage_returns_descriptive_error(with_api_key: None) -> None:
     adapter = GeminiCliAdapter()
     payload = json.dumps({"response": "ok", "usage_metadata": "bad"}).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -439,7 +426,7 @@ async def test_non_numeric_token_count_skipped_gracefully(
             },
         }
     ).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -453,7 +440,7 @@ async def test_non_numeric_token_count_skipped_gracefully(
 
 async def test_timeout_kills_long_running_command(with_api_key: None) -> None:
     adapter = GeminiCliAdapter()
-    proc = _build_subprocess_mock(side_effect=TimeoutError())
+    proc = build_subprocess_mock(side_effect=TimeoutError())
     proc.returncode = None
 
     with (

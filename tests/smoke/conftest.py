@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 from dap_runtimes import RuntimeRegistry
 from fastapi.testclient import TestClient
@@ -31,3 +32,31 @@ def wait_for_status(
 def replace_adapter(registry: RuntimeRegistry, adapter: Any) -> None:
     """Replace an existing adapter in the registry (for testing)."""
     registry._adapters[adapter.id] = adapter
+
+
+def build_subprocess_mock(
+    *,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+    returncode: int = 0,
+    side_effect: Exception | None = None,
+    pid: int = 12345,
+) -> MagicMock:
+    """Create an asyncio.Process-shaped mock for ``create_subprocess_exec``.
+
+    Shared across CLI-tool adapter tests (claude_code, codex, gemini_cli) —
+    they all need a process whose ``communicate`` is awaitable, ``wait`` is
+    awaitable, ``kill`` is sync, and ``returncode``/``pid`` are settable.
+    The ``pid`` parameter exists so per-adapter tests can keep distinct
+    debug-friendly values when asserting on the kill path.
+    """
+    process = MagicMock()
+    process.returncode = returncode
+    process.pid = pid
+    if side_effect is not None:
+        process.communicate = AsyncMock(side_effect=side_effect)
+    else:
+        process.communicate = AsyncMock(return_value=(stdout, stderr))
+    process.wait = AsyncMock(return_value=returncode)
+    process.kill = MagicMock()
+    return process
