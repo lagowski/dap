@@ -187,6 +187,19 @@ def ensure_project(engine_url: str, pipeline_id: str, workspace_path: str) -> st
                 console.print(
                     f"[dim]  Project '{CORTEX_PROJECT_NAME}' already exists — id {proj_id}[/dim]"
                 )
+                # Keep working_directory and env_vars current on every run so
+                # bash nodes (git-branch) always get the right cwd. Without
+                # this, a project created before working_directory was set, or
+                # one pointing to the wrong path, would silently pass the wrong
+                # cwd to every bash node for the lifetime of the project (#224).
+                update_payload = {
+                    "name": CORTEX_PROJECT_NAME,
+                    "description": "Cortex multi-agent pipeline",
+                    "working_directory": workspace_path,
+                    "pipelines": {CORTEX_PIPELINE_KIND: pipeline_id},
+                    "env_vars": _collect_env_vars(),
+                }
+                client.put(f"/projects/{proj_id}", json=update_payload)
                 return proj_id
 
         console.print(f"[cyan]→ Creating project '{CORTEX_PROJECT_NAME}'...[/cyan]")
@@ -427,8 +440,12 @@ def poll_and_handle(
 
 
 def default_workspace_path(repo: str) -> str:
-    """Return the conventional Cortex workspace path for a repo."""
-    repo_slug = repo.replace("/", "_")
+    """Return the conventional Cortex workspace path for a repo.
+
+    Uses the same ``owner-name`` slug that ``cortex/init/profile.py:_repo_slug``
+    produces — dash separator, not underscore (#224).
+    """
+    repo_slug = repo.replace("/", "-")
     return str(os.path.expanduser(f"~/.cortex/projects/{repo_slug}/repo"))
 
 
