@@ -62,6 +62,11 @@ async def _pg_pooled_checkpointer(
         conninfo=conn_string,
         min_size=min_size,
         max_size=max_size,
+        # psycopg_pool default max_idle=600s (10 min) matches Cortex Phase 1
+        # runtime exactly — the pool reaps idle connections just as the gate
+        # checkpoint write arrives, causing PoolTimeout (#238).  Set to 1 h
+        # so connections survive the full pipeline (~40 min).
+        max_idle=3600.0,
         kwargs={
             "autocommit": True,
             "prepare_threshold": 0,
@@ -97,13 +102,13 @@ class EngineConfig:
     # ``runtime_config``) exceeds this. Belt-and-suspenders against a runaway
     # form value or a forgotten zero default in the UI.
     dry_run_budget_usd: float = 0.50
-    # PostgreSQL checkpointer pool sizing (#187). Each background run holds a
-    # connection only for the duration of a checkpoint read/write, so 10
-    # concurrent slots cover ~10 simultaneously-checkpointing pipelines without
-    # saturating Postgres connection limits. Bump max if checkpoint contention
-    # shows up under load; shrink min on dev/test boxes to save resident
-    # connections. Ignored on the SQLite path.
-    pg_pool_min_size: int = 2
+    # PostgreSQL checkpointer pool sizing (#187, #238).
+    # AsyncPostgresSaver serialises checkpoint ops behind a Lock, so only 1
+    # connection is in flight at a time — max_size governs burst concurrency
+    # across simultaneous runs, not within one.  min_size=4 matches the
+    # psycopg_pool default and keeps enough warm connections for the gate
+    # checkpoint write that arrives after a long idle Phase 1.
+    pg_pool_min_size: int = 4
     pg_pool_max_size: int = 10
 
 
