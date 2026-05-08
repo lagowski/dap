@@ -47,9 +47,17 @@ async def _pg_pooled_checkpointer(
     """Yield an AsyncPostgresSaver backed by a psycopg AsyncConnectionPool.
 
     Replaces ``AsyncPostgresSaver.from_conn_string`` which opens a single
-    AsyncConnection — concurrent runs serialize their checkpoint reads/writes
-    through that one TCP socket. With a pool, checkpoint ops can run in
-    parallel up to ``max_size``. (#187)
+    persistent AsyncConnection. (#187)
+
+    ``AsyncPostgresSaver._cursor()`` acquires a per-saver ``asyncio.Lock``
+    before borrowing from the pool, so checkpoint reads/writes are serialised
+    across all concurrent runs sharing this saver instance — only one
+    connection is borrowed at a time. ``max_size`` therefore governs how many
+    *spare* connections stay open, not actual checkpoint parallelism.
+    ``min_size`` is the more important knob: it controls how many warm
+    connections the pool keeps ready so a checkpoint write that arrives after a
+    long idle phase (Phase 1 ~10 min) doesn't have to create a new connection
+    through a potentially-stale k8s NodePort NAT. (#238)
 
     The connection kwargs (autocommit / prepare_threshold / row_factory) mirror
     what ``from_conn_string`` configures so AsyncPostgresSaver sees the same
