@@ -474,21 +474,23 @@ def _sync_workspace(ws_path: str) -> None:
     _sync_base_branch is a per-agent fallback inside the pipeline (#245).
 
     """
-    workspace = Path(ws_path)
+    # Expand ~ so --workspace ~/... works correctly.
+    workspace = Path(ws_path).expanduser()
+    cwd = str(workspace)
     if not workspace.exists():
-        console.print(f"[yellow]⚠  Workspace not found at {ws_path} — skipping sync[/yellow]")
+        console.print(f"[yellow]⚠  Workspace not found at {workspace} — skipping sync[/yellow]")
         return
     try:
         subprocess.run(
             ["git", "fetch", "origin"],
-            cwd=ws_path,
+            cwd=cwd,
             check=True,
             capture_output=True,
             timeout=60,
         )
         result = subprocess.run(
             ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-            cwd=ws_path,
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=5,
@@ -497,22 +499,26 @@ def _sync_workspace(ws_path: str) -> None:
         branch = result.stdout.strip().split("/")[-1] if result.returncode == 0 else "main"
         subprocess.run(
             ["git", "checkout", branch],
-            cwd=ws_path,
+            cwd=cwd,
             check=True,
             capture_output=True,
             timeout=10,
         )
         subprocess.run(
             ["git", "reset", "--hard", f"origin/{branch}"],
-            cwd=ws_path,
+            cwd=cwd,
             check=True,
             capture_output=True,
             timeout=30,
         )
         console.print(f"[dim]  Workspace synced → origin/{branch}[/dim]")
-    except subprocess.CalledProcessError as e:
-        stderr = (e.stderr or b"").decode("utf-8", errors="replace")[:200]
-        console.print(f"[yellow]⚠  Workspace sync failed: {stderr}[/yellow]")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        stderr = b""
+        if isinstance(e, subprocess.CalledProcessError):
+            stderr = e.stderr or b""
+        stderr_str = stderr.decode("utf-8", errors="replace")[:200]
+        detail = f" — {stderr_str}" if stderr_str else ""
+        console.print(f"[yellow]⚠  Workspace sync failed: {e}{detail}[/yellow]")
 
 
 # ---------------------------------------------------------------------------
