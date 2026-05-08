@@ -192,14 +192,24 @@ def ensure_project(engine_url: str, pipeline_id: str, workspace_path: str) -> st
                 # this, a project created before working_directory was set, or
                 # one pointing to the wrong path, would silently pass the wrong
                 # cwd to every bash node for the lifetime of the project (#224).
+                #
+                # Build from existing project data to preserve fields we don't
+                # control (repo_url, default_branch) and merge pipeline bindings
+                # rather than replacing them wholesale (Copilot review).
                 update_payload = {
-                    "name": CORTEX_PROJECT_NAME,
-                    "description": "Cortex multi-agent pipeline",
+                    "name": p.get("name", CORTEX_PROJECT_NAME),
+                    "description": p.get("description", "Cortex multi-agent pipeline"),
                     "working_directory": workspace_path,
-                    "pipelines": {CORTEX_PIPELINE_KIND: pipeline_id},
+                    "repo_url": p.get("repo_url"),
+                    "default_branch": p.get("default_branch", "main"),
+                    "pipelines": {
+                        **p.get("pipelines", {}),
+                        CORTEX_PIPELINE_KIND: pipeline_id,
+                    },
                     "env_vars": _collect_env_vars(),
                 }
-                client.put(f"/projects/{proj_id}", json=update_payload)
+                resp_put = client.put(f"/projects/{proj_id}", json=update_payload)
+                resp_put.raise_for_status()
                 return proj_id
 
         console.print(f"[cyan]→ Creating project '{CORTEX_PROJECT_NAME}'...[/cyan]")
