@@ -47,8 +47,8 @@ def build_subprocess_mock(
     Shared across CLI-tool adapter tests (claude_code, codex, gemini_cli) —
     they all need a process whose ``communicate`` is awaitable, ``wait`` is
     awaitable, ``kill`` is sync, and ``returncode``/``pid`` are settable.
-    The ``pid`` parameter exists so per-adapter tests can keep distinct
-    debug-friendly values when asserting on the kill path.
+    The ``pid`` parameter is overridable but no current test asserts on
+    its value; the default suffices.
     """
     process = MagicMock()
     process.returncode = returncode
