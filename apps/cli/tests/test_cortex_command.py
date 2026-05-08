@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from dap_cli.__main__ import app
 from dap_cli.commands.cortex import (
+    _sync_workspace,
     cortex_approve,
     cortex_reject,
     cortex_state,
@@ -65,6 +67,68 @@ class TestDefaultWorkspacePath:
     def test_ends_with_repo(self) -> None:
         path = default_workspace_path("owner/myrepo")
         assert path.endswith("/repo")
+
+
+# ---------------------------------------------------------------------------
+# _sync_workspace
+# ---------------------------------------------------------------------------
+
+
+class TestSyncWorkspace:
+    def test_skips_when_workspace_absent(self, tmp_path: Path) -> None:
+        """Non-existent workspace is a soft skip, not an error."""
+        missing = str(tmp_path / "no-such-repo")
+        _sync_workspace(missing)  # must not raise
+
+    def test_syncs_with_expected_git_calls(self, tmp_path: Path) -> None:
+        """Happy path: git fetch + symbolic-ref + checkout + reset are called."""
+        from unittest.mock import patch
+
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+
+        symref_result = MagicMock(returncode=0, stdout="refs/remotes/origin/HEAD\n")
+        symref_result.stdout = "refs/remotes/origin/HEAD\n"
+
+        with patch("dap_cli.commands.cortex.subprocess.run") as mock_run:
+            mock_run.return_value = symref_result
+            _sync_workspace(str(workspace))
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert calls[0] == ["git", "fetch", "origin"]
+        assert calls[1] == ["git", "symbolic-ref", "refs/remotes/origin/HEAD"]
+        assert calls[2][0:2] == ["git", "checkout"]
+        assert calls[3][0:2] == ["git", "reset"]
+
+    def test_non_fatal_on_git_error(self, tmp_path: Path) -> None:
+        """CalledProcessError, TimeoutExpired, and OSError are caught, not raised."""
+        import subprocess as _sp
+        from unittest.mock import patch
+
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+
+        for exc in [
+            _sp.CalledProcessError(1, "git", stderr=b"auth error"),
+            _sp.TimeoutExpired("git", 60),
+            OSError("git not found"),
+        ]:
+            with patch("dap_cli.commands.cortex.subprocess.run", side_effect=exc):
+                _sync_workspace(str(workspace))  # must not raise
+
+    def test_expands_tilde(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """~/ in ws_path is expanded before the exists() check."""
+        from unittest.mock import patch
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+
+        with patch("dap_cli.commands.cortex.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/HEAD\n")
+            _sync_workspace("~/repo")  # should resolve to tmp_path/repo
+
+        assert mock_run.called
 
 
 # ---------------------------------------------------------------------------

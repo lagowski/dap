@@ -11,9 +11,11 @@ import importlib.resources
 import json
 import os
 import re
+import subprocess
 import time
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -460,6 +462,66 @@ def default_workspace_path(repo: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Workspace sync
+# ---------------------------------------------------------------------------
+
+
+def _sync_workspace(ws_path: str) -> None:
+    """Sync the workspace clone to its default branch before starting a run.
+
+    Mirrors cortex-project cli.py:_sync_workspace. Non-fatal: logs a warning
+    and continues if the workspace doesn't exist or git fails — execution.py
+    _sync_base_branch is a per-agent fallback inside the pipeline (#245).
+
+    """
+    # Expand ~ so --workspace ~/... works correctly.
+    workspace = Path(ws_path).expanduser()
+    cwd = str(workspace)
+    if not workspace.exists():
+        console.print(f"[yellow]⚠  Workspace not found at {workspace} — skipping sync[/yellow]")
+        return
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        result = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        branch = result.stdout.strip().split("/")[-1] if result.returncode == 0 else "main"
+        subprocess.run(
+            ["git", "checkout", branch],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        subprocess.run(
+            ["git", "reset", "--hard", f"origin/{branch}"],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        console.print(f"[dim]  Workspace synced → origin/{branch}[/dim]")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        stderr = b""
+        if isinstance(e, subprocess.CalledProcessError):
+            stderr = e.stderr or b""
+        stderr_str = stderr.decode("utf-8", errors="replace")[:200]
+        detail = f" — {stderr_str}" if stderr_str else ""
+        console.print(f"[yellow]⚠  Workspace sync failed: {e}{detail}[/yellow]")
+
+
+# ---------------------------------------------------------------------------
 # High-level command functions
 # ---------------------------------------------------------------------------
 
@@ -497,6 +559,10 @@ def cortex_run(
 
     # Workspace
     ws_path = workspace or default_workspace_path(repo)
+
+    # Sync workspace to default branch HEAD before the run so Phase 1 agents
+    # read current code and the coder branches from the right baseline (#241).
+    _sync_workspace(ws_path)
 
     # Create / reuse project
     project_id = ensure_project(engine_url, pipeline_id, ws_path)
