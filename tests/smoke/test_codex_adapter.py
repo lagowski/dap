@@ -17,6 +17,8 @@ import pytest
 from dap_runtimes import CodexAdapter
 from dap_types import RuntimeTask
 
+from .conftest import build_subprocess_mock
+
 _PATCH_PATH = "dap_runtimes.adapters.codex.asyncio.create_subprocess_exec"
 _WHICH_PATH = "dap_runtimes.adapters.codex.shutil.which"
 
@@ -80,23 +82,8 @@ def _success_payload(
     ).encode("utf-8")
 
 
-def _build_subprocess_mock(
-    *,
-    stdout: bytes = b"",
-    stderr: bytes = b"",
-    returncode: int = 0,
-    side_effect: Exception | None = None,
-) -> MagicMock:
-    process = MagicMock()
-    process.returncode = returncode
-    process.pid = 24680
-    if side_effect is not None:
-        process.communicate = AsyncMock(side_effect=side_effect)
-    else:
-        process.communicate = AsyncMock(return_value=(stdout, stderr))
-    process.wait = AsyncMock(return_value=returncode)
-    process.kill = MagicMock()
-    return process
+# _build_subprocess_mock moved to tests/smoke/conftest.py — shared across
+# claude_code / codex / gemini_cli tests (audit refactor #7).
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +116,7 @@ async def test_healthcheck_missing_api_key() -> None:
 
 async def test_healthcheck_available(with_api_key: None) -> None:
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=b"codex 0.5.0\n")
+    proc = build_subprocess_mock(stdout=b"codex 0.5.0\n")
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -208,7 +195,7 @@ async def test_execute_success_extracts_output_and_usage(
     with_api_key: None,
 ) -> None:
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(
+    proc = build_subprocess_mock(
         stdout=_success_payload(text="hi", input_tokens=200, output_tokens=80)
     )
     with (
@@ -238,7 +225,7 @@ async def test_execute_success_extracts_output_and_usage(
 
 async def test_execute_passes_prompt_via_stdin(with_api_key: None) -> None:
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -251,7 +238,7 @@ async def test_execute_passes_prompt_via_stdin(with_api_key: None) -> None:
 
 async def test_execute_with_extra_args(with_api_key: None) -> None:
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
@@ -276,7 +263,7 @@ async def test_camelcase_token_keys_are_supported(with_api_key: None) -> None:
             "finishReason": "stop",
         }
     ).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -298,7 +285,7 @@ async def test_alternate_text_keys_are_supported(with_api_key: None) -> None:
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
     ).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -315,7 +302,7 @@ async def test_per_agent_env_overrides_project_env(
     """#65 layering: runtime_config.env (highest) > project_env_vars > engine env."""
     monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
@@ -336,7 +323,7 @@ async def test_project_env_overrides_engine_env(
 ) -> None:
     monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload())
+    proc = build_subprocess_mock(stdout=_success_payload())
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
@@ -360,7 +347,7 @@ async def test_invalid_runtime_config_env_returns_failed(
 async def test_payload_preserved_for_debug(with_api_key: None) -> None:
     """Whole CLI payload should round-trip into structured for shape-drift debug."""
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=_success_payload(text="ping"))
+    proc = build_subprocess_mock(stdout=_success_payload(text="ping"))
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -379,7 +366,7 @@ async def test_payload_preserved_for_debug(with_api_key: None) -> None:
 
 async def test_non_zero_exit_marks_failure(with_api_key: None) -> None:
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(
+    proc = build_subprocess_mock(
         returncode=1,
         stdout=b"",
         stderr=b"401 unauthorized\nbad key",
@@ -401,7 +388,7 @@ async def test_unparseable_json_returns_descriptive_error(
     with_api_key: None,
 ) -> None:
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=b"not json", returncode=0)
+    proc = build_subprocess_mock(stdout=b"not json", returncode=0)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -417,7 +404,7 @@ async def test_non_object_payload_returns_descriptive_error(
 ) -> None:
     """Valid JSON that isn't an object (e.g. an array) shouldn't crash the adapter."""
     adapter = CodexAdapter()
-    proc = _build_subprocess_mock(stdout=b"[1, 2, 3]")
+    proc = build_subprocess_mock(stdout=b"[1, 2, 3]")
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -434,7 +421,7 @@ async def test_non_dict_usage_returns_descriptive_error(
     """A valid result dict with `usage` of the wrong shape — graceful failure."""
     adapter = CodexAdapter()
     payload = json.dumps({"output_text": "ok", "usage": "nope"}).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -459,7 +446,7 @@ async def test_non_numeric_token_count_skipped_gracefully(
             "usage": {"input_tokens": "not-a-number", "output_tokens": 50},
         }
     ).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -475,7 +462,7 @@ async def test_missing_usage_defaults_to_zero_tokens(with_api_key: None) -> None
     """Older CLI builds may omit `usage` entirely — adapter shouldn't crash."""
     adapter = CodexAdapter()
     payload = json.dumps({"output_text": "ok"}).encode("utf-8")
-    proc = _build_subprocess_mock(stdout=payload)
+    proc = build_subprocess_mock(stdout=payload)
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/codex"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -489,7 +476,7 @@ async def test_missing_usage_defaults_to_zero_tokens(with_api_key: None) -> None
 async def test_timeout_kills_long_running_command(with_api_key: None) -> None:
     adapter = CodexAdapter()
     # communicate raises TimeoutError when wait_for fires
-    proc = _build_subprocess_mock(side_effect=TimeoutError())
+    proc = build_subprocess_mock(side_effect=TimeoutError())
     proc.returncode = None  # still running
 
     with (
