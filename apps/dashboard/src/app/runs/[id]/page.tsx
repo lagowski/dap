@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RunStatusBadge } from "@/components/status-badge";
 import { PipelineGraph } from "@/components/pipeline-graph";
-import { NodeDrawer } from "@/components/node-drawer";
+import { NodeDetailPanel } from "@/components/node-detail-panel";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import type { Agent, Run } from "@/lib/api/types";
 
@@ -107,7 +107,7 @@ export default function RunDetailPage({
         </Card>
       )}
 
-      <NodeDrawer
+      <NodeDetailPanel
         runId={run.id}
         nodeId={selectedNode}
         onOpenChange={(open) => !open && setSelectedNode(null)}
