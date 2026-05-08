@@ -6,6 +6,7 @@ import asyncio
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from dap_runtimes import BashAdapter
@@ -300,23 +301,22 @@ async def test_structured_shape_is_consistent_across_outcomes(
 # Bundle regression tests — dap#223
 # ---------------------------------------------------------------------------
 
-def _load_bundle(filename: str) -> dict:
+def _load_bundle(filename: str) -> dict[str, Any]:
     """Load a Cortex DAP bundle JSON from the packages/cortex tree."""
     import json
-    from pathlib import Path
     bundle_path = (
         Path(__file__).parent.parent.parent
         / "packages/cortex/src/cortex/dap_bundles"
         / filename
     )
-    return json.loads(bundle_path.read_text())
+    return cast(dict[str, Any], json.loads(bundle_path.read_text()))
 
 
-def _git_branch_agent(bundle: dict) -> dict | None:
+def _git_branch_agent(bundle: dict[str, Any]) -> dict[str, Any] | None:
     """Return the git-branch bundled agent dict, or None if not present."""
     for agent_id, agent in bundle.get("bundled_agents", {}).items():
         if "git_branch" in agent_id or "Git Branch" in agent.get("name", ""):
-            return agent
+            return cast(dict[str, Any], agent)
     return None
 
 
