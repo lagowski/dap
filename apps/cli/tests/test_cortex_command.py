@@ -57,8 +57,9 @@ class TestParseIssueUrl:
 
 class TestDefaultWorkspacePath:
     def test_slashes_replaced(self) -> None:
+        # Separator must be dash to match cortex/init/profile.py:_repo_slug (#224)
         path = default_workspace_path("Dixter999/cortex-project")
-        assert "Dixter999_cortex-project" in path
+        assert "Dixter999-cortex-project" in path
         assert "/" not in path.split("cortex/projects/")[1].split("/repo")[0]
 
     def test_ends_with_repo(self) -> None:
