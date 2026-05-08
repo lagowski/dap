@@ -250,6 +250,31 @@ def _clean_workspace_for_agent(workspace) -> None:
         logger.warning("_clean_workspace_for_agent failed in %s: %s", workspace, e)
 
 
+def _sync_base_branch(workspace, base_branch: str) -> None:
+    """Fetch base_branch so origin/<base_branch> is current.
+
+    Ensures _collect_commits(origin/<base>..HEAD) sees only the commits
+    the agent actually added, not stale history from an unsynced clone (#243).
+    """
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin", base_branch],
+            cwd=str(workspace),
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        subprocess.run(
+            ["git", "reset", "--hard", f"origin/{base_branch}"],
+            cwd=str(workspace),
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        logger.warning("_sync_base_branch: fetch/reset %s failed: %s", base_branch, e)
+
+
 def checkout_agent_branch(workspace, branch_name: str, base_branch: str) -> bool:
     """Fetch + checkout an agent branch in the local workspace.
 
@@ -653,6 +678,13 @@ def run_execution_node(
     with _ws_lock:
         pre_sha: str | None = None
         if not branch_failed and workspace.exists():
+            # Sync base branch before checkout: updates origin/<base_branch> so
+            # _collect_commits(origin/<base>..HEAD) is accurate (#243). Also
+            # resets workspace to base HEAD so a stale clone can't produce a
+            # 300-file diff. Only for coder first-run; designer/documenter chain
+            # from coder's branch, retry-coder builds on existing branch tip.
+            if agent_name == "coder" and retry_count == 0:
+                _sync_base_branch(workspace, base_branch)
             checkout_agent_branch(workspace, branch_name, base_branch)
             # Remove untracked / uncommitted files left by previous agents
             # so this agent cannot accidentally stage them (#275).
