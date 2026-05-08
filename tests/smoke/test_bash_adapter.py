@@ -6,6 +6,7 @@ import asyncio
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from dap_runtimes import BashAdapter
@@ -294,3 +295,69 @@ async def test_structured_shape_is_consistent_across_outcomes(
     missing_cmd = await adapter.execute(_task())
     assert missing_cmd.structured is not None
     assert set(missing_cmd.structured.keys()) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# Bundle regression tests — dap#223
+# ---------------------------------------------------------------------------
+
+def _load_bundle(filename: str) -> dict[str, Any]:
+    """Load a Cortex DAP bundle JSON from the packages/cortex tree."""
+    import json
+    bundle_path = (
+        Path(__file__).parent.parent.parent
+        / "packages/cortex/src/cortex/dap_bundles"
+        / filename
+    )
+    return cast(dict[str, Any], json.loads(bundle_path.read_text()))
+
+
+def _git_branch_agent(bundle: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the git-branch bundled agent dict, or None if not present."""
+    for agent_id, agent in bundle.get("bundled_agents", {}).items():
+        if "git_branch" in agent_id or "Git Branch" in agent.get("name", ""):
+            return cast(dict[str, Any], agent)
+    return None
+
+
+def test_phase2_bundle_git_branch_omits_explicit_shell() -> None:
+    """cortex-phase2 bundle must not hard-code shell in git-branch runtime_config.
+
+    Hard-coding 'shell': '/bin/bash' bypasses the BashAdapter fallback chain
+    (DAP_BASH_SHELL env var → /bin/bash default), causing 'Shell not found'
+    on hosts without /bin/bash (#223).
+    """
+    bundle = _load_bundle("cortex-phase2.pipeline-bundle.json")
+    agent = _git_branch_agent(bundle)
+    assert agent is not None, "cx_p2_git_branch agent not found in phase2 bundle"
+    rc = agent.get("runtime_config", {})
+    assert "shell" not in rc, (
+        f"git-branch runtime_config must not contain 'shell' key; got: {rc}"
+    )
+
+
+def test_full_bundle_git_branch_omits_explicit_shell() -> None:
+    """cortex-full bundle must not hard-code shell in git-branch runtime_config."""
+    bundle = _load_bundle("cortex-full.pipeline-bundle.json")
+    agent = _git_branch_agent(bundle)
+    assert agent is not None, "cx_p2_git_branch agent not found in full bundle"
+    rc = agent.get("runtime_config", {})
+    assert "shell" not in rc, (
+        f"git-branch runtime_config must not contain 'shell' key; got: {rc}"
+    )
+
+
+def test_full_bundle_git_branch_command_uses_and_chaining() -> None:
+    """git-branch prompt template must use && not ; so cd failure aborts the chain."""
+    import re
+    bundle = _load_bundle("cortex-full.pipeline-bundle.json")
+    agent = _git_branch_agent(bundle)
+    assert agent is not None, "cx_p2_git_branch agent not found in full bundle"
+    pt = agent.get("prompt_template", "")
+    m = re.search(r"<command>(.*?)</command>", pt, re.DOTALL)
+    assert m is not None, "git-branch prompt_template has no <command> block"
+    cmd = m.group(1)
+    assert ";" not in cmd, (
+        "git-branch command uses ';' chaining — use '&&' so cd failure aborts "
+        f"subsequent git commands. command: {cmd!r}"
+    )
