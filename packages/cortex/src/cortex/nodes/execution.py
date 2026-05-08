@@ -264,15 +264,27 @@ def _sync_base_branch(workspace, base_branch: str) -> None:
             capture_output=True,
             timeout=60,
         )
+        # Detach HEAD to origin/<base_branch> rather than hard-resetting the
+        # current branch — avoids accidentally rewriting a previously
+        # checked-out agent branch if the workspace is still on it.
+        # `-f` discards any uncommitted changes so checkout never blocks.
         subprocess.run(
-            ["git", "reset", "--hard", f"origin/{base_branch}"],
+            ["git", "checkout", "-f", "--detach", f"origin/{base_branch}"],
             cwd=str(workspace),
             check=True,
             capture_output=True,
             timeout=30,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
-        logger.warning("_sync_base_branch: fetch/reset %s failed: %s", base_branch, e)
+        stderr = ""
+        if isinstance(e, subprocess.CalledProcessError):
+            stderr = (e.stderr or b"").decode("utf-8", errors="replace")[:200]
+        logger.warning(
+            "_sync_base_branch: fetch/detach %s failed: %s%s",
+            base_branch,
+            e,
+            f" — {stderr}" if stderr else "",
+        )
 
 
 def checkout_agent_branch(workspace, branch_name: str, base_branch: str) -> bool:
