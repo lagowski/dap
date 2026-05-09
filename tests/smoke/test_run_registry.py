@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import threading
 
 import pytest
 from dap_engine.execution import RunRegistry
@@ -30,9 +31,10 @@ async def _running_task() -> None:
         raise
 
 
-async def _completed_task(value: int = 0) -> int:
-    """A task that resolves immediately."""
-    return value
+async def _completed_task() -> None:
+    """A task that resolves immediately. Returns ``None`` so the type matches
+    ``RunRegistry._tasks: dict[str, asyncio.Task[None]]`` for stubbed slots."""
+    return None
 
 
 @pytest.mark.asyncio
@@ -67,7 +69,7 @@ async def test_register_replaces_stale_done_task_slot() -> None:
     registry = RunRegistry()
     run_id = "run-stale"
 
-    finished_task: asyncio.Task[int] = asyncio.create_task(_completed_task(7))
+    finished_task: asyncio.Task[None] = asyncio.create_task(_completed_task())
     await finished_task  # ensure it's done
 
     # Manually plant the done task — simulates the race window before the
@@ -103,29 +105,52 @@ async def test_cleanup_callback_clears_slot_after_task_done() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_register_attempts_serialise() -> None:
-    """Two coroutines reaching ``register`` for the same run_id within the
-    same event-loop tick must not both succeed — the second must observe
-    the first's task and raise."""
+async def test_register_thread_safe_under_real_concurrency() -> None:
+    """Two OS threads racing to register the same run_id collapse to one
+    winner — exercises the threading.Lock added in #258. Pure asyncio
+    coroutines wouldn't actually race here (``register`` has no await,
+    so single-loop scheduling makes the second call see the first's
+    state deterministically); we need real preemption from two threads
+    plus a ``Barrier`` to maximise the chance of the threads entering
+    the critical section concurrently."""
     registry = RunRegistry()
-    run_id = "run-concurrent"
+    run_id = "run-thread-race"
     task_a = asyncio.create_task(_running_task())
     task_b = asyncio.create_task(_running_task())
 
-    async def _try_register(t: asyncio.Task[None]) -> bool:
-        try:
-            registry.register(run_id, t)
-        except ValueError:
-            return False
-        return True
+    barrier = threading.Barrier(parties=2)
+    results: list[bool] = []
+    results_lock = threading.Lock()
 
-    results = await asyncio.gather(_try_register(task_a), _try_register(task_b))
+    def attempt(task: asyncio.Task[None]) -> None:
+        # Both threads block on the barrier so they enter ``register``
+        # at as close to the same wall-clock instant as possible.
+        barrier.wait()
+        try:
+            registry.register(run_id, task)
+            ok = True
+        except ValueError:
+            ok = False
+        with results_lock:
+            results.append(ok)
+
     try:
-        # Exactly one must succeed; the other gets ValueError → False.
+        threads = [
+            threading.Thread(target=attempt, args=(task_a,)),
+            threading.Thread(target=attempt, args=(task_b,)),
+        ]
+        for thr in threads:
+            thr.start()
+        for thr in threads:
+            thr.join()
+
+        # Exactly one wins; the other observes the winner's slot under
+        # the lock and raises ValueError. Neither outcome on its own
+        # would surface a missing lock — but breaking the lock would let
+        # both writes through, leaving the registry in an undefined state.
         assert sorted(results) == [False, True]
-        # Whichever won is the one we'll see in the registry.
-        winner = task_a if results[0] else task_b
-        assert registry.get(run_id) is winner
+        winner = registry.get(run_id)
+        assert winner in (task_a, task_b)
     finally:
         for t in (task_a, task_b):
             t.cancel()

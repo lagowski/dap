@@ -58,23 +58,35 @@ class RunRegistry:
         task.add_done_callback(_cleanup)
 
     def get(self, run_id: str) -> asyncio.Task[None] | None:
-        return self._tasks.get(run_id)
+        with self._lock:
+            return self._tasks.get(run_id)
 
     def is_running(self, run_id: str) -> bool:
-        task = self._tasks.get(run_id)
+        with self._lock:
+            task = self._tasks.get(run_id)
         return task is not None and not task.done()
 
     def list_running(self) -> list[str]:
-        return [run_id for run_id, t in self._tasks.items() if not t.done()]
+        # Snapshot the items under lock so a concurrent register / cleanup
+        # can't mutate the dict mid-iteration. Done-state check happens
+        # after release: a task transitioning to done while we evaluate
+        # is harmless, the next call observes the new state.
+        with self._lock:
+            items = list(self._tasks.items())
+        return [run_id for run_id, t in items if not t.done()]
 
     async def abort(self, run_id: str) -> bool:
         """Cancel the task for `run_id`. Returns True if a running task was found.
 
         Caller is responsible for updating the Run row's final_status.
         """
-        task = self._tasks.get(run_id)
+        with self._lock:
+            task = self._tasks.get(run_id)
         if task is None or task.done():
             return False
+        # Lock released before await — the cleanup callback that fires when
+        # the cancelled task transitions to done re-acquires the same lock,
+        # so holding it across the await would deadlock.
         task.cancel()
         try:
             await task
@@ -93,10 +105,13 @@ class RunRegistry:
 
         Returns True if a running task was found and cancelled.
         """
-        task = self._tasks.get(run_id)
-        if task is None or task.done():
-            return False
-        self._paused.add(run_id)
+        # Lookup-and-mark under lock so the ``_paused`` flip and the
+        # task-found check appear atomic to other registry callers.
+        with self._lock:
+            task = self._tasks.get(run_id)
+            if task is None or task.done():
+                return False
+            self._paused.add(run_id)
         task.cancel()
         try:
             await task
@@ -108,24 +123,27 @@ class RunRegistry:
 
     def was_paused(self, run_id: str) -> bool:
         """Whether the (now-cancelled) task was cancelled via pause(), not abort()."""
-        return run_id in self._paused
+        with self._lock:
+            return run_id in self._paused
 
     async def shutdown(self, *, timeout: float = 5.0) -> list[str]:
         """Cancel all running tasks. Returns list of run_ids that were cancelled.
 
         Used at engine teardown to ensure no orphan tasks leak.
         """
-        running_ids = self.list_running()
-        if not running_ids:
+        # Snapshot the (run_id, task) pairs under lock — we need both to
+        # cancel and await without iterating ``_tasks`` while cleanup
+        # callbacks pop entries.
+        with self._lock:
+            running = [(rid, t) for rid, t in self._tasks.items() if not t.done()]
+        if not running:
             return []
 
-        for run_id in running_ids:
-            task = self._tasks.get(run_id)
-            if task is not None and not task.done():
+        for _run_id, task in running:
+            if not task.done():
                 task.cancel()
 
-        # Wait for cancellation to settle, with timeout
-        tasks = [self._tasks[rid] for rid in running_ids if rid in self._tasks]
+        tasks = [t for _rid, t in running]
         if tasks:
             try:
                 await asyncio.wait_for(
@@ -137,4 +155,4 @@ class RunRegistry:
                     "shutdown timeout (%.1fs) — some run tasks may not have finalized",
                     timeout,
                 )
-        return running_ids
+        return [rid for rid, _t in running]
