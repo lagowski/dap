@@ -19,8 +19,8 @@ from dap_types import RuntimeTask
 
 from .conftest import build_subprocess_mock
 
-_PATCH_PATH = "dap_runtimes.adapters.gemini_cli.asyncio.create_subprocess_exec"
-_WHICH_PATH = "dap_runtimes.adapters.gemini_cli.shutil.which"
+_PATCH_PATH = "dap_runtimes.adapters._cli_base.asyncio.create_subprocess_exec"
+_WHICH_PATH = "dap_runtimes.adapters._cli_base.shutil.which"
 
 
 @pytest.fixture
@@ -502,21 +502,6 @@ async def test_cancellation_kills_subprocess(with_api_key: None) -> None:
     ],
 )
 def test_first_int_handles_varied_shapes(payload: dict[str, Any], expected: int) -> None:
-    from dap_runtimes.adapters.gemini_cli import _first_int
+    from dap_runtimes.adapters._cli_base import _first_int
 
     assert _first_int(payload, ("tokens",)) == expected
-
-
-def test_first_int_codex_and_gemini_share_behavior() -> None:
-    """Both adapters' _first_int must agree on edge cases (#214)."""
-    from dap_runtimes.adapters.codex import _first_int as codex_first_int
-    from dap_runtimes.adapters.gemini_cli import _first_int as gemini_first_int
-
-    cases: list[tuple[dict[str, Any], tuple[str, ...]]] = [
-        ({"x": "12.0"}, ("x",)),
-        ({"x": True}, ("x",)),
-        ({"x": "abc"}, ("x",)),
-        ({}, ("x",)),
-    ]
-    for payload, keys in cases:
-        assert codex_first_int(payload, keys) == gemini_first_int(payload, keys)

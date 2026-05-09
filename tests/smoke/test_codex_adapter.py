@@ -19,8 +19,8 @@ from dap_types import RuntimeTask
 
 from .conftest import build_subprocess_mock
 
-_PATCH_PATH = "dap_runtimes.adapters.codex.asyncio.create_subprocess_exec"
-_WHICH_PATH = "dap_runtimes.adapters.codex.shutil.which"
+_PATCH_PATH = "dap_runtimes.adapters._cli_base.asyncio.create_subprocess_exec"
+_WHICH_PATH = "dap_runtimes.adapters._cli_base.shutil.which"
 
 
 @pytest.fixture
