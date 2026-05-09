@@ -323,7 +323,7 @@ def try_claim_resume(session: Session, run_id: str) -> bool:
     stmt = (
         update(RunORM)
         .where(RunORM.id == run_id, RunORM.final_status == "paused")
-        .values(final_status="running", ended_at=None)
+        .values(final_status="running", ended_at=None, failure_reason=None)
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
     # CursorResult exposes .rowcount, which the static Result[Any] type does not.
@@ -338,11 +338,15 @@ def try_claim_revive(session: Session, run_id: str) -> bool:
     safety as ``try_claim_resume`` (#185), but accepts ``failed`` as a
     starting state so a node-level intervention can put a terminated run
     back into motion.
+
+    Clears ``failure_reason`` (#260): a revived run has left the failed
+    state, so a stale "engine restarted mid-run" diagnostic from the
+    previous lifecycle should not stay attached.
     """
     stmt = (
         update(RunORM)
         .where(RunORM.id == run_id, RunORM.final_status.in_(("paused", "failed")))
-        .values(final_status="running", ended_at=None)
+        .values(final_status="running", ended_at=None, failure_reason=None)
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
     # CursorResult exposes .rowcount, which the static Result[Any] type does not.

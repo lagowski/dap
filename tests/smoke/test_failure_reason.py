@@ -118,6 +118,34 @@ def test_get_run_exposes_failure_reason_via_pydantic(
     assert run.failure_reason == "boot recovery"
 
 
+def test_revive_clears_stale_failure_reason(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Reviving a failed run via retry/skip transitions it back to ``running``.
+    The previous-lifecycle ``failure_reason`` ("engine restarted mid-run",
+    etc.) no longer describes the current state and must be cleared (#260) —
+    otherwise a successfully-retried run would still surface the stale
+    diagnostic to the dashboard."""
+    run_id = _seed_running_run(session_factory)
+
+    # Stale-recovery sweep marks it failed with a reason.
+    with session_factory() as s:
+        repo.mark_stale_running_runs_as_failed(s, reason="engine restarted mid-run")
+        s.commit()
+
+    # Operator hits retry → try_claim_revive flips back to running.
+    with session_factory() as s:
+        claimed = repo.try_claim_revive(s, run_id)
+        s.commit()
+    assert claimed is True
+
+    with session_factory() as s:
+        run = s.get(RunORM, run_id)
+        assert run is not None
+        assert run.final_status == "running"
+        assert run.failure_reason is None
+
+
 def test_clean_run_has_null_failure_reason(
     session_factory: sessionmaker[Session],
 ) -> None:
