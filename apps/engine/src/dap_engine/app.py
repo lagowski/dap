@@ -95,6 +95,32 @@ async def _pg_pooled_checkpointer(
         yield AsyncPostgresSaver(conn=pool)
 
 
+# Local-dev defaults: dashboard on :3000, alt port :7332. Override at
+# deploy time via ``EngineConfig.cors_origins`` or the ``DAP_CORS_ORIGINS``
+# env var (#259).
+DEFAULT_CORS_ORIGINS: list[str] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:7332",
+    "http://127.0.0.1:7332",
+]
+
+
+def parse_cors_origins(raw: str | None) -> list[str] | None:
+    """Parse ``DAP_CORS_ORIGINS`` (comma-separated origins) into a list.
+
+    Returns ``None`` when the env var is unset or empty after stripping —
+    callers treat that as "use the default local-dev list". Whitespace
+    around individual entries is trimmed; empty entries are dropped so a
+    trailing comma doesn't produce a bogus origin string.
+    """
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(",")]
+    cleaned = [p for p in parts if p]
+    return cleaned or None
+
+
 @dataclass
 class EngineConfig:
     db_path: str = "./.dap/state.db"
@@ -118,6 +144,11 @@ class EngineConfig:
     # checkpoint write that arrives after a long idle Phase 1.
     pg_pool_min_size: int = 4
     pg_pool_max_size: int = 10
+    # CORS origins permitted on the engine's REST API (#259). ``None``
+    # means "fall back to ``DEFAULT_CORS_ORIGINS``" — the local-dev list.
+    # Production deployments override via env var ``DAP_CORS_ORIGINS``
+    # (parsed in ``__main__``) or by passing ``cors_origins=[...]`` here.
+    cors_origins: list[str] | None = None
 
 
 def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
@@ -206,12 +237,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:7332",
-            "http://127.0.0.1:7332",
-        ],
+        allow_origins=cfg.cors_origins if cfg.cors_origins is not None else DEFAULT_CORS_ORIGINS,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Authorization"],
     )
