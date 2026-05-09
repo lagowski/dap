@@ -14,14 +14,12 @@ from dap_engine.api.agents import build_agent_export_payload
 from dap_engine.api.deps import get_session
 from dap_engine.api.schemas import (
     PIPELINE_EXPORT_SCHEMA_VERSION,
-    AgentCreate,
     AgentExportPayload,
-    PipelineCreate,
     PipelineExport,
     PipelineExportPayload,
     PipelineImportRequest,
-    PipelineUpdate,
 )
+from dap_engine.contracts import AgentCreate, PipelineCreate, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
 

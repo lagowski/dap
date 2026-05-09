@@ -18,12 +18,8 @@ from dap_engine.api.deps import (
     get_session_factory,
 )
 from dap_engine.api.runs import trigger_run
-from dap_engine.api.schemas import (
-    ProjectCreate,
-    ProjectRunRequest,
-    ProjectUpdate,
-    RunCreateRequest,
-)
+from dap_engine.api.schemas import ProjectRunRequest
+from dap_engine.contracts import ProjectCreate, ProjectUpdate, RunCreateRequest
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import ProjectORM

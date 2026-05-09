@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from dap_engine.api.schemas import PipelineCreate
+from dap_engine.contracts import PipelineCreate
 from dap_engine.persistence.models import AgentORM, AgentVersionORM
 
 START_SENTINEL: Final = "__start__"

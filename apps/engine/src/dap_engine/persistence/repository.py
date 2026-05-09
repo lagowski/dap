@@ -22,7 +22,7 @@ from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from sqlalchemy import ColumnElement, func, select, tuple_, update
 from sqlalchemy.orm import Session
 
-from dap_engine.api.schemas import (
+from dap_engine.contracts import (
     AgentCreate,
     AgentUpdate,
     PipelineCreate,
