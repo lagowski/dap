@@ -121,6 +121,59 @@ def _003_pipeline_versions_add_ui_metadata(conn: Connection) -> None:
     conn.execute(text(f"ALTER TABLE pipeline_versions ADD COLUMN ui_metadata {col_type}"))
 
 
+def _004_runs_index_started_at(conn: Connection) -> None:
+    """#251 — index for ``list_runs`` ORDER BY ``started_at DESC``.
+
+    The list endpoint sorts the runs table on every page and currently
+    forces a full scan + sort. Both SQLite and PostgreSQL can walk the
+    index backward, so an ASC index is sufficient and dialect-portable.
+    """
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_runs_started_at ON runs (started_at)"))
+
+
+def _005_runs_index_project_started(conn: Connection) -> None:
+    """#251 — composite index for the project-scoped runs view.
+
+    ``WHERE project_id = ? ORDER BY started_at DESC`` is the most
+    common shape (project detail page). Leading with ``project_id``
+    lets SQLite — which can't bitmap-intersect single-column indexes —
+    satisfy filter and sort in one index walk.
+    """
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_runs_project_started ON runs (project_id, started_at)")
+    )
+
+
+def _006_node_execution_logs_index_run_started(conn: Connection) -> None:
+    """#251 — composite index for ``get_run`` log fan-out.
+
+    ``GET /runs/{id}`` joins ``node_execution_logs`` on every call to
+    populate per-node statuses (#233). High-frequency polling hammers
+    this table; the composite supports both the ``WHERE run_id = ?``
+    lookup and the ``ORDER BY started_at`` in one index.
+    """
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_node_execution_logs_run_started "
+            "ON node_execution_logs (run_id, started_at)"
+        )
+    )
+
+
+def _007_runs_index_pipeline_started(conn: Connection) -> None:
+    """#251 — composite index for the per-pipeline runs view.
+
+    Mirror of ``_005_runs_index_project_started`` for the pipeline-
+    scoped query (``WHERE pipeline_id = ? ORDER BY started_at DESC``)
+    rendered by the pipeline detail page.
+    """
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_runs_pipeline_started ON runs (pipeline_id, started_at)"
+        )
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
@@ -131,6 +184,13 @@ MIGRATIONS: list[Migration] = [
         name="003_pipeline_versions_add_ui_metadata",
         apply=_003_pipeline_versions_add_ui_metadata,
     ),
+    Migration(name="004_runs_index_started_at", apply=_004_runs_index_started_at),
+    Migration(name="005_runs_index_project_started", apply=_005_runs_index_project_started),
+    Migration(
+        name="006_node_execution_logs_index_run_started",
+        apply=_006_node_execution_logs_index_run_started,
+    ),
+    Migration(name="007_runs_index_pipeline_started", apply=_007_runs_index_pipeline_started),
 ]
 
 

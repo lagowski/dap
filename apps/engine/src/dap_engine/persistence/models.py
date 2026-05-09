@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -225,6 +226,17 @@ class RunORM(Base):
         order_by="NodeExecutionLogORM.started_at",
     )
 
+    __table_args__ = (
+        # ``list_runs`` unfiltered: ORDER BY started_at DESC (#251).
+        Index("ix_runs_started_at", "started_at"),
+        # Project-scoped runs view: ``WHERE project_id = ? ORDER BY started_at
+        # DESC``. Composite folds filter + sort into one index walk on SQLite,
+        # which can't bitmap-intersect single-column indexes (#251).
+        Index("ix_runs_project_started", "project_id", "started_at"),
+        # Per-pipeline runs view: same shape with ``pipeline_id`` (#251).
+        Index("ix_runs_pipeline_started", "pipeline_id", "started_at"),
+    )
+
 
 class StateSnapshotORM(Base):
     __tablename__ = "state_snapshots"
@@ -260,3 +272,9 @@ class NodeExecutionLogORM(Base):
     extra_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     run: Mapped[RunORM] = relationship(back_populates="node_logs")
+
+    __table_args__ = (
+        # ``get_run`` populates node_statuses by ``WHERE run_id = ? ORDER BY
+        # started_at`` on every detail fetch — high-frequency polling (#251).
+        Index("ix_node_execution_logs_run_started", "run_id", "started_at"),
+    )
