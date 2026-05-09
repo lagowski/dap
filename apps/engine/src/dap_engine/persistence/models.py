@@ -227,10 +227,14 @@ class RunORM(Base):
     )
 
     __table_args__ = (
-        # ``list_runs`` ORDER BY started_at DESC (#251).
+        # ``list_runs`` unfiltered: ORDER BY started_at DESC (#251).
         Index("ix_runs_started_at", "started_at"),
-        # ``list_runs`` filters by some combination of these three (#251).
-        Index("ix_runs_pipeline_project_status", "pipeline_id", "project_id", "final_status"),
+        # Project-scoped runs view: ``WHERE project_id = ? ORDER BY started_at
+        # DESC``. Composite folds filter + sort into one index walk on SQLite,
+        # which can't bitmap-intersect single-column indexes (#251).
+        Index("ix_runs_project_started", "project_id", "started_at"),
+        # Per-pipeline runs view: same shape with ``pipeline_id`` (#251).
+        Index("ix_runs_pipeline_started", "pipeline_id", "started_at"),
     )
 
 
