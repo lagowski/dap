@@ -19,7 +19,7 @@ from dap_types import (
     StateSnapshot,
 )
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
-from sqlalchemy import func, select, tuple_, update
+from sqlalchemy import ColumnElement, func, select, tuple_, update
 from sqlalchemy.orm import Session
 
 from dap_engine.api.schemas import (
@@ -400,39 +400,33 @@ def list_agents(
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Agent], int]:
-    base = select(AgentORM)
-    count_q = select(func.count()).select_from(AgentORM)
-
+    where_clauses: list[ColumnElement[bool]] = []
     if not archived:
-        base = base.where(AgentORM.archived_at.is_(None))
-        count_q = count_q.where(AgentORM.archived_at.is_(None))
+        where_clauses.append(AgentORM.archived_at.is_(None))
     if role is not None:
-        base = base.where(AgentORM.role == role)
-        count_q = count_q.where(AgentORM.role == role)
+        where_clauses.append(AgentORM.role == role)
 
-    total = session.scalar(count_q) or 0
+    total = (
+        session.scalar(select(func.count()).select_from(AgentORM).where(*where_clauses)) or 0
+    )
 
-    agents_orm = session.scalars(
-        base.order_by(AgentORM.created_at.desc()).offset(offset).limit(limit)
+    # JOIN on (agent_id, current_version) folds the per-row version
+    # lookup into the same query — single round trip, and nothing scales
+    # with `limit` in bind-parameter count (which a tuple-IN would).
+    rows = session.execute(
+        select(AgentORM, AgentVersionORM)
+        .join(
+            AgentVersionORM,
+            (AgentVersionORM.agent_id == AgentORM.id)
+            & (AgentVersionORM.version == AgentORM.current_version),
+        )
+        .where(*where_clauses)
+        .order_by(AgentORM.created_at.desc())
+        .offset(offset)
+        .limit(limit)
     ).all()
-    if not agents_orm:
-        return [], total
 
-    keys = [(a.id, a.current_version) for a in agents_orm]
-    version_rows = session.scalars(
-        select(AgentVersionORM).where(
-            tuple_(AgentVersionORM.agent_id, AgentVersionORM.version).in_(keys),
-        ),
-    ).all()
-    versions_by_key = {(v.agent_id, v.version): v for v in version_rows}
-
-    items: list[Agent] = []
-    for agent in agents_orm:
-        version = versions_by_key.get((agent.id, agent.current_version))
-        if version is None:
-            raise NotFoundError(f"Agent version not found: {agent.id}@v{agent.current_version}")
-        items.append(_agent_from_orm(agent, version, is_current=True))
-
+    items = [_agent_from_orm(agent, version, is_current=True) for agent, version in rows]
     return items, total
 
 
@@ -571,38 +565,31 @@ def list_pipelines(
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Pipeline], int]:
-    base = select(PipelineORM)
-    count_q = select(func.count()).select_from(PipelineORM)
-
+    where_clauses: list[ColumnElement[bool]] = []
     if not archived:
-        base = base.where(PipelineORM.archived_at.is_(None))
-        count_q = count_q.where(PipelineORM.archived_at.is_(None))
+        where_clauses.append(PipelineORM.archived_at.is_(None))
 
-    total = session.scalar(count_q) or 0
+    total = (
+        session.scalar(select(func.count()).select_from(PipelineORM).where(*where_clauses)) or 0
+    )
 
-    pipelines_orm = session.scalars(
-        base.order_by(PipelineORM.created_at.desc()).offset(offset).limit(limit)
+    # JOIN on (pipeline_id, current_version): see list_agents above.
+    rows = session.execute(
+        select(PipelineORM, PipelineVersionORM)
+        .join(
+            PipelineVersionORM,
+            (PipelineVersionORM.pipeline_id == PipelineORM.id)
+            & (PipelineVersionORM.version == PipelineORM.current_version),
+        )
+        .where(*where_clauses)
+        .order_by(PipelineORM.created_at.desc())
+        .offset(offset)
+        .limit(limit)
     ).all()
-    if not pipelines_orm:
-        return [], total
 
-    keys = [(p.id, p.current_version) for p in pipelines_orm]
-    version_rows = session.scalars(
-        select(PipelineVersionORM).where(
-            tuple_(PipelineVersionORM.pipeline_id, PipelineVersionORM.version).in_(keys),
-        ),
-    ).all()
-    versions_by_key = {(v.pipeline_id, v.version): v for v in version_rows}
-
-    items: list[Pipeline] = []
-    for pipeline in pipelines_orm:
-        version = versions_by_key.get((pipeline.id, pipeline.current_version))
-        if version is None:
-            raise NotFoundError(
-                f"Pipeline version not found: {pipeline.id}@v{pipeline.current_version}"
-            )
-        items.append(_pipeline_from_orm(pipeline, version, is_current=True))
-
+    items = [
+        _pipeline_from_orm(pipeline, version, is_current=True) for pipeline, version in rows
+    ]
     return items, total
 
 
