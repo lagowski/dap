@@ -33,6 +33,7 @@ from typing import Any, Final
 
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 
+from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.bash")
@@ -92,12 +93,7 @@ class BashAdapter(BaseAdapter):
                 shell=None,
             )
 
-        # Env layering: engine env (base) → project env_vars (overlay,
-        # #65) → per-agent runtime_config.env (highest wins).
-        env = os.environ.copy()
-        if task.project_env_vars:
-            env.update(task.project_env_vars)
-        env_error = _merge_extra_env(config, env)
+        env, env_error = merge_subprocess_env(task.project_env_vars, config)
         if env_error is not None:
             return _failed(env_error, duration_ms=0, command=command, shell=shell)
 
@@ -201,24 +197,6 @@ def _resolve_command(config: dict[str, Any], prompt_xml: str) -> str | None:
         if extracted:
             return extracted
 
-    return None
-
-
-def _merge_extra_env(config: dict[str, Any], env: dict[str, str]) -> str | None:
-    """Merge runtime_config.env into env in place. Returns error message on invalid input."""
-    extra_env = config.get("env")
-    if extra_env is None:
-        return None
-    if not isinstance(extra_env, dict):
-        return "runtime_config.env must be a dict[str, str]"
-    for key, value in extra_env.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            return (
-                "runtime_config.env must be a dict[str, str]; "
-                f"got entry with key type {type(key).__name__} "
-                f"and value type {type(value).__name__}"
-            )
-        env[key] = value
     return None
 
 

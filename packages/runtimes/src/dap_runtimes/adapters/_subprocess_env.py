@@ -1,17 +1,11 @@
-"""Shared subprocess-env builder for CLI runtime adapters (#65).
+"""Shared subprocess-env builder for runtime adapters (#65).
 
-The bash adapter has its own ``_merge_extra_env`` helper that predates
-v0.6's three-layer env contract. This module provides the unified
-helper used by ``claude-code`` / ``codex`` / ``gemini-cli`` so all
-three apply identical layering:
+Used by ``bash`` / ``claude-code`` / ``codex`` / ``gemini-cli`` so all
+adapters apply identical layering:
 
 1. Engine process env (lowest) — secrets like ``ANTHROPIC_API_KEY``.
 2. Project ``env_vars`` (overlay) — non-secret per-project values.
 3. Per-agent ``runtime_config.env`` (highest) — last-mile override.
-
-Bash keeps its bespoke implementation because it diverges in error
-shape (already returns the message inline) and to avoid churn in this
-PR; the layering is identical.
 """
 
 from __future__ import annotations
