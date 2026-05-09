@@ -301,11 +301,15 @@ class _BaseCliAdapter(BaseAdapter):
             return self._failed(
                 env_error,
                 duration_ms=0,
-                model_id=config["model_id"],
+                model_id=config.get("model_id"),
             )
 
+        # Resolve effective timeout once and reuse in both the wait_for budget
+        # and any "timed out after Xms" message — RuntimeTask.timeout_ms is
+        # nullable so we fall back to the documented 60s default.
+        effective_timeout_ms = task.timeout_ms or 60_000
         cwd = task.working_directory or os.getcwd()
-        timeout_seconds = max(task.timeout_ms or 60_000, 1) / MS_PER_SECOND
+        timeout_seconds = max(effective_timeout_ms, 1) / MS_PER_SECOND
 
         outcome = await self._run_subprocess(
             argv=argv,
@@ -316,18 +320,23 @@ class _BaseCliAdapter(BaseAdapter):
             binary=binary,
         )
 
+        # Use ``.get`` for ``model_id`` in failure paths so a misbehaving
+        # subclass that skipped its own validation produces a clear error
+        # message instead of a confusing KeyError.
+        model_id = config.get("model_id")
+
         if outcome.start_error is not None:
             return self._failed(
                 outcome.start_error,
                 duration_ms=outcome.duration_ms,
-                model_id=config["model_id"],
+                model_id=model_id,
             )
 
         if outcome.timed_out:
             return self._failed(
-                f"Command timed out after {task.timeout_ms}ms",
+                f"Command timed out after {effective_timeout_ms}ms",
                 duration_ms=outcome.duration_ms,
-                model_id=config["model_id"],
+                model_id=model_id,
                 timed_out=True,
             )
 
@@ -339,7 +348,7 @@ class _BaseCliAdapter(BaseAdapter):
             return self._failed(
                 message,
                 duration_ms=outcome.duration_ms,
-                model_id=config["model_id"],
+                model_id=model_id,
                 exit_code=outcome.exit_code,
                 stderr=outcome.stderr,
             )
@@ -350,7 +359,7 @@ class _BaseCliAdapter(BaseAdapter):
             return self._failed(
                 f"Could not parse {self.display_label} CLI output as JSON: {exc.msg}",
                 duration_ms=outcome.duration_ms,
-                model_id=config["model_id"],
+                model_id=model_id,
                 exit_code=outcome.exit_code,
                 stderr=outcome.stderr,
             )
@@ -360,7 +369,7 @@ class _BaseCliAdapter(BaseAdapter):
                 f"{self.display_label} CLI returned unexpected JSON shape: "
                 f"expected object, got {type(payload).__name__}",
                 duration_ms=outcome.duration_ms,
-                model_id=config["model_id"],
+                model_id=model_id,
                 exit_code=outcome.exit_code,
                 stderr=outcome.stderr,
             )
