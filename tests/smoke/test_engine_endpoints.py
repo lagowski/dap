@@ -55,7 +55,7 @@ def test_runtime_health_missing_binary(client: TestClient) -> None:
     """Probe must report unavailable + a ``missing`` hint when the binary
     isn't on PATH. ``shutil.which`` is patched so this is deterministic
     on dev boxes that happen to have ``claude`` installed."""
-    with patch("dap_runtimes.adapters.claude_code.shutil.which", return_value=None):
+    with patch("dap_runtimes.adapters._cli_base.shutil.which", return_value=None):
         response = client.get("/runtimes/claude-code/health")
     assert response.status_code == 200
     body = response.json()

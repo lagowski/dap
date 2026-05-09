@@ -19,8 +19,8 @@ from dap_types import RuntimeTask
 
 from .conftest import build_subprocess_mock
 
-_PATCH_PATH = "dap_runtimes.adapters.gemini_cli.asyncio.create_subprocess_exec"
-_WHICH_PATH = "dap_runtimes.adapters.gemini_cli.shutil.which"
+_PATCH_PATH = "dap_runtimes.adapters._cli_base.asyncio.create_subprocess_exec"
+_WHICH_PATH = "dap_runtimes.adapters._cli_base.shutil.which"
 
 
 @pytest.fixture
