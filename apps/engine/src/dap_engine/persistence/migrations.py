@@ -174,6 +174,19 @@ def _007_runs_index_pipeline_started(conn: Connection) -> None:
     )
 
 
+def _008_runs_add_failure_reason(conn: Connection) -> None:
+    """#260 — add ``runs.failure_reason`` for stale-recovery diagnostics.
+
+    Replaces the synthetic ``__shutdown__`` snapshot pattern with a
+    dedicated nullable column. Existing dev DBs need the ALTER on
+    next startup; fresh DBs already have the column from
+    ``create_all``, so the guard keeps this a no-op there.
+    """
+    if _column_exists(conn, "runs", "failure_reason"):
+        return
+    conn.execute(text("ALTER TABLE runs ADD COLUMN failure_reason TEXT"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
@@ -191,6 +204,7 @@ MIGRATIONS: list[Migration] = [
         apply=_006_node_execution_logs_index_run_started,
     ),
     Migration(name="007_runs_index_pipeline_started", apply=_007_runs_index_pipeline_started),
+    Migration(name="008_runs_add_failure_reason", apply=_008_runs_add_failure_reason),
 ]
 
 
