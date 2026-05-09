@@ -8,32 +8,52 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 
 logger = logging.getLogger("dap.engine.execution.registry")
 
 
 class RunRegistry:
-    """Maps run_id → asyncio.Task. Thread-unsafe; intended for asyncio loop only."""
+    """Maps run_id → asyncio.Task.
+
+    Mutations of the underlying ``_tasks`` / ``_paused`` collections are
+    serialised under a ``threading.Lock`` (#258). In normal single-loop
+    operation the lock is uncontended — Python bytecode for the
+    check-then-set in ``register`` already runs without yielding the
+    event loop — but the explicit lock makes the registry correct under
+    multi-thread access (e.g. shutdown handlers running off the loop)
+    without relying on that implicit single-thread invariant.
+
+    The DB-side TOCTOU guard for resume / revive lives in
+    :func:`dap_engine.persistence.runs.try_claim_resume` (#185); this
+    registry only protects its own in-memory state.
+    """
 
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._paused: set[str] = set()
+        # Sync mutex (not asyncio.Lock) so callers don't have to be async
+        # — register is invoked from sync code paths (e.g. POST handlers'
+        # post-claim block) and the critical section is a few dict ops.
+        self._lock = threading.Lock()
 
     def register(self, run_id: str, task: asyncio.Task[None]) -> None:
-        existing = self._tasks.get(run_id)
-        if existing is not None and not existing.done():
-            raise ValueError(f"Run already registered: {run_id}")
-        # Replace stale done-task slot (e.g. resume after pause where the
-        # done-callback has not been dispatched yet by the loop).
-        self._tasks[run_id] = task
-        self._paused.discard(run_id)
+        with self._lock:
+            existing = self._tasks.get(run_id)
+            if existing is not None and not existing.done():
+                raise ValueError(f"Run already registered: {run_id}")
+            # Replace stale done-task slot (e.g. resume after pause where the
+            # done-callback has not been dispatched yet by the loop).
+            self._tasks[run_id] = task
+            self._paused.discard(run_id)
 
         def _cleanup(_t: asyncio.Task[None]) -> None:
             # Only clear the slot if it still points at *this* task —
             # a fast resume may have replaced it with a fresh task.
-            if self._tasks.get(run_id) is task:
-                self._tasks.pop(run_id, None)
-                self._paused.discard(run_id)
+            with self._lock:
+                if self._tasks.get(run_id) is task:
+                    self._tasks.pop(run_id, None)
+                    self._paused.discard(run_id)
 
         task.add_done_callback(_cleanup)
 
