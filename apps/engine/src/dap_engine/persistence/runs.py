@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Final
 
 from dap_types import (
     NodeExecutionLog,
@@ -19,6 +20,11 @@ from dap_engine.persistence.models import (
     RunORM,
     StateSnapshotORM,
 )
+
+# Statuses considered terminal — once a run lands in any of these,
+# ``finalize_run`` / ``pause_run`` short-circuit so a stray late cancel
+# can't overwrite the run's recorded outcome (#257).
+_TERMINAL_STATUSES: Final = frozenset({"success", "failed", "aborted"})
 
 
 def _run_from_orm(
@@ -228,10 +234,20 @@ def finalize_run(
     *,
     final_status: str,
 ) -> None:
-    """Mark a run as completed (success/failed/aborted) and aggregate metrics."""
+    """Mark a run as completed (success/failed/aborted) and aggregate metrics.
+
+    Idempotent against races where two finalisers fire for the same run
+    (#257): if the run is already in a terminal state, this is a no-op.
+    The cancel-during-runner-error path, for instance, has the inner
+    ``except RunnerError`` finalise as ``failed`` and the outer
+    ``except CancelledError`` then try to finalise as ``aborted`` — the
+    first writer wins.
+    """
     run = session.get(RunORM, run_id)
     if run is None:
         raise NotFoundError(f"Run not found: {run_id}")
+    if run.final_status in _TERMINAL_STATUSES:
+        return
     run.final_status = final_status
     run.ended_at = _now()
     _aggregate_run_metrics(session, run)
@@ -239,10 +255,19 @@ def finalize_run(
 
 
 def pause_run(session: Session, run_id: str) -> None:
-    """Mark a run as paused without setting ended_at (resumable)."""
+    """Mark a run as paused without setting ended_at (resumable).
+
+    Idempotent against late pause attempts on already-terminal runs
+    (#257) — for example a pause cancellation that races with the
+    runner's own failure finalisation. Pausing an already-terminal
+    run would reset ``ended_at`` to ``None`` and lose the recorded
+    outcome, so we short-circuit instead.
+    """
     run = session.get(RunORM, run_id)
     if run is None:
         raise NotFoundError(f"Run not found: {run_id}")
+    if run.final_status in _TERMINAL_STATUSES:
+        return
     run.final_status = "paused"
     # Aggregate metrics so the dashboard reflects work-done-so-far.
     _aggregate_run_metrics(session, run)
