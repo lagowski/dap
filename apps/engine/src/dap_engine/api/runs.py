@@ -30,7 +30,7 @@ from dap_engine.api.deps import (
     get_session,
     get_session_factory,
 )
-from dap_engine.api.schemas import RunCreateRequest
+from dap_engine.contracts import RunCreateRequest
 from dap_engine.execution import (
     REWIND_RETRY,
     REWIND_SKIP,

@@ -22,17 +22,16 @@ if TYPE_CHECKING:
     from dap_engine.app import EngineConfig
 from dap_engine.api.schemas import (
     AGENT_EXPORT_SCHEMA_VERSION,
-    AgentCreate,
     AgentDryRunRequest,
     AgentDryRunResponse,
     AgentExport,
     AgentExportPayload,
     AgentImportRequest,
-    AgentUpdate,
     OutputSchemaValidation,
     RenderPreviewRequest,
     RenderPreviewResponse,
 )
+from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence import repository as repo
 
 router = APIRouter(prefix="/agents", tags=["agents"])
