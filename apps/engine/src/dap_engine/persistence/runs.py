@@ -46,6 +46,7 @@ def _run_from_orm(
             else run.node_statuses
         ),
         final_status=run.final_status,  # type: ignore[arg-type]
+        failure_reason=run.failure_reason,
         started_at=run.started_at,
         ended_at=run.ended_at,
         tokens_used=run.tokens_used,
@@ -322,7 +323,7 @@ def try_claim_resume(session: Session, run_id: str) -> bool:
     stmt = (
         update(RunORM)
         .where(RunORM.id == run_id, RunORM.final_status == "paused")
-        .values(final_status="running", ended_at=None)
+        .values(final_status="running", ended_at=None, failure_reason=None)
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
     # CursorResult exposes .rowcount, which the static Result[Any] type does not.
@@ -337,11 +338,15 @@ def try_claim_revive(session: Session, run_id: str) -> bool:
     safety as ``try_claim_resume`` (#185), but accepts ``failed`` as a
     starting state so a node-level intervention can put a terminated run
     back into motion.
+
+    Clears ``failure_reason`` (#260): a revived run has left the failed
+    state, so a stale "engine restarted mid-run" diagnostic from the
+    previous lifecycle should not stay attached.
     """
     stmt = (
         update(RunORM)
         .where(RunORM.id == run_id, RunORM.final_status.in_(("paused", "failed")))
-        .values(final_status="running", ended_at=None)
+        .values(final_status="running", ended_at=None, failure_reason=None)
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
     # CursorResult exposes .rowcount, which the static Result[Any] type does not.
@@ -353,7 +358,11 @@ def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
     """Find Run rows still in 'running' state and mark them as failed.
 
     Called on engine startup to clean up orphans left by crashes / kills.
-    Returns the count of runs updated.
+    Returns the count of runs updated. The diagnostic ``reason`` lands
+    in ``runs.failure_reason`` (#260) — earlier code wrote a synthetic
+    snapshot with ``node_id="__shutdown__"`` and a ``verification_reason``
+    state field, which polluted ``get_run_state_history`` consumers
+    that scanned for real node ids.
     """
     runs = session.scalars(
         select(RunORM).where(RunORM.final_status == "running"),
@@ -363,15 +372,7 @@ def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
     for run in runs:
         run.final_status = "failed"
         run.ended_at = now
-        # Persist reason via a synthetic snapshot — simpler than schema change.
-        snapshot = StateSnapshotORM(
-            id=_new_id(),
-            run_id=run.id,
-            node_id="__shutdown__",
-            timestamp=now,
-            state={**run.initial_state, "final_status": "failed", "verification_reason": reason},
-        )
-        session.add(snapshot)
+        run.failure_reason = reason
         count += 1
     session.flush()
     return count

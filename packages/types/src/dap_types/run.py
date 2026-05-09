@@ -34,6 +34,10 @@ class Run(BaseModel):
     node_statuses: dict[str, NodeStatus] = Field(default_factory=dict)
 
     final_status: FinalStatus = "running"
+    # Operator-facing reason for a non-clean termination (#260). Populated
+    # when ``mark_stale_running_runs_as_failed`` finalises orphan runs on
+    # engine restart; otherwise ``None``.
+    failure_reason: str | None = None
     started_at: datetime
     ended_at: datetime | None = None
 

@@ -210,6 +210,12 @@ class RunORM(Base):
     node_statuses: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
 
     final_status: Mapped[str] = mapped_column(String, nullable=False)
+    # Operator-facing reason for a non-success terminal status. Populated by
+    # ``mark_stale_running_runs_as_failed`` on engine restart (#260) so the
+    # dashboard / CLI can show why a run was forcibly terminated; ``None``
+    # for runs that finished cleanly or were aborted/paused via a normal
+    # operator action.
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

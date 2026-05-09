@@ -411,6 +411,12 @@ export interface Run {
   current_node: string | null;
   node_statuses: Record<string, NodeStatus>;
   final_status: FinalStatus;
+  /**
+   * Operator-facing reason for a non-clean termination (#260).
+   * Populated when the engine forcibly fails an orphan run on
+   * restart; `null` for runs that finished normally.
+   */
+  failure_reason: string | null;
   started_at: string;
   ended_at: string | null;
   tokens_used: number;
