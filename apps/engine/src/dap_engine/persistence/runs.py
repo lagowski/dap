@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Final
 
 from dap_types import (
     NodeExecutionLog,
@@ -19,6 +20,11 @@ from dap_engine.persistence.models import (
     RunORM,
     StateSnapshotORM,
 )
+
+# Statuses considered terminal — once a run lands in any of these,
+# ``finalize_run`` / ``pause_run`` short-circuit so a stray late cancel
+# can't overwrite the run's recorded outcome (#257).
+_TERMINAL_STATUSES: Final = frozenset({"success", "failed", "aborted"})
 
 
 def _run_from_orm(
@@ -206,20 +212,19 @@ def create_run(
     return run
 
 
-def _aggregate_run_metrics(session: Session, run: RunORM) -> None:
-    """Recompute tokens_used + cost_usd on a RunORM from its node-execution logs.
+def _compute_run_totals(session: Session, run_id: str) -> tuple[int, float]:
+    """Sum ``tokens_used`` + ``cost_usd`` from a run's node-execution logs.
 
-    Uses SQL aggregation so we don't materialize every log row in memory —
-    runs with many nodes can have a lot of logs.
+    Uses SQL aggregation so we don't materialise every log row in memory —
+    runs with many nodes can have a lot of logs. Returns ``(tokens, cost)``.
     """
     totals = session.execute(
         select(
             func.coalesce(func.sum(NodeExecutionLogORM.tokens_used), 0),
             func.coalesce(func.sum(NodeExecutionLogORM.cost_usd), 0.0),
-        ).where(NodeExecutionLogORM.run_id == run.id)
+        ).where(NodeExecutionLogORM.run_id == run_id)
     ).one()
-    run.tokens_used = int(totals[0])
-    run.cost_usd = float(totals[1])
+    return int(totals[0]), float(totals[1])
 
 
 def finalize_run(
@@ -228,24 +233,74 @@ def finalize_run(
     *,
     final_status: str,
 ) -> None:
-    """Mark a run as completed (success/failed/aborted) and aggregate metrics."""
-    run = session.get(RunORM, run_id)
-    if run is None:
-        raise NotFoundError(f"Run not found: {run_id}")
-    run.final_status = final_status
-    run.ended_at = _now()
-    _aggregate_run_metrics(session, run)
+    """Mark a run as completed (success/failed/aborted) and aggregate metrics.
+
+    Idempotent and race-safe (#257): the status transition is an atomic
+    ``UPDATE ... WHERE final_status NOT IN <terminal>`` and the rowcount
+    decides whether the caller won the claim. A late finaliser whose
+    session still holds a stale ``"running"`` cached ORM instance will
+    see ``rowcount=0`` because the predicate runs at the database, not
+    against the session's identity map — first writer wins.
+
+    Cancel-during-runner-error scenario: the inner ``except RunnerError``
+    commits ``finalize_run("failed")`` and the outer ``except
+    CancelledError`` handler then calls ``finalize_run("aborted")`` from
+    a fresh session; the second call no-ops.
+    """
+    tokens, cost = _compute_run_totals(session, run_id)
+    stmt = (
+        update(RunORM)
+        .where(
+            RunORM.id == run_id,
+            RunORM.final_status.notin_(_TERMINAL_STATUSES),
+        )
+        .values(
+            final_status=final_status,
+            ended_at=_now(),
+            tokens_used=tokens,
+            cost_usd=cost,
+        )
+    )
+    result = session.execute(stmt)
+    # ``CursorResult.rowcount`` exposed only at runtime; static type is
+    # ``Result[Any]`` which doesn't have it — same pattern as
+    # ``try_claim_resume`` below.
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        # Either the run doesn't exist or it's already terminal —
+        # distinguish for the caller. NotFoundError is a programmer
+        # error; the no-op return is the expected race outcome.
+        if session.get(RunORM, run_id) is None:
+            raise NotFoundError(f"Run not found: {run_id}")
+        return
     session.flush()
 
 
 def pause_run(session: Session, run_id: str) -> None:
-    """Mark a run as paused without setting ended_at (resumable)."""
-    run = session.get(RunORM, run_id)
-    if run is None:
-        raise NotFoundError(f"Run not found: {run_id}")
-    run.final_status = "paused"
-    # Aggregate metrics so the dashboard reflects work-done-so-far.
-    _aggregate_run_metrics(session, run)
+    """Mark a run as paused without setting ended_at (resumable).
+
+    Idempotent and race-safe (#257), same atomic-UPDATE pattern as
+    ``finalize_run``. A late pause attempt on an already-terminal run
+    no-ops at the database level so it can't reset ``ended_at`` to
+    ``None`` and erase the recorded outcome.
+    """
+    tokens, cost = _compute_run_totals(session, run_id)
+    stmt = (
+        update(RunORM)
+        .where(
+            RunORM.id == run_id,
+            RunORM.final_status.notin_(_TERMINAL_STATUSES),
+        )
+        .values(
+            final_status="paused",
+            tokens_used=tokens,
+            cost_usd=cost,
+        )
+    )
+    result = session.execute(stmt)
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        if session.get(RunORM, run_id) is None:
+            raise NotFoundError(f"Run not found: {run_id}")
+        return
     session.flush()
 
 
