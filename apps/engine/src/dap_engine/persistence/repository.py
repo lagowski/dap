@@ -415,10 +415,22 @@ def list_agents(
     agents_orm = session.scalars(
         base.order_by(AgentORM.created_at.desc()).offset(offset).limit(limit)
     ).all()
+    if not agents_orm:
+        return [], total
+
+    keys = [(a.id, a.current_version) for a in agents_orm]
+    version_rows = session.scalars(
+        select(AgentVersionORM).where(
+            tuple_(AgentVersionORM.agent_id, AgentVersionORM.version).in_(keys),
+        ),
+    ).all()
+    versions_by_key = {(v.agent_id, v.version): v for v in version_rows}
 
     items: list[Agent] = []
     for agent in agents_orm:
-        version = _get_agent_version_orm(session, agent.id, agent.current_version)
+        version = versions_by_key.get((agent.id, agent.current_version))
+        if version is None:
+            raise NotFoundError(f"Agent version not found: {agent.id}@v{agent.current_version}")
         items.append(_agent_from_orm(agent, version, is_current=True))
 
     return items, total
@@ -571,10 +583,24 @@ def list_pipelines(
     pipelines_orm = session.scalars(
         base.order_by(PipelineORM.created_at.desc()).offset(offset).limit(limit)
     ).all()
+    if not pipelines_orm:
+        return [], total
+
+    keys = [(p.id, p.current_version) for p in pipelines_orm]
+    version_rows = session.scalars(
+        select(PipelineVersionORM).where(
+            tuple_(PipelineVersionORM.pipeline_id, PipelineVersionORM.version).in_(keys),
+        ),
+    ).all()
+    versions_by_key = {(v.pipeline_id, v.version): v for v in version_rows}
 
     items: list[Pipeline] = []
     for pipeline in pipelines_orm:
-        version = _get_pipeline_version_orm(session, pipeline.id, pipeline.current_version)
+        version = versions_by_key.get((pipeline.id, pipeline.current_version))
+        if version is None:
+            raise NotFoundError(
+                f"Pipeline version not found: {pipeline.id}@v{pipeline.current_version}"
+            )
         items.append(_pipeline_from_orm(pipeline, version, is_current=True))
 
     return items, total
