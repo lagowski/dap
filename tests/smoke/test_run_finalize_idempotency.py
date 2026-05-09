@@ -164,3 +164,79 @@ def test_pause_run_first_call_normal_path(session_factory: sessionmaker[Session]
 
     assert _final_status(session_factory, run_id) == "paused"
     assert _ended_at(session_factory, run_id) is None
+
+
+def test_finalize_run_safe_against_stale_session_cache(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The real race: session A loads the run while it's ``running``, session
+    B then commits ``failed``, and session A *still* tries to finalise as
+    ``aborted`` using its cached ORM instance.
+
+    A pure ``session.get()`` + Python-side guard would let the late writer
+    through because the cached instance still says ``running``. The atomic
+    ``UPDATE ... WHERE final_status NOT IN <terminal>`` forces the predicate
+    at the database, so the late writer's rowcount is 0 and the recorded
+    outcome survives.
+    """
+    run_id = _seed_running_run(session_factory)
+
+    session_a = session_factory()
+    try:
+        # Populate session_a's identity map with the still-"running" ORM.
+        cached = session_a.get(RunORM, run_id)
+        assert cached is not None
+        assert cached.final_status == "running"
+
+        # Session B commits the terminal transition concurrently.
+        with session_factory() as session_b:
+            repo.finalize_run(session_b, run_id, final_status="failed")
+            session_b.commit()
+
+        # Session A's cached ORM is now stale.
+        assert cached.final_status == "running"
+
+        # Late finaliser fires on session A. With the atomic UPDATE the
+        # row stays ``failed`` regardless of what session_a's identity map
+        # thinks.
+        repo.finalize_run(session_a, run_id, final_status="aborted")
+        session_a.commit()
+    finally:
+        session_a.close()
+
+    assert _final_status(session_factory, run_id) == "failed"
+
+
+def test_pause_run_safe_against_stale_session_cache(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """``pause_run`` mirror of the cross-session race — session A's stale
+    cache must not let it overwrite a terminal status committed by session B.
+    """
+    run_id = _seed_running_run(session_factory)
+
+    session_a = session_factory()
+    try:
+        cached = session_a.get(RunORM, run_id)
+        assert cached is not None
+
+        with session_factory() as session_b:
+            repo.finalize_run(session_b, run_id, final_status="failed")
+            session_b.commit()
+
+        repo.pause_run(session_a, run_id)
+        session_a.commit()
+    finally:
+        session_a.close()
+
+    assert _final_status(session_factory, run_id) == "failed"
+
+
+def test_finalize_run_raises_for_missing_run(session_factory: sessionmaker[Session]) -> None:
+    """The atomic UPDATE returning rowcount=0 is ambiguous between
+    'already terminal' (silent no-op) and 'no such run' (loud error).
+    The fallback ``session.get`` distinguishes them — verify the missing
+    case still surfaces ``NotFoundError`` so programmer errors don't go
+    unnoticed."""
+    with session_factory() as s, pytest.raises(repo.NotFoundError):
+        repo.finalize_run(s, "no-such-run-id", final_status="failed")
