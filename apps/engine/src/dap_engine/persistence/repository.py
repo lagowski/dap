@@ -406,9 +406,7 @@ def list_agents(
     if role is not None:
         where_clauses.append(AgentORM.role == role)
 
-    total = (
-        session.scalar(select(func.count()).select_from(AgentORM).where(*where_clauses)) or 0
-    )
+    total = session.scalar(select(func.count()).select_from(AgentORM).where(*where_clauses)) or 0
 
     # JOIN on (agent_id, current_version) folds the per-row version
     # lookup into the same query — single round trip, and nothing scales
@@ -569,9 +567,7 @@ def list_pipelines(
     if not archived:
         where_clauses.append(PipelineORM.archived_at.is_(None))
 
-    total = (
-        session.scalar(select(func.count()).select_from(PipelineORM).where(*where_clauses)) or 0
-    )
+    total = session.scalar(select(func.count()).select_from(PipelineORM).where(*where_clauses)) or 0
 
     # JOIN on (pipeline_id, current_version): see list_agents above.
     rows = session.execute(
@@ -587,9 +583,7 @@ def list_pipelines(
         .limit(limit)
     ).all()
 
-    items = [
-        _pipeline_from_orm(pipeline, version, is_current=True) for pipeline, version in rows
-    ]
+    items = [_pipeline_from_orm(pipeline, version, is_current=True) for pipeline, version in rows]
     return items, total
 
 
