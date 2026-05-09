@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -225,6 +226,13 @@ class RunORM(Base):
         order_by="NodeExecutionLogORM.started_at",
     )
 
+    __table_args__ = (
+        # ``list_runs`` ORDER BY started_at DESC (#251).
+        Index("ix_runs_started_at", "started_at"),
+        # ``list_runs`` filters by some combination of these three (#251).
+        Index("ix_runs_pipeline_project_status", "pipeline_id", "project_id", "final_status"),
+    )
+
 
 class StateSnapshotORM(Base):
     __tablename__ = "state_snapshots"
@@ -260,3 +268,9 @@ class NodeExecutionLogORM(Base):
     extra_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     run: Mapped[RunORM] = relationship(back_populates="node_logs")
+
+    __table_args__ = (
+        # ``get_run`` populates node_statuses by ``WHERE run_id = ? ORDER BY
+        # started_at`` on every detail fetch — high-frequency polling (#251).
+        Index("ix_node_execution_logs_run_started", "run_id", "started_at"),
+    )
