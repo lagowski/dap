@@ -227,7 +227,6 @@ def finalize_run(
     run_id: str,
     *,
     final_status: str,
-    final_state: PipelineState | None = None,
 ) -> None:
     """Mark a run as completed (success/failed/aborted) and aggregate metrics."""
     run = session.get(RunORM, run_id)
@@ -236,12 +235,6 @@ def finalize_run(
     run.final_status = final_status
     run.ended_at = _now()
     _aggregate_run_metrics(session, run)
-
-    if final_state is not None:
-        # Persist final state by overwriting the run's recorded final_status
-        # but the per-node snapshots remain authoritative.
-        run.current_node = None
-
     session.flush()
 
 
