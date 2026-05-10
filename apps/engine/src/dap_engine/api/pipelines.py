@@ -128,7 +128,7 @@ def create_pipeline(
 def validate_pipeline(
     payload: PipelineCreate,
     session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
+    _user: UserORM = Depends(current_active_user),
 ) -> ValidationResult:
     """Pre-save DAG validation — used by Pipeline Designer before submitting.
 
@@ -141,7 +141,9 @@ def validate_pipeline(
     Auth-required even though it's read-only: the validator hits the
     agents table to check ``node.agent_id`` references, so leaving it
     open would leak which agent ids exist in the DB to anonymous
-    callers.
+    callers. The ``_user`` parameter exists purely to wire the auth
+    dependency — its value isn't read, the leading underscore signals
+    that to readers and to ``ruff`` rule ``PLW0613``.
     """
     return validate_pipeline_dag(payload, session)
 
