@@ -138,9 +138,13 @@ async def test_user_manager_delete_is_soft(client: TestClient) -> None:
     app_state = client.app.state  # type: ignore[attr-defined]
     factory = app_state.async_session_factory
     async with factory() as session:
-        user_orm = (
-            await session.execute(select(UserORM).where(UserORM.email == "dave@example.com"))  # type: ignore[arg-type]
-        ).scalar_one()
+        # ``.unique()`` is required because UserORM eager-loads
+        # oauth_accounts via ``lazy="joined"`` — without it SQLAlchemy
+        # raises "must be invoked on this Result".
+        result = await session.execute(
+            select(UserORM).where(UserORM.email == "dave@example.com")  # type: ignore[arg-type]
+        )
+        user_orm = result.scalars().unique().one()
         manager = UserManager(SQLAlchemyUserDatabase(session, UserORM))
         await manager.delete(user_orm)
 

@@ -38,6 +38,14 @@ def main() -> None:
         # workers validate tokens against the same key.
         auth_jwt_secret=os.environ.get("DAP_AUTH_JWT_SECRET"),
         auth_access_ttl_seconds=int(os.environ.get("DAP_AUTH_ACCESS_TTL_SECONDS", "900")),
+        # OAuth (#299, sub-A2). Each provider activates only when both
+        # client_id and client_secret are set; missing or partially-set
+        # credentials are ignored without a startup error so a self-host
+        # install can run with email+password only.
+        oauth_github_client_id=os.environ.get("DAP_OAUTH_GITHUB_CLIENT_ID"),
+        oauth_github_client_secret=os.environ.get("DAP_OAUTH_GITHUB_CLIENT_SECRET"),
+        oauth_google_client_id=os.environ.get("DAP_OAUTH_GOOGLE_CLIENT_ID"),
+        oauth_google_client_secret=os.environ.get("DAP_OAUTH_GOOGLE_CLIENT_SECRET"),
     )
 
     app = create_app(config)
