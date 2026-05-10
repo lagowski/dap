@@ -21,9 +21,9 @@ uv sync --all-packages
 
 ## Status
 
-- Type checking: `cortex.*` is currently in `[[tool.mypy.overrides]]
-  ignore_errors = true` (Phase 2 follow-up — type annotations are tracked
-  separately).
+- Type checking: `cortex.*` is currently set to `ignore_errors = true` under
+  `[[tool.mypy.overrides]]` in the root `pyproject.toml` (Phase 2 follow-up —
+  type annotations are tracked separately).
 - Lint: standard ruff config with cortex-specific per-file ignores documented
   in the root `pyproject.toml` (en-dash chars, intentional inline imports,
   protocol constants).
