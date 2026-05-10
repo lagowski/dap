@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 #
-# Pre-push hook — blokuje bezpośredni push do main / develop.
-# Aktywacja: git config core.hooksPath .githooks
+# Pre-push hook — łączy dwa lokalne safety-nety:
 #
-# Ten hook jest lokalnym safety net. Remote branch protection
-# (GitHub rules) jest właściwym enforcementem.
+#  (1) Blokada bezpośredniego pushu do `main` / `develop`. Remote
+#      branch protection po stronie GitHub jest właściwym
+#      enforcementem; ten check zatrzymuje pomyłkę zanim w ogóle
+#      doleci do origin.
+#
+#  (2) `pre-commit run --all-files` przed pushem. CI uruchamia
+#      `ruff format --check`, `ruff check`, `mypy`, `pytest`
+#      identycznie; jeśli odpalimy je tu, push do branch'a feature
+#      gwarantuje że tracking się nie wywróci o trywialny format-fix
+#      autofix'em (powtarzający się scenariusz w sub-A2 i sub-A3).
+#
+# Aktywacja: git config core.hooksPath .githooks
 
 set -euo pipefail
 
@@ -40,5 +49,21 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
   done
 done
+
+# (2) Pre-commit run — only when the tool is installed locally. The
+# block is opt-in (skips silently when `pre-commit` isn't on PATH) so
+# contributors who haven't run `uv tool install pre-commit` aren't
+# forced to do so just to push. CI still enforces format/lint/types,
+# so this hook only adds *earlier* feedback for those who've installed
+# the tool — there's no functional regression for skippers.
+if command -v pre-commit >/dev/null 2>&1; then
+  echo "→ pre-push: running pre-commit (skip with: git push --no-verify)"
+  if ! pre-commit run --all-files; then
+    echo ""
+    echo "✗ pre-commit failed — fix the issues above and try again."
+    echo "  (the same checks run in CI, so an unfixed push will fail there too)"
+    exit 1
+  fi
+fi
 
 exit 0

@@ -100,15 +100,26 @@ gh pr create --base main --head develop --title "release: vX.Y.Z"
 
 ## Lokalne zabezpieczenia
 
-### Pre-push hook (blokada main / develop)
+### Pre-push hook (blokada main / develop + format guard)
 
-Repo dostarcza **pre-push hook** blokujący bezpośredni push do `main` i `develop` (patrz `.githooks/pre-push`). Hook aktywny po:
+Repo dostarcza **pre-push hook** (patrz `.githooks/pre-push`) który robi dwie rzeczy:
+
+1. **Blokuje bezpośredni push do `main` / `develop`** — wymusza gitflow workflow z PR-em.
+2. **Uruchamia `pre-commit run --all-files` przed pushem** (jeśli `pre-commit` jest zainstalowane lokalnie) — łapie `ruff format` autofix-y które mogłyby się prześlizgnąć przez sam `pre-commit install` (autofix modyfikuje plik ale nie failuje commita; bez tego CI łapie format-only diff dopiero zdalnie).
+
+Aktywacja po sklonowaniu repo:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-Wykonaj raz po sklonowaniu repo. Hook nie zastępuje branch protection po stronie GitHub — jest tylko local safety net.
+Bypass (np. emergency hotfix lub praca w branchu z WIP-em który nie powinien być formatowany przed push'em):
+
+```bash
+git push --no-verify
+```
+
+Hook nie zastępuje branch protection po stronie GitHub — jest tylko local safety net + accelerator feedback'u.
 
 ### Pre-commit hooks (ruff + mypy)
 
