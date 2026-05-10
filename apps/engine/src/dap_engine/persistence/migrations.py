@@ -284,6 +284,48 @@ def _010_create_oauth_accounts_table(conn: Connection) -> None:
     )
 
 
+def _011_create_api_tokens_table(conn: Connection) -> None:
+    """v0.3 / #299 — create the ``api_tokens`` table for CLI / script auth.
+
+    Mirrors the ORM mapping in ``ApiTokenORM``. The token-prefix index
+    is the hot path: every authenticated CLI call looks up by prefix
+    first, then SHA-256-verifies the candidate hash. The user_id index
+    supports the ``GET /auth/api-tokens`` listing endpoint (admin view
+    or per-user).
+
+    Same idempotency pattern as migration 10 — fresh DBs already have
+    the table from ``create_all``; this migration backstops upgrades
+    and ensures indexes exist either way.
+    """
+    inspector = inspect(conn)
+    if not inspector.has_table("api_tokens"):
+        dialect = conn.dialect.name
+        id_type = "UUID" if dialect == "postgresql" else "CHAR(36)"
+        ts_type = "TIMESTAMPTZ" if dialect == "postgresql" else "TIMESTAMP"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE api_tokens (
+                    id {id_type} NOT NULL PRIMARY KEY,
+                    user_id {id_type} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    name VARCHAR(255) NOT NULL,
+                    token_prefix VARCHAR(8) NOT NULL,
+                    token_hash VARCHAR(64) NOT NULL,
+                    created_at {ts_type} NOT NULL,
+                    expires_at {ts_type} NULL,
+                    last_used_at {ts_type} NULL,
+                    revoked_at {ts_type} NULL
+                )
+                """
+            )
+        )
+
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_api_tokens_token_prefix ON api_tokens (token_prefix)")
+    )
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_api_tokens_user_id ON api_tokens (user_id)"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
@@ -304,6 +346,7 @@ MIGRATIONS: list[Migration] = [
     Migration(name="008_runs_add_failure_reason", apply=_008_runs_add_failure_reason),
     Migration(name="009_create_users_table", apply=_009_create_users_table),
     Migration(name="010_create_oauth_accounts_table", apply=_010_create_oauth_accounts_table),
+    Migration(name="011_create_api_tokens_table", apply=_011_create_api_tokens_table),
 ]
 
 
