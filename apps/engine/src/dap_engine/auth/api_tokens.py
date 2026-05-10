@@ -24,15 +24,19 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
 from typing import NamedTuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dap_engine.persistence.models import ApiTokenORM, UserORM
+
+logger = logging.getLogger("dap.engine.auth.api_tokens")
 
 TOKEN_PREFIX = "dap_"
 TOKEN_RANDOM_BYTES = 32  # → 43 base64-url chars
@@ -117,10 +121,22 @@ async def verify_api_token(  # noqa: PLR0911 — early-return matrix per failure
         if user is None or not user.is_active:
             return None
 
-        # Touch last_used_at separately — see module docstring on
-        # why this is best-effort.
+        # Touch last_used_at — best-effort. Wrap in try/except so a
+        # transient write failure (SQLite busy, lost FK to a
+        # just-deleted user, etc.) doesn't promote a successful auth
+        # to a 500. The token already passed all integrity checks
+        # above; the only thing left is the audit-style timestamp,
+        # which we'd rather lose than fail the request over.
         token.last_used_at = now
-        await session.commit()
+        try:
+            await session.commit()
+        except SQLAlchemyError:
+            await session.rollback()
+            logger.warning(
+                "auth.api_token.last_used_touch_failed",
+                extra={"token_id": str(token.id), "user_id": str(user.id)},
+                exc_info=True,
+            )
         return user, token
 
     return None

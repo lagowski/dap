@@ -38,12 +38,23 @@ def client() -> Iterator[TestClient]:
 
 
 def _register_and_login(client: TestClient, email: str) -> str:
-    """Register a user and return the JWT bearer string."""
-    client.post("/auth/register", json={"email": email, "password": TEST_PASSWORD})
+    """Register a user and return the JWT bearer string.
+
+    Asserts on each step's status code so a setup-stage failure
+    surfaces as a clear AssertionError instead of a confusing
+    KeyError when ``json()["access_token"]`` is read off a 4xx
+    response body.
+    """
+    register = client.post(
+        "/auth/register",
+        json={"email": email, "password": TEST_PASSWORD},
+    )
+    assert register.status_code == 201, register.text
     login = client.post(
         "/auth/jwt/login",
         data={"username": email, "password": TEST_PASSWORD},
     )
+    assert login.status_code == 200, login.text
     return login.json()["access_token"]  # type: ignore[no-any-return]
 
 
