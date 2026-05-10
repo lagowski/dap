@@ -138,11 +138,7 @@ async def test_expired_token_is_rejected(client: TestClient) -> None:
     factory = client.app.state.async_session_factory  # type: ignore[attr-defined]
     async with factory() as session:
         row = (
-            (
-                await session.execute(
-                    select(ApiTokenORM).where(ApiTokenORM.id == create["id"])
-                )
-            )
+            (await session.execute(select(ApiTokenORM).where(ApiTokenORM.id == create["id"])))
             .scalars()
             .one()
         )
