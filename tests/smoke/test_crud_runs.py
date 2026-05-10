@@ -20,6 +20,8 @@ from dap_engine.persistence.models import (
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
+from tests.smoke._auth import authed_test_client
+
 
 def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
     """Insert a run + 1 snapshot + 1 node log directly. Returns run_id."""
@@ -98,9 +100,28 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
 @pytest.fixture
 def client_and_factory() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
     tmp = tempfile.mkdtemp(prefix="dap-crud-runs-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="crud-runs-secret",
+    )
     app = create_app(config)
-    with TestClient(app) as c:
+    with authed_test_client(app) as c:
+        # The fixture-default user is admin=False; the seeded runs have
+        # NULL user_id (legacy backfill semantics), so promote to admin
+        # to let the test scenarios see them. The cross-user gate has
+        # its own test surface in test_ownership_runs.py.
+        from dap_engine.persistence.models import UserORM
+
+        with app.state.session_factory() as session:
+            user_orm = session.query(UserORM).filter(UserORM.email == "test@local.dev").one()
+            user_orm.is_superuser = True
+            session.commit()
+            # The bearer token was minted before the promotion — refresh it.
+            login = c.post(
+                "/auth/jwt/login",
+                data={"username": "test@local.dev", "password": "test-password-123"},
+            )
+            c.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         yield c, app.state.session_factory
 
 

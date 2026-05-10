@@ -18,6 +18,7 @@ from dap_engine.persistence.models import (
     PipelineORM,
     PipelineVersionORM,
     RunORM,
+    UserORM,
 )
 from dap_runtimes import RuntimeRegistry
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
@@ -194,7 +195,10 @@ def test_stale_running_runs_marked_failed_on_startup() -> None:
     reaped on the next startup (engine has no in-memory task for it)."""
     tmp = tempfile.mkdtemp(prefix="dap-stale-")
     db_path = Path(tmp) / "state.db"
-    config = EngineConfig(db_path=str(db_path))
+    config = EngineConfig(
+        db_path=str(db_path),
+        auth_jwt_secret="stale-test-secret",
+    )
 
     # First app instance — write a stale running row + dependencies.
     app = create_app(config)
@@ -290,9 +294,24 @@ def test_stale_running_runs_marked_failed_on_startup() -> None:
             session.add(stale)
             session.commit()
 
-    # Restart — startup should mark the stale run as failed.
+    # Restart — startup should mark the stale run as failed. The
+    # stale-run check itself is user-agnostic (engine startup hook),
+    # so we register + log in as a fresh admin to read it back via
+    # the API. ``authed_test_client`` mints a default user; promote
+    # to admin so the listing surfaces legacy NULL-user runs.
     app2 = create_app(config)
-    with TestClient(app2) as client2:
+    with authed_test_client(app2) as client2:
+        factory2 = app2.state.session_factory
+        with factory2() as session2:
+            user_orm = session2.query(UserORM).filter(UserORM.email == "test@local.dev").one()
+            user_orm.is_superuser = True
+            session2.commit()
+        login = client2.post(
+            "/auth/jwt/login",
+            data={"username": "test@local.dev", "password": "test-password-123"},
+        )
+        client2.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+
         run = client2.get("/runs/stale-run-id").json()
         assert run["final_status"] == "failed"
         assert run["ended_at"] is not None

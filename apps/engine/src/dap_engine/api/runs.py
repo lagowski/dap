@@ -30,6 +30,7 @@ from dap_engine.api.deps import (
     get_session,
     get_session_factory,
 )
+from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import RunCreateRequest
 from dap_engine.execution import (
     REWIND_RETRY,
@@ -39,7 +40,7 @@ from dap_engine.execution import (
     execute_run_background,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineORM, PipelineVersionORM, ProjectORM
+from dap_engine.persistence.models import PipelineVersionORM, UserORM
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -54,38 +55,63 @@ async def trigger_run(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Trigger asynchronous pipeline execution.
 
     Returns immediately with the Run row in `running` state. The actual
     execution happens in a background asyncio.Task. Poll the GET endpoints
     for progress, or POST /runs/{id}/abort to cancel.
+
+    Ownership: the caller must own the referenced pipeline (and project,
+    when set). Both gates surface a 404 / 422 with anti-enumeration
+    wording — a foreign pipeline_id looks exactly like a missing id.
+    The new run row is stamped with the acting ``user_id``.
     """
-    pipeline = session.get(PipelineORM, payload.pipeline_id)
-    if pipeline is None or pipeline.archived_at is not None:
+    try:
+        pipeline = repo.get_pipeline(
+            session, payload.pipeline_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if not pipeline.is_active:
+        # Archived pipeline — 404, same wording as "doesn't exist", so a
+        # caller can't tell archived apart from missing.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pipeline not found: {payload.pipeline_id}",
         )
 
-    # When a project is bound, it must exist and be active. Archived
-    # projects fail loudly here so users notice instead of getting a
-    # half-stamped run that the dashboard can't group cleanly.
-    project: ProjectORM | None = None
+    # When a project is bound, it must exist (and be owned by the caller)
+    # and be active. Archived projects fail loudly here so users notice
+    # instead of getting a half-stamped run that the dashboard can't
+    # group cleanly.
+    project = None
     if payload.project_id is not None:
-        project = session.get(ProjectORM, payload.project_id)
-        if project is None:
+        try:
+            project = repo.get_project(
+                session, payload.project_id, actor_id=user.id, is_admin=user.is_superuser
+            )
+        except repo.NotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Project not found: {payload.project_id}",
-            )
+                detail=str(exc),
+            ) from exc
         if project.archived_at is not None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Project is archived: {payload.project_id}",
             )
 
-    target_version = payload.pipeline_version or pipeline.current_version
+    # ``is not None`` rather than ``or`` — the latter coerces ``0`` to
+    # the current version, but ``0`` is a malformed user-supplied
+    # version we want to surface as 404 below, not silently rewrite.
+    # ``RunCreateRequest.pipeline_version`` has no ge=1 validator, so
+    # this is the only gate that catches the malformed case
+    # (Copilot review on PR #313).
+    target_version = (
+        payload.pipeline_version if payload.pipeline_version is not None else pipeline.version
+    )
     pipeline_version = session.scalar(
         select(PipelineVersionORM)
         .where(PipelineVersionORM.pipeline_id == payload.pipeline_id)
@@ -124,6 +150,7 @@ async def trigger_run(
 
     run_orm = repo.create_run(
         session,
+        user_id=user.id,
         pipeline_id=payload.pipeline_id,
         pipeline_version=target_version,
         trigger_source="api",
@@ -153,7 +180,7 @@ async def trigger_run(
     run_registry.register(run_id, task)
 
     # Re-fetch run to return current state (running)
-    return repo.get_run(session, run_id)
+    return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
 
 
 @router.post("/{run_id}/abort", response_model=Run)
@@ -161,6 +188,7 @@ async def abort_run(
     run_id: str,
     session: Session = Depends(get_session),
     run_registry: RunRegistry = Depends(get_run_registry),
+    user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Cancel a running pipeline.
 
@@ -168,7 +196,7 @@ async def abort_run(
     background task is registered for it. Paused runs can also be aborted.
     """
     try:
-        run = repo.get_run(session, run_id)
+        run = repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -188,7 +216,7 @@ async def abort_run(
     # *separate* session. With expire_on_commit=False, our request session
     # still has the stale RunORM cached — expire it so we read fresh state.
     session.expire_all()
-    return repo.get_run(session, run_id)
+    return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
 
 
 @router.post("/{run_id}/pause", response_model=Run)
@@ -196,6 +224,7 @@ async def pause_run_endpoint(
     run_id: str,
     session: Session = Depends(get_session),
     run_registry: RunRegistry = Depends(get_run_registry),
+    user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Pause a running pipeline.
 
@@ -204,7 +233,7 @@ async def pause_run_endpoint(
     POST /runs/{id}/resume. 409 if the run is not currently running.
     """
     try:
-        run = repo.get_run(session, run_id)
+        run = repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -225,7 +254,7 @@ async def pause_run_endpoint(
     # Pause finalization runs in the background task's session — expire
     # this session's cached RunORM so the response reflects final_status="paused".
     session.expire_all()
-    return repo.get_run(session, run_id)
+    return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
 
 
 @router.post("/{run_id}/resume", response_model=Run)
@@ -236,6 +265,7 @@ async def resume_run_endpoint(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Resume a paused run from its last LangGraph checkpoint.
 
@@ -258,7 +288,7 @@ async def resume_run_endpoint(
         (this engine version) which makes ``/resume`` work correctly (#164).
     """
     try:
-        run = repo.get_run(session, run_id)
+        run = repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -305,7 +335,7 @@ async def resume_run_endpoint(
     )
     run_registry.register(run_id, task)
 
-    return repo.get_run(session, run_id)
+    return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
 
 
 @router.post("/{run_id}/nodes/{node_id}/approve", response_model=Run)
@@ -317,6 +347,7 @@ async def approve_gate_endpoint(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Approve a human gate and continue pipeline execution (#164).
 
@@ -346,7 +377,7 @@ async def approve_gate_endpoint(
         ``/resume`` would re-execute the gate node and pause again.
     """
     try:
-        run = repo.get_run(session, run_id)
+        run = repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -420,7 +451,7 @@ async def approve_gate_endpoint(
         )
     )
     run_registry.register(run_id, task)
-    return repo.get_run(session, run_id)
+    return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
 
 
 @router.post("/{run_id}/nodes/{node_id}/retry", response_model=Run)
@@ -432,6 +463,7 @@ async def retry_node(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Re-execute a single node and continue forward.
 
@@ -449,6 +481,7 @@ async def retry_node(
         run_registry=run_registry,
         session_factory=session_factory,
         checkpointer=checkpointer,
+        user=user,
     )
 
 
@@ -461,6 +494,7 @@ async def skip_node(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Bypass a node and continue with its downstream successors.
 
@@ -479,6 +513,7 @@ async def skip_node(
         run_registry=run_registry,
         session_factory=session_factory,
         checkpointer=checkpointer,
+        user=user,
     )
 
 
@@ -492,10 +527,11 @@ async def _do_node_intervention(
     run_registry: RunRegistry,
     session_factory: sessionmaker[Session],
     checkpointer: BaseCheckpointSaver[Any],
+    user: UserORM,
 ) -> Run:
     """Shared validation + dispatch path for retry-node and skip-node."""
     try:
-        run = repo.get_run(session, run_id)
+        run = repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -564,12 +600,13 @@ async def _do_node_intervention(
     run_registry.register(run_id, task)
 
     session.expire_all()
-    return repo.get_run(session, run_id)
+    return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
 
 
 @router.get("")
 def list_runs(
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
     pipeline_id: str | None = Query(default=None),
     final_status: str | None = Query(default=None),
     project_id: str | None = Query(
@@ -587,6 +624,8 @@ def list_runs(
     effective_project_id = None if only_unscoped else project_id
     items, total = repo.list_runs(
         session,
+        actor_id=user.id,
+        is_admin=user.is_superuser,
         pipeline_id=pipeline_id,
         final_status=final_status,
         project_id=effective_project_id,
@@ -603,17 +642,25 @@ def list_runs(
 
 
 @router.get("/{run_id}", response_model=Run)
-def get_run(run_id: str, session: Session = Depends(get_session)) -> Run:
+def get_run(
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Run:
     try:
-        return repo.get_run(session, run_id)
+        return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/{run_id}/state", response_model=PipelineState)
-def get_run_state(run_id: str, session: Session = Depends(get_session)) -> PipelineState:
+def get_run_state(
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> PipelineState:
     try:
-        return repo.get_run_state(session, run_id)
+        return repo.get_run_state(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -622,9 +669,12 @@ def get_run_state(run_id: str, session: Session = Depends(get_session)) -> Pipel
 def list_run_state_history(
     run_id: str,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> list[StateSnapshot]:
     try:
-        return repo.list_run_state_history(session, run_id)
+        return repo.list_run_state_history(
+            session, run_id, actor_id=user.id, is_admin=user.is_superuser
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -634,8 +684,11 @@ def get_run_node_log(
     run_id: str,
     node_id: str,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> NodeExecutionLog:
     try:
-        return repo.get_run_node_log(session, run_id, node_id)
+        return repo.get_run_node_log(
+            session, run_id, node_id, actor_id=user.id, is_admin=user.is_superuser
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

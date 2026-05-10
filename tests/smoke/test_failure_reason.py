@@ -112,7 +112,10 @@ def test_get_run_exposes_failure_reason_via_pydantic(
         s.commit()
 
     with session_factory() as s:
-        run = repo.get_run(s, run_id)
+        # Admin-mode bypass — this is a direct-DB test that doesn't
+        # exercise ownership; the lifecycle primitives are
+        # user-agnostic by design.
+        run = repo.get_run(s, run_id, actor_id=uuid.uuid4(), is_admin=True)
 
     assert run.final_status == "failed"
     assert run.failure_reason == "boot recovery"
@@ -159,7 +162,10 @@ def test_clean_run_has_null_failure_reason(
         s.commit()
 
     with session_factory() as s:
-        run = repo.get_run(s, run_id)
+        # Admin-mode bypass — this is a direct-DB test that doesn't
+        # exercise ownership; the lifecycle primitives are
+        # user-agnostic by design.
+        run = repo.get_run(s, run_id, actor_id=uuid.uuid4(), is_admin=True)
 
     assert run.final_status == "success"
     assert run.failure_reason is None
