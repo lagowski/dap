@@ -1,7 +1,8 @@
 [project]
 name = "cortex"
-version = "0.2.0"
+version = "0.0.1"
 description = "Cortex pipeline nodes — runs inside DAP engine"
+readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "dap-types",
