@@ -33,12 +33,15 @@ router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 @router.get("")
 def list_pipelines(
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
     archived: bool = Query(default=False),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict[str, Any]:
     items, total = repo.list_pipelines(
         session,
+        actor_id=user.id,
+        is_admin=user.is_superuser,
         archived=archived,
         offset=offset,
         limit=limit,
@@ -109,6 +112,7 @@ def _update_to_create_shape(payload: PipelineUpdate) -> PipelineCreate:
 def create_pipeline(
     payload: PipelineCreate,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> Pipeline:
     """Create a pipeline (v1). Rejects invalid DAGs with 422 (#120).
 
@@ -117,13 +121,14 @@ def create_pipeline(
     Designer surfaces interactively are now enforced server-side.
     """
     _enforce_validation(payload, session)
-    return repo.create_pipeline(session, payload)
+    return repo.create_pipeline(session, payload, user_id=user.id)
 
 
 @router.post("/validate", response_model=ValidationResult)
 def validate_pipeline(
     payload: PipelineCreate,
     session: Session = Depends(get_session),
+    _user: UserORM = Depends(current_active_user),
 ) -> ValidationResult:
     """Pre-save DAG validation — used by Pipeline Designer before submitting.
 
@@ -132,6 +137,13 @@ def validate_pipeline(
     endpoints (``POST`` / ``PUT``) call the same validator and turn
     any errors into 422 — this endpoint stays as the live-feedback
     surface so the Designer can show diagnostics without committing.
+
+    Auth-required even though it's read-only: the validator hits the
+    agents table to check ``node.agent_id`` references, so leaving it
+    open would leak which agent ids exist in the DB to anonymous
+    callers. The ``_user`` parameter exists purely to wire the auth
+    dependency — its value isn't read, the leading underscore signals
+    that to readers and to ``ruff`` rule ``PLW0613``.
     """
     return validate_pipeline_dag(payload, session)
 
@@ -228,13 +240,17 @@ def import_pipeline(
     # error. The session-wide rollback in ``get_session`` then
     # tears down the bundled agents created above — no orphans.
     _enforce_validation(create_payload, session)
-    return repo.create_pipeline(session, create_payload)
+    return repo.create_pipeline(session, create_payload, user_id=user.id)
 
 
 @router.get("/{pipeline_id}", response_model=Pipeline)
-def get_pipeline(pipeline_id: str, session: Session = Depends(get_session)) -> Pipeline:
+def get_pipeline(
+    pipeline_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Pipeline:
     try:
-        return repo.get_pipeline(session, pipeline_id)
+        return repo.get_pipeline(session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -244,6 +260,7 @@ def update_pipeline(
     pipeline_id: str,
     payload: PipelineUpdate,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> Pipeline:
     """Update a pipeline (creates a new version). Rejects invalid DAGs with 422 (#120).
 
@@ -256,23 +273,34 @@ def update_pipeline(
     the body would also fail DAG validation. Otherwise a typo in
     the URL plus a typo in the body would surface as 422 and hide
     the real "this id doesn't exist" cause.
+
+    Ownership gates are inside ``repo.get_pipeline`` /
+    ``repo.update_pipeline``: a non-admin probing someone else's
+    pipeline_id gets 404, never 422 — the validator never runs on a
+    foreign id, so the body shape can't leak through error details.
     """
     try:
-        repo.get_pipeline(session, pipeline_id)
+        repo.get_pipeline(session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     _enforce_validation(_update_to_create_shape(payload), session)
-    return repo.update_pipeline(session, pipeline_id, payload)
+    try:
+        return repo.update_pipeline(
+            session, pipeline_id, payload, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.delete("/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_pipeline(
     pipeline_id: str,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> Response:
     try:
-        repo.archive_pipeline(session, pipeline_id)
+        repo.archive_pipeline(session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -282,9 +310,12 @@ def archive_pipeline(
 def list_pipeline_versions(
     pipeline_id: str,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> list[Pipeline]:
     try:
-        return repo.list_pipeline_versions(session, pipeline_id)
+        return repo.list_pipeline_versions(
+            session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -294,9 +325,12 @@ def get_pipeline_version(
     pipeline_id: str,
     version: int,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> Pipeline:
     try:
-        return repo.get_pipeline_version(session, pipeline_id, version)
+        return repo.get_pipeline_version(
+            session, pipeline_id, version, actor_id=user.id, is_admin=user.is_superuser
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -339,7 +373,9 @@ def export_pipeline(
     referenced agent gets the standard 422 from the DAG validator.
     """
     try:
-        pipeline = repo.get_pipeline(session, pipeline_id)
+        pipeline = repo.get_pipeline(
+            session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

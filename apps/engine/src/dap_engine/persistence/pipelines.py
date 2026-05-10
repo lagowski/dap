@@ -1,7 +1,22 @@
-"""Pipeline persistence — CRUD on PipelineORM / PipelineVersionORM."""
+"""Pipeline persistence — CRUD on PipelineORM / PipelineVersionORM.
+
+Ownership: every read / write helper takes the actor's ``user_id``
+(plus an ``is_admin`` flag for the cross-user admin path). Non-admins
+only see their own rows; an attempt to read or mutate someone else's
+pipeline raises ``NotFoundError`` (anti-enumeration — same rule
+``agents.py`` applies and that ``api-tokens`` already enforces).
+
+Pipelines reference agents by ``node.agent_id`` strings. The DAG
+validator (``execution.validator``) only checks for *existence* —
+it does **not** enforce agent-level ownership. A user is allowed to
+build a pipeline on top of any agent whose id they know; v0.3
+ownership scope is the *pipeline* row, not transitive references.
+That keeps shared / admin-curated agent libraries usable.
+"""
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 
 from dap_types import Pipeline
@@ -9,9 +24,25 @@ from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from sqlalchemy import ColumnElement, func, select, tuple_
 from sqlalchemy.orm import Session
 
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.contracts import PipelineCreate, PipelineUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
+
+
+def _ownership_filter(
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[ColumnElement[bool]]:
+    """Return ``[]`` for admins, else a single-clause filter for the actor.
+
+    Centralised so every list query gets the rule without copy-paste.
+    Admins see all rows (including legacy NULL ``user_id`` rows from
+    the pre-v0.3 backfill); non-admins only see rows they own.
+    """
+    if is_admin:
+        return []
+    return [PipelineORM.user_id == actor_id]
 
 
 def _pipeline_from_orm(
@@ -38,10 +69,17 @@ def _pipeline_from_orm(
     )
 
 
-def create_pipeline(session: Session, payload: PipelineCreate) -> Pipeline:
+def create_pipeline(
+    session: Session,
+    payload: PipelineCreate,
+    *,
+    user_id: uuid.UUID,
+) -> Pipeline:
+    """Create a new pipeline owned by ``user_id`` and write an audit row."""
     now = _now()
     pipeline = PipelineORM(
         id=_new_id(),
+        user_id=user_id,
         name=payload.name,
         description=payload.description,
         current_version=1,
@@ -67,12 +105,30 @@ def create_pipeline(session: Session, payload: PipelineCreate) -> Pipeline:
     session.add(pipeline)
     session.add(version)
     session.flush()
+    record_audit_event(
+        session,
+        user_id=user_id,
+        event_type="pipeline.created",
+        event_data={"pipeline_id": pipeline.id, "name": payload.name},
+    )
     return _pipeline_from_orm(pipeline, version, is_current=True)
 
 
-def update_pipeline(session: Session, pipeline_id: str, payload: PipelineUpdate) -> Pipeline:
+def update_pipeline(
+    session: Session,
+    pipeline_id: str,
+    payload: PipelineUpdate,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> Pipeline:
+    """Update a pipeline. Non-admins can only touch their own rows."""
     pipeline = session.get(PipelineORM, pipeline_id)
     if pipeline is None or pipeline.archived_at is not None:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    if not is_admin and pipeline.user_id != actor_id:
+        # Anti-enumeration: cross-user lookup looks indistinguishable
+        # from "doesn't exist".
         raise NotFoundError(f"Pipeline not found: {pipeline_id}")
 
     now = _now()
@@ -102,30 +158,69 @@ def update_pipeline(session: Session, pipeline_id: str, payload: PipelineUpdate)
     )
     session.add(version)
     session.flush()
+    record_audit_event(
+        session,
+        user_id=actor_id,
+        event_type="pipeline.updated",
+        event_data={"pipeline_id": pipeline.id, "version": new_version_number},
+    )
     return _pipeline_from_orm(pipeline, version, is_current=True)
 
 
-def archive_pipeline(session: Session, pipeline_id: str) -> None:
+def archive_pipeline(
+    session: Session,
+    pipeline_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> None:
+    """Archive a pipeline. Non-admins can only archive their own rows."""
     pipeline = session.get(PipelineORM, pipeline_id)
     if pipeline is None:
         raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    if not is_admin and pipeline.user_id != actor_id:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
     if pipeline.archived_at is not None:
-        return
+        return  # idempotent
     pipeline.archived_at = _now()
     session.flush()
+    record_audit_event(
+        session,
+        user_id=actor_id,
+        event_type="pipeline.archived",
+        event_data={"pipeline_id": pipeline.id},
+    )
 
 
-def get_pipeline(session: Session, pipeline_id: str) -> Pipeline:
+def get_pipeline(
+    session: Session,
+    pipeline_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> Pipeline:
+    """Fetch a pipeline. Non-admins only see their own."""
     pipeline = session.get(PipelineORM, pipeline_id)
     if pipeline is None:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    if not is_admin and pipeline.user_id != actor_id:
         raise NotFoundError(f"Pipeline not found: {pipeline_id}")
     version = _get_pipeline_version_orm(session, pipeline_id, pipeline.current_version)
     return _pipeline_from_orm(pipeline, version, is_current=True)
 
 
-def get_pipeline_version(session: Session, pipeline_id: str, version: int) -> Pipeline:
+def get_pipeline_version(
+    session: Session,
+    pipeline_id: str,
+    version: int,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> Pipeline:
     pipeline = session.get(PipelineORM, pipeline_id)
     if pipeline is None:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    if not is_admin and pipeline.user_id != actor_id:
         raise NotFoundError(f"Pipeline not found: {pipeline_id}")
     version_orm = _get_pipeline_version_orm(session, pipeline_id, version)
     return _pipeline_from_orm(
@@ -135,9 +230,17 @@ def get_pipeline_version(session: Session, pipeline_id: str, version: int) -> Pi
     )
 
 
-def list_pipeline_versions(session: Session, pipeline_id: str) -> list[Pipeline]:
+def list_pipeline_versions(
+    session: Session,
+    pipeline_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[Pipeline]:
     pipeline = session.get(PipelineORM, pipeline_id)
     if pipeline is None:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    if not is_admin and pipeline.user_id != actor_id:
         raise NotFoundError(f"Pipeline not found: {pipeline_id}")
     versions = session.scalars(
         select(PipelineVersionORM)
@@ -153,11 +256,14 @@ def list_pipeline_versions(session: Session, pipeline_id: str) -> list[Pipeline]
 def list_pipelines(
     session: Session,
     *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
     archived: bool = False,
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Pipeline], int]:
     where_clauses: list[ColumnElement[bool]] = []
+    where_clauses.extend(_ownership_filter(actor_id, is_admin))
     if not archived:
         where_clauses.append(PipelineORM.archived_at.is_(None))
 
@@ -203,6 +309,11 @@ def _current_pipeline_versions(session: Session) -> list[PipelineVersionORM]:
     bounded by the number of non-archived pipelines, instead of every
     historical revision. Imported by ``agents.pipelines_using_agent``
     and ``agents.count_pipelines_using_agents``.
+
+    Does **not** filter by ``user_id`` — it powers the agent-side
+    "is this agent in use?" hint, which (as documented on
+    ``pipelines_using_agent``) requires upstream ownership gating in
+    the agents-layer caller. That contract is unchanged by sub-A4b2b.
     """
     pipelines = session.scalars(select(PipelineORM).where(PipelineORM.archived_at.is_(None))).all()
     if not pipelines:
