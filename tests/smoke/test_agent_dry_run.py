@@ -219,9 +219,7 @@ def test_dry_run_injects_role_into_render_context(client: TestClient) -> None:
         json={
             "draft": _bash_draft(
                 role="implementer",
-                prompt_template=(
-                    "<agent_prompt><role>{{ role }}</role></agent_prompt>"
-                ),
+                prompt_template=("<agent_prompt><role>{{ role }}</role></agent_prompt>"),
             ),
             "context": {},
         },
@@ -269,9 +267,7 @@ def test_dry_run_caller_context_role_wins_over_agent_role(
             "draft": _bash_draft(
                 role="implementer",
                 input_schema=[],
-                prompt_template=(
-                    "<agent_prompt><role>{{ role }}</role></agent_prompt>"
-                ),
+                prompt_template=("<agent_prompt><role>{{ role }}</role></agent_prompt>"),
             ),
             "context": {"role": "verifier-override"},
         },

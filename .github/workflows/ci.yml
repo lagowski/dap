@@ -39,10 +39,10 @@ jobs:
         run: uv sync --all-packages --frozen
 
       - name: Ruff lint
-        run: uv run ruff check apps packages
+        run: uv run ruff check apps packages tests
 
       - name: Ruff format check
-        run: uv run ruff format --check apps packages
+        run: uv run ruff format --check apps packages tests
 
       - name: Mypy
         run: uv run mypy apps packages tests

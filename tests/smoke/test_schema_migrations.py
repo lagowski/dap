@@ -183,8 +183,5 @@ def test_pre_064_db_records_migration_as_applied(tmpdir_path: Path) -> None:
     engine = create_engine_for_sqlite(str(db_path))
 
     with engine.begin() as conn:
-        names = {
-            row[0]
-            for row in conn.execute(text("SELECT name FROM schema_migrations"))
-        }
+        names = {row[0] for row in conn.execute(text("SELECT name FROM schema_migrations"))}
     assert "001_runs_add_project_id" in names

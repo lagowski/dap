@@ -2,7 +2,7 @@
 name = "cortex"
 version = "0.2.0"
 description = "Cortex pipeline nodes — runs inside DAP engine"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "dap-types",
     "dap-runtimes",
