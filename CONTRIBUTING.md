@@ -105,7 +105,9 @@ gh pr create --base main --head develop --title "release: vX.Y.Z"
 Repo dostarcza **pre-push hook** (patrz `.githooks/pre-push`) który robi dwie rzeczy:
 
 1. **Blokuje bezpośredni push do `main` / `develop`** — wymusza gitflow workflow z PR-em.
-2. **Uruchamia `pre-commit run --all-files` przed pushem** (jeśli `pre-commit` jest zainstalowane lokalnie) — łapie `ruff format` autofix-y które mogłyby się prześlizgnąć przez sam `pre-commit install` (autofix modyfikuje plik ale nie failuje commita; bez tego CI łapie format-only diff dopiero zdalnie).
+2. **Uruchamia `pre-commit run --all-files` przed pushem** (jeśli `pre-commit` jest zainstalowane lokalnie). Łapie format-fix-y które prześlizgnęły się przez sam `pre-commit install`.
+
+   Mechanizm autofix-skipu: gdy hook commit'a zmieni plik (np. `ruff-format`), pre-commit przerywa *bieżący* commit i zostawia naprawione pliki w roboczym drzewie (nie zaindexowanym). Jeśli operator ponowi `git commit` **bez** uprzedniego `git add`, drugi commit przechodzi na *starym* indexie — niesformatowanej wersji — ponieważ z perspektywy pre-commit hook'a "tym razem nic nie zmienił". Ta druga forma diffa dolatuje do origin i wywala CI dopiero zdalnie. Push-time check zamyka tę lukę.
 
 Aktywacja po sklonowaniu repo:
 
