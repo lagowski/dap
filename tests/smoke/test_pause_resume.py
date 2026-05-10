@@ -423,9 +423,7 @@ def test_concurrent_approve_only_one_wins(
     run_id = _trigger_and_wait_paused(client, pipeline_id)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [
-            pool.submit(client.post, f"/runs/{run_id}/nodes/n2/approve") for _ in range(2)
-        ]
+        futures = [pool.submit(client.post, f"/runs/{run_id}/nodes/n2/approve") for _ in range(2)]
         responses = [f.result() for f in concurrent.futures.as_completed(futures)]
 
     statuses = sorted(r.status_code for r in responses)
@@ -436,9 +434,7 @@ def test_concurrent_approve_only_one_wins(
     loser = next(r for r in responses if r.status_code == 409)
     detail = loser.json()["detail"]
     assert (
-        "not paused" in detail
-        or "no longer paused" in detail
-        or "active background task" in detail
+        "not paused" in detail or "no longer paused" in detail or "active background task" in detail
     ), f"Unexpected 409 detail: {detail!r}"
 
     completed = _wait_for_status(client, run_id, {"success", "failed", "aborted"})
@@ -497,9 +493,7 @@ def test_concurrent_resume_only_one_wins(
     loser = next(r for r in responses if r.status_code == 409)
     detail = loser.json()["detail"]
     assert (
-        "not paused" in detail
-        or "no longer paused" in detail
-        or "active background task" in detail
+        "not paused" in detail or "no longer paused" in detail or "active background task" in detail
     ), f"Unexpected 409 detail: {detail!r}"
 
     # Run still completes (winner's task ran).

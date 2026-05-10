@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from dap_types.state import PipelineState, StateSnapshot
@@ -41,7 +41,7 @@ def test_pipeline_state_description_round_trip_via_snapshot() -> None:
         id="snap-1",
         run_id="r",
         node_id="n",
-        timestamp=datetime.now(tz=timezone.utc),
+        timestamp=datetime.now(tz=UTC),
         state=state,
     )
     rebuilt = StateSnapshot.model_validate(snap.model_dump())

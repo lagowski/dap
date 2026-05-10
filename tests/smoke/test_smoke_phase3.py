@@ -16,7 +16,6 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
@@ -25,7 +24,6 @@ from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
 from .conftest import replace_adapter, wait_for_status
-
 
 # ---------------------------------------------------------------------------
 # Stub adapters
@@ -240,7 +238,9 @@ _PHASE2_OUTPUT_STATE = {
 
 
 @pytest.fixture
-def phase3_approve_client() -> Iterator[tuple[TestClient, Phase3PythonFuncStub, Phase3ReviewerStub]]:
+def phase3_approve_client() -> Iterator[
+    tuple[TestClient, Phase3PythonFuncStub, Phase3ReviewerStub]
+]:
     """Client with reviewer configured to return APPROVE (happy path)."""
     tmp = tempfile.mkdtemp(prefix="dap-phase3-approve-")
     config = EngineConfig(db_path=str(Path(tmp) / "state.db"))

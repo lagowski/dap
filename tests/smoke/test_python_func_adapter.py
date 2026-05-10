@@ -412,12 +412,16 @@ async def test_pipeline_state_missing_yields_empty_seed(
 # timeout=None runs without limit
 @pytest.mark.asyncio
 async def test_timeout_none_runs_without_limit(adapter: PythonFuncAdapter) -> None:
-    import sys, types
+    import sys
+    import types
+
     mod = types.ModuleType("_dap_test_notimeout_mod")
     mod.run = lambda state, config: {"done": True}  # type: ignore[attr-defined]
     sys.modules["_dap_test_notimeout_mod"] = mod
     try:
-        result = await adapter.execute(_task(callable_path="_dap_test_notimeout_mod:run", timeout_ms=None))
+        result = await adapter.execute(
+            _task(callable_path="_dap_test_notimeout_mod:run", timeout_ms=None)
+        )
         assert result.success
     finally:
         del sys.modules["_dap_test_notimeout_mod"]
@@ -443,9 +447,7 @@ async def test_timeout_returns_failure(
     mod.run = _slow_func  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "_dap_test_slow_mod", mod)
 
-    result = await adapter.execute(
-        _task(callable_path="_dap_test_slow_mod:run", timeout_ms=100)
-    )
+    result = await adapter.execute(_task(callable_path="_dap_test_slow_mod:run", timeout_ms=100))
     assert result.success is False
     assert any("timed out" in err for err in result.errors)
 

@@ -248,7 +248,7 @@ async def test_execute_with_extra_args(with_api_key: None) -> None:
 async def test_per_agent_env_overrides_project_env(
     with_api_key: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Three-layer env (#65): per-agent runtime_config.env wins over project, project wins over engine."""
+    """Three-layer env (#65): per-agent runtime_config.env > project env > engine env."""
     monkeypatch.setenv("DAP_LAYER_PROBE", "engine")
     adapter = ClaudeCodeAdapter()
     proc = build_subprocess_mock(stdout=_success_payload())
