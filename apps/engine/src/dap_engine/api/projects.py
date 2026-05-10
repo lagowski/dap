@@ -187,4 +187,5 @@ async def trigger_project_run(
         run_registry=run_registry,
         session_factory=session_factory,
         checkpointer=checkpointer,
+        user=user,
     )

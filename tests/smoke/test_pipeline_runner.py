@@ -6,6 +6,7 @@ Uses a stub runtime adapter so no real LLM calls happen.
 from __future__ import annotations
 
 import tempfile
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from dap_engine.persistence.models import (
     AgentVersionORM,
     PipelineORM,
     PipelineVersionORM,
+    UserORM,
 )
 from dap_runtimes import RuntimeRegistry
 from dap_types import (
@@ -154,10 +156,32 @@ async def _run_pipeline(
         assert pipeline_orm is not None
         assert version_orm is not None
 
+        # Seed a synthetic owner — the runner doesn't care who owns the
+        # row, but ``runs.user_id`` has a FK to ``users.id`` so the row
+        # must exist. Single shared user keeps the seed minimal.
+        owner_id = uuid.uuid4()
+        if session.get(UserORM, owner_id) is None:
+            session.add(
+                UserORM(
+                    id=owner_id,
+                    email=f"runner-{owner_id}@local.dev",
+                    hashed_password="x" * 64,  # unhashable / unusable
+                    is_active=False,
+                    is_superuser=False,
+                    is_verified=False,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                    deleted_at=None,
+                    last_login_at=None,
+                )
+            )
+            session.flush()
+
         # Seed a Run row so node_execution_logs FK is satisfied.
         initial_state = PipelineState(run_id="pending", repo="test", branch="main")
         run = repo.create_run(
             session,
+            user_id=owner_id,
             pipeline_id=pipeline_orm.id,
             pipeline_version=version_orm.version,
             trigger_source="cli",

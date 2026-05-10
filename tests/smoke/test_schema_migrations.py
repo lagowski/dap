@@ -22,7 +22,6 @@ import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.db import create_engine_for_sqlite
 from dap_engine.persistence.migrations import MIGRATIONS, apply_migrations
-from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 
@@ -162,13 +161,34 @@ def test_pre_064_db_get_runs_endpoint_returns_200(tmpdir_path: Path) -> None:
     """End-to-end: a pre-#64 DB used to crash GET /runs with
     ``OperationalError: no such column: runs.project_id``. After the
     migration, the endpoint should serve the (now ``project_id=null``)
-    row without error."""
+    row without error.
+
+    Promote the fixture user to admin so the listing surfaces the
+    seeded ``user_id=NULL`` legacy row — the post-#299 ownership rule
+    only treats those rows as visible to admins.
+    """
+    from dap_engine.persistence.models import UserORM
+
+    from tests.smoke._auth import authed_test_client
+
     db_path = tmpdir_path / "pre-064-endpoint.db"
     _seed_pre_064_runs_table(db_path)
 
-    config = EngineConfig(db_path=str(db_path))
+    config = EngineConfig(
+        db_path=str(db_path),
+        auth_jwt_secret="pre-064-test-secret",
+    )
     app = create_app(config)
-    with TestClient(app) as client:
+    with authed_test_client(app) as client:
+        with app.state.session_factory() as session:
+            user_orm = session.query(UserORM).filter(UserORM.email == "test@local.dev").one()
+            user_orm.is_superuser = True
+            session.commit()
+        login = client.post(
+            "/auth/jwt/login",
+            data={"username": "test@local.dev", "password": "test-password-123"},
+        )
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         response = client.get("/runs")
 
     assert response.status_code == 200

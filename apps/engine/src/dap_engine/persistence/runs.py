@@ -1,7 +1,23 @@
-"""Run persistence — Run lifecycle, state snapshots, node-execution logs."""
+"""Run persistence — Run lifecycle, state snapshots, node-execution logs.
+
+Ownership: read / list helpers (``get_run``, ``list_runs``,
+``get_run_state``, ``list_run_state_history``, ``get_run_node_log``)
+take the actor's ``user_id`` plus an ``is_admin`` flag. Cross-user
+lookups raise ``NotFoundError`` (anti-enumeration — same rule
+``agents.py`` / ``pipelines.py`` / ``projects.py`` apply).
+
+Lifecycle primitives (``finalize_run``, ``pause_run``,
+``try_claim_resume``, ``try_claim_revive``,
+``mark_stale_running_runs_as_failed``) **deliberately** take no
+ownership args — they're called from background asyncio tasks and the
+engine-startup hook, neither of which has a user context. The
+ownership boundary is established by the API route, which gates
+``get_run(actor_id, is_admin)`` before invoking any primitive.
+"""
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from typing import Final
 
@@ -11,15 +27,31 @@ from dap_types import (
     Run,
     StateSnapshot,
 )
-from sqlalchemy import func, select, update
+from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.orm import Session
 
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
 from dap_engine.persistence.models import (
     NodeExecutionLogORM,
     RunORM,
     StateSnapshotORM,
 )
+
+
+def _ownership_filter(
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[ColumnElement[bool]]:
+    """Return ``[]`` for admins, else a single-clause filter for the actor.
+
+    Admins see all rows (including legacy NULL ``user_id`` rows from
+    the pre-v0.3 backfill); non-admins only see runs they triggered.
+    """
+    if is_admin:
+        return []
+    return [RunORM.user_id == actor_id]
+
 
 # Statuses considered terminal — once a run lands in any of these,
 # ``finalize_run`` / ``pause_run`` short-circuit so a stray late cancel
@@ -89,6 +121,8 @@ def _node_log_from_orm(log: NodeExecutionLogORM) -> NodeExecutionLog:
 def list_runs(
     session: Session,
     *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
     pipeline_id: str | None = None,
     final_status: str | None = None,
     project_id: str | None = None,
@@ -96,40 +130,49 @@ def list_runs(
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Run], int]:
-    """List runs with optional filters.
+    """List runs with optional filters; non-admins only see their own.
 
     ``project_id``: filter to a specific project's runs.
     ``only_unscoped``: when True, return only runs without a project
     (ad-hoc / legacy). Mutually exclusive with ``project_id``; the
     router enforces the mapping from query string to one of these.
     """
-    base = select(RunORM)
-    count_q = select(func.count()).select_from(RunORM)
-
+    where_clauses: list[ColumnElement[bool]] = []
+    where_clauses.extend(_ownership_filter(actor_id, is_admin))
     if pipeline_id is not None:
-        base = base.where(RunORM.pipeline_id == pipeline_id)
-        count_q = count_q.where(RunORM.pipeline_id == pipeline_id)
+        where_clauses.append(RunORM.pipeline_id == pipeline_id)
     if final_status is not None:
-        base = base.where(RunORM.final_status == final_status)
-        count_q = count_q.where(RunORM.final_status == final_status)
+        where_clauses.append(RunORM.final_status == final_status)
     if only_unscoped:
-        base = base.where(RunORM.project_id.is_(None))
-        count_q = count_q.where(RunORM.project_id.is_(None))
+        where_clauses.append(RunORM.project_id.is_(None))
     elif project_id is not None:
-        base = base.where(RunORM.project_id == project_id)
-        count_q = count_q.where(RunORM.project_id == project_id)
+        where_clauses.append(RunORM.project_id == project_id)
 
-    total = session.scalar(count_q) or 0
+    total = session.scalar(select(func.count()).select_from(RunORM).where(*where_clauses)) or 0
 
     runs_orm = session.scalars(
-        base.order_by(RunORM.started_at.desc()).offset(offset).limit(limit)
+        select(RunORM)
+        .where(*where_clauses)
+        .order_by(RunORM.started_at.desc())
+        .offset(offset)
+        .limit(limit)
     ).all()
     return [_run_from_orm(r) for r in runs_orm], total
 
 
-def get_run(session: Session, run_id: str) -> Run:
+def get_run(
+    session: Session,
+    run_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> Run:
     run = session.get(RunORM, run_id)
     if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
+        # Anti-enumeration: cross-user lookup looks indistinguishable
+        # from "doesn't exist".
         raise NotFoundError(f"Run not found: {run_id}")
     # Populate node_statuses from execution logs on every detail fetch (#233).
     #
@@ -153,10 +196,18 @@ def get_run(session: Session, run_id: str) -> Run:
     return _run_from_orm(run, node_statuses_override=node_statuses_override)
 
 
-def get_run_state(session: Session, run_id: str) -> PipelineState:
+def get_run_state(
+    session: Session,
+    run_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> PipelineState:
     """Return the latest state snapshot, or initial_state if no snapshots yet."""
     run = session.get(RunORM, run_id)
     if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
         raise NotFoundError(f"Run not found: {run_id}")
 
     latest = session.scalar(
@@ -170,9 +221,17 @@ def get_run_state(session: Session, run_id: str) -> PipelineState:
     return PipelineState.model_validate(latest.state)
 
 
-def list_run_state_history(session: Session, run_id: str) -> list[StateSnapshot]:
+def list_run_state_history(
+    session: Session,
+    run_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[StateSnapshot]:
     run = session.get(RunORM, run_id)
     if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
         raise NotFoundError(f"Run not found: {run_id}")
     snapshots = session.scalars(
         select(StateSnapshotORM)
@@ -185,16 +244,23 @@ def list_run_state_history(session: Session, run_id: str) -> list[StateSnapshot]
 def create_run(
     session: Session,
     *,
+    user_id: uuid.UUID,
     pipeline_id: str,
     pipeline_version: int,
     trigger_source: str,
     initial_state: PipelineState,
     project_id: str | None = None,
 ) -> RunORM:
-    """Insert a Run row in 'running' state. Caller commits."""
+    """Insert a Run row in 'running' state. Caller commits.
+
+    The acting ``user_id`` is required; routes resolve it from the
+    authenticated request, tests pass an explicit owner. Writes a
+    ``run.triggered`` audit row.
+    """
     now = _now()
     run = RunORM(
         id=_new_id(),
+        user_id=user_id,
         project_id=project_id,
         pipeline_id=pipeline_id,
         pipeline_version=pipeline_version,
@@ -210,6 +276,18 @@ def create_run(
     )
     session.add(run)
     session.flush()
+    record_audit_event(
+        session,
+        user_id=user_id,
+        event_type="run.triggered",
+        event_data={
+            "run_id": run.id,
+            "pipeline_id": pipeline_id,
+            "pipeline_version": pipeline_version,
+            "project_id": project_id,
+            "trigger_source": trigger_source,
+        },
+    )
     return run
 
 
@@ -378,9 +456,18 @@ def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
     return count
 
 
-def get_run_node_log(session: Session, run_id: str, node_id: str) -> NodeExecutionLog:
+def get_run_node_log(
+    session: Session,
+    run_id: str,
+    node_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> NodeExecutionLog:
     run = session.get(RunORM, run_id)
     if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
         raise NotFoundError(f"Run not found: {run_id}")
 
     log = session.scalar(
