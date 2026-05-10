@@ -274,10 +274,7 @@ def _010_create_oauth_accounts_table(conn: Connection) -> None:
         )
 
     conn.execute(
-        text(
-            "CREATE INDEX IF NOT EXISTS ix_oauth_accounts_user_id "
-            "ON oauth_accounts (user_id)"
-        )
+        text("CREATE INDEX IF NOT EXISTS ix_oauth_accounts_user_id ON oauth_accounts (user_id)")
     )
     conn.execute(
         text(
