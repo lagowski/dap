@@ -88,6 +88,42 @@ jobs:
                 continue;
               }
 
+              // GitHub Copilot Code Review does not review bot-authored
+              // PRs (dependabot, renovate, etc.). Auto-pass the gate so
+              // these PRs aren't perma-stuck in "Waiting for Copilot
+              // review" — branch protection still enforces CI green.
+              const author = (pr.user && pr.user.login) || '';
+              if (author.endsWith('[bot]')) {
+                try {
+                  await github.rest.checks.create({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: CHECK_NAME,
+                    head_sha: pr.head.sha,
+                    status: 'completed',
+                    conclusion: 'success',
+                    output: {
+                      title: `Copilot review skipped (bot author: ${author})`,
+                      summary:
+                        'GitHub Copilot Code Review does not review bot-' +
+                        'authored PRs. Gate auto-passed; CI checks still ' +
+                        'enforced via branch protection.',
+                    },
+                  });
+                  core.info(`PR #${pr.number}: success — bot author auto-pass (${author}).`);
+                } catch (err) {
+                  if (err.status === 403) {
+                    core.warning(
+                      `PR #${pr.number}: cannot post check (likely fork PR). ` +
+                      'Will be retried by the next cron run from the default branch.'
+                    );
+                  } else {
+                    throw err;
+                  }
+                }
+                continue;
+              }
+
               const reviews = await github.paginate(github.rest.pulls.listReviews, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
