@@ -301,13 +301,13 @@ async def test_structured_shape_is_consistent_across_outcomes(
 # Bundle regression tests — dap#223
 # ---------------------------------------------------------------------------
 
+
 def _load_bundle(filename: str) -> dict[str, Any]:
     """Load a Cortex DAP bundle JSON from the packages/cortex tree."""
     import json
+
     bundle_path = (
-        Path(__file__).parent.parent.parent
-        / "packages/cortex/src/cortex/dap_bundles"
-        / filename
+        Path(__file__).parent.parent.parent / "packages/cortex/src/cortex/dap_bundles" / filename
     )
     return cast(dict[str, Any], json.loads(bundle_path.read_text()))
 
@@ -331,9 +331,7 @@ def test_phase2_bundle_git_branch_omits_explicit_shell() -> None:
     agent = _git_branch_agent(bundle)
     assert agent is not None, "cx_p2_git_branch agent not found in phase2 bundle"
     rc = agent.get("runtime_config", {})
-    assert "shell" not in rc, (
-        f"git-branch runtime_config must not contain 'shell' key; got: {rc}"
-    )
+    assert "shell" not in rc, f"git-branch runtime_config must not contain 'shell' key; got: {rc}"
 
 
 def test_full_bundle_git_branch_omits_explicit_shell() -> None:
@@ -342,14 +340,13 @@ def test_full_bundle_git_branch_omits_explicit_shell() -> None:
     agent = _git_branch_agent(bundle)
     assert agent is not None, "cx_p2_git_branch agent not found in full bundle"
     rc = agent.get("runtime_config", {})
-    assert "shell" not in rc, (
-        f"git-branch runtime_config must not contain 'shell' key; got: {rc}"
-    )
+    assert "shell" not in rc, f"git-branch runtime_config must not contain 'shell' key; got: {rc}"
 
 
 def test_full_bundle_git_branch_command_uses_and_chaining() -> None:
     """git-branch prompt template must use && not ; so cd failure aborts the chain."""
     import re
+
     bundle = _load_bundle("cortex-full.pipeline-bundle.json")
     agent = _git_branch_agent(bundle)
     assert agent is not None, "cx_p2_git_branch agent not found in full bundle"

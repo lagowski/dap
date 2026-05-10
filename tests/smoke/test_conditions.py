@@ -146,6 +146,19 @@ def test_dot_notation_and_condition() -> None:
             ComparisonCondition(field="extensions.review_attempts", operator="<", value=2),
         ],
     )
-    assert evaluate_condition(cond, _state(extensions={"review_approved": False, "review_attempts": 0})) is True
-    assert evaluate_condition(cond, _state(extensions={"review_approved": True, "review_attempts": 0})) is False
-    assert evaluate_condition(cond, _state(extensions={"review_approved": False, "review_attempts": 2})) is False
+    assert (
+        evaluate_condition(
+            cond, _state(extensions={"review_approved": False, "review_attempts": 0})
+        )
+        is True
+    )
+    assert (
+        evaluate_condition(cond, _state(extensions={"review_approved": True, "review_attempts": 0}))
+        is False
+    )
+    assert (
+        evaluate_condition(
+            cond, _state(extensions={"review_approved": False, "review_attempts": 2})
+        )
+        is False
+    )

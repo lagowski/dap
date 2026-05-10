@@ -16,7 +16,6 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
@@ -25,7 +24,6 @@ from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
 from .conftest import replace_adapter, wait_for_status
-
 
 # ---------------------------------------------------------------------------
 # Stub adapters
@@ -107,10 +105,7 @@ class Phase2CodeReviewerStub:
     async def execute(self, task: RuntimeTask) -> RuntimeResult:
         self.call_count += 1
         # Pop next result, default to "clean" if exhausted
-        if self._results:
-            status = self._results.pop(0)
-        else:
-            status = "clean"
+        status = self._results.pop(0) if self._results else "clean"
 
         # Read current review_attempts from pipeline state
         pipeline_state = task.runtime_config.get("__pipeline_state", {})
@@ -264,7 +259,9 @@ def _create_phase2_pipeline(
 
 
 @pytest.fixture
-def phase2_clean_client() -> Iterator[tuple[TestClient, Phase2PythonFuncStub, Phase2CodeReviewerStub]]:
+def phase2_clean_client() -> Iterator[
+    tuple[TestClient, Phase2PythonFuncStub, Phase2CodeReviewerStub]
+]:
     """Client with code-reviewer configured to return 'clean' on first call."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-clean-")
     config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
@@ -280,7 +277,9 @@ def phase2_clean_client() -> Iterator[tuple[TestClient, Phase2PythonFuncStub, Ph
 
 
 @pytest.fixture
-def phase2_retry_client() -> Iterator[tuple[TestClient, Phase2PythonFuncStub, Phase2CodeReviewerStub]]:
+def phase2_retry_client() -> Iterator[
+    tuple[TestClient, Phase2PythonFuncStub, Phase2CodeReviewerStub]
+]:
     """Client with code-reviewer configured to return 'needs_work' repeatedly."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-retry-")
     config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
@@ -356,7 +355,7 @@ def test_phase2_retry_loop_capped_at_2_attempts(
     phase2_retry_client: tuple[TestClient, Phase2PythonFuncStub, Phase2CodeReviewerStub],
 ) -> None:
     """needs_work routing retries from coder at most once (attempts < 2), then falls through."""
-    client, pf_stub, reviewer = phase2_retry_client
+    client, _pf_stub, reviewer = phase2_retry_client
     pipeline_id = _create_phase2_pipeline(client, approval_required_nodes=[])
 
     triggered = client.post(

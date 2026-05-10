@@ -35,14 +35,8 @@ def test_normalize_pg_prefix() -> None:
 def test_pg_conn_string_handles_postgres_scheme() -> None:
     """End-to-end: ``postgres://`` survives the conn-string rewrite as ``postgresql://``."""
     assert pg_conn_string("postgres://user:pw@host/db") == "postgresql://user:pw@host/db"
-    assert (
-        pg_conn_string("postgresql+asyncpg://user:pw@host/db")
-        == "postgresql://user:pw@host/db"
-    )
-    assert (
-        pg_conn_string("postgresql+psycopg://user:pw@host/db")
-        == "postgresql://user:pw@host/db"
-    )
+    assert pg_conn_string("postgresql+asyncpg://user:pw@host/db") == "postgresql://user:pw@host/db"
+    assert pg_conn_string("postgresql+psycopg://user:pw@host/db") == "postgresql://user:pw@host/db"
 
 
 def test_pg_sync_url_forces_psycopg_driver() -> None:

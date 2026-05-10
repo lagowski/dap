@@ -11,7 +11,6 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app

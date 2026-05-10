@@ -74,7 +74,7 @@ async def test_register_replaces_stale_done_task_slot() -> None:
 
     # Manually plant the done task — simulates the race window before the
     # cleanup callback runs.
-    registry._tasks[run_id] = finished_task  # noqa: SLF001  (intentional white-box)
+    registry._tasks[run_id] = finished_task
 
     fresh_task = asyncio.create_task(_running_task())
     try:

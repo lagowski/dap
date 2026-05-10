@@ -167,35 +167,67 @@ def test_get_run_node_statuses_multiple_nodes(
     run_id = str(uuid.uuid4())
     now = datetime.now(UTC)
     initial_state: dict[str, Any] = {
-        "run_id": run_id, "repo": "r/r", "branch": "main", "commit_sha": None,
-        "available_issues": [], "selected_issue_ids": [], "tests_generated": False,
-        "test_files": [], "test_generation_errors": [], "max_attempts": 3,
-        "attempt": 0, "tests_passed": False, "last_test_output": "",
-        "modified_files": [], "implementation_notes": None,
-        "verification_status": "pending", "verification_reason": None,
-        "final_status": "failed", "extensions": {},
+        "run_id": run_id,
+        "repo": "r/r",
+        "branch": "main",
+        "commit_sha": None,
+        "available_issues": [],
+        "selected_issue_ids": [],
+        "tests_generated": False,
+        "test_files": [],
+        "test_generation_errors": [],
+        "max_attempts": 3,
+        "attempt": 0,
+        "tests_passed": False,
+        "last_test_output": "",
+        "modified_files": [],
+        "implementation_notes": None,
+        "verification_status": "pending",
+        "verification_reason": None,
+        "final_status": "failed",
+        "extensions": {},
     }
 
     def _make_log(node_id: str, status: str, offset_ms: int) -> NodeExecutionLogORM:
         from datetime import timedelta
+
         t = now + timedelta(milliseconds=offset_ms)
         return NodeExecutionLogORM(
-            id=str(uuid.uuid4()), run_id=run_id, node_id=node_id,
-            agent_id="agent-1", runtime_id="python-func",
-            started_at=t, ended_at=t,
-            prompt_xml="", stdout="", stderr="",
-            output_json=None, tokens_used=0, cost_usd=0.0,
-            duration_ms=10, status=status, error_message=None,
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            node_id=node_id,
+            agent_id="agent-1",
+            runtime_id="python-func",
+            started_at=t,
+            ended_at=t,
+            prompt_xml="",
+            stdout="",
+            stderr="",
+            output_json=None,
+            tokens_used=0,
+            cost_usd=0.0,
+            duration_ms=10,
+            status=status,
+            error_message=None,
         )
 
     with factory() as session:
-        session.add(RunORM(
-            id=run_id, pipeline_id="pipe-1", pipeline_version=1,
-            trigger_source="cli", initial_state=initial_state,
-            current_node=None, node_statuses={},
-            final_status="failed", started_at=now, ended_at=now,
-            tokens_used=0, cost_usd=0.0,
-        ))
+        session.add(
+            RunORM(
+                id=run_id,
+                pipeline_id="pipe-1",
+                pipeline_version=1,
+                trigger_source="cli",
+                initial_state=initial_state,
+                current_node=None,
+                node_statuses={},
+                final_status="failed",
+                started_at=now,
+                ended_at=now,
+                tokens_used=0,
+                cost_usd=0.0,
+            )
+        )
         session.add(_make_log("node-a", "success", 0))
         session.add(_make_log("node-b", "success", 100))
         session.add(_make_log("node-c", "failed", 200))
@@ -217,22 +249,43 @@ def test_get_run_node_statuses_empty_when_no_logs(
     run_id = str(uuid.uuid4())
     now = datetime.now(UTC)
     initial_state: dict[str, Any] = {
-        "run_id": run_id, "repo": "r/r", "branch": "main", "commit_sha": None,
-        "available_issues": [], "selected_issue_ids": [], "tests_generated": False,
-        "test_files": [], "test_generation_errors": [], "max_attempts": 3,
-        "attempt": 0, "tests_passed": False, "last_test_output": "",
-        "modified_files": [], "implementation_notes": None,
-        "verification_status": "pending", "verification_reason": None,
-        "final_status": "running", "extensions": {},
+        "run_id": run_id,
+        "repo": "r/r",
+        "branch": "main",
+        "commit_sha": None,
+        "available_issues": [],
+        "selected_issue_ids": [],
+        "tests_generated": False,
+        "test_files": [],
+        "test_generation_errors": [],
+        "max_attempts": 3,
+        "attempt": 0,
+        "tests_passed": False,
+        "last_test_output": "",
+        "modified_files": [],
+        "implementation_notes": None,
+        "verification_status": "pending",
+        "verification_reason": None,
+        "final_status": "running",
+        "extensions": {},
     }
     with factory() as session:
-        session.add(RunORM(
-            id=run_id, pipeline_id="pipe-1", pipeline_version=1,
-            trigger_source="cli", initial_state=initial_state,
-            current_node=None, node_statuses={},
-            final_status="running", started_at=now, ended_at=None,
-            tokens_used=0, cost_usd=0.0,
-        ))
+        session.add(
+            RunORM(
+                id=run_id,
+                pipeline_id="pipe-1",
+                pipeline_version=1,
+                trigger_source="cli",
+                initial_state=initial_state,
+                current_node=None,
+                node_statuses={},
+                final_status="running",
+                started_at=now,
+                ended_at=None,
+                tokens_used=0,
+                cost_usd=0.0,
+            )
+        )
         session.commit()
 
     body = client.get(f"/runs/{run_id}").json()
