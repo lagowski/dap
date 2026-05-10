@@ -1,5 +1,11 @@
 """Agent persistence — CRUD on AgentORM / AgentVersionORM.
 
+Ownership: every read / write helper takes the actor's ``user_id``
+(plus an ``is_admin`` flag for the cross-user admin path). Non-admins
+only see their own rows; an attempt to mutate someone else's row
+raises ``NotFoundError`` (anti-enumeration — same rule the API layer
+already applies for cross-user DELETE on api-tokens).
+
 Also hosts ``pipelines_using_agent`` / ``count_pipelines_using_agents``:
 those are agent-facing queries (rendered on agent endpoints) but
 operate on pipeline data, so they reuse the private
@@ -9,16 +15,33 @@ operate on pipeline data, so they reuse the private
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterable, Sequence
 
 from dap_types import Agent
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
 from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineORM
 from dap_engine.persistence.pipelines import _current_pipeline_versions
+
+
+def _ownership_filter(
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[ColumnElement[bool]]:
+    """Return ``[]`` for admins, else a single-clause filter for the actor.
+
+    Centralised so every list query gets the rule without copy-paste.
+    Admins see all rows (including legacy NULL ``user_id`` rows from
+    the pre-v0.3 backfill); non-admins only see rows they own.
+    """
+    if is_admin:
+        return []
+    return [AgentORM.user_id == actor_id]
 
 
 def _agent_from_orm(
@@ -46,10 +69,17 @@ def _agent_from_orm(
     )
 
 
-def create_agent(session: Session, payload: AgentCreate) -> Agent:
+def create_agent(
+    session: Session,
+    payload: AgentCreate,
+    *,
+    user_id: uuid.UUID,
+) -> Agent:
+    """Create a new agent owned by ``user_id`` and write an audit row."""
     now = _now()
     agent = AgentORM(
         id=_new_id(),
+        user_id=user_id,
         name=payload.name,
         role=payload.role,
         current_version=1,
@@ -75,12 +105,30 @@ def create_agent(session: Session, payload: AgentCreate) -> Agent:
     session.add(agent)
     session.add(version)
     session.flush()
+    record_audit_event(
+        session,
+        user_id=user_id,
+        event_type="agent.created",
+        event_data={"agent_id": agent.id, "name": payload.name, "role": payload.role},
+    )
     return _agent_from_orm(agent, version, is_current=True)
 
 
-def update_agent(session: Session, agent_id: str, payload: AgentUpdate) -> Agent:
+def update_agent(
+    session: Session,
+    agent_id: str,
+    payload: AgentUpdate,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> Agent:
+    """Update an agent. Non-admins can only touch their own rows."""
     agent = session.get(AgentORM, agent_id)
     if agent is None or agent.archived_at is not None:
+        raise NotFoundError(f"Agent not found: {agent_id}")
+    if not is_admin and agent.user_id != actor_id:
+        # Anti-enumeration: cross-user lookup looks indistinguishable
+        # from "doesn't exist".
         raise NotFoundError(f"Agent not found: {agent_id}")
 
     now = _now()
@@ -108,21 +156,58 @@ def update_agent(session: Session, agent_id: str, payload: AgentUpdate) -> Agent
     )
     session.add(version)
     session.flush()
+    record_audit_event(
+        session,
+        user_id=actor_id,
+        event_type="agent.updated",
+        event_data={"agent_id": agent.id, "version": new_version_number},
+    )
     return _agent_from_orm(agent, version, is_current=True)
 
 
-def archive_agent(session: Session, agent_id: str) -> None:
+def archive_agent(
+    session: Session,
+    agent_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> None:
+    """Archive an agent. Non-admins can only archive their own rows."""
     agent = session.get(AgentORM, agent_id)
     if agent is None:
+        raise NotFoundError(f"Agent not found: {agent_id}")
+    if not is_admin and agent.user_id != actor_id:
         raise NotFoundError(f"Agent not found: {agent_id}")
     if agent.archived_at is not None:
         return  # idempotent
     agent.archived_at = _now()
     session.flush()
+    record_audit_event(
+        session,
+        user_id=actor_id,
+        event_type="agent.archived",
+        event_data={"agent_id": agent.id},
+    )
 
 
 def pipelines_using_agent(session: Session, agent_id: str) -> list[tuple[str, str]]:
-    """Return (id, name) of non-archived pipelines whose current version references the agent."""
+    """Return (id, name) of non-archived pipelines whose current version references the agent.
+
+    Read-only / informational — used by the "is this agent in use?"
+    UI hint. Doesn't filter by pipeline ownership: an admin viewing an
+    agent that other users embed in their pipelines should see the
+    full impact.
+
+    **Caller contract** — this function leaks pipeline ids/names by
+    design (admins need them; the UI hint needs them). Every caller
+    MUST gate the request on agent-level ownership *before* calling
+    this, otherwise a non-admin can probe foreign agent ids and get
+    back a structured 409 with names instead of the intended 404.
+    The two callers today (``GET /agents/{id}/usage`` via list
+    enrichment, and the ``DELETE /agents/{id}`` precheck) both call
+    ``get_agent(...)``/``list_agents(...)`` first to establish that
+    gate — sub-A4b2a wired the DELETE gate explicitly.
+    """
     out: list[tuple[str, str]] = []
     pipeline_names = {
         p.id: p.name
@@ -155,15 +240,30 @@ def count_pipelines_using_agents(
     return counts
 
 
-def get_agent(session: Session, agent_id: str) -> Agent:
+def get_agent(
+    session: Session,
+    agent_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> Agent:
+    """Fetch an agent. Non-admins only see their own."""
     agent = session.get(AgentORM, agent_id)
     if agent is None:
+        raise NotFoundError(f"Agent not found: {agent_id}")
+    if not is_admin and agent.user_id != actor_id:
         raise NotFoundError(f"Agent not found: {agent_id}")
     version = _get_agent_version_orm(session, agent_id, agent.current_version)
     return _agent_from_orm(agent, version, is_current=True)
 
 
-def get_agents_by_ids(session: Session, agent_ids: Iterable[str]) -> dict[str, Agent]:
+def get_agents_by_ids(
+    session: Session,
+    agent_ids: Iterable[str],
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> dict[str, Agent]:
     """Fetch multiple agents (current version) in 2 queries total (#126).
 
     Used by the pipeline bundle exporter, where a pipeline can
@@ -174,14 +274,17 @@ def get_agents_by_ids(session: Session, agent_ids: Iterable[str]) -> dict[str, A
     head version.
 
     Missing ids are silently absent from the returned dict — callers
-    handle them however they want (404 vs skip).
+    handle them however they want (404 vs skip). Non-admin actors get
+    only their own rows in the result; an out-of-scope id behaves like
+    "id doesn't exist" (anti-enumeration).
     """
     ids = list(agent_ids)
     if not ids:
         return {}
-    agent_rows = session.scalars(
-        select(AgentORM).where(AgentORM.id.in_(ids)),
-    ).all()
+    agent_query = select(AgentORM).where(AgentORM.id.in_(ids))
+    if not is_admin:
+        agent_query = agent_query.where(AgentORM.user_id == actor_id)
+    agent_rows = session.scalars(agent_query).all()
     if not agent_rows:
         return {}
     version_rows = session.scalars(
@@ -199,27 +302,53 @@ def get_agents_by_ids(session: Session, agent_ids: Iterable[str]) -> dict[str, A
     return out
 
 
-def get_agent_version(session: Session, agent_id: str, version: int) -> Agent:
+def get_agent_version(
+    session: Session,
+    agent_id: str,
+    version: int,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> Agent:
     agent = session.get(AgentORM, agent_id)
     if agent is None:
+        raise NotFoundError(f"Agent not found: {agent_id}")
+    if not is_admin and agent.user_id != actor_id:
         raise NotFoundError(f"Agent not found: {agent_id}")
     version_orm = _get_agent_version_orm(session, agent_id, version)
     return _agent_from_orm(agent, version_orm, is_current=version == agent.current_version)
 
 
-def get_agent_template(session: Session, agent_id: str, version: int | None = None) -> str:
+def get_agent_template(
+    session: Session,
+    agent_id: str,
+    version: int | None = None,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> str:
     """Fetch the prompt_template string for an agent (current or specific version)."""
     agent = session.get(AgentORM, agent_id)
     if agent is None:
+        raise NotFoundError(f"Agent not found: {agent_id}")
+    if not is_admin and agent.user_id != actor_id:
         raise NotFoundError(f"Agent not found: {agent_id}")
     target_version = version if version is not None else agent.current_version
     version_orm = _get_agent_version_orm(session, agent_id, target_version)
     return version_orm.prompt_template
 
 
-def list_agent_versions(session: Session, agent_id: str) -> list[Agent]:
+def list_agent_versions(
+    session: Session,
+    agent_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[Agent]:
     agent = session.get(AgentORM, agent_id)
     if agent is None:
+        raise NotFoundError(f"Agent not found: {agent_id}")
+    if not is_admin and agent.user_id != actor_id:
         raise NotFoundError(f"Agent not found: {agent_id}")
     versions = session.scalars(
         select(AgentVersionORM)
@@ -234,12 +363,15 @@ def list_agent_versions(session: Session, agent_id: str) -> list[Agent]:
 def list_agents(
     session: Session,
     *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
     role: str | None = None,
     archived: bool = False,
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Agent], int]:
     where_clauses: list[ColumnElement[bool]] = []
+    where_clauses.extend(_ownership_filter(actor_id, is_admin))
     if not archived:
         where_clauses.append(AgentORM.archived_at.is_(None))
     if role is not None:

@@ -23,6 +23,8 @@ from dap_runtimes import RuntimeRegistry
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
+from tests.smoke._auth import authed_test_client
+
 from .conftest import replace_adapter, wait_for_status
 
 # ---------------------------------------------------------------------------
@@ -264,11 +266,11 @@ def phase2_clean_client() -> Iterator[
 ]:
     """Client with code-reviewer configured to return 'clean' on first call."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-clean-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
     app = create_app(config)
     pf_stub = Phase2PythonFuncStub()
     reviewer = Phase2CodeReviewerStub(review_results=["clean"])
-    with TestClient(app) as c:
+    with authed_test_client(app) as c:
         registry: RuntimeRegistry = app.state.runtime_registry
         replace_adapter(registry, Phase2BashStub())
         replace_adapter(registry, pf_stub)
@@ -282,12 +284,12 @@ def phase2_retry_client() -> Iterator[
 ]:
     """Client with code-reviewer configured to return 'needs_work' repeatedly."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-retry-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
     app = create_app(config)
     pf_stub = Phase2PythonFuncStub()
     # needs_work, needs_work, then clean (but cap should trigger at 2)
     reviewer = Phase2CodeReviewerStub(review_results=["needs_work", "needs_work", "clean"])
-    with TestClient(app) as c:
+    with authed_test_client(app) as c:
         registry: RuntimeRegistry = app.state.runtime_registry
         replace_adapter(registry, Phase2BashStub())
         replace_adapter(registry, pf_stub)

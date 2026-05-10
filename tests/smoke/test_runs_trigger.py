@@ -18,6 +18,8 @@ from dap_runtimes import RuntimeRegistry
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
+from tests.smoke._auth import authed_test_client
+
 POLL_INTERVAL_S = 0.05
 POLL_TIMEOUT_S = 5.0
 
@@ -56,9 +58,12 @@ class TriggerStubAdapter:
 @pytest.fixture
 def client_with_stub() -> Iterator[tuple[TestClient, RuntimeRegistry, TriggerStubAdapter]]:
     tmp = tempfile.mkdtemp(prefix="dap-trigger-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="smoke-secret",
+    )
     app = create_app(config)
-    with TestClient(app) as c:
+    with authed_test_client(app) as c:
         registry: RuntimeRegistry = app.state.runtime_registry
         stub = TriggerStubAdapter()
         registry.register(stub)

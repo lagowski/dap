@@ -14,6 +14,8 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
+from dap_engine.auth.users import current_active_user
+from dap_engine.persistence.models import UserORM
 
 if TYPE_CHECKING:
     # Runtime cycle: dap_engine.app imports this router module, so we
@@ -72,6 +74,7 @@ def _scrub_secret_like_keys(value: dict[str, Any]) -> dict[str, Any]:
 @router.get("")
 def list_agents(
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
     role: str | None = Query(default=None),
     archived: bool = Query(default=False),
     offset: int = Query(default=0, ge=0),
@@ -79,6 +82,8 @@ def list_agents(
 ) -> dict[str, Any]:
     items, total = repo.list_agents(
         session,
+        actor_id=user.id,
+        is_admin=user.is_superuser,
         role=role,
         archived=archived,
         offset=offset,
@@ -95,8 +100,12 @@ def list_agents(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Agent)
-def create_agent(payload: AgentCreate, session: Session = Depends(get_session)) -> Agent:
-    return repo.create_agent(session, payload)
+def create_agent(
+    payload: AgentCreate,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Agent:
+    return repo.create_agent(session, payload, user_id=user.id)
 
 
 @router.post(
@@ -108,6 +117,7 @@ def import_agent(
     payload: AgentImportRequest,
     session: Session = Depends(get_session),
     registry: RuntimeRegistry = Depends(get_registry),
+    user: UserORM = Depends(current_active_user),
 ) -> Agent:
     """Create a new agent (v1) from an exported JSON payload (#94).
 
@@ -136,13 +146,17 @@ def import_agent(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors(),
         ) from exc
-    return repo.create_agent(session, create_payload)
+    return repo.create_agent(session, create_payload, user_id=user.id)
 
 
 @router.get("/{agent_id}", response_model=Agent)
-def get_agent(agent_id: str, session: Session = Depends(get_session)) -> Agent:
+def get_agent(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Agent:
     try:
-        return repo.get_agent(session, agent_id)
+        return repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -152,15 +166,36 @@ def update_agent(
     agent_id: str,
     payload: AgentUpdate,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> Agent:
     try:
-        return repo.update_agent(session, agent_id, payload)
+        return repo.update_agent(
+            session,
+            agent_id,
+            payload,
+            actor_id=user.id,
+            is_admin=user.is_superuser,
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
-def archive_agent(agent_id: str, session: Session = Depends(get_session)) -> Response:
+def archive_agent(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Response:
+    # Ownership gate first — otherwise the 409-precheck below leaks info
+    # about foreign agents (id existence + names of blocking pipelines).
+    # The cheapest gate is a get_agent() call: it returns the row only if
+    # the caller owns it (or is admin) and raises NotFoundError otherwise,
+    # which we surface as 404 — same response a non-existent id gets.
+    try:
+        repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     blocking = repo.pipelines_using_agent(session, agent_id)
     if blocking:
         raise HTTPException(
@@ -175,16 +210,22 @@ def archive_agent(agent_id: str, session: Session = Depends(get_session)) -> Res
             },
         )
     try:
-        repo.archive_agent(session, agent_id)
+        repo.archive_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{agent_id}/versions", response_model=list[Agent])
-def list_agent_versions(agent_id: str, session: Session = Depends(get_session)) -> list[Agent]:
+def list_agent_versions(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> list[Agent]:
     try:
-        return repo.list_agent_versions(session, agent_id)
+        return repo.list_agent_versions(
+            session, agent_id, actor_id=user.id, is_admin=user.is_superuser
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -194,9 +235,12 @@ def get_agent_version(
     agent_id: str,
     version: int,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> Agent:
     try:
-        return repo.get_agent_version(session, agent_id, version)
+        return repo.get_agent_version(
+            session, agent_id, version, actor_id=user.id, is_admin=user.is_superuser
+        )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -205,6 +249,7 @@ def get_agent_version(
 def export_agent(
     agent_id: str,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> AgentExport:
     """Return a portable JSON shape of the agent (#94).
 
@@ -218,7 +263,7 @@ def export_agent(
     replaced with ``<redacted>`` before serialisation.
     """
     try:
-        agent = repo.get_agent(session, agent_id)
+        agent = repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -268,6 +313,7 @@ def render_preview(
     payload: RenderPreviewRequest,
     version: int | None = Query(default=None, description="Agent version (default: current)"),
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> RenderPreviewResponse:
     """Render the agent's prompt_template with the supplied context.
 
@@ -276,9 +322,11 @@ def render_preview(
     """
     try:
         agent = (
-            repo.get_agent_version(session, agent_id, version)
+            repo.get_agent_version(
+                session, agent_id, version, actor_id=user.id, is_admin=user.is_superuser
+            )
             if version is not None
-            else repo.get_agent(session, agent_id)
+            else repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
         )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -330,7 +378,13 @@ class _DryRunSource(NamedTuple):
     agent_budget_usd: float | None
 
 
-def _resolve_dryrun_source(payload: AgentDryRunRequest, session: Session) -> _DryRunSource:
+def _resolve_dryrun_source(
+    payload: AgentDryRunRequest,
+    session: Session,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> _DryRunSource:
     """Resolve the agent fields needed for a dry-run.
 
     Fetches a saved agent or unwraps the inline draft; the schema
@@ -352,9 +406,15 @@ def _resolve_dryrun_source(payload: AgentDryRunRequest, session: Session) -> _Dr
     assert payload.agent_id is not None
     try:
         agent = (
-            repo.get_agent_version(session, payload.agent_id, payload.agent_version)
+            repo.get_agent_version(
+                session,
+                payload.agent_id,
+                payload.agent_version,
+                actor_id=actor_id,
+                is_admin=is_admin,
+            )
             if payload.agent_version is not None
-            else repo.get_agent(session, payload.agent_id)
+            else repo.get_agent(session, payload.agent_id, actor_id=actor_id, is_admin=is_admin)
         )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -410,6 +470,7 @@ async def dry_run_agent(
     session: Session = Depends(get_session),
     registry: RuntimeRegistry = Depends(get_registry),
     config: EngineConfig = Depends(get_engine_config),
+    user: UserORM = Depends(current_active_user),
 ) -> AgentDryRunResponse:
     """Execute one agent end-to-end without persisting anything (#103).
 
@@ -422,7 +483,7 @@ async def dry_run_agent(
     Auth handled by the runtime adapter itself (env key OR stored OAuth
     session — see #99).
     """
-    source = _resolve_dryrun_source(payload, session)
+    source = _resolve_dryrun_source(payload, session, actor_id=user.id, is_admin=user.is_superuser)
 
     if not registry.has(source.runtime_id):
         raise HTTPException(
