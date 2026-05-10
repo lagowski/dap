@@ -1,37 +1,49 @@
 #!/usr/bin/env bash
 #
-# Pre-push hook — blokuje bezpośredni push do main / develop.
-# Aktywacja: git config core.hooksPath .githooks
+# Pre-push hook — bundles two local safety nets:
 #
-# Ten hook jest lokalnym safety net. Remote branch protection
-# (GitHub rules) jest właściwym enforcementem.
+#  (1) Refuses direct pushes to `main` / `develop`. The actual
+#      enforcement lives in GitHub branch-protection rules; this check
+#      catches the mistake before it leaves the laptop, and surfaces
+#      the workflow reminder right next to it.
+#
+#  (2) Runs `pre-commit run --all-files` before the push. The
+#      `.pre-commit-config.yaml` covers ruff (lint + format) and mypy
+#      strict — a subset of CI (which also runs pytest + dashboard
+#      typecheck/build). Catching that subset locally fixes the
+#      recurring scenario where a `ruff-format` autofix during a
+#      previous commit was left unstaged and the next commit re-pushed
+#      the unformatted version, only for CI's `ruff format --check` to
+#      reject it.
+#
+# Activation: git config core.hooksPath .githooks
 
 set -euo pipefail
 
 protected_branches=("main" "develop")
 remote="$1"
 
-# Format stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
+# stdin format: <local_ref> <local_sha> <remote_ref> <remote_sha>
 while read -r local_ref local_sha remote_ref remote_sha; do
-  # remote_ref ma format refs/heads/<branch>
+  # remote_ref has the form refs/heads/<branch>
   branch="${remote_ref#refs/heads/}"
 
   for protected in "${protected_branches[@]}"; do
     if [[ "$branch" == "$protected" ]]; then
-      # Sprawdź czy to delete ref (push --delete)
+      # `git push --delete` sends an all-zero local sha
       zero_sha="0000000000000000000000000000000000000000"
       if [[ "$local_sha" == "$zero_sha" ]]; then
-        echo "✗ Blokada: usuwanie branch '$protected' jest zabronione."
+        echo "✗ Refused: deleting branch '$protected' is not allowed."
         exit 1
       fi
 
-      echo "✗ Blokada: bezpośredni push do '$protected' jest zabroniony."
+      echo "✗ Refused: direct push to '$protected' is not allowed."
       echo ""
       echo "  Workflow:"
-      echo "    1. Utwórz branch z develop: git checkout -b issue/<nr>-<slug>"
-      echo "    2. Commituj zmiany na tym branchu"
-      echo "    3. Push branch: git push -u origin issue/<nr>-<slug>"
-      echo "    4. Otwórz PR → $protected przez gh pr create"
+      echo "    1. Create a branch from develop: git checkout -b issue/<nr>-<slug>"
+      echo "    2. Commit your changes on that branch"
+      echo "    3. Push the branch: git push -u origin issue/<nr>-<slug>"
+      echo "    4. Open a PR → $protected via gh pr create"
       echo ""
       echo "  Override (use with caution):"
       echo "    git push --no-verify $remote $branch"
@@ -40,5 +52,21 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
   done
 done
+
+# (2) Pre-commit run — only when the tool is installed locally. The
+# block is opt-in (silent skip when `pre-commit` isn't on PATH) so
+# contributors who haven't run `uv tool install pre-commit` aren't
+# forced to do so just to push. CI still enforces ruff + mypy + pytest,
+# so this hook only adds *earlier* feedback for the ruff/mypy subset.
+if command -v pre-commit >/dev/null 2>&1; then
+  echo "→ pre-push: running pre-commit (skip with: git push --no-verify)"
+  if ! pre-commit run --all-files; then
+    echo ""
+    echo "✗ pre-commit failed — fix the issues above and try again."
+    echo "  (the same hooks run on every commit; CI re-runs ruff + mypy"
+    echo "   plus pytest, so an unfixed push will fail there too.)"
+    exit 1
+  fi
+fi
 
 exit 0

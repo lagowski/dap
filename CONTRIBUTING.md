@@ -100,15 +100,28 @@ gh pr create --base main --head develop --title "release: vX.Y.Z"
 
 ## Lokalne zabezpieczenia
 
-### Pre-push hook (blokada main / develop)
+### Pre-push hook (blokada main / develop + format guard)
 
-Repo dostarcza **pre-push hook** blokujący bezpośredni push do `main` i `develop` (patrz `.githooks/pre-push`). Hook aktywny po:
+Repo dostarcza **pre-push hook** (patrz `.githooks/pre-push`) który robi dwie rzeczy:
+
+1. **Blokuje bezpośredni push do `main` / `develop`** — wymusza gitflow workflow z PR-em.
+2. **Uruchamia `pre-commit run --all-files` przed pushem** (jeśli `pre-commit` jest zainstalowane lokalnie). Łapie format-fix-y które prześlizgnęły się przez sam `pre-commit install`.
+
+   Mechanizm autofix-skipu: gdy hook commit'a zmieni plik (np. `ruff-format`), pre-commit przerywa *bieżący* commit i zostawia naprawione pliki w roboczym drzewie (nie zaindexowanym). Jeśli operator ponowi `git commit` **bez** uprzedniego `git add`, drugi commit przechodzi na *starym* indexie — niesformatowanej wersji — ponieważ z perspektywy pre-commit hook'a "tym razem nic nie zmienił". Ta druga forma diffa dolatuje do origin i wywala CI dopiero zdalnie. Push-time check zamyka tę lukę.
+
+Aktywacja po sklonowaniu repo:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-Wykonaj raz po sklonowaniu repo. Hook nie zastępuje branch protection po stronie GitHub — jest tylko local safety net.
+Bypass (np. emergency hotfix lub praca w branchu z WIP-em który nie powinien być formatowany przed push'em):
+
+```bash
+git push --no-verify
+```
+
+Hook nie zastępuje branch protection po stronie GitHub — jest tylko local safety net + accelerator feedback'u.
 
 ### Pre-commit hooks (ruff + mypy)
 
