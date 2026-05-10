@@ -158,13 +158,15 @@ async def _run_pipeline(
 
         # Seed a synthetic owner — the runner doesn't care who owns the
         # row, but ``runs.user_id`` has a FK to ``users.id`` so the row
-        # must exist. Single shared user keeps the seed minimal.
-        owner_id = uuid.uuid4()
+        # must exist. Deterministic UUID so repeat ``_run_pipeline``
+        # calls share the user instead of inserting a fresh row each
+        # time (Copilot review on PR #313).
+        owner_id = uuid.UUID("00000000-0000-0000-0000-00000000beef")
         if session.get(UserORM, owner_id) is None:
             session.add(
                 UserORM(
                     id=owner_id,
-                    email=f"runner-{owner_id}@local.dev",
+                    email="runner-test@local.dev",
                     hashed_password="x" * 64,  # unhashable / unusable
                     is_active=False,
                     is_superuser=False,

@@ -103,7 +103,15 @@ async def trigger_run(
                 detail=f"Project is archived: {payload.project_id}",
             )
 
-    target_version = payload.pipeline_version or pipeline.version
+    # ``is not None`` rather than ``or`` — the latter coerces ``0`` to
+    # the current version, but ``0`` is a malformed user-supplied
+    # version we want to surface as 404 below, not silently rewrite.
+    # ``RunCreateRequest.pipeline_version`` has no ge=1 validator, so
+    # this is the only gate that catches the malformed case
+    # (Copilot review on PR #313).
+    target_version = (
+        payload.pipeline_version if payload.pipeline_version is not None else pipeline.version
+    )
     pipeline_version = session.scalar(
         select(PipelineVersionORM)
         .where(PipelineVersionORM.pipeline_id == payload.pipeline_id)
