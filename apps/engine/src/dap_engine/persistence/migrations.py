@@ -284,6 +284,195 @@ def _010_create_oauth_accounts_table(conn: Connection) -> None:
     )
 
 
+def _012_add_user_id_to_resources(conn: Connection) -> None:
+    """v0.3 / #299 (sub-A4a) — add nullable ``user_id`` to resource tables.
+
+    Adds the column on ``agents``, ``pipelines``, ``projects``, ``runs``
+    so the schema is ready for the ownership enforcement that lands in
+    sub-A4b. The column is nullable here because:
+      1. SQLite ``ALTER TABLE … ADD COLUMN`` can't add a NOT NULL
+         column without a DEFAULT, and we don't have a system-user UUID
+         to default to until #13 runs.
+      2. The backfill (#13) populates *existing* rows; the
+         application-layer contract that "every new row sets user_id"
+         is enforced by the route handlers (sub-A4b), not the schema.
+
+    PostgreSQL gets the same nullable shape so the two backends match.
+    The follow-up sub-PR can ALTER COLUMN SET NOT NULL on PG once the
+    contract is wired through; SQLite leaves it nullable forever
+    because that dialect has no equivalent ALTER.
+
+    Index creation runs **unconditionally** with ``IF NOT EXISTS``,
+    separately from the ADD COLUMN guard. Otherwise on a fresh DB —
+    where ``Base.metadata.create_all`` already created the column — the
+    early-skip branch would also skip the indexes, leaving fresh
+    installs without ``ix_*_user_id`` (the ORM only declares those
+    indexes on three of the four tables; ``RunORM`` deliberately does
+    not, so the index would be missing entirely otherwise).
+
+    PostgreSQL upgrades additionally need an explicit FK constraint:
+    ``ALTER TABLE ADD COLUMN`` (without REFERENCES) leaves the column
+    integrity-checkless even though the ORM declares a ForeignKey.
+    SQLite ignores trailing FK clauses, but to keep the migration
+    dialect-correct we only emit the ALTER on PostgreSQL.
+    """
+    dialect = conn.dialect.name
+    id_type = "UUID" if dialect == "postgresql" else "CHAR(36)"
+
+    for table in ("agents", "pipelines", "projects", "runs"):
+        if not _column_exists(conn, table, "user_id"):
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id {id_type} NULL"))
+            if dialect == "postgresql":
+                # SQLite can't add an FK to an existing column; on PG we
+                # tighten the constraint to match the ORM mapping
+                # (ondelete=CASCADE). Constraint naming is explicit so
+                # operators can drop / recreate it without guessing the
+                # generated identifier.
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {table} ADD CONSTRAINT fk_{table}_user_id "
+                        "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+                    )
+                )
+        # Indexes always — IF NOT EXISTS makes this a cheap no-op when
+        # create_all already produced them on a fresh DB, and a real
+        # backstop for older dev DBs upgrading through this migration.
+        conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id)"))
+
+
+def _013_backfill_user_id_via_system_user(conn: Connection) -> None:
+    """v0.3 / #299 (sub-A4a) — backfill resource ownership.
+
+    For each resource table with NULL ``user_id`` rows (i.e. data that
+    pre-dates v0.3), set ``user_id`` to a synthetic ``system@local``
+    user that's created on-the-fly if missing. The user is flagged
+    ``is_superuser=True`` so admins listing resources see the legacy
+    rows, plus ``is_active=False`` and a random unrecoverable password
+    so **nobody can log in as system@local directly**. To re-assign
+    ownership, an admin signs in with their own real account
+    (after Phase B's dashboard auth flow ships) and reassigns the
+    legacy resources via the admin panel (Phase C).
+
+    Skipped entirely on a fresh DB where every resource table is
+    empty — the system user only materialises when something actually
+    needs claiming.
+    """
+    # Detect whether any backfill is needed.
+    has_orphans = False
+    for table in ("agents", "pipelines", "projects", "runs"):
+        if not _column_exists(conn, table, "user_id"):
+            continue
+        result = conn.execute(text(f"SELECT 1 FROM {table} WHERE user_id IS NULL LIMIT 1"))
+        if result.first() is not None:
+            has_orphans = True
+            break
+    if not has_orphans:
+        return
+
+    # Find or create the system user. We can't use the ORM here (the
+    # in-code migration runs against a raw SQLAlchemy Connection), so
+    # SELECT-then-INSERT with the email as a uniqueness key.
+    import secrets  # noqa: PLC0415 — local; migrations import lazily
+
+    SYSTEM_EMAIL = "system@local"
+    existing = conn.execute(
+        text("SELECT id FROM users WHERE email = :email"),
+        {"email": SYSTEM_EMAIL},
+    ).first()
+    if existing is None:
+        # Hash a random throwaway password — fastapi-users uses pwdlib
+        # / argon2 by default, but the migration has no easy access to
+        # that. Storing a plain-random sha256 keeps the column non-NULL
+        # without ever being a valid login (no UserManager will accept
+        # it since the row is also is_active=False).
+        import hashlib  # noqa: PLC0415
+        import uuid as _uuid  # noqa: PLC0415
+
+        system_id = str(_uuid.uuid4())
+        random_secret = secrets.token_urlsafe(32)
+        random_hash = hashlib.sha256(random_secret.encode()).hexdigest()
+        now = datetime.now(UTC).isoformat()
+        conn.execute(
+            text(
+                """
+                INSERT INTO users (
+                    id, email, hashed_password,
+                    is_active, is_superuser, is_verified,
+                    created_at, updated_at, deleted_at, last_login_at
+                ) VALUES (
+                    :id, :email, :pw,
+                    :is_active, :is_superuser, :is_verified,
+                    :created_at, :updated_at, NULL, NULL
+                )
+                """
+            ),
+            {
+                "id": system_id,
+                "email": SYSTEM_EMAIL,
+                "pw": random_hash,
+                "is_active": False,
+                "is_superuser": True,
+                "is_verified": True,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        logger.warning(
+            "Backfilled %s for legacy ownership claims on pre-v0.3 resources. "
+            "Password is unrecoverable — sign in as an admin and re-assign "
+            "ownership via /admin/users (Phase C) or hard-delete the row.",
+            SYSTEM_EMAIL,
+        )
+    else:
+        system_id = str(existing[0])
+
+    for table in ("agents", "pipelines", "projects", "runs"):
+        if not _column_exists(conn, table, "user_id"):
+            continue
+        conn.execute(
+            text(f"UPDATE {table} SET user_id = :uid WHERE user_id IS NULL"),
+            {"uid": system_id},
+        )
+
+
+def _014_create_audit_log_table(conn: Connection) -> None:
+    """v0.3 / #299 (sub-A4a) — create the ``audit_log`` table.
+
+    Matches ``AuditLogORM``. Append-only; no FK to ``users`` so an audit
+    row survives hard-deletion of the actor (audit integrity > referential
+    cleanliness — see ORM docstring).
+
+    Same idempotent IF-NOT-EXISTS index pattern as migrations 10 + 11.
+    """
+    inspector = inspect(conn)
+    if not inspector.has_table("audit_log"):
+        dialect = conn.dialect.name
+        id_type = "UUID" if dialect == "postgresql" else "CHAR(36)"
+        ts_type = "TIMESTAMPTZ" if dialect == "postgresql" else "TIMESTAMP"
+        json_type = "JSONB" if dialect == "postgresql" else "TEXT"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE audit_log (
+                    id {id_type} NOT NULL PRIMARY KEY,
+                    user_id {id_type} NULL,
+                    event_type VARCHAR(100) NOT NULL,
+                    event_data {json_type} NULL,
+                    created_at {ts_type} NOT NULL
+                )
+                """
+            )
+        )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_audit_log_user_event ON audit_log (user_id, event_type)"
+        )
+    )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_audit_log_created_at ON audit_log (created_at)")
+    )
+
+
 def _011_create_api_tokens_table(conn: Connection) -> None:
     """v0.3 / #299 — create the ``api_tokens`` table for CLI / script auth.
 
@@ -347,6 +536,12 @@ MIGRATIONS: list[Migration] = [
     Migration(name="009_create_users_table", apply=_009_create_users_table),
     Migration(name="010_create_oauth_accounts_table", apply=_010_create_oauth_accounts_table),
     Migration(name="011_create_api_tokens_table", apply=_011_create_api_tokens_table),
+    Migration(name="012_add_user_id_to_resources", apply=_012_add_user_id_to_resources),
+    Migration(
+        name="013_backfill_user_id_via_system_user",
+        apply=_013_backfill_user_id_via_system_user,
+    ),
+    Migration(name="014_create_audit_log_table", apply=_014_create_audit_log_table),
 ]
 
 

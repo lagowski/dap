@@ -146,6 +146,51 @@ class ApiTokenORM(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class AuditLogORM(Base):
+    """Append-only audit trail of security-relevant events (#299, sub-A4).
+
+    Captures the *what* + *who* + *when* of operator-visible auth /
+    ownership events. ``event_type`` is a stable string key (e.g.
+    ``user.registered``, ``user.login``, ``api_token.created``,
+    ``api_token.revoked``); ``event_data`` is a free-form JSON
+    payload for per-event details (target user id, token prefix, IP
+    address from the request, …).
+
+    Lifecycle:
+    - **Append-only**: rows are never updated or deleted by application
+      code. A retention policy (e.g. monthly partition pruning) can
+      reclaim space later if growth becomes a concern (Phase E).
+    - ``user_id`` is nullable so events that happen *before* the actor
+      is identified (e.g. failed login by an unknown email) can still
+      be recorded.
+    - No FK to ``users.id`` either — the row should survive even if
+      the user account is hard-deleted (audit integrity > referential
+      cleanliness).
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        # Admin filter UI lists by user, by event type, or by both. The
+        # composite leads with user_id since "show me what user X did"
+        # is the primary investigation flow; event_type alone falls back
+        # to a small filtered scan.
+        Index("ix_audit_log_user_event", "user_id", "event_type"),
+        Index("ix_audit_log_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    # Nullable: pre-auth events (failed login by unknown email) and
+    # system events (migration, scheduled cleanup) have no actor.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(GUID, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+
+
 class OAuthAccountORM(SQLAlchemyBaseOAuthAccountTableUUID, Base):
     """Linked OAuth identity (GitHub, Google, …).
 
@@ -196,8 +241,30 @@ class AgentORM(Base):
     """Logical agent — stable identity + pointer to current version."""
 
     __tablename__ = "agents"
+    __table_args__ = (
+        # Listing endpoints filter by user_id ("my agents") on every page;
+        # keep the index aligned with the dominant access pattern.
+        Index("ix_agents_user_id", "user_id"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Owner of the agent. CASCADE on user delete is intentional — a user
+    # row that's been hard-deleted (admin / GDPR path, Phase C/E) takes
+    # their owned data with it. Soft-deleted users keep their rows.
+    # Owner of this row — set on every new resource by the route
+    # handlers (sub-A4b). Nullable on the SQL side so the migration
+    # can ADD COLUMN against pre-v0.3 dev DBs without DEFAULT
+    # acrobatics; the backfill (#13) populates existing rows from a
+    # synthetic ``system`` user, and Phase A's enforcement PR (sub-A4b)
+    # will switch the application-layer contract to "always set on
+    # create" — at which point the DB column flips to NOT NULL on
+    # PostgreSQL (SQLite ALTER COLUMN limitations leave it nullable
+    # there, but the ORM contract still holds).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("users.id", ondelete="cascade"),
+        nullable=True,
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     role: Mapped[str] = mapped_column(String, nullable=False)
     current_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -256,8 +323,23 @@ class PipelineORM(Base):
     """Logical pipeline — stable identity + pointer to current version."""
 
     __tablename__ = "pipelines"
+    __table_args__ = (Index("ix_pipelines_user_id", "user_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Owner of this row — set on every new resource by the route
+    # handlers (sub-A4b). Nullable on the SQL side so the migration
+    # can ADD COLUMN against pre-v0.3 dev DBs without DEFAULT
+    # acrobatics; the backfill (#13) populates existing rows from a
+    # synthetic ``system`` user, and Phase A's enforcement PR (sub-A4b)
+    # will switch the application-layer contract to "always set on
+    # create" — at which point the DB column flips to NOT NULL on
+    # PostgreSQL (SQLite ALTER COLUMN limitations leave it nullable
+    # there, but the ORM contract still holds).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("users.id", ondelete="cascade"),
+        nullable=True,
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     current_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -323,8 +405,23 @@ class ProjectORM(Base):
     """
 
     __tablename__ = "projects"
+    __table_args__ = (Index("ix_projects_user_id", "user_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Owner of this row — set on every new resource by the route
+    # handlers (sub-A4b). Nullable on the SQL side so the migration
+    # can ADD COLUMN against pre-v0.3 dev DBs without DEFAULT
+    # acrobatics; the backfill (#13) populates existing rows from a
+    # synthetic ``system`` user, and Phase A's enforcement PR (sub-A4b)
+    # will switch the application-layer contract to "always set on
+    # create" — at which point the DB column flips to NOT NULL on
+    # PostgreSQL (SQLite ALTER COLUMN limitations leave it nullable
+    # there, but the ORM contract still holds).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("users.id", ondelete="cascade"),
+        nullable=True,
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
@@ -351,6 +448,20 @@ class RunORM(Base):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Owner of this row — set on every new resource by the route
+    # handlers (sub-A4b). Nullable on the SQL side so the migration
+    # can ADD COLUMN against pre-v0.3 dev DBs without DEFAULT
+    # acrobatics; the backfill (#13) populates existing rows from a
+    # synthetic ``system`` user, and Phase A's enforcement PR (sub-A4b)
+    # will switch the application-layer contract to "always set on
+    # create" — at which point the DB column flips to NOT NULL on
+    # PostgreSQL (SQLite ALTER COLUMN limitations leave it nullable
+    # there, but the ORM contract still holds).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("users.id", ondelete="cascade"),
+        nullable=True,
+    )
     # Owning project (v0.6, #64). FK with NO cascade — archiving a
     # project leaves its runs intact for historical inspection.
     # Nullable for ad-hoc / legacy runs triggered without a project.
@@ -398,6 +509,12 @@ class RunORM(Base):
         Index("ix_runs_project_started", "project_id", "started_at"),
         # Per-pipeline runs view: same shape with ``pipeline_id`` (#251).
         Index("ix_runs_pipeline_started", "pipeline_id", "started_at"),
+        # Owner-scoped listings (admin cross-user view + dashboard's
+        # "my runs" tab in Phase B). The composites above lead with
+        # project_id / pipeline_id, so they don't help the user-only
+        # filter; this single-column index keeps the access pattern
+        # symmetric with the other resource tables (sub-A4a, #299).
+        Index("ix_runs_user_id", "user_id"),
     )
 
 
