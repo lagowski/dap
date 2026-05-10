@@ -60,11 +60,12 @@ logs/
 npm-debug.log*
 pnpm-debug.log*
 
-# --- IDE ---
+# --- IDE / Agents ---
 .vscode/
 .idea/
 *.swp
 *.swo
+.claude/
 
 # --- OS ---
 .DS_Store
