@@ -50,6 +50,33 @@ jobs:
       - name: Pytest
         run: uv run pytest -q
 
+  pip-audit:
+    name: Python deps CVE scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Pin Python from .python-version
+        run: uv python install
+
+      - name: Install workspace (frozen)
+        run: uv sync --all-packages --frozen
+
+      - name: pip-audit
+        # Audits the synced venv (uv.lock-frozen). Workspace packages
+        # (dap-*, cortex) are skipped as expected — they are local, not
+        # on PyPI. CVE detection covers all transitive dependencies.
+        run: uv run pip-audit
+
   dashboard:
     name: Dashboard (typecheck + build)
     runs-on: ubuntu-latest
