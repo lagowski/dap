@@ -100,9 +100,21 @@ class OAuthAccountORM(SQLAlchemyBaseOAuthAccountTableUUID, Base):
     ``ForeignKey("user.id", …)`` (singular table name) but our user
     table is ``users`` (plural — see UserORM.__tablename__). Without
     the override, SQLAlchemy raises NoReferencedTableError on import.
+
+    Indexes are declared at the ORM level so ``Base.metadata.create_all``
+    creates them on fresh DBs (it runs *before* ``apply_migrations`` —
+    see ``persistence/db.py``). The migration provides idempotent
+    fallbacks for existing DBs that predate this release.
     """
 
     __tablename__ = "oauth_accounts"
+    __table_args__ = (
+        # Every callback resolves an existing OAuth identity by
+        # ``(oauth_name, account_id)``; without this composite the lookup
+        # is a full table scan on every login (and login frequency
+        # scales with active-user count).
+        Index("ix_oauth_accounts_provider_account", "oauth_name", "account_id"),
+    )
 
     @declared_attr
     def user_id(cls) -> Mapped[uuid.UUID]:
@@ -110,6 +122,11 @@ class OAuthAccountORM(SQLAlchemyBaseOAuthAccountTableUUID, Base):
             GUID,
             ForeignKey("users.id", ondelete="cascade"),
             nullable=False,
+            # User-scoped queries (list / unlink an OAuth account from
+            # the admin panel in Phase C) hit this column on every page;
+            # an explicit single-column index keeps those fast even when
+            # the composite above doesn't help (it leads with oauth_name).
+            index=True,
         )
 
 

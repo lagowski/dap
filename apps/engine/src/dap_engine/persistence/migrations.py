@@ -246,41 +246,42 @@ def _010_create_oauth_accounts_table(conn: Connection) -> None:
     fresh DBs already have the table from ``Base.metadata.create_all``;
     this migration backstops upgrades from pre-OAuth dev DBs.
 
-    Indexes:
-    - ``ix_oauth_accounts_user_id`` — every login / token-refresh resolves
-      a user's linked accounts; composite (user_id, oauth_name) would be
-      ideal but a plain user_id index is enough at this scale.
-    - ``ix_oauth_accounts_provider_account`` — the OAuth callback looks
-      up an existing link by ``(oauth_name, account_id)``; without an
-      index this is a full table scan on every login.
+    Indexes are created unconditionally with ``IF NOT EXISTS`` —
+    ``create_all`` runs first but only creates indexes for *new* tables,
+    so a DB that was upgraded incrementally could end up with the table
+    but no indexes. The ``IF NOT EXISTS`` guards make the index creates
+    a cheap no-op on fresh DBs that already have them from the ORM.
     """
     inspector = inspect(conn)
-    if inspector.has_table("oauth_accounts"):
-        return
-
-    dialect = conn.dialect.name
-    id_type = "UUID" if dialect == "postgresql" else "CHAR(36)"
+    if not inspector.has_table("oauth_accounts"):
+        dialect = conn.dialect.name
+        id_type = "UUID" if dialect == "postgresql" else "CHAR(36)"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE oauth_accounts (
+                    id {id_type} NOT NULL PRIMARY KEY,
+                    user_id {id_type} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    oauth_name VARCHAR(100) NOT NULL,
+                    access_token VARCHAR(1024) NOT NULL,
+                    expires_at INTEGER NULL,
+                    refresh_token VARCHAR(1024) NULL,
+                    account_id VARCHAR(320) NOT NULL,
+                    account_email VARCHAR(320) NOT NULL
+                )
+                """
+            )
+        )
 
     conn.execute(
         text(
-            f"""
-            CREATE TABLE oauth_accounts (
-                id {id_type} NOT NULL PRIMARY KEY,
-                user_id {id_type} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                oauth_name VARCHAR(100) NOT NULL,
-                access_token VARCHAR(1024) NOT NULL,
-                expires_at INTEGER NULL,
-                refresh_token VARCHAR(1024) NULL,
-                account_id VARCHAR(320) NOT NULL,
-                account_email VARCHAR(320) NOT NULL
-            )
-            """
+            "CREATE INDEX IF NOT EXISTS ix_oauth_accounts_user_id "
+            "ON oauth_accounts (user_id)"
         )
     )
-    conn.execute(text("CREATE INDEX ix_oauth_accounts_user_id ON oauth_accounts (user_id)"))
     conn.execute(
         text(
-            "CREATE INDEX ix_oauth_accounts_provider_account "
+            "CREATE INDEX IF NOT EXISTS ix_oauth_accounts_provider_account "
             "ON oauth_accounts (oauth_name, account_id)"
         )
     )
