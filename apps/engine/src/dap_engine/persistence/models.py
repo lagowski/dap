@@ -9,9 +9,10 @@ Versioning model:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -28,6 +29,53 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Users (auth — v0.3, see #299)
+# ---------------------------------------------------------------------------
+
+
+class UserORM(SQLAlchemyBaseUserTableUUID, Base):
+    """Authenticated user.
+
+    Inherits the ``id`` (UUID), ``email`` (unique), ``hashed_password``,
+    ``is_active``, ``is_superuser``, ``is_verified`` columns from
+    ``SQLAlchemyBaseUserTableUUID``. We extend with audit timestamps and
+    a soft-delete column.
+
+    Naming note: the fastapi-users default ``__tablename__`` is ``user``
+    (singular). We override to ``users`` to match the rest of the schema
+    (``agents``, ``pipelines``, ``runs``, ``projects``, …).
+
+    Soft-delete: the ``UserManager.delete`` override (in
+    ``auth/users.py``) writes ``deleted_at`` + flips ``is_active=False``
+    instead of issuing ``DELETE FROM users``. This keeps the row alive
+    so any future FK pointing at the user — e.g. the ``user_id`` column
+    that lands on ``agents`` / ``pipelines`` / ``projects`` / ``runs`` in
+    a follow-up sub-PR — remains valid without cascading data loss.
+    Hard delete (admin-initiated, GDPR right-to-erasure) is exposed
+    separately in Phase C/E.
+    """
+
+    __tablename__ = "users"
+
+    # `default` runs Python-side on ORM `User(...)` construction (which is
+    # how fastapi-users creates rows). `onupdate` keeps `updated_at` fresh
+    # on subsequent UPDATEs without callers having to remember.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # ---------------------------------------------------------------------------

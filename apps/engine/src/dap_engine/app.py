@@ -24,6 +24,10 @@ from dap_engine.api.projects import router as projects_router
 from dap_engine.api.runs import router as runs_router
 from dap_engine.api.runtimes import router as runtimes_router
 from dap_engine.api.settings import router as settings_router
+from dap_engine.auth import fastapi_users
+from dap_engine.auth.db import create_async_engine_for_url, make_async_session_factory
+from dap_engine.auth.schemas import UserCreate, UserRead, UserUpdate
+from dap_engine.auth.users import auth_backend, configure_jwt
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.db import (
@@ -149,6 +153,35 @@ class EngineConfig:
     # Production deployments override via env var ``DAP_CORS_ORIGINS``
     # (parsed in ``__main__``) or by passing ``cors_origins=[...]`` here.
     cors_origins: list[str] | None = None
+    # Auth (v0.3, see #299).
+    # ``auth_jwt_secret``: required for any auth-protected route.  Tests
+    # set a deterministic value; production reads ``DAP_AUTH_JWT_SECRET``
+    # in ``__main__`` and refuses to start with a default. We accept None
+    # here only to keep the dataclass default-constructible; the lifespan
+    # generates a per-process random secret in that case (sufficient for
+    # local dev where every restart invalidates outstanding tokens).
+    auth_jwt_secret: str | None = None
+    auth_access_ttl_seconds: int = 60 * 15
+
+
+def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any]:
+    """Build the JWT-config + async engine + session factory for fastapi-users.
+
+    Returns ``(async_engine, async_session_factory)``. The async engine
+    is owned by the caller, which must dispose it on shutdown.
+
+    A ``None`` ``auth_jwt_secret`` is replaced with a per-process random,
+    which means outstanding tokens become invalid on the next restart.
+    That's the safer default for local dev / tests; production must set
+    ``DAP_AUTH_JWT_SECRET`` explicitly.
+    """
+    import secrets  # noqa: PLC0415 — local to keep top of file uncluttered
+
+    jwt_secret = cfg.auth_jwt_secret or secrets.token_urlsafe(32)
+    configure_jwt(jwt_secret, cfg.auth_access_ttl_seconds)
+    async_engine = create_async_engine_for_url(cfg.database_url, cfg.db_path)
+    async_session_factory = make_async_session_factory(async_engine)
+    return async_engine, async_session_factory
 
 
 def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
@@ -184,6 +217,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         registry = create_default_registry()
         run_registry = RunRegistry()
 
+        # Auth: parallel async engine for fastapi-users (see auth/db.py).
+        auth_async_engine, async_session_factory = _setup_auth(cfg)
+
         # Recover stale runs left by previous crashes
         with session_factory() as cleanup_session:
             stale_count = repo.mark_stale_running_runs_as_failed(
@@ -208,6 +244,8 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
             app.state.runtime_registry = registry
             app.state.run_registry = run_registry
             app.state.checkpointer = checkpointer
+            app.state.async_session_factory = async_session_factory
+            app.state.auth_async_engine = auth_async_engine
 
             logger.info("dap-engine started — dialect=%s db=%s", dialect, db_label)
             try:
@@ -226,6 +264,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
                                 )
                         shutdown_session.commit()
 
+                await auth_async_engine.dispose()
                 engine.dispose()
                 logger.info("dap-engine stopped")
 
@@ -249,5 +288,26 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     app.include_router(projects_router)
     app.include_router(runs_router)
     app.include_router(settings_router)
+
+    # Auth routes (v0.3, see #299).
+    # Existing endpoints are NOT yet auth-protected — that lands in a
+    # follow-up PR alongside the user_id ownership columns. This PR only
+    # exposes the auth surface so dashboards / CLIs can register and log
+    # in; the full auth-and-ownership migration ships separately.
+    app.include_router(
+        fastapi_users.get_auth_router(auth_backend),
+        prefix="/auth/jwt",
+        tags=["auth"],
+    )
+    app.include_router(
+        fastapi_users.get_register_router(UserRead, UserCreate),
+        prefix="/auth",
+        tags=["auth"],
+    )
+    app.include_router(
+        fastapi_users.get_users_router(UserRead, UserUpdate),
+        prefix="/users",
+        tags=["users"],
+    )
 
     return app
