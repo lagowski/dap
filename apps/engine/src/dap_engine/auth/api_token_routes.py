@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dap_engine.auth.api_tokens import generate_token
+from dap_engine.auth.audit import record_audit_event_async
 from dap_engine.auth.db import get_async_session
 from dap_engine.auth.users import current_active_user_jwt_only
 from dap_engine.persistence.models import ApiTokenORM, UserORM
@@ -87,6 +88,17 @@ async def create_api_token(
         expires_at=expires_at,
     )
     session.add(row)
+    await session.flush()  # populate row.id before audit refers to it
+    await record_audit_event_async(
+        session,
+        user_id=user.id,
+        event_type="api_token.created",
+        event_data={
+            "token_id": str(row.id),
+            "name": row.name,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        },
+    )
     await session.commit()
     await session.refresh(row)
 
@@ -153,4 +165,13 @@ async def revoke_api_token(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
     if row.revoked_at is None:
         row.revoked_at = datetime.now(UTC)
+        await record_audit_event_async(
+            session,
+            user_id=user.id,
+            event_type="api_token.revoked",
+            event_data={"token_id": str(row.id), "name": row.name},
+        )
+        # record_audit_event_async commits — second commit is a no-op
+        # but harmless; left in for defensive symmetry with the
+        # pre-audit shape.
         await session.commit()
