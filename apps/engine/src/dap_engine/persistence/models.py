@@ -26,6 +26,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column, relationship
 
 
@@ -151,7 +152,7 @@ class AuditLogORM(Base):
 
     Captures the *what* + *who* + *when* of operator-visible auth /
     ownership events. ``event_type`` is a stable string key (e.g.
-    ``user.registered``, ``user.login``, ``api_token.created``,
+    ``user.registered``, ``user.logged_in``, ``api_token.created``,
     ``api_token.revoked``); ``event_data`` is a free-form JSON
     payload for per-event details (target user id, token prefix, IP
     address from the request, …).
@@ -183,7 +184,15 @@ class AuditLogORM(Base):
     # system events (migration, scheduled cleanup) have no actor.
     user_id: Mapped[uuid.UUID | None] = mapped_column(GUID, nullable=True)
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    event_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # JSONB on PostgreSQL — supports native JSON path queries (the admin
+    # panel will filter by ``event_data->>'token_id'`` etc.) and matches
+    # the migration's CREATE TABLE column type. ``JSON.with_variant(JSONB,
+    # "postgresql")`` keeps the SQLite path on plain JSON (TEXT under the
+    # hood, no native operators but the column type is dialect-aware).
+    event_data: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

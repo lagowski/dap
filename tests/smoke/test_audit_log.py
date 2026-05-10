@@ -147,9 +147,12 @@ async def test_soft_delete_user_writes_audit_row(client: TestClient) -> None:
         )
         manager = UserManager(SQLAlchemyUserDatabase(session, UserORM))
         await manager.delete(user)
-        # Manager doesn't commit on its own — flush + commit so the
-        # audit row lands in the DB before we read it back.
-        await session.commit()
+        # `manager.delete` already commits via ``user_db.update`` AND via
+        # the audit-event helper (eager commit per its docstring). The
+        # explicit commit here is defensive — at this point the session
+        # has nothing pending, so it's a no-op, kept only so a future
+        # change that adds further work in this block doesn't silently
+        # forget to flush.
 
     rows = await _audit_rows(client, "user.deleted")
     assert len(rows) == 1
