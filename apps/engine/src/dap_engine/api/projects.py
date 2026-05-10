@@ -23,7 +23,7 @@ from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import ProjectCreate, ProjectUpdate, RunCreateRequest
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import ProjectORM, UserORM
+from dap_engine.persistence.models import UserORM
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -136,22 +136,18 @@ async def trigger_project_run(
     call), and delegates to the standard run-trigger flow.
 
     Ownership: non-admins can only trigger projects they own. The
-    project lookup is gated *before* the archived-state check so a
-    cross-user probe surfaces 404 (anti-enumeration), never the
-    structured "Project is archived" 422 that would leak existence.
+    project lookup is gated by ``repo.get_project`` — same gate the
+    other CRUD endpoints use — so a cross-user probe surfaces 404
+    (anti-enumeration), never the structured "Project is archived"
+    422 that would leak existence. Sharing the gate avoids drift if
+    the ownership rule changes (Copilot review on PR #312).
     """
-    project = session.get(ProjectORM, project_id)
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project not found: {project_id}",
+    try:
+        project = repo.get_project(
+            session, project_id, actor_id=user.id, is_admin=user.is_superuser
         )
-    if not user.is_superuser and project.user_id != user.id:
-        # Same anti-enumeration response as "doesn't exist".
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project not found: {project_id}",
-        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if project.archived_at is not None:
         # 422 — same status as POST /runs returns when an archived project_id
         # is in the payload. Aligning the two trigger paths so clients can
