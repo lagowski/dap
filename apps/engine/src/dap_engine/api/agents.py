@@ -186,6 +186,16 @@ def archive_agent(
     session: Session = Depends(get_session),
     user: UserORM = Depends(current_active_user),
 ) -> Response:
+    # Ownership gate first — otherwise the 409-precheck below leaks info
+    # about foreign agents (id existence + names of blocking pipelines).
+    # The cheapest gate is a get_agent() call: it returns the row only if
+    # the caller owns it (or is admin) and raises NotFoundError otherwise,
+    # which we surface as 404 — same response a non-existent id gets.
+    try:
+        repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     blocking = repo.pipelines_using_agent(session, agent_id)
     if blocking:
         raise HTTPException(

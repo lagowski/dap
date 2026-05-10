@@ -196,11 +196,17 @@ def pipelines_using_agent(session: Session, agent_id: str) -> list[tuple[str, st
     Read-only / informational — used by the "is this agent in use?"
     UI hint. Doesn't filter by pipeline ownership: an admin viewing an
     agent that other users embed in their pipelines should see the
-    full impact, and the only callers that surface this list (the
-    agent endpoint + the archive precheck) are already gated by
-    agent-level ownership upstream. If a non-admin reaches this
-    function for someone else's agent, that's a bug in the calling
-    route — not something to silently filter here.
+    full impact.
+
+    **Caller contract** — this function leaks pipeline ids/names by
+    design (admins need them; the UI hint needs them). Every caller
+    MUST gate the request on agent-level ownership *before* calling
+    this, otherwise a non-admin can probe foreign agent ids and get
+    back a structured 409 with names instead of the intended 404.
+    The two callers today (``GET /agents/{id}/usage`` via list
+    enrichment, and the ``DELETE /agents/{id}`` precheck) both call
+    ``get_agent(...)``/``list_agents(...)`` first to establish that
+    gate — sub-A4b2a wired the DELETE gate explicitly.
     """
     out: list[tuple[str, str]] = []
     pipeline_names = {

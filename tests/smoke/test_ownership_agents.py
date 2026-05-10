@@ -115,6 +115,45 @@ def test_archive_other_users_agent_returns_404(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_archive_other_users_in_use_agent_returns_404_not_409(client: TestClient) -> None:
+    """Anti-enumeration regression — DELETE must gate ownership before
+    the 409-precheck, otherwise a non-admin probing a foreign id whose
+    agent happens to be in-use gets a structured 409 with the foreign
+    pipeline's id + name. Caught by Copilot review on PR #310.
+
+    Setup: Alice creates an agent and embeds it in a pipeline (so
+    pipelines_using_agent() returns non-empty). Bob then tries DELETE.
+    Expected: 404 with no leak of Alice's pipeline name.
+    """
+    # Alice (the default fixture user) creates the agent and a pipeline
+    # that references it.
+    a_id = client.post("/agents", json=_create_payload(name="alice-in-use-agent")).json()["id"]
+    pipeline_payload = {
+        "name": "alice-secret-pipeline",
+        "description": "",
+        "schema_version": "langgraph/1.0",
+        "state_schema_ref": "PipelineState.v1",
+        "entry_point": "n1",
+        "nodes": [{"id": "n1", "agent_id": a_id, "position": {"x": 0, "y": 0}}],
+        "edges": [{"id": "e1", "source": "n1", "target": "__end__"}],
+        "defaults": {
+            "max_attempts": 3,
+            "budget_limit_usd": 5.0,
+            "approval_required_nodes": [],
+        },
+    }
+    pipeline_resp = client.post("/pipelines", json=pipeline_payload)
+    assert pipeline_resp.status_code == 201, pipeline_resp.text
+
+    # Bob now probes Alice's agent id.
+    bob_jwt = register_and_login(client, "bob-probe@example.com")
+    resp = client.delete(f"/agents/{a_id}", headers=_bearer(bob_jwt))
+    assert resp.status_code == 404
+    # Sanity: the response body must not contain the Alice-owned pipeline
+    # name anywhere — that's exactly the leak this test guards against.
+    assert "alice-secret-pipeline" not in resp.text
+
+
 def test_unauthenticated_request_returns_401(client: TestClient) -> None:
     """Without auth, every /agents endpoint must reject the request."""
     # Drop the auto-attached header for this single test.

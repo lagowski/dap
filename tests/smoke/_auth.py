@@ -20,11 +20,11 @@ Usage:
         with authed_test_client(app) as c:
             yield c
 
-The helper registers a single ``test@local`` user, logs in to obtain a
-JWT, and attaches it as the default ``Authorization: Bearer`` header on
-the returned ``TestClient``. The user is *not* an admin — admin-only
+The helper registers a single ``test@local.dev`` user, logs in to obtain
+a JWT, and attaches it as the default ``Authorization: Bearer`` header
+on the returned ``TestClient``. The user is *not* an admin — admin-only
 tests should additionally set ``is_superuser=True`` directly via the
-async session factory (see ``test_ownership.py`` for the pattern).
+async session factory (see ``test_ownership_agents.py`` for the pattern).
 """
 
 from __future__ import annotations
