@@ -115,13 +115,17 @@ Wykonaj raz po sklonowaniu repo. Hook nie zastępuje branch protection po stroni
 Repo używa [`pre-commit`](https://pre-commit.com) do uruchomienia tych samych checków co CI lokalnie przed każdym commitem (ruff lint + format, mypy strict). Konfiguracja w `.pre-commit-config.yaml`. Instalacja:
 
 ```bash
+# 1. Najpierw skonfiguruj hooksPath (włącza pre-push hook z .githooks/).
+git config core.hooksPath .githooks
+
+# 2. Potem zainstaluj pre-commit.
 uv tool install pre-commit
 pre-commit install
 ```
 
-Pierwsze `pre-commit run --all-files` zbuduje izolowane środowiska dla hooków ruff (kilka sekund); kolejne uruchomienia są błyskawiczne. Mypy używa lokalnego `uv run mypy`, więc dziedziczy workspace deps (bez tego `--strict` daje false positives).
+**Kolejność jest ważna.** Gdy `core.hooksPath` jest ustawione, Git ignoruje `.git/hooks/` całkowicie. `pre-commit install` wykrywa custom hooksPath i instaluje hook `pre-commit` do tego samego katalogu (`.githooks/pre-commit`), więc oba hooki — `pre-push` (zatwierdzony w repo) i `pre-commit` (instalowany lokalnie, gitignored) — żyją razem w `.githooks/`.
 
-Pre-commit i pre-push hooki współistnieją — pierwszy używa `.git/hooks/`, drugi `.githooks/` (przez `core.hooksPath`).
+Pierwsze `pre-commit run --all-files` zbuduje izolowane środowiska dla hooków ruff (kilka sekund); kolejne uruchomienia są błyskawiczne. Mypy używa lokalnego `uv run mypy`, więc dziedziczy workspace deps (bez tego `--strict` daje false positives).
 
 ## Remote branch protection (GitHub)
 

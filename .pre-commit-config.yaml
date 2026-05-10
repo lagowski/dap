@@ -1,14 +1,15 @@
 # Pre-commit hooks: same checks as CI, run locally before each commit.
 # Install once after cloning the repo:
 #
+#   git config core.hooksPath .githooks    # pre-push hook from .githooks/
 #   uv tool install pre-commit
-#   pre-commit install
+#   pre-commit install                     # picks up the configured hooksPath
 #
 # To run all hooks against the entire tree (mimics CI):
 #
 #   pre-commit run --all-files
 #
-# Reference: .claude/rules/standard-patterns.md, CONTRIBUTING.md.
+# See CONTRIBUTING.md ("Lokalne zabezpieczenia") for details.
 
 minimum_pre_commit_version: "3.0.0"
 default_install_hook_types: [pre-commit]

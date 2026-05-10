@@ -30,9 +30,11 @@ updates:
     open-pull-requests-limit: 3
     target-branch: "develop"
     commit-message:
-      # `chore(dashboard): bump foo` after `include: "scope"` appends the pkg.
+      # No `include: "scope"` here — the prefix already carries
+      # "(dashboard)". Combining a parenthesised prefix with
+      # `include: "scope"` would produce double scopes like
+      # `chore(dashboard)(typescript): bump foo`.
       prefix: "chore(dashboard)"
-      include: "scope"
 
   # GitHub Actions (workflow `uses:` references).
   - package-ecosystem: "github-actions"
