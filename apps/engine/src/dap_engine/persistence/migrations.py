@@ -302,16 +302,41 @@ def _012_add_user_id_to_resources(conn: Connection) -> None:
     contract is wired through; SQLite leaves it nullable forever
     because that dialect has no equivalent ALTER.
 
-    Each table guarded individually so a partial-upgrade DB (e.g.
-    ``agents`` already migrated, ``runs`` not yet) doesn't crash.
+    Index creation runs **unconditionally** with ``IF NOT EXISTS``,
+    separately from the ADD COLUMN guard. Otherwise on a fresh DB —
+    where ``Base.metadata.create_all`` already created the column — the
+    early-skip branch would also skip the indexes, leaving fresh
+    installs without ``ix_*_user_id`` (the ORM only declares those
+    indexes on three of the four tables; ``RunORM`` deliberately does
+    not, so the index would be missing entirely otherwise).
+
+    PostgreSQL upgrades additionally need an explicit FK constraint:
+    ``ALTER TABLE ADD COLUMN`` (without REFERENCES) leaves the column
+    integrity-checkless even though the ORM declares a ForeignKey.
+    SQLite ignores trailing FK clauses, but to keep the migration
+    dialect-correct we only emit the ALTER on PostgreSQL.
     """
     dialect = conn.dialect.name
     id_type = "UUID" if dialect == "postgresql" else "CHAR(36)"
 
     for table in ("agents", "pipelines", "projects", "runs"):
-        if _column_exists(conn, table, "user_id"):
-            continue
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id {id_type} NULL"))
+        if not _column_exists(conn, table, "user_id"):
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id {id_type} NULL"))
+            if dialect == "postgresql":
+                # SQLite can't add an FK to an existing column; on PG we
+                # tighten the constraint to match the ORM mapping
+                # (ondelete=CASCADE). Constraint naming is explicit so
+                # operators can drop / recreate it without guessing the
+                # generated identifier.
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {table} ADD CONSTRAINT fk_{table}_user_id "
+                        "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+                    )
+                )
+        # Indexes always — IF NOT EXISTS makes this a cheap no-op when
+        # create_all already produced them on a fresh DB, and a real
+        # backstop for older dev DBs upgrading through this migration.
         conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id)"))
 
 
@@ -320,15 +345,13 @@ def _013_backfill_user_id_via_system_user(conn: Connection) -> None:
 
     For each resource table with NULL ``user_id`` rows (i.e. data that
     pre-dates v0.3), set ``user_id`` to a synthetic ``system@local``
-    user that's created on-the-fly if missing. The system user is an
-    administrator (``is_superuser=True``) so an operator who logs in
-    as them can re-assign ownership through the admin panel (Phase C).
-
-    The system user's password is set to a 32-byte random URL-safe
-    string and the row is flagged ``is_active=False`` — login is
-    impossible without an admin password reset (Phase E ships the
-    workflow). Until then, the row exists purely as the FK target for
-    legacy resources.
+    user that's created on-the-fly if missing. The user is flagged
+    ``is_superuser=True`` so admins listing resources see the legacy
+    rows, plus ``is_active=False`` and a random unrecoverable password
+    so **nobody can log in as system@local directly**. To re-assign
+    ownership, an admin signs in with their own real account
+    (after Phase B's dashboard auth flow ships) and reassigns the
+    legacy resources via the admin panel (Phase C).
 
     Skipped entirely on a fresh DB where every resource table is
     empty — the system user only materialises when something actually

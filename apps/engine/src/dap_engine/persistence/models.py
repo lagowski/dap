@@ -448,10 +448,6 @@ class RunORM(Base):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # Owner of the run — same lineage as the pipeline that produced it.
-    # Indexed via the existing started_at composites; a single-column
-    # user_id index would be redundant since list-runs always pages by
-    # time DESC.
     # Owner of this row — set on every new resource by the route
     # handlers (sub-A4b). Nullable on the SQL side so the migration
     # can ADD COLUMN against pre-v0.3 dev DBs without DEFAULT
@@ -513,6 +509,12 @@ class RunORM(Base):
         Index("ix_runs_project_started", "project_id", "started_at"),
         # Per-pipeline runs view: same shape with ``pipeline_id`` (#251).
         Index("ix_runs_pipeline_started", "pipeline_id", "started_at"),
+        # Owner-scoped listings (admin cross-user view + dashboard's
+        # "my runs" tab in Phase B). The composites above lead with
+        # project_id / pipeline_id, so they don't help the user-only
+        # filter; this single-column index keeps the access pattern
+        # symmetric with the other resource tables (sub-A4a, #299).
+        Index("ix_runs_user_id", "user_id"),
     )
 
 
