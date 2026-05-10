@@ -88,7 +88,7 @@ def test_dap_prompt_dsl_importable() -> None:
     assert isinstance(result, BuildResult)
     assert result.valid is True
     # TestAuthorContext is a Pydantic model subclass
-    assert TestAuthorContext.model_fields["role"]
+    assert "role" in TestAuthorContext.model_fields
 
 
 def test_dap_cli_importable() -> None:

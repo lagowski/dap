@@ -3,7 +3,7 @@ name = "dap-runtimes"
 version = "0.0.1"
 description = "Runtime adapters for DAP (claude-code, gemini-cli, codex, aider, api-call, bash, http)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "dap-types",
     "anyio>=4.6.0",
