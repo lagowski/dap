@@ -32,6 +32,12 @@ def main() -> None:
         # Comma-separated CORS allow-list — None falls back to the local-dev
         # default in EngineConfig (#259).
         cors_origins=parse_cors_origins(os.environ.get("DAP_CORS_ORIGINS")),
+        # Auth (#299). When unset, the lifespan generates a per-process
+        # random — fine for a single-instance local dev, but multi-worker
+        # / multi-replica deployments MUST set DAP_AUTH_JWT_SECRET so all
+        # workers validate tokens against the same key.
+        auth_jwt_secret=os.environ.get("DAP_AUTH_JWT_SECRET"),
+        auth_access_ttl_seconds=int(os.environ.get("DAP_AUTH_ACCESS_TTL_SECONDS", "900")),
     )
 
     app = create_app(config)

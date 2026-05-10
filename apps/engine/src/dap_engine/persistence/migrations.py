@@ -206,20 +206,32 @@ def _009_create_users_table(conn: Connection) -> None:
     if inspector.has_table("users"):
         return
 
+    # Dialect-aware DDL: PostgreSQL gets a real UUID column and TIMESTAMPTZ
+    # so the type matches the ``DateTime(timezone=True)`` ORM mapping; SQLite
+    # uses CHAR(36) + TIMESTAMP because it lacks both native types and
+    # treats them as TEXT internally either way.
+    dialect = conn.dialect.name
+    if dialect == "postgresql":
+        id_type = "UUID"
+        ts_type = "TIMESTAMPTZ"
+    else:
+        id_type = "CHAR(36)"
+        ts_type = "TIMESTAMP"
+
     conn.execute(
         text(
-            """
+            f"""
             CREATE TABLE users (
-                id CHAR(36) NOT NULL PRIMARY KEY,
+                id {id_type} NOT NULL PRIMARY KEY,
                 email VARCHAR(320) NOT NULL,
                 hashed_password VARCHAR(1024) NOT NULL,
                 is_active BOOLEAN NOT NULL,
                 is_superuser BOOLEAN NOT NULL,
                 is_verified BOOLEAN NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL,
-                deleted_at TIMESTAMP NULL,
-                last_login_at TIMESTAMP NULL
+                created_at {ts_type} NOT NULL,
+                updated_at {ts_type} NOT NULL,
+                deleted_at {ts_type} NULL,
+                last_login_at {ts_type} NULL
             )
             """
         )

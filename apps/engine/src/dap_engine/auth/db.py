@@ -45,23 +45,30 @@ __all__ = [
 def _async_url_for(database_url: str | None, db_path: str | None) -> str:
     """Build a SQLAlchemy async URL from the same inputs the sync engine uses.
 
-    Precedence matches ``persistence/db.py``: ``database_url`` wins when set,
-    else fall back to a SQLite file at ``db_path``. Raises ``ValueError`` if
-    both are missing — caller is expected to validate config first.
+    Mirrors ``create_app()``'s sync-engine selection logic exactly: only
+    PostgreSQL URLs in ``database_url`` are honoured; SQLite URLs are
+    ignored in favour of ``db_path`` so both engines always point at the
+    same underlying SQLite file. Otherwise an operator setting
+    ``DAP_DATABASE_URL=sqlite:///foo.db`` would silently get a different
+    DB for auth than for the rest of the engine.
+
+    Raises ``ValueError`` if neither input yields a usable URL —
+    callers must validate config before reaching this helper.
     """
-    if database_url:
-        if detect_dialect(database_url) == "postgresql":
-            url = _normalize_pg_prefix(database_url)
-            url = url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
-            if url.startswith("postgresql://"):
-                url = "postgresql+psycopg://" + url[len("postgresql://") :]
-            return url
-        # SQLite URL — ensure the aiosqlite driver suffix is present.
-        return database_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+    if database_url and detect_dialect(database_url) == "postgresql":
+        url = _normalize_pg_prefix(database_url)
+        url = url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+        if url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url[len("postgresql://") :]
+        return url
+    # Sync engine treats anything that isn't a Postgres URL as "use db_path",
+    # so do the same here. ``database_url`` carrying a SQLite URL is
+    # effectively dead code on the sync side; honouring it asymmetrically
+    # would diverge the auth and main databases.
     if db_path:
         absolute = Path(db_path).resolve()
         return f"sqlite+aiosqlite:///{absolute}"
-    raise ValueError("Either database_url or db_path must be provided")
+    raise ValueError("Either database_url (postgresql) or db_path must be provided")
 
 
 def create_async_engine_for_url(

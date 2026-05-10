@@ -48,10 +48,14 @@ class UserORM(SQLAlchemyBaseUserTableUUID, Base):
     (singular). We override to ``users`` to match the rest of the schema
     (``agents``, ``pipelines``, ``runs``, ``projects``, …).
 
-    Soft-delete: ``deleted_at`` carries a timestamp instead of removing
-    the row, so existing pipelines / runs that reference this user keep
-    their FK valid (FK enforcement comes later in #299; this column lands
-    early so we don't migrate twice).
+    Soft-delete: the ``UserManager.delete`` override (in
+    ``auth/users.py``) writes ``deleted_at`` + flips ``is_active=False``
+    instead of issuing ``DELETE FROM users``. This keeps the row alive
+    so any future FK pointing at the user — e.g. the ``user_id`` column
+    that lands on ``agents`` / ``pipelines`` / ``projects`` / ``runs`` in
+    a follow-up sub-PR — remains valid without cascading data loss.
+    Hard delete (admin-initiated, GDPR right-to-erasure) is exposed
+    separately in Phase C/E.
     """
 
     __tablename__ = "users"

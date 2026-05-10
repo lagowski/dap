@@ -98,3 +98,71 @@ def test_register_duplicate_email_fails(client: TestClient) -> None:
     second = client.post("/auth/register", json=payload)
     assert second.status_code == 400, second.text
     assert "REGISTER_USER_ALREADY_EXISTS" in second.text
+
+
+async def test_user_manager_delete_is_soft(client: TestClient) -> None:
+    """``UserManager.delete`` must soft-delete: row stays, ``is_active=False``.
+
+    Verified via the manager directly because the HTTP ``DELETE /users/{id}``
+    endpoint exposed by fastapi-users requires a superuser token, and admin
+    bootstrap isn't wired in this sub-PR. The HTTP-level coverage lands with
+    Phase C (admin endpoint) once superuser promotion exists.
+
+    After ``UserManager.delete``: the JWT no longer authenticates
+    (``current_active_user`` rejects ``is_active=False``), re-login with
+    the same credentials returns ``LOGIN_BAD_CREDENTIALS`` (fastapi-users'
+    ``authenticate()`` rejects deactivated users), and a fresh signup
+    with the same email is rejected as duplicate (row preserved).
+    """
+    from dap_engine.auth.users import UserManager
+    from dap_engine.persistence.models import UserORM
+    from fastapi_users.db import SQLAlchemyUserDatabase
+    from sqlalchemy import select
+
+    client.post(
+        "/auth/register",
+        json={"email": "dave@example.com", "password": TEST_PASSWORD},
+    )
+    login = client.post(
+        "/auth/jwt/login",
+        data={"username": "dave@example.com", "password": TEST_PASSWORD},
+    )
+    token = login.json()["access_token"]
+    auth_header = {"Authorization": f"Bearer {token}"}
+
+    # Soft-delete via the manager directly (admin HTTP path = Phase C).
+    # TestClient.app is the Starlette ASGI callable; the underlying FastAPI
+    # app (where lifespan attaches state) is reachable via .app.app on the
+    # nested wrapper we use for tests. Ignore the typing here — TestClient
+    # types are deliberately lax about ASGI app introspection.
+    app_state = client.app.state  # type: ignore[attr-defined]
+    factory = app_state.async_session_factory
+    async with factory() as session:
+        user_orm = (
+            await session.execute(select(UserORM).where(UserORM.email == "dave@example.com"))  # type: ignore[arg-type]
+        ).scalar_one()
+        manager = UserManager(SQLAlchemyUserDatabase(session, UserORM))
+        await manager.delete(user_orm)
+
+    # 1. The same JWT must no longer authenticate — current_user(active=True)
+    #    rejects deactivated users even with a still-valid signature.
+    me_resp = client.get("/users/me", headers=auth_header)
+    assert me_resp.status_code == 401
+
+    # 2. Re-login with the same credentials is rejected as bad-credentials
+    #    (authenticate() returns None for is_active=False).
+    relogin = client.post(
+        "/auth/jwt/login",
+        data={"username": "dave@example.com", "password": TEST_PASSWORD},
+    )
+    assert relogin.status_code == 400, relogin.text
+    assert "LOGIN_BAD_CREDENTIALS" in relogin.text
+
+    # 3. A fresh signup with the same email is rejected as duplicate —
+    #    the row hasn't gone away.
+    duplicate = client.post(
+        "/auth/register",
+        json={"email": "dave@example.com", "password": TEST_PASSWORD},
+    )
+    assert duplicate.status_code == 400, duplicate.text
+    assert "REGISTER_USER_ALREADY_EXISTS" in duplicate.text

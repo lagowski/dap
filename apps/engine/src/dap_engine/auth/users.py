@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
@@ -92,6 +93,32 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
             extra={"user_id": str(user.id), "email": user.email},
         )
 
+    async def delete(
+        self,
+        user: UserORM,
+        request: Request | None = None,
+    ) -> None:
+        """Soft-delete the user: stamp ``deleted_at`` + flip ``is_active``.
+
+        fastapi-users' default ``delete()`` calls ``user_db.delete(user)``
+        which is a hard ``DELETE FROM users``. We override so the row stays
+        in the table — that keeps any FK referencing this user (introduced
+        in a follow-up sub-PR for ``agents`` / ``pipelines`` / etc.) valid
+        without cascading data loss. ``is_active=False`` makes the
+        ``current_user(active=True)`` dependency reject any future request
+        from this user, so soft-deleted accounts can no longer authenticate
+        even if they hold a valid JWT.
+
+        Hard delete (audit-driven, admin-initiated, GDPR right-to-erasure)
+        lands as a separate admin endpoint in Phase C/E.
+        """
+        await self.on_before_delete(user, request)
+        await self.user_db.update(
+            user,
+            {"deleted_at": datetime.now(UTC), "is_active": False},
+        )
+        await self.on_after_delete(user, request)
+
 
 # ---------------------------------------------------------------------------
 # JWT strategy + auth backend
@@ -133,5 +160,8 @@ fastapi_users: FastAPIUsers[UserORM, uuid.UUID] = FastAPIUsers[UserORM, uuid.UUI
 
 # Convenience dependency for protected routes — kept here so callers
 # don't need to know about the underlying ``fastapi_users.current_user``
-# factory. ``active=True`` excludes suspended / soft-deleted users.
+# factory. ``active=True`` rejects users where ``is_active=False`` —
+# which includes soft-deleted users (``UserManager.delete`` flips the
+# flag) and admin-suspended users (Phase C will add suspend/unsuspend
+# endpoints that toggle the same column).
 current_active_user = fastapi_users.current_user(active=True)
