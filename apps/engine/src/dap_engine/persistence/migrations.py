@@ -187,6 +187,46 @@ def _008_runs_add_failure_reason(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE runs ADD COLUMN failure_reason TEXT"))
 
 
+def _009_create_users_table(conn: Connection) -> None:
+    """v0.3 / #299 — create the ``users`` table for fastapi-users.
+
+    Fresh DBs already have this table from ``Base.metadata.create_all``
+    (the ORM mapping landed in this release alongside the migration).
+    The migration backstops upgrades from pre-v0.3 dev DBs and records
+    the schema version for paper trail.
+
+    Columns mirror ``SQLAlchemyBaseUserTableUUID`` (id, email,
+    hashed_password, is_active, is_superuser, is_verified) plus the
+    extensions defined on ``UserORM`` (created_at, updated_at,
+    deleted_at, last_login_at). The unique-email index is created
+    explicitly because SQLite's CREATE TABLE … UNIQUE inline doesn't
+    produce a named index that we can grep for in operations.
+    """
+    inspector = inspect(conn)
+    if inspector.has_table("users"):
+        return
+
+    conn.execute(
+        text(
+            """
+            CREATE TABLE users (
+                id CHAR(36) NOT NULL PRIMARY KEY,
+                email VARCHAR(320) NOT NULL,
+                hashed_password VARCHAR(1024) NOT NULL,
+                is_active BOOLEAN NOT NULL,
+                is_superuser BOOLEAN NOT NULL,
+                is_verified BOOLEAN NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                deleted_at TIMESTAMP NULL,
+                last_login_at TIMESTAMP NULL
+            )
+            """
+        )
+    )
+    conn.execute(text("CREATE UNIQUE INDEX ix_users_email ON users (email)"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
@@ -205,6 +245,7 @@ MIGRATIONS: list[Migration] = [
     ),
     Migration(name="007_runs_index_pipeline_started", apply=_007_runs_index_pipeline_started),
     Migration(name="008_runs_add_failure_reason", apply=_008_runs_add_failure_reason),
+    Migration(name="009_create_users_table", apply=_009_create_users_table),
 ]
 
 
