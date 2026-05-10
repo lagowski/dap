@@ -100,13 +100,32 @@ gh pr create --base main --head develop --title "release: vX.Y.Z"
 
 ## Lokalne zabezpieczenia
 
-Repo instaluje **pre-push hook** blokujący bezpośredni push do `main` i `develop` (patrz `.githooks/pre-push`). Hook aktywny po:
+### Pre-push hook (blokada main / develop)
+
+Repo dostarcza **pre-push hook** blokujący bezpośredni push do `main` i `develop` (patrz `.githooks/pre-push`). Hook aktywny po:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
 Wykonaj raz po sklonowaniu repo. Hook nie zastępuje branch protection po stronie GitHub — jest tylko local safety net.
+
+### Pre-commit hooks (ruff + mypy)
+
+Repo używa [`pre-commit`](https://pre-commit.com) do uruchomienia tych samych checków co CI lokalnie przed każdym commitem (ruff lint + format, mypy strict). Konfiguracja w `.pre-commit-config.yaml`. Instalacja:
+
+```bash
+# 1. Najpierw skonfiguruj hooksPath (włącza pre-push hook z .githooks/).
+git config core.hooksPath .githooks
+
+# 2. Potem zainstaluj pre-commit.
+uv tool install pre-commit
+pre-commit install
+```
+
+**Kolejność jest ważna.** Gdy `core.hooksPath` jest ustawione, Git ignoruje `.git/hooks/` całkowicie. `pre-commit install` wykrywa custom hooksPath i instaluje hook `pre-commit` do tego samego katalogu (`.githooks/pre-commit`), więc oba hooki — `pre-push` (zatwierdzony w repo) i `pre-commit` (instalowany lokalnie, gitignored) — żyją razem w `.githooks/`.
+
+Pierwsze `pre-commit run --all-files` zbuduje izolowane środowiska dla hooków ruff (kilka sekund); kolejne uruchomienia są błyskawiczne. Mypy używa lokalnego `uv run mypy`, więc dziedziczy workspace deps (bez tego `--strict` daje false positives).
 
 ## Remote branch protection (GitHub)
 

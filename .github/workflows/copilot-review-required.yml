@@ -61,7 +61,7 @@ jobs:
       contents: read
     steps:
       - name: Post / refresh copilot-review check on relevant PRs
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const COPILOT = 'copilot-pull-request-reviewer[bot]';
