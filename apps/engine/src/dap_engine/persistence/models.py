@@ -89,6 +89,63 @@ class UserORM(SQLAlchemyBaseUserTableUUID, Base):
     )
 
 
+class ApiTokenORM(Base):
+    """Long-lived API token for CLI / scripts (#299, sub-A3).
+
+    Tokens are opaque random strings (``dap_<43-char-base64>``) issued
+    via ``POST /auth/api-tokens``. The raw token is shown to the caller
+    exactly once at creation time; the database stores only the SHA-256
+    hash and the first 8 chars (``token_prefix``) for indexed lookup.
+
+    Why SHA-256 instead of bcrypt/argon2: the token has 256 bits of
+    entropy, so brute-force is infeasible regardless of hash speed; a
+    cryptographic but cheap hash keeps every authenticated request
+    inexpensive. (Password hashes use slow KDFs because passwords have
+    far less entropy and offline cracking is the realistic threat —
+    that calculus doesn't apply here.)
+
+    Lifecycle:
+    - ``revoked_at`` set on ``DELETE /auth/api-tokens/{id}`` — the
+      verify path treats any non-NULL value as "rejected"
+    - ``expires_at`` optional. NULL means "no expiry"; a past timestamp
+      is treated as revoked
+    - ``last_used_at`` is touched on every successful auth so admins
+      can spot stale tokens; not on the hot path under a tx (we update
+      it best-effort and tolerate races)
+    """
+
+    __tablename__ = "api_tokens"
+    __table_args__ = (
+        # Lookup happens on every authenticated CLI call: select by
+        # prefix (cheap, indexed), then SHA-256 verify the candidates.
+        # Almost always one match per prefix; the verify step exists
+        # purely to defeat collisions (very unlikely with 8 chars from a 64-
+        # symbol alphabet) and to be timing-attack-resistant.
+        Index("ix_api_tokens_token_prefix", "token_prefix"),
+        Index("ix_api_tokens_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        GUID,
+        ForeignKey("users.id", ondelete="cascade"),
+        nullable=False,
+    )
+    # Human-readable label set by the user at create time
+    # (e.g. "ci-pipeline", "personal-laptop").
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String(8), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class OAuthAccountORM(SQLAlchemyBaseOAuthAccountTableUUID, Base):
     """Linked OAuth identity (GitHub, Google, …).
 

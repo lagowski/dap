@@ -1,4 +1,4 @@
-"""UserManager + JWT authentication backend + FastAPIUsers instance.
+"""UserManager + auth backends + FastAPIUsers instance.
 
 The JWT secret is configured once from the engine lifespan via
 ``configure_jwt`` and lives on a module-level holder; ``get_jwt_strategy``
@@ -6,6 +6,16 @@ reads it on every login. ``UserManager`` instances pull the same value
 into ``reset_password_token_secret`` and ``verification_token_secret``
 on construction so fastapi-users' password-reset / verification routers
 work end-to-end without per-request indirection.
+
+Two authentication backends are wired into the ``FastAPIUsers`` instance:
+- ``auth_backend`` — JWT bearer (``/auth/jwt/login`` flow)
+- ``api_token_backend`` — opaque ``dap_*`` tokens (``/auth/api-tokens``,
+  see ``api_tokens.py``)
+
+Both share the standard ``Authorization: Bearer <token>`` header.
+``current_user(active=True)`` accepts whichever backend reads the token
+successfully — JWT is tried first because its decode is purely
+in-process (no DB hit) for non-API-token requests.
 """
 
 from __future__ import annotations
@@ -21,10 +31,13 @@ from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
     JWTStrategy,
+    Strategy,
 )
 from fastapi_users.db import SQLAlchemyUserDatabase
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from dap_engine.auth.db import get_user_db
+from dap_engine.auth.api_tokens import looks_like_api_token, verify_api_token
+from dap_engine.auth.db import get_async_session, get_user_db
 from dap_engine.persistence.models import UserORM
 
 # 15 minutes by default — short enough that revocation latency stays
@@ -142,6 +155,67 @@ auth_backend = AuthenticationBackend(
 
 
 # ---------------------------------------------------------------------------
+# API token strategy — long-lived tokens for CLI / scripts (sub-A3).
+# ---------------------------------------------------------------------------
+
+
+class ApiTokenStrategy(Strategy[UserORM, uuid.UUID]):
+    """fastapi-users Strategy that resolves ``dap_*`` opaque tokens.
+
+    The strategy receives the bearer token from ``BearerTransport``; if
+    the value doesn't start with the API-token prefix it returns
+    ``None`` (lets the JWT strategy try). Otherwise it does the DB
+    lookup defined in ``api_tokens.verify_api_token``.
+
+    ``write_token`` raises — API tokens are created via the dedicated
+    ``POST /auth/api-tokens`` endpoint, not via the standard login
+    flow. ``destroy_token`` is a no-op for the same reason: revocation
+    goes through ``DELETE /auth/api-tokens/{id}``.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def read_token(
+        self,
+        token: str | None,
+        user_manager: BaseUserManager[UserORM, uuid.UUID],
+    ) -> UserORM | None:
+        if not token or not looks_like_api_token(token):
+            return None
+        result = await verify_api_token(token, self.session)
+        if result is None:
+            return None
+        user, _ = result
+        return user
+
+    async def write_token(self, user: UserORM) -> str:
+        raise NotImplementedError(
+            "API tokens are minted via POST /auth/api-tokens, not the standard login flow"
+        )
+
+    async def destroy_token(self, token: str, user: UserORM) -> None:
+        # Revocation goes through DELETE /auth/api-tokens/{id}; this hook
+        # exists only because the AuthenticationBackend interface requires it.
+        return None
+
+
+def get_api_token_strategy(
+    session: AsyncSession = Depends(get_async_session),
+) -> ApiTokenStrategy:
+    return ApiTokenStrategy(session)
+
+
+api_token_backend = AuthenticationBackend(
+    name="api-token",
+    # Same Authorization: Bearer header as JWT — strategy disambiguates
+    # by token shape ("dap_*" vs JWT). tokenUrl is OpenAPI metadata only.
+    transport=BearerTransport(tokenUrl="auth/api-tokens"),
+    get_strategy=get_api_token_strategy,
+)
+
+
+# ---------------------------------------------------------------------------
 # UserManager dependency + FastAPIUsers instance
 # ---------------------------------------------------------------------------
 
@@ -154,7 +228,7 @@ async def get_user_manager(
 
 fastapi_users: FastAPIUsers[UserORM, uuid.UUID] = FastAPIUsers[UserORM, uuid.UUID](
     get_user_manager,
-    [auth_backend],
+    [auth_backend, api_token_backend],
 )
 
 
@@ -164,4 +238,32 @@ fastapi_users: FastAPIUsers[UserORM, uuid.UUID] = FastAPIUsers[UserORM, uuid.UUI
 # which includes soft-deleted users (``UserManager.delete`` flips the
 # flag) and admin-suspended users (Phase C will add suspend/unsuspend
 # endpoints that toggle the same column).
+#
+# Accepts both JWT bearer tokens (regular dashboard sessions) AND
+# ``dap_*`` API tokens (CLI / scripts) — see the multi-backend
+# ``FastAPIUsers`` instance above.
 current_active_user = fastapi_users.current_user(active=True)
+
+
+async def _jwt_only_backends(
+    request: Request,
+) -> list[AuthenticationBackend[UserORM, uuid.UUID]]:
+    """Restrict an endpoint to JWT auth — used by API-token CRUD itself.
+
+    Issuing or revoking an API token via *another* API token would let
+    a leaked CLI credential silently mint long-lived siblings (or
+    revoke the user's other tokens). Forcing JWT here means the
+    operator must have an active password / OAuth session — same trust
+    boundary as managing the user's profile.
+
+    The signature mirrors what fastapi-users' ``get_enabled_backends``
+    expects (async callable accepting ``Request``), even though we
+    don't dispatch on the request — the contract is what matters.
+    """
+    return [auth_backend]
+
+
+current_active_user_jwt_only = fastapi_users.current_user(
+    active=True,
+    get_enabled_backends=_jwt_only_backends,
+)
