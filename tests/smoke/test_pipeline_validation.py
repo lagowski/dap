@@ -568,9 +568,7 @@ def test_cohesion_terminal_node_outputs_skipped(client: TestClient) -> None:
     Pre-#204 this fired a noisy "no downstream reader" warning on
     legitimate end-of-pipeline writers.
     """
-    a = _create_agent_with_contract(
-        client, name="Writer", output_schema=["selected_issue_ids"]
-    )
+    a = _create_agent_with_contract(client, name="Writer", output_schema=["selected_issue_ids"])
     b = _create_agent_with_contract(
         client,
         name="FinalReporter",

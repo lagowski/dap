@@ -15,14 +15,12 @@ Provisioning (run once, as admin):
 from __future__ import annotations
 
 import os
-import tempfile
 from collections.abc import Iterator
 
 import pytest
-from fastapi.testclient import TestClient
-
 from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.db import detect_dialect, pg_conn_string
+from fastapi.testclient import TestClient
 
 PG_URL: str | None = os.environ.get("DAP_DATABASE_URL")
 _PG_AVAILABLE = PG_URL is not None and detect_dialect(PG_URL) == "postgresql"
@@ -49,10 +47,9 @@ def pg_client() -> Iterator[TestClient]:
         # row counts in smoke tests are small enough that DELETE is fine.
         # langgraph checkpoint tables are managed by the saver and stay
         # between tests.
-        from sqlalchemy import create_engine
-
         from dap_engine.persistence.db import _pg_sync_url
         from dap_engine.persistence.models import Base
+        from sqlalchemy import create_engine
 
         cleanup_engine = create_engine(_pg_sync_url(PG_URL), future=True)
         try:
@@ -94,9 +91,7 @@ def test_checkpointer_tables_created_on_startup(pg_client: TestClient) -> None:
     with psycopg.connect(conn_str) as conn:
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-            )
+            for row in conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         }
     required = {"checkpoints", "checkpoint_blobs", "checkpoint_writes"}
     assert required.issubset(tables), (

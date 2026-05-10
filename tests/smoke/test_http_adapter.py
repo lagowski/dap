@@ -409,17 +409,12 @@ async def test_http_4xx_redacts_bearer_token_echoed_in_error_body(
     adapter = HttpAdapter()
     response = _mock_response(
         status_code=401,
-        text=(
-            "Unauthorized. Got header: "
-            f"Authorization: Bearer {_BEARER_TOKEN}. Please retry."
-        ),
+        text=(f"Unauthorized. Got header: Authorization: Bearer {_BEARER_TOKEN}. Please retry."),
     )
     client = _mock_client(response)
 
     with patch(_PATCH_PATH, return_value=client):
-        result = await adapter.execute(
-            _task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"})
-        )
+        result = await adapter.execute(_task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"}))
 
     assert result.success is False
     [error] = result.errors
@@ -447,9 +442,7 @@ async def test_http_4xx_redacts_bare_token_without_bearer_prefix(
     client = _mock_client(response)
 
     with patch(_PATCH_PATH, return_value=client):
-        result = await adapter.execute(
-            _task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"})
-        )
+        result = await adapter.execute(_task(auth={"type": "bearer", "env": "OLLAMA_API_KEY"}))
 
     [error] = result.errors
     assert _BEARER_TOKEN not in error
