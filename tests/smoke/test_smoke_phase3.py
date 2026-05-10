@@ -23,6 +23,8 @@ from dap_runtimes import RuntimeRegistry
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
+from tests.smoke._auth import authed_test_client
+
 from .conftest import replace_adapter, wait_for_status
 
 # ---------------------------------------------------------------------------
@@ -243,12 +245,12 @@ def phase3_approve_client() -> Iterator[
 ]:
     """Client with reviewer configured to return APPROVE (happy path)."""
     tmp = tempfile.mkdtemp(prefix="dap-phase3-approve-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
     app = create_app(config)
     pf_stub = Phase3PythonFuncStub()
     reviewer = Phase3ReviewerStub(decision="APPROVE")
     merger = Phase3PrMergerStub()
-    with TestClient(app) as c:
+    with authed_test_client(app) as c:
         registry: RuntimeRegistry = app.state.runtime_registry
         replace_adapter(registry, pf_stub)
         registry.register(reviewer)
@@ -260,12 +262,12 @@ def phase3_approve_client() -> Iterator[
 def phase3_reject_client() -> Iterator[tuple[TestClient, Phase3PythonFuncStub, Phase3ReviewerStub]]:
     """Client with reviewer configured to return REJECT."""
     tmp = tempfile.mkdtemp(prefix="dap-phase3-reject-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
     app = create_app(config)
     pf_stub = Phase3PythonFuncStub()
     reviewer = Phase3ReviewerStub(decision="REJECT")
     merger = Phase3PrMergerStub()
-    with TestClient(app) as c:
+    with authed_test_client(app) as c:
         registry: RuntimeRegistry = app.state.runtime_registry
         replace_adapter(registry, pf_stub)
         registry.register(reviewer)

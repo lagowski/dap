@@ -19,9 +19,11 @@ from dap_engine.api.schemas import (
     PipelineExportPayload,
     PipelineImportRequest,
 )
+from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import AgentCreate, PipelineCreate, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
+from dap_engine.persistence.models import UserORM
 
 logger = logging.getLogger("dap.engine.pipelines")
 
@@ -142,6 +144,7 @@ def validate_pipeline(
 def import_pipeline(
     payload: PipelineImportRequest,
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> Pipeline:
     """Create a new pipeline (v1) from an exported JSON payload (#124).
 
@@ -197,7 +200,7 @@ def import_pipeline(
                         "source_id": source_id,
                     },
                 ) from exc
-            new_agent = repo.create_agent(session, agent_create)
+            new_agent = repo.create_agent(session, agent_create, user_id=user.id)
             id_remap[source_id] = new_agent.id
 
         # Step 2 — rewrite node.agent_id in the pipeline payload.
@@ -319,6 +322,7 @@ def export_pipeline(
         ),
     ),
     session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
 ) -> PipelineExport:
     """Return a portable JSON shape of the pipeline (#124, #126).
 
@@ -372,7 +376,9 @@ def export_pipeline(
         # back to "agent not found" 422 on the receiving end if the
         # bundle ends up incomplete.
         agent_ids = sorted({node.agent_id for node in payload.nodes})
-        agents_by_id = repo.get_agents_by_ids(session, agent_ids)
+        agents_by_id = repo.get_agents_by_ids(
+            session, agent_ids, actor_id=user.id, is_admin=user.is_superuser
+        )
         bundled_agents = {
             agent_id: build_agent_export_payload(agents_by_id[agent_id])
             for agent_id in agent_ids

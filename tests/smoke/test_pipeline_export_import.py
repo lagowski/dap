@@ -17,13 +17,18 @@ import pytest
 from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
 
+from tests.smoke._auth import authed_test_client
+
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory(prefix="dap-pipeline-export-") as tmp:
-        config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+        config = EngineConfig(
+            db_path=str(Path(tmp) / "state.db"),
+            auth_jwt_secret="smoke-secret",
+        )
         app = create_app(config)
-        with TestClient(app) as c:
+        with authed_test_client(app) as c:
             yield c
 
 

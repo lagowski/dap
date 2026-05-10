@@ -17,15 +17,19 @@ from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
 from fastapi.testclient import TestClient
 
+from tests.smoke._auth import authed_test_client
 from tests.smoke.test_runs_trigger import TriggerStubAdapter, _wait_for_completion
 
 
 @pytest.fixture
 def client_with_stub() -> Iterator[tuple[TestClient, RuntimeRegistry, TriggerStubAdapter]]:
     tmp = tempfile.mkdtemp(prefix="dap-project-run-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="smoke-secret",
+    )
     app = create_app(config)
-    with TestClient(app) as c:
+    with authed_test_client(app) as c:
         registry: RuntimeRegistry = app.state.runtime_registry
         stub = TriggerStubAdapter()
         registry.register(stub)
