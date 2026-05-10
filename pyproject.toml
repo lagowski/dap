@@ -3,7 +3,7 @@ name = "dap-workspace"
 version = "0.0.1"
 description = "Deterministic Agent Pipeline — root workspace (meta-package, not installed)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = { text = "TBD" }
 
 [tool.uv.workspace]
@@ -101,6 +101,14 @@ no_implicit_optional = true
 check_untyped_defs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+show_error_codes = true
+# Forces every `# type: ignore` to carry a code (e.g. [attr-defined]).
+# Without this, silent suppression hides new errors that appear later.
+enable_error_code = [
+    "ignore-without-code",
+    "truthy-bool",
+    "unused-awaitable",
+]
 exclude = ["build/", "dist/", ".venv/"]
 
 # NB: dodaj override dla langgraph.* gdy zintegrujemy go w F5
@@ -121,5 +129,7 @@ ignore_errors = true
 asyncio_mode = "auto"
 testpaths = ["tests", "apps", "packages"]
 python_files = ["test_*.py", "*_test.py"]
-addopts = "-q"
+# --strict-markers: catches typos in @pytest.mark.foo (only registered markers allowed)
+# --import-mode=importlib: recommended for new projects (avoids sys.path hacks)
+addopts = "-q --strict-markers --import-mode=importlib"
 

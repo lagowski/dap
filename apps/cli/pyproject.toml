@@ -3,7 +3,7 @@ name = "dap-cli"
 version = "0.0.1"
 description = "DAP CLI launcher (dap init / start / stop / status)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "dap-engine",
     "typer>=0.12.5",
