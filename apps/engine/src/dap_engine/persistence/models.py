@@ -9,10 +9,12 @@ Versioning model:
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi_users.db import SQLAlchemyBaseUserTableUUID
+from fastapi_users.db import SQLAlchemyBaseOAuthAccountTableUUID, SQLAlchemyBaseUserTableUUID
+from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -24,7 +26,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -76,6 +78,56 @@ class UserORM(SQLAlchemyBaseUserTableUUID, Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Linked OAuth identities. Eager-loaded ("joined") because fastapi-users'
+    # SQLAlchemyUserDatabase reads this list on every login lookup; lazy
+    # loading would emit a separate SELECT per request.
+    oauth_accounts: Mapped[list[OAuthAccountORM]] = relationship(
+        "OAuthAccountORM",
+        lazy="joined",
+        cascade="all, delete-orphan",
+    )
+
+
+class OAuthAccountORM(SQLAlchemyBaseOAuthAccountTableUUID, Base):
+    """Linked OAuth identity (GitHub, Google, …).
+
+    Inherits id (UUID), oauth_name, access_token, expires_at,
+    refresh_token, account_id, account_email columns from
+    SQLAlchemyBaseOAuthAccountTableUUID.
+
+    ``user_id`` is overridden because the parent helper hardcodes
+    ``ForeignKey("user.id", …)`` (singular table name) but our user
+    table is ``users`` (plural — see UserORM.__tablename__). Without
+    the override, SQLAlchemy raises NoReferencedTableError on import.
+
+    Indexes are declared at the ORM level so ``Base.metadata.create_all``
+    creates them on fresh DBs (it runs *before* ``apply_migrations`` —
+    see ``persistence/db.py``). The migration provides idempotent
+    fallbacks for existing DBs that predate this release.
+    """
+
+    __tablename__ = "oauth_accounts"
+    __table_args__ = (
+        # Every callback resolves an existing OAuth identity by
+        # ``(oauth_name, account_id)``; without this composite the lookup
+        # is a full table scan on every login (and login frequency
+        # scales with active-user count).
+        Index("ix_oauth_accounts_provider_account", "oauth_name", "account_id"),
+    )
+
+    @declared_attr
+    def user_id(cls) -> Mapped[uuid.UUID]:
+        return mapped_column(
+            GUID,
+            ForeignKey("users.id", ondelete="cascade"),
+            nullable=False,
+            # User-scoped queries (list / unlink an OAuth account from
+            # the admin panel in Phase C) hit this column on every page;
+            # an explicit single-column index keeps those fast even when
+            # the composite above doesn't help (it leads with oauth_name).
+            index=True,
+        )
 
 
 # ---------------------------------------------------------------------------

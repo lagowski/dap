@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from dap_engine.persistence.db import _normalize_pg_prefix, detect_dialect
-from dap_engine.persistence.models import UserORM
+from dap_engine.persistence.models import OAuthAccountORM, UserORM
 
 __all__ = [
     "AsyncSession",
@@ -128,4 +128,8 @@ async def get_async_session(
 async def get_user_db(
     session: AsyncSession = Depends(get_async_session),
 ) -> AsyncGenerator[SQLAlchemyUserDatabase[UserORM, uuid.UUID]]:
-    yield SQLAlchemyUserDatabase(session, UserORM)
+    # Pass OAuthAccountORM as the third argument so fastapi-users'
+    # OAuth router can look up / create linked identities. Without this
+    # the router silently 404s on every callback (no linked-account
+    # storage available).
+    yield SQLAlchemyUserDatabase(session, UserORM, OAuthAccountORM)

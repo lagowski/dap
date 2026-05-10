@@ -26,6 +26,7 @@ from dap_engine.api.runtimes import router as runtimes_router
 from dap_engine.api.settings import router as settings_router
 from dap_engine.auth import fastapi_users
 from dap_engine.auth.db import create_async_engine_for_url, make_async_session_factory
+from dap_engine.auth.oauth import make_github_client, make_google_client
 from dap_engine.auth.schemas import UserCreate, UserRead, UserUpdate
 from dap_engine.auth.users import auth_backend, configure_jwt
 from dap_engine.execution import RunRegistry
@@ -162,13 +163,25 @@ class EngineConfig:
     # local dev where every restart invalidates outstanding tokens).
     auth_jwt_secret: str | None = None
     auth_access_ttl_seconds: int = 60 * 15
+    # OAuth (v0.3, sub-A2). Each provider is opt-in: when both
+    # client_id and client_secret are set the corresponding /auth/<provider>
+    # router is mounted; otherwise nothing is exposed for that provider.
+    # Self-host installs can run with email+password only and add OAuth
+    # later by setting these env vars and restarting.
+    oauth_github_client_id: str | None = None
+    oauth_github_client_secret: str | None = None
+    oauth_google_client_id: str | None = None
+    oauth_google_client_secret: str | None = None
 
 
-def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any]:
+def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:
     """Build the JWT-config + async engine + session factory for fastapi-users.
 
-    Returns ``(async_engine, async_session_factory)``. The async engine
-    is owned by the caller, which must dispose it on shutdown.
+    Returns ``(async_engine, async_session_factory, jwt_secret)``. The
+    async engine is owned by the caller, which must dispose it on shutdown.
+    ``jwt_secret`` is returned so OAuth routers can reuse it as their
+    state-secret (CSRF protection of the OAuth flow); a separate secret
+    would force operators to manage two env vars without a security gain.
 
     A ``None`` ``auth_jwt_secret`` is replaced with a per-process random,
     which means outstanding tokens become invalid on the next restart.
@@ -181,11 +194,17 @@ def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any]:
     configure_jwt(jwt_secret, cfg.auth_access_ttl_seconds)
     async_engine = create_async_engine_for_url(cfg.database_url, cfg.db_path)
     async_session_factory = make_async_session_factory(async_engine)
-    return async_engine, async_session_factory
+    return async_engine, async_session_factory, jwt_secret
 
 
 def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     cfg = config or EngineConfig()
+
+    # Auth setup runs synchronously at app-construction time so the OAuth
+    # routers (mounted below at module scope, not in lifespan) have access
+    # to the same JWT/state secret. ``create_async_engine`` doesn't open
+    # connections until the first request, so this is safe to do here.
+    auth_async_engine, async_session_factory, oauth_state_secret = _setup_auth(cfg)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -216,9 +235,6 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         session_factory = make_session_factory(engine)
         registry = create_default_registry()
         run_registry = RunRegistry()
-
-        # Auth: parallel async engine for fastapi-users (see auth/db.py).
-        auth_async_engine, async_session_factory = _setup_auth(cfg)
 
         # Recover stale runs left by previous crashes
         with session_factory() as cleanup_session:
@@ -309,5 +325,45 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         prefix="/users",
         tags=["users"],
     )
+
+    # OAuth routers — only mounted when both credentials are present.
+    # ``associate_by_email=True`` lets a user with an existing local
+    # password account link a GitHub/Google identity by logging in with
+    # the same email. ``is_verified_by_default=True`` flags OAuth-created
+    # users as verified — Google enforces verified emails server-side and
+    # GitHub returns the verified primary email when the ``user:email``
+    # scope is granted (see auth/oauth.py).
+    if cfg.oauth_github_client_id and cfg.oauth_github_client_secret:
+        github_client = make_github_client(
+            cfg.oauth_github_client_id,
+            cfg.oauth_github_client_secret,
+        )
+        app.include_router(
+            fastapi_users.get_oauth_router(
+                github_client,
+                auth_backend,
+                oauth_state_secret,
+                associate_by_email=True,
+                is_verified_by_default=True,
+            ),
+            prefix="/auth/github",
+            tags=["auth"],
+        )
+    if cfg.oauth_google_client_id and cfg.oauth_google_client_secret:
+        google_client = make_google_client(
+            cfg.oauth_google_client_id,
+            cfg.oauth_google_client_secret,
+        )
+        app.include_router(
+            fastapi_users.get_oauth_router(
+                google_client,
+                auth_backend,
+                oauth_state_secret,
+                associate_by_email=True,
+                is_verified_by_default=True,
+            ),
+            prefix="/auth/google",
+            tags=["auth"],
+        )
 
     return app

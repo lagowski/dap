@@ -239,6 +239,51 @@ def _009_create_users_table(conn: Connection) -> None:
     conn.execute(text("CREATE UNIQUE INDEX ix_users_email ON users (email)"))
 
 
+def _010_create_oauth_accounts_table(conn: Connection) -> None:
+    """v0.3 / #299 — create the ``oauth_accounts`` table for fastapi-users.
+
+    Mirrors the ORM mapping in ``OAuthAccountORM``. As with migration 9,
+    fresh DBs already have the table from ``Base.metadata.create_all``;
+    this migration backstops upgrades from pre-OAuth dev DBs.
+
+    Indexes are created unconditionally with ``IF NOT EXISTS`` —
+    ``create_all`` runs first but only creates indexes for *new* tables,
+    so a DB that was upgraded incrementally could end up with the table
+    but no indexes. The ``IF NOT EXISTS`` guards make the index creates
+    a cheap no-op on fresh DBs that already have them from the ORM.
+    """
+    inspector = inspect(conn)
+    if not inspector.has_table("oauth_accounts"):
+        dialect = conn.dialect.name
+        id_type = "UUID" if dialect == "postgresql" else "CHAR(36)"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE oauth_accounts (
+                    id {id_type} NOT NULL PRIMARY KEY,
+                    user_id {id_type} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    oauth_name VARCHAR(100) NOT NULL,
+                    access_token VARCHAR(1024) NOT NULL,
+                    expires_at INTEGER NULL,
+                    refresh_token VARCHAR(1024) NULL,
+                    account_id VARCHAR(320) NOT NULL,
+                    account_email VARCHAR(320) NOT NULL
+                )
+                """
+            )
+        )
+
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_oauth_accounts_user_id ON oauth_accounts (user_id)")
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_oauth_accounts_provider_account "
+            "ON oauth_accounts (oauth_name, account_id)"
+        )
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
@@ -258,6 +303,7 @@ MIGRATIONS: list[Migration] = [
     Migration(name="007_runs_index_pipeline_started", apply=_007_runs_index_pipeline_started),
     Migration(name="008_runs_add_failure_reason", apply=_008_runs_add_failure_reason),
     Migration(name="009_create_users_table", apply=_009_create_users_table),
+    Migration(name="010_create_oauth_accounts_table", apply=_010_create_oauth_accounts_table),
 ]
 
 

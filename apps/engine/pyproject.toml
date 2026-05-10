@@ -20,9 +20,11 @@ dependencies = [
     "psycopg[binary,pool]>=3.2",
     "langgraph-checkpoint-postgres>=2.0",
     # Auth (v0.3 — see #299).
-    # `fastapi-users[sqlalchemy]` pulls aiosqlite already; explicit pin so
-    # `--frozen` installs catch breaking minor bumps in pre-commit hooks.
-    "fastapi-users[sqlalchemy]>=15.0.5",
+    # `fastapi-users[sqlalchemy]` pulls aiosqlite already; the `oauth`
+    # extra adds httpx-oauth for the GitHub + Google providers wired in
+    # the OAuth sub-PR. Explicit pin so `--frozen` installs catch
+    # breaking minor bumps in pre-commit hooks.
+    "fastapi-users[sqlalchemy,oauth]>=15.0.5",
 ]
 
 [project.scripts]
