@@ -41,6 +41,7 @@ export const queryKeys = {
     ["projects", "list", filters ?? {}] as const,
   project: (id: string) => ["projects", id] as const,
   settings: ["settings"] as const,
+  currentUser: ["auth", "me"] as const,
 };
 
 const RUNS_LIST_REFETCH_MS = 2_000;
@@ -364,5 +365,67 @@ export function useSettings() {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => api.getSettings(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Auth (Phase B, #300)
+// ---------------------------------------------------------------------------
+
+import type { LoginCredentials, RegisterCredentials } from "@/lib/api/types";
+
+/**
+ * Current user, or ``null`` when the cookie is missing / stale.
+ *
+ * Stays cached across navigations — every page that renders chrome
+ * dependent on the user (sidebar, header, conditional admin links)
+ * shares the single result. ``staleTime`` is long because the
+ * underlying row only changes when the user explicitly logs out or
+ * an admin promotes them; we'd rather show stale ``is_superuser``
+ * for a few minutes than re-fetch on every navigation.
+ */
+export function useCurrentUser() {
+  return useQuery({
+    queryKey: queryKeys.currentUser,
+    queryFn: () => api.getCurrentUser(),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
+export function useLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (creds: LoginCredentials) => api.login(creds),
+    onSuccess: () => {
+      // Force a re-fetch — the cookie is now live and ``useCurrentUser``
+      // should return the real user instead of ``null``. Also bust
+      // everything else: any data the previous (anonymous / 401)
+      // session might have cached is suspect.
+      qc.invalidateQueries();
+    },
+  });
+}
+
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.logout(),
+    onSuccess: () => {
+      qc.setQueryData(queryKeys.currentUser, null);
+      qc.removeQueries();
+    },
+  });
+}
+
+export function useRegister() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (creds: RegisterCredentials) => api.register(creds),
+    onSuccess: () => {
+      // Auto-login already minted the cookie; flush caches so the
+      // new (authenticated) identity drives every subsequent fetch.
+      qc.invalidateQueries();
+    },
   });
 }
