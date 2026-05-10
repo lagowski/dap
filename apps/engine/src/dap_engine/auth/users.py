@@ -25,7 +25,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import (
     AuthenticationBackend,
@@ -37,6 +37,7 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dap_engine.auth.api_tokens import looks_like_api_token, verify_api_token
+from dap_engine.auth.audit import record_audit_event_async
 from dap_engine.auth.db import get_async_session, get_user_db
 from dap_engine.persistence.models import UserORM
 
@@ -100,10 +101,32 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
         user: UserORM,
         request: Request | None = None,
     ) -> None:
-        # Phase A only logs; structured audit log lands later in #299.
         logging.getLogger("dap.engine.auth").info(
             "user.registered",
             extra={"user_id": str(user.id), "email": user.email},
+        )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.registered",
+            event_data={"email": user.email},
+        )
+
+    async def on_after_login(
+        self,
+        user: UserORM,
+        request: Request | None = None,
+        response: Response | None = None,
+    ) -> None:
+        logging.getLogger("dap.engine.auth").info(
+            "user.logged_in",
+            extra={"user_id": str(user.id)},
+        )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.logged_in",
+            event_data={"email": user.email},
         )
 
     async def delete(
@@ -129,6 +152,12 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
         await self.user_db.update(
             user,
             {"deleted_at": datetime.now(UTC), "is_active": False},
+        )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.deleted",
+            event_data={"email": user.email, "soft": True},
         )
         await self.on_after_delete(user, request)
 
