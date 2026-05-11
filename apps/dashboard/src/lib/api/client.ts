@@ -12,6 +12,8 @@ import type {
   AgentDryRunResponse,
   AgentExport,
   AgentUpdate,
+  CurrentUser,
+  LoginCredentials,
   NodeExecutionLog,
   PaginatedList,
   Pipeline,
@@ -23,6 +25,7 @@ import type {
   ProjectCreate,
   ProjectRunRequest,
   ProjectUpdate,
+  RegisterCredentials,
   Run,
   RunCreateRequest,
   SettingsView,
@@ -30,8 +33,17 @@ import type {
   ValidationResult,
 } from "./types";
 
-const ENGINE_URL =
-  process.env.NEXT_PUBLIC_DAP_ENGINE_URL ?? "http://127.0.0.1:7333";
+/**
+ * After Phase B1 (#300) the browser talks to the dashboard's
+ * ``/api/*`` proxy, never the engine directly. The proxy reads the
+ * JWT from an httpOnly cookie and forwards it as a Bearer header.
+ *
+ * Server-side fetches (Next route handlers, server components) still
+ * hit the engine directly via ``DAP_ENGINE_URL`` — but those paths
+ * use a different client (``lib/auth/engine.ts``). This client is
+ * browser-only.
+ */
+const API_BASE_URL = "/api";
 
 export class ApiError extends Error {
   constructor(
@@ -81,7 +93,7 @@ export function formatApiError(error: unknown): string {
 
 async function request<T>(
   path: string,
-  init?: RequestInit & { json?: unknown },
+  init?: RequestInit & { json?: unknown; skipAuthRedirect?: boolean },
 ): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -94,10 +106,14 @@ async function request<T>(
     body = JSON.stringify(init.json);
   }
 
-  const response = await fetch(`${ENGINE_URL}${path}`, {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers,
     body,
+    // Cookies attach automatically since the dashboard's ``/api/*``
+    // proxy lives on the same origin, but pass ``same-origin``
+    // explicitly so the contract is documented in code.
+    credentials: "same-origin",
   });
 
   if (!response.ok) {
@@ -106,6 +122,21 @@ async function request<T>(
       detail = await response.json();
     } catch {
       // not JSON
+    }
+    // 401 → the cookie is missing / stale. Tell the browser to land
+    // on /login with a ``next=`` hint so the user comes back to
+    // wherever they were. Probing calls (``getCurrentUser``) opt
+    // out via ``skipAuthRedirect`` — they need to *see* the 401
+    // to decide whether to render the signed-in UI or the sign-in
+    // entry point. Server-side fetches (no ``window``) just
+    // propagate the error so the caller can decide.
+    if (
+      response.status === 401 &&
+      typeof window !== "undefined" &&
+      !init?.skipAuthRedirect
+    ) {
+      const next = window.location.pathname + window.location.search;
+      window.location.replace(`/login?next=${encodeURIComponent(next)}`);
     }
     throw new ApiError(response.status, detail);
   }
@@ -367,4 +398,48 @@ export async function triggerProjectRun(
 
 export async function getSettings(): Promise<SettingsView> {
   return request<SettingsView>("/settings");
+}
+
+// ---------------------------------------------------------------------------
+// Auth (Phase B, #300)
+// ---------------------------------------------------------------------------
+
+/**
+ * Auth endpoints target the dashboard's own ``/api/auth/*`` route
+ * handlers, not the engine directly. The handlers proxy to the
+ * engine and own the cookie lifecycle (set on login, clear on
+ * logout). ``request`` already prepends ``/api`` for us, so the
+ * paths here are ``/auth/*``.
+ */
+
+export async function login(creds: LoginCredentials): Promise<void> {
+  await request<{ ok: true }>("/auth/login", { method: "POST", json: creds });
+}
+
+export async function logout(): Promise<void> {
+  await request<{ ok: true }>("/auth/logout", { method: "POST" });
+}
+
+export async function register(creds: RegisterCredentials): Promise<void> {
+  await request<{ ok: true; verified: boolean }>("/auth/register", {
+    method: "POST",
+    json: creds,
+  });
+}
+
+/**
+ * ``GET /api/auth/me`` returns the current user or 401 if the cookie
+ * is missing / invalid. We translate the 401 to ``null`` here so
+ * call sites can use the result as "is logged in?" without dealing
+ * with thrown ApiErrors for the most common case.
+ */
+export async function getCurrentUser(): Promise<CurrentUser | null> {
+  try {
+    return await request<CurrentUser>("/auth/me", { skipAuthRedirect: true });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      return null;
+    }
+    throw error;
+  }
 }
