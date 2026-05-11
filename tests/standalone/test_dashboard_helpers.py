@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from dap_cli import dashboard
 
 
@@ -41,9 +40,7 @@ def test_find_node_returns_path_when_node_installed() -> None:
     assert result is None or Path(result).name in {"node", "node.exe"}
 
 
-def test_spawn_dashboard_returns_none_when_bundle_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_spawn_dashboard_returns_none_when_bundle_missing() -> None:
     """If the bundle isn't present, ``spawn_dashboard`` shouldn't
     even try to call ``node``."""
     with (

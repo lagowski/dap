@@ -92,13 +92,13 @@ def test_wheel_ships_bundle_info(built_wheel: Path) -> None:
     assert "Git SHA:" in info
 
 
-def test_find_bundle_after_install(built_wheel: Path, tmp_path: pytest.TempPathFactory) -> None:
+def test_find_bundle_after_install(built_wheel: Path, tmp_path: Path) -> None:
     """Install the wheel into a fresh venv and exercise the runtime
     ``find_bundle()`` helper. Catches the kind of packaging bug
     where the wheel has the file but ``importlib.resources`` can't
     see it (wrong package data declaration, missing __init__.py
     etc.)."""
-    venv = Path(str(tmp_path)) / "v"
+    venv = tmp_path / "v"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
     pip = venv / ("Scripts" if os.name == "nt" else "bin") / "pip"
     python = venv / ("Scripts" if os.name == "nt" else "bin") / "python"

@@ -28,10 +28,12 @@ echo "==> Building dashboard at ${DASHBOARD_SRC}"
 cd "${DASHBOARD_SRC}"
 
 # ``pnpm`` is expected on PATH. CI uses corepack; local dev uses the
-# repo's own pnpm version pinned via packageManager.
+# repo's own pnpm version pinned via packageManager. The dashboard's
+# pnpm-lock.yaml is v9 format — pnpm 9 and 10 both read it, so we
+# don't pin a major here.
 if ! command -v pnpm >/dev/null 2>&1; then
     echo >&2 "error: pnpm not on PATH."
-    echo >&2 "       Install via 'corepack enable && corepack prepare pnpm@10 --activate'"
+    echo >&2 "       Install via 'corepack enable && corepack prepare pnpm@latest --activate'"
     exit 1
 fi
 
@@ -41,13 +43,34 @@ pnpm install --frozen-lockfile
 NEXT_TELEMETRY_DISABLED=1 pnpm build
 
 echo "==> Staging bundle at ${BUNDLE_DEST}"
-# Wipe the previous bundle so removed files don't linger. ``rm -rf``
-# is fine here — every file under ``_dashboard/`` is gitignored
-# except the ``.gitkeep`` placeholder, which we re-create below so
-# the directory always exists in dev wheels too.
+# Stash the .gitkeep placeholder so its committed content isn't lost
+# by the wipe. Every other file under ``_dashboard/`` is gitignored
+# (rebuilt fresh each run); the .gitkeep is committed so dev wheels
+# built without running this script still have the directory on disk
+# for hatchling's force-include.
+GITKEEP_BACKUP=""
+if [[ -f "${BUNDLE_DEST}/.gitkeep" ]]; then
+    GITKEEP_BACKUP="$(mktemp)"
+    cp "${BUNDLE_DEST}/.gitkeep" "${GITKEEP_BACKUP}"
+fi
+
 rm -rf "${BUNDLE_DEST}"
 mkdir -p "${BUNDLE_DEST}"
-touch "${BUNDLE_DEST}/.gitkeep"
+
+# Restore the placeholder. If the script was somehow run from a
+# state with no .gitkeep (clean checkout where git removed the file
+# between the read and write — unlikely but worth guarding), fall
+# back to a tiny synthesised note so the file still ships in the
+# wheel.
+if [[ -n "${GITKEEP_BACKUP}" ]]; then
+    mv "${GITKEEP_BACKUP}" "${BUNDLE_DEST}/.gitkeep"
+else
+    cat > "${BUNDLE_DEST}/.gitkeep" <<'EOF'
+# Placeholder so the directory exists for hatchling's force-include.
+# The dashboard bundle is staged on top of this by
+# scripts/build-dashboard-bundle.sh.
+EOF
+fi
 
 # Next standalone output lands at ``.next/standalone`` with
 # ``server.js`` at the root + a self-contained ``node_modules``. The

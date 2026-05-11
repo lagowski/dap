@@ -56,15 +56,15 @@ def spawn_dashboard(
     *,
     port: int,
     engine_url: str,
-    log_prefix: str = "[dashboard] ",
 ) -> subprocess.Popen[bytes] | None:
     """Spawn ``node <bundle>/server.js`` in the background.
 
     Returns the ``Popen`` handle on success, or ``None`` when either
     the bundle or Node is missing — caller surfaces an appropriate
     message and continues without the dashboard. Stdout/stderr are
-    forwarded to the parent process with a fixed prefix so the
-    operator sees engine and dashboard logs interleaved cleanly.
+    inherited from the parent process so the operator sees engine
+    and dashboard logs interleaved without ``dap`` having to pump
+    bytes between pipes.
     """
     bundle = find_bundle()
     if bundle is None:

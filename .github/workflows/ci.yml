@@ -48,7 +48,12 @@ jobs:
         run: uv run mypy apps packages tests
 
       - name: Pytest
-        run: uv run pytest -q
+        # ``tests/standalone/`` exercises the pip-installable wheel
+        # and needs Node + pnpm; the dedicated ``bundle-wheel`` job in
+        # the Packaging workflow runs it. Ignore here so this job
+        # stays focused and doesn't silently skip wheel coverage when
+        # Node isn't available on the runner.
+        run: uv run pytest -q --ignore=tests/standalone
 
   pip-audit:
     name: Python deps CVE scan
