@@ -168,7 +168,11 @@ jobs:
           enable-cache: true
 
       - name: Install Python toolchain
-        run: uv sync --frozen --dev
+        # ``--all-packages`` installs every workspace member (dap-cli,
+        # dap-engine, …) so the standalone tests can ``import dap_cli``.
+        # Without it, ``uv sync`` only installs third-party deps and
+        # the test collection errors with ``ModuleNotFoundError``.
+        run: uv sync --frozen --dev --all-packages
 
       - name: Build dashboard bundle + dap-cli wheel + smoke test
         run: uv run pytest tests/standalone/ -v
