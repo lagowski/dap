@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Activity, FolderKanban, GitBranch, Settings, Users, Workflow } from "lucide-react";
 import { ProjectPicker } from "@/components/project-picker";
+import { UserMenu } from "@/components/user-menu";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -43,6 +44,7 @@ export function Sidebar() {
           );
         })}
       </nav>
+      <UserMenu />
       <div className="p-3 border-t text-xs text-muted-foreground">
         <span className="font-mono">F6 MVP</span>
       </div>
