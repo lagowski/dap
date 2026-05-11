@@ -1,8 +1,9 @@
-name: Docker build
+name: Packaging
 
-# Build + smoke-test the standalone Docker image on every PR that
-# touches packaging-relevant files. **Doesn't push** — that lands in
-# the release workflow (D3) once it's wired.
+# Build + smoke-test the standalone Docker image AND the dap-cli
+# wheel-with-dashboard on every PR that touches packaging-relevant
+# files. **Doesn't push** — that lands in the release workflow (D3)
+# once it's wired.
 
 on:
   pull_request:
@@ -14,6 +15,8 @@ on:
       - packages/**
       - pyproject.toml
       - uv.lock
+      - scripts/build-dashboard-bundle.sh
+      - tests/standalone/**
       - .github/workflows/docker-build.yml
   push:
     branches: [develop]
@@ -25,6 +28,8 @@ on:
       - packages/**
       - pyproject.toml
       - uv.lock
+      - scripts/build-dashboard-bundle.sh
+      - tests/standalone/**
       - .github/workflows/docker-build.yml
 
 permissions:
@@ -138,3 +143,32 @@ jobs:
               exit 1
           fi
           echo "Image runs as uid=${uid} ✓"
+
+  bundle-wheel:
+    # Validates the dap-cli wheel ships the dashboard bundle (D2,
+    # #334). Same trigger as the docker build because both consume
+    # ``apps/dashboard/`` and the bundle script.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.0.0 --activate
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.18"
+          enable-cache: true
+
+      - name: Install Python toolchain
+        run: uv sync --frozen --dev
+
+      - name: Build dashboard bundle + dap-cli wheel + smoke test
+        run: uv run pytest tests/standalone/ -v
