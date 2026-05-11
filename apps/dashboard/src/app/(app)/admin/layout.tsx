@@ -2,15 +2,16 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { AlertCircle, ShieldCheck } from "lucide-react";
 
 import { useCurrentUser } from "@/hooks/api";
+import { formatApiError } from "@/lib/api/client";
 
 /**
  * Admin section gate (#301, sub-C1).
  *
  * Renders only when the current user is a superuser. Non-admins are
- * redirected to the home page on mount — the actual backend enforcement
+ * redirected to ``/runs`` on mount — the actual backend enforcement
  * lives on every admin endpoint server-side (each repo function takes
  * ``is_admin`` and refuses cross-user / system-wide access otherwise),
  * so this gate is UX polish, not a security boundary. The bookmarked
@@ -28,20 +29,46 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const currentUser = useCurrentUser();
 
-  // Send non-admins home as soon as the auth probe resolves. The
-  // effect fires twice on the loading→resolved transition; the
-  // guard against ``isLoading`` keeps it idempotent.
+  // Send non-admins to ``/runs`` as soon as the auth probe resolves.
+  // ``/runs`` (not ``/``) because the home page itself just redirects
+  // to /runs — going through it adds a wasted client→server hop and
+  // a brief flash of the redirect.
+  //
+  // The effect fires twice on the loading→resolved transition; the
+  // ``isLoading`` and ``isError`` guards keep it idempotent. We skip
+  // the redirect on error so a temporary engine outage doesn't bounce
+  // a real admin out — same rule the UserMenu component applies.
   useEffect(() => {
-    if (currentUser.isLoading) return;
+    if (currentUser.isLoading || currentUser.isError) return;
     if (!currentUser.data?.is_superuser) {
-      router.replace("/");
+      router.replace("/runs");
     }
-  }, [currentUser.isLoading, currentUser.data, router]);
+  }, [currentUser.isLoading, currentUser.isError, currentUser.data, router]);
 
   if (currentUser.isLoading) {
     return (
       <div className="p-6 text-sm text-muted-foreground" aria-busy="true">
         Loading…
+      </div>
+    );
+  }
+
+  // ``getCurrentUser`` returns ``null`` on 401 (middleware redirects
+  // that case to ``/login`` anyway), so any error here is a non-auth
+  // failure — engine outage, 5xx, malformed JSON. Surface it instead
+  // of redirecting; an honest "can't reach the engine" is friendlier
+  // than a misleading "you're not allowed".
+  if (currentUser.isError) {
+    return (
+      <div
+        role="alert"
+        className="p-6 text-sm space-y-2 max-w-prose"
+      >
+        <div className="flex items-center gap-2 font-medium">
+          <AlertCircle className="h-4 w-4 text-destructive" aria-hidden />
+          Couldn&apos;t reach engine
+        </div>
+        <p className="text-muted-foreground">{formatApiError(currentUser.error)}</p>
       </div>
     );
   }
