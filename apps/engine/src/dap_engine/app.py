@@ -183,6 +183,23 @@ class EngineConfig:
     oauth_github_client_secret: str | None = None
     oauth_google_client_id: str | None = None
     oauth_google_client_secret: str | None = None
+    # Post-login redirect for OAuth callbacks (sub-B5).
+    #
+    # When set, fastapi-users' OAuth callback redirects the browser to
+    # this URL with the access token as a ``?token=<jwt>`` query
+    # parameter, instead of returning JSON. The dashboard's
+    # ``/api/auth/oauth/callback`` handler reads the token, sets the
+    # httpOnly cookie, and lands the user on the home page — turning
+    # the OAuth dance into the same cookie-only auth surface password
+    # login uses.
+    #
+    # In dev this points at the dashboard's local URL
+    # (``http://localhost:3000/api/auth/oauth/callback``); production
+    # operators set ``DAP_AUTH_OAUTH_REDIRECT_URL`` to the
+    # equivalent dashboard URL. When ``None`` (no dashboard wired)
+    # the callback falls back to returning JSON — useful for
+    # CLI-only deployments.
+    auth_oauth_redirect_url: str | None = None
 
 
 def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:
@@ -381,6 +398,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
                 github_client,
                 auth_backend,
                 oauth_state_secret,
+                redirect_url=cfg.auth_oauth_redirect_url,
                 associate_by_email=True,
                 is_verified_by_default=True,
             ),
@@ -397,6 +415,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
                 google_client,
                 auth_backend,
                 oauth_state_secret,
+                redirect_url=cfg.auth_oauth_redirect_url,
                 associate_by_email=True,
                 is_verified_by_default=True,
             ),

@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
+import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -111,6 +112,15 @@ function SignupPageInner() {
           Get started with DAP — your runs and pipelines stay private to you.
         </CardDescription>
       </CardHeader>
+      <div className="px-6 pb-4">
+        <OAuthButtons />
+        <div className="relative my-4 text-center">
+          <span className="bg-card px-2 text-xs uppercase tracking-wider text-muted-foreground">
+            or
+          </span>
+          <div className="absolute inset-x-0 top-1/2 -z-10 h-px bg-border" />
+        </div>
+      </div>
       <form onSubmit={form.handleSubmit(onSubmit)} noValidate>
         <CardContent className="space-y-4">
           <div className="space-y-2">
