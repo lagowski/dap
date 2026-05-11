@@ -22,3 +22,28 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dap_cli"]
+# Exclude the bundle from the standard package collection so it's
+# only carried by the ``force-include`` block below — otherwise
+# hatchling adds the same paths twice and the wheel gets duplicate
+# entries (UserWarning: Duplicate name).
+exclude = [
+    "src/dap_cli/_dashboard",
+    "src/dap_cli/_dashboard/**",
+]
+
+# Include the dashboard bundle (#302 sub-D2) when it's present.
+# Built on demand by ``scripts/build-dashboard-bundle.sh`` —
+# gitignored, so dev wheels built without running the script ship
+# only the ``.gitkeep`` placeholder (``dap start`` falls back to a
+# friendly "dashboard not bundled" message). The release pipeline
+# (D3) always runs the bundler before ``uv build``.
+[tool.hatch.build.targets.wheel.force-include]
+"src/dap_cli/_dashboard" = "dap_cli/_dashboard"
+
+# Same rule for the sdist so ``uv pip install dap-cli`` from a
+# source distribution still has the bundle.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/dap_cli",
+    "README.md",
+]

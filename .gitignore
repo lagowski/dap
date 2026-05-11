@@ -74,3 +74,14 @@ Thumbs.db
 # --- Cache ---
 .cache/
 .eslintcache
+
+# --- Built artefacts ---
+# Dashboard bundle staged into the dap-cli wheel by
+# scripts/build-dashboard-bundle.sh — regenerated on demand from
+# apps/dashboard/.next. The ``.gitkeep`` is retained so hatchling's
+# ``force-include`` always finds the directory; dev wheels built
+# without running the bundle script ship an effectively-empty
+# ``_dashboard/`` and ``dap start`` falls back to "dashboard not
+# bundled".
+apps/cli/src/dap_cli/_dashboard/*
+!apps/cli/src/dap_cli/_dashboard/.gitkeep

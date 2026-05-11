@@ -1,4 +1,4 @@
-"""dap start — odpala FastAPI engine in-process."""
+"""dap start — odpala FastAPI engine in-process + bundled dashboard."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 import uvicorn
 from rich.console import Console
 
+from dap_cli.dashboard import find_bundle, find_node, spawn_dashboard
 from dap_cli.paths import (
     DEFAULT_DASHBOARD_PORT,
     DEFAULT_ENGINE_PORT,
@@ -71,12 +72,35 @@ def start_command(
 
     console.print("[cyan]Starting DAP...[/cyan]")
     console.print(f"[green]✓ engine[/green]  http://127.0.0.1:{engine_port}")
-    console.print(
-        f"[yellow]○ dashboard[/yellow]  http://127.0.0.1:{port}  "
-        "[dim](not yet implemented — F6)[/dim]",
+
+    # Try to spawn the bundled dashboard. ``spawn_dashboard`` returns
+    # None when either the bundle (``_dashboard/server.js``) or
+    # ``node`` is missing — both are expected in dev installs that
+    # haven't run ``scripts/build-dashboard-bundle.sh``.
+    dashboard_proc = spawn_dashboard(
+        port=port,
+        engine_url=f"http://127.0.0.1:{engine_port}",
     )
-    if not headless:
-        console.print("[dim]  (would open browser in non-headless mode after F6)[/dim]")
+    if dashboard_proc is not None:
+        console.print(f"[green]✓ dashboard[/green]  http://127.0.0.1:{port}")
+    else:
+        # Distinguish the two no-dashboard cases so the operator
+        # knows which knob to turn.
+        if find_bundle() is None:
+            reason = (
+                "no bundle in this wheel — run "
+                "[bold]scripts/build-dashboard-bundle.sh[/bold] from a checkout"
+            )
+        elif find_node() is None:
+            reason = "Node.js not on PATH — install Node 20+ to enable"
+        else:
+            reason = "unknown (check logs)"
+        console.print(
+            f"[yellow]○ dashboard[/yellow]  not started [dim]({reason})[/dim]",
+        )
+
+    if not headless and dashboard_proc is not None:
+        console.print(f"[dim]  Open http://127.0.0.1:{port} in your browser.[/dim]")
     console.print()
     console.print("[dim]Press Ctrl+C to stop.[/dim]")
 
@@ -89,4 +113,12 @@ def start_command(
             access_log=False,
         )
     finally:
+        # Stop the dashboard before clearing our PID file so the
+        # operator never sees the dashboard outlive ``dap stop``.
+        if dashboard_proc is not None and dashboard_proc.poll() is None:
+            dashboard_proc.terminate()
+            try:
+                dashboard_proc.wait(timeout=5)
+            except Exception:
+                dashboard_proc.kill()
         remove_pid_file()
