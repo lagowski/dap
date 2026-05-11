@@ -500,14 +500,22 @@ export function useDeleteAdminUser() {
 // Admin — Audit log (#301, sub-C3)
 // ---------------------------------------------------------------------------
 
-export function useAuditEvents(filters: {
-  eventType?: string;
-  userId?: string;
-  offset?: number;
-  limit?: number;
-} = {}) {
+export function useAuditEvents(
+  filters: {
+    eventType?: string;
+    userId?: string;
+    offset?: number;
+    limit?: number;
+  } = {},
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: queryKeys.adminAuditEventsList(filters),
     queryFn: () => api.listAuditEvents(filters),
+    // ``enabled`` lets the audit-log page pause the query while the
+    // user is mid-typing a UUID into the filter input — otherwise
+    // every keystroke would fire a 422 against the engine
+    // (Copilot review on PR #329).
+    enabled: options.enabled ?? true,
   });
 }

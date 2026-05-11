@@ -124,9 +124,14 @@ def test_audit_events_filters_by_user_id(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert all(row["user_id"] == alice_id for row in body["items"])
-    # Bob's register event must NOT appear.
+    # Bob's register event must NOT appear. ``event_data`` is nullable
+    # so use ``(... or {})`` instead of ``.get("event_data", {})`` —
+    # the latter would raise on rows where the column is explicitly
+    # ``None`` (system events, pre-auth failures).
     bob_events = [
-        row for row in body["items"] if row.get("event_data", {}).get("email") == "bob@example.com"
+        row
+        for row in body["items"]
+        if (row.get("event_data") or {}).get("email") == "bob@example.com"
     ]
     assert bob_events == []
 

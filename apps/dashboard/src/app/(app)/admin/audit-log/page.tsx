@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, FileClock, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,28 @@ import type { AuditEvent } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
+const FILTER_DEBOUNCE_MS = 300;
+
+/**
+ * Loose UUID v4 check — only used to skip the request when the user
+ * is still typing. The server validates the format authoritatively;
+ * this is purely UX.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Mirror a value into state after ``ms`` of inactivity. Used to avoid
+ * firing one API request per keystroke while typing into the filter
+ * inputs (Copilot review on PR #329).
+ */
+function useDebouncedValue<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const handle = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(handle);
+  }, [value, ms]);
+  return debounced;
+}
 
 function formatTimestamp(value: string): string {
   const date = new Date(value);
@@ -43,23 +65,39 @@ function formatEventData(data: AuditEvent["event_data"]): {
 }
 
 export default function AdminAuditLogPage() {
-  const [eventType, setEventType] = useState("");
-  const [userId, setUserId] = useState("");
+  // "Draft" inputs — bound to the field value, update on every
+  // keystroke. The actual query reads the debounced mirrors below
+  // so we don't spam the engine with one request per character.
+  const [eventTypeDraft, setEventTypeDraft] = useState("");
+  const [userIdDraft, setUserIdDraft] = useState("");
   const [offset, setOffset] = useState(0);
 
-  // Filters reset offset to 0 — paging from page 5 to a new
-  // narrower filter would otherwise land on an empty page.
-  function applyFilter(setter: (v: string) => void, value: string) {
-    setter(value);
-    setOffset(0);
-  }
+  const eventType = useDebouncedValue(eventTypeDraft, FILTER_DEBOUNCE_MS);
+  const userIdDebounced = useDebouncedValue(userIdDraft, FILTER_DEBOUNCE_MS);
 
-  const events = useAuditEvents({
-    eventType: eventType.trim() || undefined,
-    userId: userId.trim() || undefined,
-    offset,
-    limit: PAGE_SIZE,
-  });
+  // Skip the request entirely for a half-typed UUID — the engine
+  // would 422 it. Empty-string still fires (clears the filter); a
+  // partial-but-not-yet-UUID input is the only state we suppress.
+  const userIdTrimmed = userIdDebounced.trim();
+  const userIdLooksValid = userIdTrimmed === "" || UUID_RE.test(userIdTrimmed);
+
+  // Reset to the first page whenever the *debounced* filters change —
+  // paging from page 5 to a new narrower filter would otherwise land
+  // on an empty page. Done in an effect (not on keystroke) so the
+  // user can finish typing without their cursor losing focus mid-type.
+  useEffect(() => {
+    setOffset(0);
+  }, [eventType, userIdDebounced]);
+
+  const events = useAuditEvents(
+    {
+      eventType: eventType.trim() || undefined,
+      userId: userIdTrimmed || undefined,
+      offset,
+      limit: PAGE_SIZE,
+    },
+    { enabled: userIdLooksValid },
+  );
 
   const total = events.data?.total ?? 0;
   const hasNextPage = offset + PAGE_SIZE < total;
@@ -91,8 +129,8 @@ export default function AdminAuditLogPage() {
             <Input
               id="event-type"
               placeholder="user.logged_in"
-              value={eventType}
-              onChange={(e) => applyFilter(setEventType, e.target.value)}
+              value={eventTypeDraft}
+              onChange={(e) => setEventTypeDraft(e.target.value)}
             />
           </div>
           <div className="space-y-1">
@@ -100,9 +138,15 @@ export default function AdminAuditLogPage() {
             <Input
               id="user-id"
               placeholder="UUID"
-              value={userId}
-              onChange={(e) => applyFilter(setUserId, e.target.value)}
+              value={userIdDraft}
+              onChange={(e) => setUserIdDraft(e.target.value)}
+              aria-invalid={!userIdLooksValid || undefined}
             />
+            {!userIdLooksValid && (
+              <p className="text-xs text-muted-foreground">
+                Waiting for a complete UUID…
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
