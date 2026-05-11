@@ -640,7 +640,20 @@ export interface AdminInstanceSettings {
     redirect_url: string | null;
   };
   cors: {
-    origins: string[] | null;
+    /**
+     * The *effective* allow-list — what ``CORSMiddleware`` actually
+     * uses. When the operator left ``DAP_CORS_ORIGINS`` unset this
+     * is the engine's default local-dev list, **not** an empty/
+     * permissive policy. ``using_default`` disambiguates the two.
+     */
+    origins: string[];
+    /**
+     * ``true`` when ``DAP_CORS_ORIGINS`` was unset and the engine
+     * fell back to ``DEFAULT_CORS_ORIGINS``. The dashboard renders
+     * a warning chip in this state — production deployments
+     * should set ``DAP_CORS_ORIGINS`` explicitly.
+     */
+    using_default: boolean;
   };
   storage: {
     backend: "sqlite" | "postgresql";

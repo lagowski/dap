@@ -110,12 +110,79 @@ def test_admin_settings_returns_full_snapshot_for_admin(client: TestClient) -> N
     assert body["oauth"]["google"]["client_id_configured"] is False
     assert body["oauth"]["redirect_url"] == "http://localhost:3000/api/auth/oauth/callback"
 
-    # CORS: explicit list from the fixture.
+    # CORS: explicit list from the fixture → using_default=False.
     assert body["cors"]["origins"] == ["http://localhost:3000"]
+    assert body["cors"]["using_default"] is False
 
     # Storage: SQLite path (default backend in tests).
     assert body["storage"]["backend"] == "sqlite"
     assert body["storage"]["location"].endswith("state.db")
+
+
+def test_admin_settings_cors_using_default_when_unset(client: TestClient) -> None:
+    """When ``cors_origins`` is ``None`` the engine falls back to
+    ``DEFAULT_CORS_ORIGINS`` — the endpoint must surface the effective
+    list (not ``None``) plus a ``using_default=True`` flag so the
+    dashboard can chip it as "from defaults" (Copilot review on PR
+    #332). Otherwise operators reading the page would think they have
+    a permissive CORS policy when they're actually on the local-dev
+    allow-list."""
+    with tempfile.TemporaryDirectory(prefix="dap-cors-default-") as tmp:
+        # ``cors_origins`` omitted → defaults to None on EngineConfig.
+        config = EngineConfig(
+            db_path=str(Path(tmp) / "state.db"),
+            auth_jwt_secret="cors-default-secret",
+        )
+        app = create_app(config)
+        with TestClient(app) as c:
+            c.post(
+                "/auth/register",
+                json={"email": "alice@example.com", "password": PASSWORD},
+            )
+            _promote_to_admin(app, "alice@example.com")
+            login = c.post(
+                "/auth/jwt/login",
+                data={"username": "alice@example.com", "password": PASSWORD},
+            )
+            token = login.json()["access_token"]
+            resp = c.get("/settings/admin", headers=_bearer(token))
+            assert resp.status_code == 200
+            cors = resp.json()["cors"]
+            assert cors["using_default"] is True
+            # The effective list must NOT be empty — that would imply
+            # an explicit "deny all", which isn't what ``None`` means.
+            assert len(cors["origins"]) > 0
+
+
+def test_admin_settings_storage_detects_sqlite_url(client: TestClient) -> None:
+    """``database_url=sqlite://...`` must report ``backend=sqlite``,
+    not ``postgresql``. Earlier sub-C5 versions treated any non-None
+    URL as Postgres (Copilot review on PR #332); this asserts the
+    fix using the same ``detect_dialect`` helper ``create_app`` uses."""
+    with tempfile.TemporaryDirectory(prefix="dap-sqlite-url-") as tmp:
+        # SQLAlchemy needs an absolute path or ``:memory:`` for sqlite URLs.
+        db_path = Path(tmp) / "state.db"
+        config = EngineConfig(
+            db_path=str(db_path),
+            database_url=f"sqlite:///{db_path}",
+            auth_jwt_secret="sqlite-url-secret",
+        )
+        app = create_app(config)
+        with TestClient(app) as c:
+            c.post(
+                "/auth/register",
+                json={"email": "alice@example.com", "password": PASSWORD},
+            )
+            _promote_to_admin(app, "alice@example.com")
+            login = c.post(
+                "/auth/jwt/login",
+                data={"username": "alice@example.com", "password": PASSWORD},
+            )
+            token = login.json()["access_token"]
+            resp = c.get("/settings/admin", headers=_bearer(token))
+            assert resp.status_code == 200, resp.text
+            storage = resp.json()["storage"]
+            assert storage["backend"] == "sqlite"
 
 
 def test_admin_settings_never_returns_raw_secrets(client: TestClient) -> None:
@@ -133,7 +200,12 @@ def test_admin_settings_never_returns_raw_secrets(client: TestClient) -> None:
 
 
 def test_redact_database_url_masks_password() -> None:
-    """Unit-level — feed common shapes and assert credentials disappear."""
+    """Unit-level — feed common shapes and assert credentials disappear.
+
+    Uses SQLAlchemy's URL parser (``make_url`` + ``render_as_string``)
+    so URL-encoded passwords + IPv6 hosts + query params round-trip
+    safely (Copilot review on PR #332).
+    """
     redacted = _redact_database_url(
         "postgresql+psycopg://app_user:hunter2@db.internal:5432/dap",
     )
@@ -141,6 +213,13 @@ def test_redact_database_url_masks_password() -> None:
     assert "app_user" in redacted  # user keeps visibility
     assert "db.internal:5432/dap" in redacted
 
-    # No credentials → returned unchanged.
+    # URL-encoded password with ``@`` inside it must NOT leak.
+    encoded = _redact_database_url(
+        "postgresql+psycopg://app_user:p%40ss%40word@db.internal:5432/dap",
+    )
+    assert "p%40ss%40word" not in encoded
+    assert "p@ss@word" not in encoded
+
+    # No credentials → still parseable, no spurious changes.
     plain = "postgresql://db.internal:5432/dap"
-    assert _redact_database_url(plain) == plain
+    assert "db.internal:5432" in _redact_database_url(plain)

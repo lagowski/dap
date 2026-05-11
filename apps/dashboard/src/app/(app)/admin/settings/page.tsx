@@ -203,34 +203,42 @@ function OAuthCard({ data }: { data: AdminInstanceSettings }) {
 }
 
 function CorsCard({ data }: { data: AdminInstanceSettings }) {
-  const origins = data.cors.origins;
+  const { origins, using_default } = data.cors;
   return (
     <Card>
       <CardHeader>
         <CardTitle>CORS</CardTitle>
         <CardDescription>
-          Origin allow-list for browser-side calls. Empty list = no allow-list
-          (default permissive).
+          Effective origin allow-list. When DAP_CORS_ORIGINS is unset the engine
+          falls back to a local-dev allow-list (not a permissive policy).
         </CardDescription>
       </CardHeader>
       <CardContent className="py-0">
         <Row
           label="Origins"
           value={
-            origins === null || origins.length === 0 ? (
-              <span className="inline-flex items-center gap-1 text-xs text-amber-700">
-                <AlertTriangle className="h-3 w-3" aria-hidden />
-                default (all origins) &mdash; set DAP_CORS_ORIGINS for prod
-              </span>
-            ) : (
-              <ul className="text-xs space-y-0.5">
-                {origins.map((origin) => (
-                  <li key={origin}>
-                    <code className="break-all">{origin}</code>
-                  </li>
-                ))}
-              </ul>
-            )
+            <div className="space-y-2">
+              {using_default && (
+                <span className="inline-flex items-center gap-1 text-xs text-amber-700">
+                  <AlertTriangle className="h-3 w-3" aria-hidden />
+                  using built-in dev defaults &mdash; set DAP_CORS_ORIGINS for prod
+                </span>
+              )}
+              {origins.length === 0 ? (
+                <span className="inline-flex items-center gap-1 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3" aria-hidden />
+                  empty allow-list &mdash; all cross-origin requests will be rejected
+                </span>
+              ) : (
+                <ul className="text-xs space-y-0.5">
+                  {origins.map((origin) => (
+                    <li key={origin}>
+                      <code className="break-all">{origin}</code>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           }
         />
       </CardContent>

@@ -26,10 +26,13 @@ from dap_runtimes import RuntimeRegistry
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
 from dap_types import HealthStatus, RuntimeAdapter
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from dap_engine.api.deps import get_registry
 from dap_engine.auth.users import current_active_user
 from dap_engine.execution.runner import DEFAULT_RECURSION_LIMIT
+from dap_engine.persistence.db import detect_dialect
 from dap_engine.persistence.models import UserORM
 
 logger = logging.getLogger("dap.engine.api.settings")
@@ -178,11 +181,8 @@ async def get_admin_settings(
 
     config = request.app.state.config
 
-    # Database backend + masked URL. For SQLite we show the path; for
-    # any other database_url we mask everything between ``//`` and
-    # ``@`` — the host/port stay visible so the admin can verify it's
-    # the right server, but credentials never reach the response.
     db_backend, db_location = _describe_database(config)
+    cors = _describe_cors(config)
 
     return {
         "auth": {
@@ -209,13 +209,7 @@ async def get_admin_settings(
             },
             "redirect_url": config.auth_oauth_redirect_url,
         },
-        "cors": {
-            # ``None`` means "default permissive" (no allow-list); a
-            # list means an explicit one. Operators want to tell these
-            # apart at a glance — the dashboard renders ``None`` as
-            # "(default, all origins)" with a warning chip.
-            "origins": config.cors_origins,
-        },
+        "cors": cors,
         "storage": {
             "backend": db_backend,
             "location": db_location,
@@ -223,33 +217,72 @@ async def get_admin_settings(
     }
 
 
+def _describe_cors(config: Any) -> dict[str, Any]:
+    """Return the *effective* CORS configuration.
+
+    The engine treats ``cors_origins=None`` as "fall back to
+    ``DEFAULT_CORS_ORIGINS`` (the local-dev allow-list)", **not**
+    "permissive / all origins". Earlier sub-C5 versions exposed the
+    raw config value, which let the dashboard mis-report unset config
+    as "all origins" (Copilot review on PR #332).
+
+    Now we resolve to what ``CORSMiddleware`` will actually use, plus
+    a ``using_default`` flag the dashboard renders as a chip so an
+    operator knows the value came from defaults rather than an
+    explicit env var.
+    """
+    # Import locally to avoid a circular import with ``app.py``.
+    from dap_engine.app import DEFAULT_CORS_ORIGINS  # noqa: PLC0415
+
+    if config.cors_origins is None:
+        return {
+            "origins": list(DEFAULT_CORS_ORIGINS),
+            "using_default": True,
+        }
+    return {
+        "origins": list(config.cors_origins),
+        "using_default": False,
+    }
+
+
 def _describe_database(config: Any) -> tuple[str, str]:
     """Return ``(backend, location)`` with credentials redacted.
 
-    SQLite paths are returned as-is — they're filesystem paths on the
-    engine host, not secrets. PostgreSQL URLs go through
-    credential-redaction so the response never carries the password
-    even if the env var holds one.
+    Uses ``persistence.db.detect_dialect`` for backend detection —
+    the same helper ``create_app`` uses — so the answer matches
+    what's actually running. Naively treating any non-None
+    ``database_url`` as PostgreSQL (Copilot review on PR #332)
+    would mis-label SQLite URLs and break the dashboard display.
     """
     url = getattr(config, "database_url", None)
     if url is None:
-        # SQLite path — the existing default.
+        # No DATABASE_URL set → engine uses the SQLite file at db_path.
         return "sqlite", str(Path(config.db_path).resolve())
+    backend = detect_dialect(url)
+    if backend == "sqlite":
+        # SQLite-via-URL is rare but supported; show the path the
+        # way an operator would type it.
+        return "sqlite", url
     return "postgresql", _redact_database_url(url)
 
 
 def _redact_database_url(url: str) -> str:
-    """Mask the password in a ``scheme://user:password@host/db`` URL.
+    """Mask the password in a database URL.
 
-    We don't try to handle every edge case (e.g. URL-encoded passwords
-    with ``@`` in them) — the goal is to make accidental credential
-    exposure visibly wrong in the dashboard. Best effort.
+    Uses SQLAlchemy's ``make_url`` + ``render_as_string(hide_password=True)``
+    so URL-encoded passwords, IPv6 hosts, query params, and other
+    quirks of real-world database URLs round-trip safely (Copilot
+    review on PR #332). A previous string-splitting version would
+    leak credentials on URLs whose password contained ``@`` or other
+    edge characters.
+
+    Falls back to the input string if SQLAlchemy can't parse the URL
+    — better to show a raw value than to silently strip something
+    important. The endpoint's secret-redaction test asserts the
+    happy path, and the engine refuses to start with an unparseable
+    URL anyway.
     """
-    if "@" not in url or "://" not in url:
+    try:
+        return make_url(url).render_as_string(hide_password=True)
+    except ArgumentError:
         return url
-    scheme, rest = url.split("://", 1)
-    creds, host_path = rest.rsplit("@", 1)
-    if ":" in creds:
-        user, _password = creds.split(":", 1)
-        creds = f"{user}:***"
-    return f"{scheme}://{creds}@{host_path}"

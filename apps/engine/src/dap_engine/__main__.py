@@ -38,6 +38,13 @@ def main() -> None:
         # workers validate tokens against the same key.
         auth_jwt_secret=os.environ.get("DAP_AUTH_JWT_SECRET"),
         auth_access_ttl_seconds=int(os.environ.get("DAP_AUTH_ACCESS_TTL_SECONDS", "900")),
+        # Reset-token logging — opt-in dev convenience documented on
+        # ``EngineConfig.auth_log_reset_tokens``. Off unless the env
+        # var is set to a truthy string. The /admin/settings page
+        # surfaces the resulting value with an amber warning when it's
+        # on.
+        auth_log_reset_tokens=os.environ.get("DAP_AUTH_LOG_RESET_TOKENS", "").strip().lower()
+        in ("1", "true", "yes", "on"),
         # When set, OAuth callbacks redirect the browser here with the
         # JWT in ``?token=`` instead of returning JSON (#300, sub-B5).
         # The dashboard's ``/api/auth/oauth/callback`` reads it and
