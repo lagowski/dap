@@ -13,10 +13,8 @@
 
 import { NextResponse } from "next/server";
 
-import { buildJwtCookieHeader } from "@/lib/auth/cookies";
+import { buildJwtCookieHeader, getJwtCookieMaxAge } from "@/lib/auth/cookies";
 import { getEngineUrl } from "@/lib/auth/engine";
-
-const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 
 export async function POST(request: Request): Promise<NextResponse> {
   let payload: { email?: unknown; password?: unknown };
@@ -82,7 +80,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const response = NextResponse.json({ ok: true, verified: true }, { status: 201 });
   response.headers.set(
     "Set-Cookie",
-    buildJwtCookieHeader(tokenPayload.access_token, DEFAULT_TOKEN_TTL_SECONDS),
+    buildJwtCookieHeader(tokenPayload.access_token, getJwtCookieMaxAge()),
   );
   return response;
 }

@@ -11,13 +11,8 @@
 
 import { NextResponse } from "next/server";
 
-import { buildJwtCookieHeader } from "@/lib/auth/cookies";
+import { buildJwtCookieHeader, getJwtCookieMaxAge } from "@/lib/auth/cookies";
 import { getEngineUrl } from "@/lib/auth/engine";
-
-// Engine default access-token TTL is 1 hour (3600s). Keep the cookie
-// in lockstep — once the JWT expires the engine will 401 anyway and
-// the next request rolls the user to /login via middleware.
-const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 
 export async function POST(request: Request): Promise<NextResponse> {
   let payload: { email?: unknown; password?: unknown };
@@ -74,7 +69,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const response = NextResponse.json({ ok: true });
   response.headers.set(
     "Set-Cookie",
-    buildJwtCookieHeader(tokenPayload.access_token, DEFAULT_TOKEN_TTL_SECONDS),
+    buildJwtCookieHeader(tokenPayload.access_token, getJwtCookieMaxAge()),
   );
   return response;
 }

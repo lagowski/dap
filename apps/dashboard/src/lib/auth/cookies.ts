@@ -14,6 +14,27 @@ const COOKIE_NAME = "dap-jwt";
 export const JWT_COOKIE_NAME = COOKIE_NAME;
 
 /**
+ * Cookie ``Max-Age`` for the JWT — must stay in lockstep with the
+ * engine's access-token TTL or the dashboard will keep presenting an
+ * apparently-authenticated cookie that the engine rejects (or expire
+ * users early). Single source of truth: the
+ * ``DAP_AUTH_ACCESS_TTL_SECONDS`` server-side env var, which both
+ * the engine config (``EngineConfig.auth_access_ttl_seconds``) and
+ * this dashboard read. Falls back to the engine's documented
+ * default (3600s = 1h) when unset.
+ *
+ * Centralising the lookup here keeps the login / register / future
+ * refresh flows consistent — they all import this value instead of
+ * hard-coding their own.
+ */
+export function getJwtCookieMaxAge(): number {
+  const raw = process.env.DAP_AUTH_ACCESS_TTL_SECONDS;
+  if (raw === undefined || raw === "") return 3600;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3600;
+}
+
+/**
  * Build the ``Set-Cookie`` header value for the JWT cookie.
  *
  * - ``HttpOnly`` so JS can't read it (XSS-resistant).
