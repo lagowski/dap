@@ -321,6 +321,24 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         prefix="/auth",
         tags=["auth"],
     )
+    # Password reset (#300, sub-B3). Two endpoints:
+    #
+    #   POST /auth/forgot-password  — email-only body; engine emits a
+    #     reset token via ``on_after_forgot_password``. Until email
+    #     delivery lands, the hook logs the token at WARNING level
+    #     so an operator can copy it for self-hosted resets.
+    #   POST /auth/reset-password   — accepts ``{token, password}``
+    #     and rewrites the user's hashed_password if the token
+    #     validates.
+    #
+    # Same behaviour as fastapi-users defaults; no custom wrapping
+    # beyond the logging hook on the UserManager. Mounted under
+    # ``/auth`` to match the register / users router conventions.
+    app.include_router(
+        fastapi_users.get_reset_password_router(),
+        prefix="/auth",
+        tags=["auth"],
+    )
     app.include_router(
         fastapi_users.get_users_router(UserRead, UserUpdate),
         prefix="/users",

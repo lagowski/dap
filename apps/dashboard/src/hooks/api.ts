@@ -418,6 +418,21 @@ export function useLogout() {
   });
 }
 
+export function useForgotPassword() {
+  // No invalidation — the user has no session, so there's nothing
+  // to refresh.
+  return useMutation({
+    mutationFn: (email: string) => api.forgotPassword(email),
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (params: { token: string; password: string }) =>
+      api.resetPassword(params.token, params.password),
+  });
+}
+
 export function useRegister() {
   const qc = useQueryClient();
   return useMutation({

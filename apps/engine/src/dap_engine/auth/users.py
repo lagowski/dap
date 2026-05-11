@@ -26,7 +26,8 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 from fastapi import Depends, Request, Response
-from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
+from fastapi_users import BaseUserManager, FastAPIUsers, InvalidPasswordException, UUIDIDMixin
+from fastapi_users import schemas as fa_users_schemas
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
@@ -45,6 +46,10 @@ from dap_engine.persistence.models import UserORM
 # bounded even without a token blacklist (we don't ship one yet).
 # Override via ``DAP_AUTH_ACCESS_TTL`` env var → ``EngineConfig``.
 DEFAULT_ACCESS_TTL_SECONDS = 60 * 15
+
+# Server-side password policy — must stay aligned with the dashboard's
+# Zod rule (see ``apps/dashboard/src/app/(auth)/signup/page.tsx``).
+MIN_PASSWORD_LENGTH = 8
 
 
 # In-process holder for the JWT secret. The engine lifespan writes here
@@ -96,6 +101,25 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
         self.reset_password_token_secret = secret
         self.verification_token_secret = secret
 
+    async def validate_password(
+        self,
+        password: str,
+        user: fa_users_schemas.BaseUserCreate | UserORM,
+    ) -> None:
+        """Server-side password policy — runs on register, reset, and
+        admin-set paths. Matches the dashboard's Zod rule (min 8 chars)
+        so the policy is the same regardless of which client wrote
+        the field (#300, sub-B3).
+
+        Keeps the validator deliberately minimal: complexity rules
+        (mixed-case, digits) tend to push users toward predictable
+        substitutions; length is the cheap and effective gate.
+        """
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise InvalidPasswordException(
+                reason=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+            )
+
     async def on_after_register(
         self,
         user: UserORM,
@@ -126,6 +150,54 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
             self.user_db.session,  # type: ignore[attr-defined]
             user_id=user.id,
             event_type="user.logged_in",
+            event_data={"email": user.email},
+        )
+
+    async def on_after_forgot_password(
+        self,
+        user: UserORM,
+        token: str,
+        request: Request | None = None,
+    ) -> None:
+        """Forgot-password hook (#300, sub-B3).
+
+        v0.3 doesn't have email delivery yet — Phase E ships that.
+        Until then the token lands in the engine log at WARNING so an
+        operator can copy it out for self-hosted resets. The audit
+        log captures the *event* (not the token) so admins can
+        observe reset attempts.
+
+        Crucially, this hook also runs for non-existent emails (the
+        ``/auth/forgot-password`` endpoint always returns 202 to
+        prevent enumeration), so it MUST NOT leak the email back to
+        the caller via any side channel.
+        """
+        logging.getLogger("dap.engine.auth").warning(
+            "user.forgot_password (token issued, email delivery TODO): user_id=%s reset_token=%s",
+            user.id,
+            token,
+        )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.forgot_password",
+            event_data={"email": user.email},
+        )
+
+    async def on_after_reset_password(
+        self,
+        user: UserORM,
+        request: Request | None = None,
+    ) -> None:
+        """Audit successful password resets — no token in the event data
+        (token already burned by the time this fires)."""
+        logging.getLogger("dap.engine.auth").info(
+            "user.password_reset", extra={"user_id": str(user.id)}
+        )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.password_reset",
             event_data={"email": user.email},
         )
 
