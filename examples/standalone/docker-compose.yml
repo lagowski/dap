@@ -7,8 +7,12 @@
 # Quick start:
 #   1. cp .env.example .env  &&  edit DAP_AUTH_JWT_SECRET
 #   2. docker compose up -d
-#   3. dap init --admin-email you@example.com  (interactive password prompt)
-#   4. Open http://localhost:3000
+#   3. Open http://localhost:3000, sign up the first account
+#   4. Promote that account to admin (one-line SQL in README.md)
+#
+# The interactive ``dap init`` admin bootstrap lands in D4 (#336) and
+# will replace step 3-4 with a single prompt. Until then ``/signup`` +
+# manual promotion is the documented flow.
 
 services:
   dap:

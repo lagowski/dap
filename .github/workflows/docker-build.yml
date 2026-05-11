@@ -103,8 +103,27 @@ jobs:
           fi
 
           # Container is healthy: assert the docker healthcheck agrees.
-          status="$(docker inspect --format '{{.State.Health.Status}}' "${CID}" 2>/dev/null || echo "(no healthcheck)")"
-          echo "Docker healthcheck status: ${status}"
+          # The healthcheck has a 30s ``start_period`` + 30s ``interval``,
+          # so a freshly-started container can still report ``starting``
+          # at this point. Poll for up to 60s for it to flip to ``healthy``
+          # before failing — that way a flaky cold start doesn't mask the
+          # real assertion ("the healthcheck never goes green").
+          deadline=$((SECONDS + 60))
+          status="starting"
+          while (( SECONDS < deadline )); do
+              status="$(docker inspect --format '{{.State.Health.Status}}' "${CID}" 2>/dev/null || echo "(no healthcheck)")"
+              if [[ "${status}" == "healthy" ]]; then
+                  echo "Docker healthcheck status: healthy ✓"
+                  break
+              fi
+              sleep 2
+          done
+          if [[ "${status}" != "healthy" ]]; then
+              echo "::error::Docker healthcheck did not reach 'healthy' (last status: ${status})"
+              docker logs "${CID}"
+              docker rm -f "${CID}" || true
+              exit 1
+          fi
 
           docker rm -f "${CID}"
 

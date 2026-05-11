@@ -40,28 +40,24 @@ curl http://localhost:7333/health
 ## Promote the first user to admin
 
 Until `dap init` (D4) lands the interactive bootstrap, the first
-registered user has the default `is_superuser=False`. Flip it
-manually:
+registered user has the default `is_superuser=False`. Flip it with a
+one-line SQL update against the bind-mounted database:
 
 ```bash
-# SQLite (default).
-docker compose exec dap python -c "
-import asyncio
-from sqlalchemy import select
-from dap_engine.auth.db import async_session_factory
-from dap_engine.persistence.models import UserORM
-
-async def main():
-    async with async_session_factory() as s:
-        user = (await s.execute(
-            select(UserORM).where(UserORM.email == 'you@example.com')
-        )).scalars().unique().one()
-        user.is_superuser = True
-        await s.commit()
-
-asyncio.run(main())
-"
+# SQLite (default) — works against the file in the dap-data volume.
+docker compose exec dap sqlite3 /data/state.db \
+    "UPDATE users SET is_superuser=1 WHERE email='you@example.com';"
 ```
+
+For Postgres deployments:
+
+```bash
+docker compose exec postgres psql -U dap -d dap \
+    -c "UPDATE users SET is_superuser=true WHERE email='you@example.com';"
+```
+
+Verify by logging out + back in — the "Admin" link appears in the
+sidebar.
 
 ## Production checklist
 

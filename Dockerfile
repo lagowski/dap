@@ -96,7 +96,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------------------
 # Stage 2 — Dashboard (Next.js standalone bundle)
 # ---------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine AS dashboard-builder
+#
+# Debian-slim (glibc) base, NOT Alpine. Next.js bundles native
+# binaries (``@next/swc-*``, ``sharp``) compiled against the host
+# libc; building on musl (Alpine) and copying the standalone bundle
+# into a glibc runtime image produces "ELF interpreter not found"
+# errors at runtime. Keeping builder + runtime on the same libc
+# family avoids that whole class of pain.
+FROM node:${NODE_VERSION}-slim AS dashboard-builder
 
 WORKDIR /build/apps/dashboard
 
@@ -118,16 +125,32 @@ RUN pnpm build
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
-# Runtime-only deps for psycopg + Node (for next start). Build tools
-# stay in the builder stage — they don't ship.
+# Runtime-only deps for psycopg + curl/tini. Node is installed via
+# NodeSource (next step) so its major version matches the build
+# stage — Debian's packaged ``nodejs`` is whatever the distro
+# happens to ship and can lag the build stage by years. A
+# major-version skew between the build and runtime Node has
+# bitten Next.js standalone bundles in the wild, so we pin
+# explicitly.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
-        nodejs \
         curl \
+        gnupg \
+        ca-certificates \
         tini \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node ${NODE_VERSION} from NodeSource — same major as the
+# dashboard-builder stage. Bypasses Debian's stale apt repo.
+ARG NODE_VERSION
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version
 
 # Non-root user — matches the standard kubernetes / OpenShift expectation.
 ARG APP_UID=1000
