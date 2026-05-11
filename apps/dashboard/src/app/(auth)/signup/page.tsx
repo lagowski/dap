@@ -65,8 +65,42 @@ function SignupPageInner() {
   });
 
   async function onSubmit(values: SignupFormValues) {
-    await register.mutateAsync({ email: values.email, password: values.password });
-    router.replace(next);
+    const result = await register.mutateAsync({
+      email: values.email,
+      password: values.password,
+    });
+    // When the engine accepted the registration but didn't auto-login
+    // (e.g. email verification is required), keep the user here and
+    // show the success card — redirecting would bounce them to
+    // ``/login`` since the cookie isn't live. ``register.data`` drives
+    // the success banner below.
+    if (result.verified) {
+      router.replace(next);
+    }
+  }
+
+  // Pending-verification state — registration succeeded but the engine
+  // didn't issue a session. We surface the email so the user knows
+  // which inbox to check, and offer the sign-in entry point for after
+  // they verify.
+  if (register.data && !register.data.verified) {
+    const email = form.getValues("email");
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Check your email</CardTitle>
+          <CardDescription>
+            We&apos;ve sent a verification link to <strong>{email}</strong>. Open it
+            to activate your account, then sign in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild className="w-full">
+            <Link href="/login">Go to sign in</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (

@@ -420,11 +420,25 @@ export async function logout(): Promise<void> {
   await request<{ ok: true }>("/auth/logout", { method: "POST" });
 }
 
-export async function register(creds: RegisterCredentials): Promise<void> {
-  await request<{ ok: true; verified: boolean }>("/auth/register", {
-    method: "POST",
-    json: creds,
-  });
+export interface RegisterResult {
+  /**
+   * ``true`` when the engine auto-login succeeded and the JWT cookie
+   * is now live — the caller should treat the user as signed in.
+   * ``false`` when the engine accepted the account but didn't issue
+   * a session (e.g. email-verification flow). The caller should
+   * keep the user on the signup page and show a "check your email"
+   * style message rather than redirecting them — without a cookie,
+   * the middleware would bounce them straight to ``/login``.
+   */
+  verified: boolean;
+}
+
+export async function register(creds: RegisterCredentials): Promise<RegisterResult> {
+  const result = await request<{ ok: true; verified: boolean }>(
+    "/auth/register",
+    { method: "POST", json: creds },
+  );
+  return { verified: result.verified };
 }
 
 /**
