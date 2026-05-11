@@ -41,7 +41,6 @@ const TILES: readonly Tile[] = [
     description:
       "Filter and inspect security-relevant events (logins, password resets, role changes).",
     icon: FileClock,
-    comingIn: "C3",
   },
   {
     href: "/admin/api-tokens",
