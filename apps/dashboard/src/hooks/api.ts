@@ -42,6 +42,9 @@ export const queryKeys = {
   project: (id: string) => ["projects", id] as const,
   settings: ["settings"] as const,
   currentUser: ["auth", "me"] as const,
+  adminUsers: ["admin", "users"] as const,
+  adminUsersList: (filters?: { includeDeleted?: boolean }) =>
+    ["admin", "users", "list", filters ?? {}] as const,
 };
 
 const RUNS_LIST_REFETCH_MS = 2_000;
@@ -441,6 +444,47 @@ export function useRegister() {
       // Auto-login already minted the cookie; flush caches so the
       // new (authenticated) identity drives every subsequent fetch.
       qc.invalidateQueries();
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Admin — Users (#301, sub-C2)
+// ---------------------------------------------------------------------------
+
+import type { AdminUserUpdate } from "@/lib/api/types";
+
+/**
+ * Admin users list. Filter param exposed so the page can flip the
+ * "include soft-deleted" toggle without re-keying the query manually.
+ */
+export function useAdminUsers(filters: { includeDeleted?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.adminUsersList(filters),
+    queryFn: () => api.listAdminUsers(filters),
+  });
+}
+
+export function useUpdateAdminUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { id: string; payload: AdminUserUpdate }) =>
+      api.updateAdminUser(params.id, params.payload),
+    onSuccess: () => {
+      // Every variant of the admin-users list re-fetches; if an admin
+      // demotes themself the currentUser badge needs to flip too.
+      qc.invalidateQueries({ queryKey: queryKeys.adminUsers });
+      qc.invalidateQueries({ queryKey: queryKeys.currentUser });
+    },
+  });
+}
+
+export function useDeleteAdminUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteAdminUser(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.adminUsers });
     },
   });
 }

@@ -25,6 +25,7 @@ from dap_engine.api.runs import router as runs_router
 from dap_engine.api.runtimes import router as runtimes_router
 from dap_engine.api.settings import router as settings_router
 from dap_engine.auth import fastapi_users
+from dap_engine.auth.admin_users_routes import router as admin_users_router
 from dap_engine.auth.api_token_routes import router as api_token_router
 from dap_engine.auth.db import create_async_engine_for_url, make_async_session_factory
 from dap_engine.auth.oauth import make_github_client, make_google_client
@@ -375,6 +376,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         prefix="/users",
         tags=["users"],
     )
+    # Admin-only list endpoint that fastapi-users doesn't ship (#301,
+    # sub-C2). Same ``/users`` prefix as the fastapi-users router —
+    # FastAPI dispatches by exact path so ``GET /users`` lands here
+    # and ``GET /users/{id}`` keeps its fastapi-users handler.
+    app.include_router(admin_users_router)
 
     # API tokens (CLI / scripts) — JWT-only management surface; the
     # tokens themselves authenticate any other route via the api-token

@@ -6,6 +6,8 @@
  */
 
 import type {
+  AdminUser,
+  AdminUserUpdate,
   Agent,
   AgentCreate,
   AgentDryRunRequest,
@@ -479,4 +481,56 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     }
     throw error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Admin — Users (#301, sub-C2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Paginated list of every user. Backend route is the admin-only
+ * ``GET /users`` added in sub-C2 (fastapi-users doesn't ship one).
+ * Non-admin callers get 404 here — same anti-enumeration rule the
+ * resource routes follow.
+ */
+export async function listAdminUsers(params: {
+  includeDeleted?: boolean;
+  offset?: number;
+  limit?: number;
+} = {}): Promise<PaginatedList<AdminUser>> {
+  const search = new URLSearchParams();
+  if (params.includeDeleted) search.set("include_deleted", "true");
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return request<PaginatedList<AdminUser>>(`/users${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * Patch a user — admin-only when targeting someone other than self.
+ * The engine uses the fastapi-users default ``PATCH /users/{id}``,
+ * which returns the narrower ``UserRead`` (== ``CurrentUser`` here),
+ * **not** the admin-wide ``AdminUser`` shape — no ``created_at`` /
+ * ``last_login_at`` / ``deleted_at`` in the response. Consumers
+ * shouldn't read the returned object; the ``useUpdateAdminUser``
+ * hook re-fetches the admin list on success so the table picks
+ * up the fresh state from there.
+ */
+export async function updateAdminUser(
+  id: string,
+  payload: AdminUserUpdate,
+): Promise<CurrentUser> {
+  return request<CurrentUser>(`/users/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    json: payload,
+  });
+}
+
+/**
+ * Soft-delete a user. The engine's ``UserManager.delete`` override
+ * stamps ``deleted_at`` + flips ``is_active=False`` (sub-A1) instead
+ * of wiping the row — keeps audit log + ownership FKs intact.
+ */
+export async function deleteAdminUser(id: string): Promise<void> {
+  await request<void>(`/users/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

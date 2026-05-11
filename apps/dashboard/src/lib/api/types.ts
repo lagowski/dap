@@ -532,3 +532,34 @@ export interface RegisterCredentials {
   email: string;
   password: string;
 }
+
+// ---------------------------------------------------------------------------
+// Admin — Users (#301, sub-C2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin-only user representation returned by ``GET /users`` (the
+ * admin list endpoint). Wider than ``CurrentUser`` — exposes
+ * ``created_at`` / ``last_login_at`` / ``deleted_at`` so the admin
+ * table can show "joined", "last active", and the soft-delete state.
+ */
+export interface AdminUser {
+  id: string;
+  email: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  is_verified: boolean;
+  created_at: string | null;
+  last_login_at: string | null;
+  deleted_at: string | null;
+}
+
+/**
+ * Fields the dashboard's "edit user" actions toggle. Matches
+ * fastapi-users' ``BaseUserUpdate`` schema (PATCH ``/users/{id}``).
+ */
+export interface AdminUserUpdate {
+  is_active?: boolean;
+  is_superuser?: boolean;
+  is_verified?: boolean;
+}
