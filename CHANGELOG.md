@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Admin bootstrap (#336, sub-D4): `dap init` now creates or promotes
+  an admin user idempotently. Supports `--admin-email` with three
+  password modes — `--admin-password=...` (flag), `--admin-password-stdin`
+  (kubectl-style), or interactive `getpass` with random-password
+  fallback. Writes `.dap/bootstrap.json` (chmod 600) tracking the
+  admin email + creation timestamp; `dap status` surfaces the
+  bootstrap line at the top of its output. Replaces the manual SQL
+  ``UPDATE users SET is_superuser=1`` step in the standalone README.
 - Release pipeline (#335, sub-D3): `.github/workflows/release.yml`
   triggered on `v*.*.*` tags. Builds six wheels with the dashboard
   bundle, publishes to PyPI via trusted-publisher OIDC, builds a

@@ -15,13 +15,24 @@ openssl rand -hex 32   # → paste into DAP_AUTH_JWT_SECRET in .env
 # 3. Start.
 docker compose up -d
 
-# 4. Create the bootstrap admin (the engine refuses to mint accounts
-#    over OAuth without one). Until D4 ships the interactive
-#    bootstrap, use the dashboard /signup page — the first registered
-#    user is promoted to admin manually via the SQL helper below.
+# 4. Create the bootstrap admin (the engine has no admin out of the box).
+#    Two paths, pick one:
+#
+#    a) Inside the running container — interactive prompt:
+#       docker compose exec dap dap init --admin-email=you@example.com
+#       (or pass --admin-password=... / --admin-password-stdin for non-TTY)
+#
+#    b) From the host before first start — when you have ``dap`` installed
+#       locally and the data volume is bind-mounted, run ``dap init`` in a
+#       directory that contains the same ``.dap/`` layout.
+#
+#    On a fresh database the command creates the admin with the supplied
+#    password. Re-running is idempotent: an existing email gets promoted.
+
+# 5. Open the dashboard.
 open http://localhost:3000
 
-# 5. Verify health.
+# 6. Verify health.
 docker compose ps        # dap should be ``healthy``
 curl http://localhost:7333/health
 ```
@@ -37,27 +48,28 @@ curl http://localhost:7333/health
   one user. SQLite is fine for a single operator; concurrent writes
   beyond that benefit from real row locking.
 
-## Promote the first user to admin
+## Promote an existing user to admin
 
-Until `dap init` (D4) lands the interactive bootstrap, the first
-registered user has the default `is_superuser=False`. Flip it with a
-one-line SQL update against the bind-mounted database:
+`dap init` is the supported path — it creates a new admin or promotes
+an existing email idempotently. The SQL helpers below are a backstop
+for the rare case where you've lost CLI access to the container.
 
 ```bash
-# SQLite (default) — works against the file in the dap-data volume.
+# Inside the container (uses the bundled dap binary):
+docker compose exec dap dap init --admin-email=you@example.com --admin-password=$(openssl rand -hex 16)
+
+# SQLite (default) — direct DB edit.
 docker compose exec dap sqlite3 /data/state.db \
     "UPDATE users SET is_superuser=1 WHERE email='you@example.com';"
-```
 
-For Postgres deployments:
-
-```bash
+# Postgres deployments:
 docker compose exec postgres psql -U dap -d dap \
     -c "UPDATE users SET is_superuser=true WHERE email='you@example.com';"
 ```
 
 Verify by logging out + back in — the "Admin" link appears in the
-sidebar.
+sidebar. ``dap status`` (inside the container) reports the bootstrap
+state on its first line.
 
 ## Production checklist
 
