@@ -46,6 +46,12 @@ const PUBLIC_AUTH_API_PATHS = new Set([
   "/api/auth/logout",
   "/api/auth/register",
   "/api/auth/me",
+  // Forgot/reset (B3) are public — the user reaches them precisely
+  // when they don't have a working session. The reset-password
+  // route accepts a single-use token instead of a cookie, so it
+  // proves authenticity on its own.
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
 ]);
 
 /**

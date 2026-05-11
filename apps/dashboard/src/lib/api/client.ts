@@ -433,6 +433,29 @@ export interface RegisterResult {
   verified: boolean;
 }
 
+export async function forgotPassword(email: string): Promise<void> {
+  await request<{ ok: true }>("/auth/forgot-password", {
+    method: "POST",
+    json: { email },
+    // Forgot-password is a probe (the user *is* logged out — that's
+    // why they're asking) — must not bounce through /login on the
+    // 401 the engine would never send, but for symmetry with the
+    // other public auth calls we still opt out.
+    skipAuthRedirect: true,
+  });
+}
+
+export async function resetPassword(
+  token: string,
+  password: string,
+): Promise<void> {
+  await request<{ ok: true }>("/auth/reset-password", {
+    method: "POST",
+    json: { token, password },
+    skipAuthRedirect: true,
+  });
+}
+
 export async function register(creds: RegisterCredentials): Promise<RegisterResult> {
   const result = await request<{ ok: true; verified: boolean }>(
     "/auth/register",

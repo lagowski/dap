@@ -26,7 +26,13 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 from fastapi import Depends, Request, Response
-from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
+from fastapi_users import (
+    BaseUserManager,
+    FastAPIUsers,
+    InvalidPasswordException,
+    UUIDIDMixin,
+)
+from fastapi_users import schemas as fa_users_schemas
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
@@ -46,6 +52,10 @@ from dap_engine.persistence.models import UserORM
 # Override via ``DAP_AUTH_ACCESS_TTL`` env var → ``EngineConfig``.
 DEFAULT_ACCESS_TTL_SECONDS = 60 * 15
 
+# Server-side password policy — must stay aligned with the dashboard's
+# Zod rule (see ``apps/dashboard/src/app/(auth)/signup/page.tsx``).
+MIN_PASSWORD_LENGTH = 8
+
 
 # In-process holder for the JWT secret. The engine lifespan writes here
 # at startup; ``get_jwt_strategy`` reads it on every login. A module-level
@@ -53,19 +63,32 @@ DEFAULT_ACCESS_TTL_SECONDS = 60 * 15
 # strategy factory takes no arguments.
 _JWT_SECRET: str | None = None
 _ACCESS_TTL_SECONDS: int = DEFAULT_ACCESS_TTL_SECONDS
+_LOG_RESET_TOKENS: bool = False
 
 
-def configure_jwt(secret: str, access_ttl_seconds: int = DEFAULT_ACCESS_TTL_SECONDS) -> None:
+def configure_jwt(
+    secret: str,
+    access_ttl_seconds: int = DEFAULT_ACCESS_TTL_SECONDS,
+    *,
+    log_reset_tokens: bool = False,
+) -> None:
     """Set the JWT secret + lifetime — called once from the engine lifespan.
 
     Empty secret raises immediately so misconfig fails on startup, not on
     the first login attempt.
+
+    ``log_reset_tokens`` is a developer convenience for self-hosted
+    setups without email delivery. **Off by default** because reset
+    tokens are credentials — leaking them into log aggregation would
+    hand attackers account-takeover material. See ``EngineConfig.
+    auth_log_reset_tokens`` for the public knob.
     """
     if not secret:
         raise ValueError("DAP_AUTH_JWT_SECRET must be a non-empty string")
-    global _JWT_SECRET, _ACCESS_TTL_SECONDS  # noqa: PLW0603 — module-level by design
+    global _JWT_SECRET, _ACCESS_TTL_SECONDS, _LOG_RESET_TOKENS  # noqa: PLW0603 — module-level by design
     _JWT_SECRET = secret
     _ACCESS_TTL_SECONDS = access_ttl_seconds
+    _LOG_RESET_TOKENS = log_reset_tokens
 
 
 def _resolve_jwt_secret_or_raise() -> str:
@@ -95,6 +118,25 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
         secret = _resolve_jwt_secret_or_raise()
         self.reset_password_token_secret = secret
         self.verification_token_secret = secret
+
+    async def validate_password(
+        self,
+        password: str,
+        user: fa_users_schemas.BaseUserCreate | UserORM,
+    ) -> None:
+        """Server-side password policy — runs on register, reset, and
+        admin-set paths. Matches the dashboard's Zod rule (min 8 chars)
+        so the policy is the same regardless of which client wrote
+        the field (#300, sub-B3).
+
+        Keeps the validator deliberately minimal: complexity rules
+        (mixed-case, digits) tend to push users toward predictable
+        substitutions; length is the cheap and effective gate.
+        """
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise InvalidPasswordException(
+                reason=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+            )
 
     async def on_after_register(
         self,
@@ -126,6 +168,66 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
             self.user_db.session,  # type: ignore[attr-defined]
             user_id=user.id,
             event_type="user.logged_in",
+            event_data={"email": user.email},
+        )
+
+    async def on_after_forgot_password(
+        self,
+        user: UserORM,
+        token: str,
+        request: Request | None = None,
+    ) -> None:
+        """Forgot-password hook (#300, sub-B3).
+
+        v0.3 doesn't have email delivery yet — Phase E ships that.
+        For self-hosted setups without email, an operator can opt in
+        to **token logging** via ``DAP_AUTH_LOG_RESET_TOKENS=1`` and
+        copy the token out of stdout. **Default is off** because
+        reset tokens are credentials; production log aggregation
+        would otherwise routinely contain account-takeover material.
+        The audit log always captures the *event* (no token) so
+        admins can observe reset attempts.
+
+        fastapi-users only invokes this hook when a user matches the
+        submitted email — unknown emails get a 202 from the endpoint
+        without firing the hook (anti-enumeration is enforced
+        upstream, not here).
+        """
+        logger = logging.getLogger("dap.engine.auth")
+        if _LOG_RESET_TOKENS:
+            logger.warning(
+                "user.forgot_password (token issued, email delivery TODO): "
+                "user_id=%s reset_token=%s",
+                user.id,
+                token,
+            )
+        else:
+            logger.info(
+                "user.forgot_password (token issued, not logged — "
+                "set DAP_AUTH_LOG_RESET_TOKENS=1 for dev): user_id=%s",
+                user.id,
+            )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.forgot_password",
+            event_data={"email": user.email},
+        )
+
+    async def on_after_reset_password(
+        self,
+        user: UserORM,
+        request: Request | None = None,
+    ) -> None:
+        """Audit successful password resets — no token in the event data
+        (token already burned by the time this fires)."""
+        logging.getLogger("dap.engine.auth").info(
+            "user.password_reset", extra={"user_id": str(user.id)}
+        )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.password_reset",
             event_data={"email": user.email},
         )
 
