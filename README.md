@@ -2,9 +2,19 @@
 
 [![CI](https://github.com/rafeekpro/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rafeekpro/dap/actions/workflows/ci.yml)
 
-DAP is a local, single-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control. Anti-emergent by design: the state machine, not the model, decides what runs next.
+DAP is a self-hostable, multi-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control. Anti-emergent by design: the state machine, not the model, decides what runs next.
 
-## Requirements
+## Install paths
+
+Three supported install paths, in order of complexity:
+
+1. **PyPI** — `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`. Single-machine. The wheel ships with the bundled Next.js dashboard; `dap start` spawns the dashboard alongside the engine when `node` is on `PATH`, and runs engine-only otherwise (the CLI prints a hint).
+2. **Docker** — `ghcr.io/rafeekpro/dap:0.3.0` for shared / production deployments. See [`examples/standalone/`](examples/standalone/) for a working compose file with SQLite (default) or Postgres.
+3. **Source** — for contributors. The `scripts/setup` + `scripts/dev` flow below.
+
+See [**docs/self-hosting.md**](docs/self-hosting.md) for full deployment, OAuth setup, production checklist, and troubleshooting.
+
+## Requirements (source install)
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/) 0.8+
@@ -13,7 +23,7 @@ DAP is a local, single-user system for building and executing **deterministic ag
 
 `scripts/setup` checks all four for you, so you don't need to verify by hand. If you do want to install them yourself: `pyenv install 3.13 && pyenv local 3.13`, `curl -LsSf https://astral.sh/uv/install.sh | sh`, `nvm install 22 && nvm use 22`, `corepack enable && corepack prepare pnpm@latest --activate`.
 
-## Install
+## Install (from source)
 
 ```bash
 git clone https://github.com/rafeekpro/dap && cd dap
@@ -152,10 +162,12 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 
 ## Documentation
 
+- [`docs/self-hosting.md`](docs/self-hosting.md) — deployment paths (PyPI / Docker / source), production checklist, OAuth setup, troubleshooting.
 - [`docs/architecture.md`](docs/architecture.md) — components, state schema, Run lifecycle, LangGraph checkpoint model.
 - [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
 - [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
 - [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
+- [`docs/release.md`](docs/release.md) — release pipeline, per-tag publishing, rollback procedures.
 - [`packages/runtimes/README.md`](packages/runtimes/README.md) — per-runtime config reference.
 - [`examples/pipelines/`](examples/pipelines/) — importable pipeline bundles + their READMEs.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — branching, PR flow, commit style.
