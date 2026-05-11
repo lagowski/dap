@@ -14,6 +14,52 @@ const COOKIE_NAME = "dap-jwt";
 export const JWT_COOKIE_NAME = COOKIE_NAME;
 
 /**
+ * Short-lived cookie that proves the current browser initiated an
+ * OAuth flow. Set when the user clicks ``Continue with GitHub`` /
+ * ``…Google``, required when the OAuth callback lands. Without it
+ * an attacker could trick a victim into visiting
+ * ``/api/auth/oauth/callback?token=<attacker_jwt>`` and log them
+ * into the attacker's account (login-CSRF / session fixation).
+ * See ``api/auth/oauth/[provider]/route.ts``.
+ */
+export const OAUTH_FLOW_COOKIE_NAME = "dap-oauth-flow";
+
+/**
+ * Build a ``Set-Cookie`` value for the OAuth-flow nonce. 10 minutes is
+ * enough for the slowest interactive auth (typing a 2FA code, picking
+ * an account, granting consent) without leaving the cookie around if
+ * the user abandons the flow.
+ */
+export function buildOAuthFlowCookieHeader(value: string): string {
+  const flags = [
+    `${OAUTH_FLOW_COOKIE_NAME}=${value}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    "Max-Age=600",
+  ];
+  if (process.env.NODE_ENV === "production") {
+    flags.push("Secure");
+  }
+  return flags.join("; ");
+}
+
+/** Set-Cookie value that expires the OAuth-flow cookie immediately. */
+export function buildOAuthFlowClearCookieHeader(): string {
+  const flags = [
+    `${OAUTH_FLOW_COOKIE_NAME}=`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    "Max-Age=0",
+  ];
+  if (process.env.NODE_ENV === "production") {
+    flags.push("Secure");
+  }
+  return flags.join("; ");
+}
+
+/**
  * Cookie ``Max-Age`` for the JWT — must stay in lockstep with the
  * engine's access-token TTL or the dashboard will keep presenting an
  * apparently-authenticated cookie that the engine rejects (or expire

@@ -42,7 +42,12 @@ def main() -> None:
         # JWT in ``?token=`` instead of returning JSON (#300, sub-B5).
         # The dashboard's ``/api/auth/oauth/callback`` reads it and
         # promotes it to an httpOnly cookie.
-        auth_oauth_redirect_url=os.environ.get("DAP_AUTH_OAUTH_REDIRECT_URL"),
+        #
+        # Normalise blank / whitespace-only values to ``None`` — an
+        # operator who exports the var but leaves it empty would
+        # otherwise hand fastapi-users an invalid empty redirect_url
+        # (Copilot review on PR #326).
+        auth_oauth_redirect_url=(os.environ.get("DAP_AUTH_OAUTH_REDIRECT_URL", "").strip() or None),
         # OAuth (#299, sub-A2). Each provider activates only when both
         # client_id and client_secret are set; missing or partially-set
         # credentials are ignored without a startup error so a self-host
