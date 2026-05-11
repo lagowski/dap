@@ -69,6 +69,32 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "Building version: ${version}"
 
+      - name: Verify pyproject versions match tag
+        # Without this guard a release can ship wheels at the old
+        # ``0.0.1`` while the Docker tag + GitHub Release say
+        # ``v0.3.0`` — Copilot review on PR #340. Skipped on manual
+        # dispatch (no real tag yet, ``0.0.0-dev+...`` synthetic).
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          EXPECTED: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          fail=0
+          for pkg in packages/types packages/runtimes packages/prompt-dsl packages/cortex apps/engine apps/cli; do
+              actual=$(grep -E '^version = ' "${pkg}/pyproject.toml" | head -1 | sed -E 's/version = "(.*)"/\1/')
+              if [[ "${actual}" != "${EXPECTED}" ]]; then
+                  echo "::error file=${pkg}/pyproject.toml::version=${actual} but tag is v${EXPECTED}"
+                  fail=1
+              else
+                  echo "✓ ${pkg}: ${actual}"
+              fi
+          done
+          if [[ ${fail} -ne 0 ]]; then
+              echo ""
+              echo "Run scripts/bump-version.sh ${EXPECTED} (or edit each pyproject.toml) then re-tag."
+              exit 1
+          fi
+
       - name: Set up Node (for dashboard bundle)
         uses: actions/setup-node@v4
         with:
@@ -90,10 +116,10 @@ jobs:
         run: ./scripts/build-dashboard-bundle.sh
 
       - name: Build wheels + sdists
-        # ``uv build --all`` builds every workspace member. Output
-        # lands at ``dist/<package>/``; one ``--out-dir`` per
-        # package keeps the artefact layout predictable for the
-        # publish step.
+        # Build each workspace member into a flat ``dist/``
+        # directory. ``pypa/gh-action-pypi-publish`` accepts every
+        # ``dist/*.whl`` + ``dist/*.tar.gz`` in one shot, so a flat
+        # layout is cleaner than per-package subdirs here.
         run: |
           set -euo pipefail
           mkdir -p dist
