@@ -31,6 +31,9 @@ def client() -> Iterator[TestClient]:
     config = EngineConfig(
         db_path=str(Path(tmp) / "state.db"),
         auth_jwt_secret="smoke-reset-secret-do-not-use-in-prod",
+        # Opt-in to token logging for the test — the round-trip needs
+        # to extract the token from caplog. Default is off in prod.
+        auth_log_reset_tokens=True,
     )
     app = create_app(config)
     with TestClient(app) as c:
@@ -113,6 +116,36 @@ def test_reset_password_with_invalid_token_returns_400(client: TestClient) -> No
         json={"token": "definitely-not-a-token", "password": NEW_PASSWORD},
     )
     assert resp.status_code == 400
+
+
+def test_forgot_password_does_not_log_token_by_default(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Default config (``auth_log_reset_tokens=False``) must NOT emit the
+    raw reset token — reset tokens are credentials, and the default
+    config is what production runs (Copilot review on PR #324).
+
+    Captures at INFO so the "not logged" diagnostic is visible; we
+    assert (a) the diagnostic line landed and (b) no record at any
+    level carries ``reset_token=``.
+    """
+    with tempfile.TemporaryDirectory(prefix="dap-reset-default-") as tmp:
+        config = EngineConfig(
+            db_path=str(Path(tmp) / "state.db"),
+            auth_jwt_secret="default-config-secret",
+            # NOTE: auth_log_reset_tokens omitted → default False.
+        )
+        app = create_app(config)
+        with TestClient(app) as c:
+            c.post(
+                "/auth/register",
+                json={"email": "dee@example.com", "password": TEST_PASSWORD},
+            )
+            with caplog.at_level(logging.INFO, logger="dap.engine.auth"):
+                resp = c.post("/auth/forgot-password", json={"email": "dee@example.com"})
+            assert resp.status_code == 202
+            assert "not logged" in caplog.text, caplog.text
+            assert "reset_token=" not in caplog.text, caplog.text
 
 
 def test_reset_password_with_short_password_returns_400(

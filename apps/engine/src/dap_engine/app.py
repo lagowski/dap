@@ -164,6 +164,16 @@ class EngineConfig:
     # local dev where every restart invalidates outstanding tokens).
     auth_jwt_secret: str | None = None
     auth_access_ttl_seconds: int = 60 * 15
+    # Password-reset token logging (sub-B3 review).
+    #
+    # When ``True``, the ``UserManager.on_after_forgot_password`` hook
+    # logs the raw reset token at WARNING level. Useful for self-hosted
+    # dev / one-operator instances that have no email delivery yet —
+    # the operator copies the token out of stdout and hands it to the
+    # user. **Off by default** because reset tokens are credentials;
+    # production log aggregation would otherwise routinely contain
+    # account-takeover material. Set via ``DAP_AUTH_LOG_RESET_TOKENS``.
+    auth_log_reset_tokens: bool = False
     # OAuth (v0.3, sub-A2). Each provider is opt-in: when both
     # client_id and client_secret are set the corresponding /auth/<provider>
     # router is mounted; otherwise nothing is exposed for that provider.
@@ -192,7 +202,11 @@ def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:
     import secrets  # noqa: PLC0415 — local to keep top of file uncluttered
 
     jwt_secret = cfg.auth_jwt_secret or secrets.token_urlsafe(32)
-    configure_jwt(jwt_secret, cfg.auth_access_ttl_seconds)
+    configure_jwt(
+        jwt_secret,
+        cfg.auth_access_ttl_seconds,
+        log_reset_tokens=cfg.auth_log_reset_tokens,
+    )
     async_engine = create_async_engine_for_url(cfg.database_url, cfg.db_path)
     async_session_factory = make_async_session_factory(async_engine)
     return async_engine, async_session_factory, jwt_secret

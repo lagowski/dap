@@ -26,7 +26,12 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 from fastapi import Depends, Request, Response
-from fastapi_users import BaseUserManager, FastAPIUsers, InvalidPasswordException, UUIDIDMixin
+from fastapi_users import (
+    BaseUserManager,
+    FastAPIUsers,
+    InvalidPasswordException,
+    UUIDIDMixin,
+)
 from fastapi_users import schemas as fa_users_schemas
 from fastapi_users.authentication import (
     AuthenticationBackend,
@@ -58,19 +63,32 @@ MIN_PASSWORD_LENGTH = 8
 # strategy factory takes no arguments.
 _JWT_SECRET: str | None = None
 _ACCESS_TTL_SECONDS: int = DEFAULT_ACCESS_TTL_SECONDS
+_LOG_RESET_TOKENS: bool = False
 
 
-def configure_jwt(secret: str, access_ttl_seconds: int = DEFAULT_ACCESS_TTL_SECONDS) -> None:
+def configure_jwt(
+    secret: str,
+    access_ttl_seconds: int = DEFAULT_ACCESS_TTL_SECONDS,
+    *,
+    log_reset_tokens: bool = False,
+) -> None:
     """Set the JWT secret + lifetime — called once from the engine lifespan.
 
     Empty secret raises immediately so misconfig fails on startup, not on
     the first login attempt.
+
+    ``log_reset_tokens`` is a developer convenience for self-hosted
+    setups without email delivery. **Off by default** because reset
+    tokens are credentials — leaking them into log aggregation would
+    hand attackers account-takeover material. See ``EngineConfig.
+    auth_log_reset_tokens`` for the public knob.
     """
     if not secret:
         raise ValueError("DAP_AUTH_JWT_SECRET must be a non-empty string")
-    global _JWT_SECRET, _ACCESS_TTL_SECONDS  # noqa: PLW0603 — module-level by design
+    global _JWT_SECRET, _ACCESS_TTL_SECONDS, _LOG_RESET_TOKENS  # noqa: PLW0603 — module-level by design
     _JWT_SECRET = secret
     _ACCESS_TTL_SECONDS = access_ttl_seconds
+    _LOG_RESET_TOKENS = log_reset_tokens
 
 
 def _resolve_jwt_secret_or_raise() -> str:
@@ -162,21 +180,33 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
         """Forgot-password hook (#300, sub-B3).
 
         v0.3 doesn't have email delivery yet — Phase E ships that.
-        Until then the token lands in the engine log at WARNING so an
-        operator can copy it out for self-hosted resets. The audit
-        log captures the *event* (not the token) so admins can
-        observe reset attempts.
+        For self-hosted setups without email, an operator can opt in
+        to **token logging** via ``DAP_AUTH_LOG_RESET_TOKENS=1`` and
+        copy the token out of stdout. **Default is off** because
+        reset tokens are credentials; production log aggregation
+        would otherwise routinely contain account-takeover material.
+        The audit log always captures the *event* (no token) so
+        admins can observe reset attempts.
 
-        Crucially, this hook also runs for non-existent emails (the
-        ``/auth/forgot-password`` endpoint always returns 202 to
-        prevent enumeration), so it MUST NOT leak the email back to
-        the caller via any side channel.
+        fastapi-users only invokes this hook when a user matches the
+        submitted email — unknown emails get a 202 from the endpoint
+        without firing the hook (anti-enumeration is enforced
+        upstream, not here).
         """
-        logging.getLogger("dap.engine.auth").warning(
-            "user.forgot_password (token issued, email delivery TODO): user_id=%s reset_token=%s",
-            user.id,
-            token,
-        )
+        logger = logging.getLogger("dap.engine.auth")
+        if _LOG_RESET_TOKENS:
+            logger.warning(
+                "user.forgot_password (token issued, email delivery TODO): "
+                "user_id=%s reset_token=%s",
+                user.id,
+                token,
+            )
+        else:
+            logger.info(
+                "user.forgot_password (token issued, not logged — "
+                "set DAP_AUTH_LOG_RESET_TOKENS=1 for dev): user_id=%s",
+                user.id,
+            )
         await record_audit_event_async(
             self.user_db.session,  # type: ignore[attr-defined]
             user_id=user.id,
