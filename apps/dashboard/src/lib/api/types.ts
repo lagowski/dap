@@ -506,3 +506,29 @@ export interface ValidationResult {
   errors: string[];
   warnings: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Auth (Phase B, #300)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape returned by ``GET /users/me`` — fastapi-users' default user
+ * model plus our additions. Matches ``UserORM`` in the engine.
+ */
+export interface CurrentUser {
+  id: string;
+  email: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  is_verified: boolean;
+}
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface RegisterCredentials {
+  email: string;
+  password: string;
+}
