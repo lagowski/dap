@@ -6,6 +6,7 @@
  */
 
 import type {
+  AdminApiToken,
   AdminUser,
   AdminUserUpdate,
   Agent,
@@ -556,4 +557,42 @@ export async function listAuditEvents(
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   const qs = search.toString();
   return request<PaginatedList<AuditEvent>>(`/audit/events${qs ? `?${qs}` : ""}`);
+}
+
+// ---------------------------------------------------------------------------
+// Admin — API tokens (#301, sub-C4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin-wide token list. Includes every user's tokens with owner
+ * email + id attached so the table can render the owner column
+ * without a per-row lookup. Default ``includeRevoked=true`` so the
+ * admin sees the full lifecycle; flip to ``false`` for "currently
+ * valid" view.
+ */
+export async function listAdminApiTokens(params: {
+  includeRevoked?: boolean;
+  offset?: number;
+  limit?: number;
+} = {}): Promise<PaginatedList<AdminApiToken>> {
+  const search = new URLSearchParams();
+  // Default on the engine is ``include_revoked=true``; only emit
+  // the param when the caller explicitly wants ``false``.
+  if (params.includeRevoked === false) search.set("include_revoked", "false");
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return request<PaginatedList<AdminApiToken>>(
+    `/auth/api-tokens/admin${qs ? `?${qs}` : ""}`,
+  );
+}
+
+/**
+ * Revoke any user's token. Admin-only endpoint (non-admins get 404
+ * from the engine — mirrored from the rest of the admin surface).
+ */
+export async function adminRevokeApiToken(id: string): Promise<void> {
+  await request<void>(`/auth/api-tokens/admin/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }

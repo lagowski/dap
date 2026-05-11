@@ -586,3 +586,29 @@ export interface AuditEventFilters {
   eventType?: string;
   userId?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Admin — API tokens (#301, sub-C4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin view of an API token. Wider than the user-scoped shape
+ * (``ApiTokenRead`` on the engine) — adds ``owner_id`` + ``owner_email``
+ * so the admin table can render the owner column without a separate
+ * lookup per row.
+ *
+ * ``prefix`` is the 8-char indexed prefix of the raw token (the
+ * substring *after* ``dap_``); the raw token itself only exists in
+ * the response of the create endpoint.
+ */
+export interface AdminApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  owner_id: string;
+  owner_email: string;
+}

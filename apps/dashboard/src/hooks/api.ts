@@ -52,6 +52,12 @@ export const queryKeys = {
     offset?: number;
     limit?: number;
   }) => ["admin", "audit-events", "list", filters ?? {}] as const,
+  adminApiTokens: ["admin", "api-tokens"] as const,
+  adminApiTokensList: (filters?: {
+    includeRevoked?: boolean;
+    offset?: number;
+    limit?: number;
+  }) => ["admin", "api-tokens", "list", filters ?? {}] as const,
 };
 
 const RUNS_LIST_REFETCH_MS = 2_000;
@@ -517,5 +523,30 @@ export function useAuditEvents(
     // every keystroke would fire a 422 against the engine
     // (Copilot review on PR #329).
     enabled: options.enabled ?? true,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Admin — API tokens (#301, sub-C4)
+// ---------------------------------------------------------------------------
+
+export function useAdminApiTokens(filters: {
+  includeRevoked?: boolean;
+  offset?: number;
+  limit?: number;
+} = {}) {
+  return useQuery({
+    queryKey: queryKeys.adminApiTokensList(filters),
+    queryFn: () => api.listAdminApiTokens(filters),
+  });
+}
+
+export function useAdminRevokeApiToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.adminRevokeApiToken(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.adminApiTokens });
+    },
   });
 }
