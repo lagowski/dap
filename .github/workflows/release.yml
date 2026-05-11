@@ -1,0 +1,300 @@
+name: Release
+
+# Triggered by ``git push`` of a ``v*.*.*`` tag (or ``v*.*.*-rc*`` for
+# pre-releases). Builds every first-party wheel, ships the dashboard
+# bundle inside dap-cli, publishes to PyPI via trusted-publisher
+# OIDC, builds a multi-platform Docker image, pushes to GHCR, and
+# creates a GitHub Release with the auto-generated changelog
+# between this tag and the previous one.
+#
+# Operator-side prerequisites (one-time, see docs/release.md):
+#   1. Each PyPI package registered with this repo as a trusted
+#      publisher (no API token required).
+#   2. ``contents: write`` + ``id-token: write`` + ``packages: write``
+#      permissions enabled at the workflow level (declared below).
+#
+# Smoke-friendly: a ``workflow_dispatch`` trigger lets the operator
+# rehearse the build steps without cutting a real tag (with PyPI
+# publish + GitHub Release creation conditional on an actual tag
+# push so dry runs stay harmless).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write       # github-release creation
+  packages: write       # GHCR push
+  id-token: write       # PyPI trusted-publisher OIDC
+
+concurrency:
+  # One release at a time per tag. Don't cancel-in-progress — a
+  # release that's halfway through publishing shouldn't be killed
+  # by a re-trigger.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------
+  # Stage 1: build all six first-party wheels (+ sdist for each).
+  # The dap-cli wheel gets the dashboard bundle staged into it
+  # before the build runs.
+  # ---------------------------------------------------------------
+  build-wheels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the full history so ``git log`` can render the
+          # changelog between the previous tag and this one.
+          fetch-depth: 0
+
+      - name: Derive version from tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              version="${GITHUB_REF#refs/tags/v}"
+          else
+              # Manual dispatch — synthesise a dev version so the
+              # build still works end-to-end.
+              version="0.0.0-dev+${GITHUB_SHA::7}"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Building version: ${version}"
+
+      - name: Verify pyproject versions match tag
+        # Without this guard a release can ship wheels at the old
+        # ``0.0.1`` while the Docker tag + GitHub Release say
+        # ``v0.3.0`` — Copilot review on PR #340. Skipped on manual
+        # dispatch (no real tag yet, ``0.0.0-dev+...`` synthetic).
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          EXPECTED: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          fail=0
+          for pkg in packages/types packages/runtimes packages/prompt-dsl packages/cortex apps/engine apps/cli; do
+              actual=$(grep -E '^version = ' "${pkg}/pyproject.toml" | head -1 | sed -E 's/version = "(.*)"/\1/')
+              if [[ "${actual}" != "${EXPECTED}" ]]; then
+                  echo "::error file=${pkg}/pyproject.toml::version=${actual} but tag is v${EXPECTED}"
+                  fail=1
+              else
+                  echo "✓ ${pkg}: ${actual}"
+              fi
+          done
+          if [[ ${fail} -ne 0 ]]; then
+              echo ""
+              echo "Run scripts/bump-version.sh ${EXPECTED} (or edit each pyproject.toml) then re-tag."
+              exit 1
+          fi
+
+      - name: Set up Node (for dashboard bundle)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.0.0 --activate
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.18"
+          enable-cache: true
+
+      - name: Build dashboard bundle
+        # This stages apps/cli/src/dap_cli/_dashboard/ — must run
+        # BEFORE ``uv build`` so the dap-cli wheel picks it up.
+        run: ./scripts/build-dashboard-bundle.sh
+
+      - name: Build wheels + sdists
+        # Build each workspace member into a flat ``dist/``
+        # directory. ``pypa/gh-action-pypi-publish`` accepts every
+        # ``dist/*.whl`` + ``dist/*.tar.gz`` in one shot, so a flat
+        # layout is cleaner than per-package subdirs here.
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for pkg in packages/types packages/runtimes packages/prompt-dsl packages/cortex apps/engine apps/cli; do
+              echo "==> building $pkg"
+              uv build --out-dir dist/ "$pkg"
+          done
+          ls -la dist/
+
+      - name: Upload wheels artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: dist/
+          retention-days: 7
+
+  # ---------------------------------------------------------------
+  # Stage 2: publish wheels + sdists to PyPI via trusted-publisher.
+  # Skipped on workflow_dispatch (no tag → no release).
+  # ---------------------------------------------------------------
+  publish-pypi:
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      # GitHub environment that PyPI's trusted-publisher rules point
+      # at. The token is minted JIT via OIDC — no long-lived secret
+      # needs to live in the repo. See docs/release.md for setup.
+      name: pypi
+      url: https://pypi.org/project/dap-cli/
+    timeout-minutes: 10
+
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # ``skip-existing`` so re-running the workflow on a tag
+          # already partially published doesn't fail on the
+          # already-uploaded packages.
+          skip-existing: true
+          # Optional pre-publish smoke check that catches manifest
+          # / metadata issues PyPI would reject anyway.
+          verify-metadata: true
+
+  # ---------------------------------------------------------------
+  # Stage 3: build the multi-platform Docker image and push to GHCR.
+  # Runs in parallel with publish-pypi; both depend on
+  # build-wheels but neither depends on the other.
+  # ---------------------------------------------------------------
+  build-docker:
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        # arm64 cross-build needs QEMU on x86 runners.
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN has packages:write from the workflow-level
+          # permissions block, so no extra secret needed.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push multi-platform image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # Tag every release with the immutable version + bump
+          # ``latest`` (full release only, never on pre-releases).
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/dap:${{ needs.build-wheels.outputs.version }}
+          # Bump ``latest`` only when this is a stable release —
+          # never on ``-rc``, ``-beta``, ``-dev`` etc. Otherwise
+          # ``docker pull dap:latest`` would surprise operators
+          # with a pre-release.
+          labels: |
+            org.opencontainers.image.version=${{ needs.build-wheels.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Tag ``latest`` for stable releases
+        if: ${{ !contains(needs.build-wheels.outputs.version, '-') }}
+        run: |
+          set -euo pipefail
+          REPO="ghcr.io/${{ github.repository_owner }}/dap"
+          VERSION="${{ needs.build-wheels.outputs.version }}"
+          docker buildx imagetools create \
+              --tag "${REPO}:latest" \
+              "${REPO}:${VERSION}"
+
+  # ---------------------------------------------------------------
+  # Stage 4: GitHub Release with auto-generated changelog between
+  # the previous tag and this one. Last in the chain so the release
+  # notes can mention the wheels + image are already live.
+  # ---------------------------------------------------------------
+  github-release:
+    needs: [build-wheels, publish-pypi, build-docker]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build-wheels.outputs.version }}"
+          # Find the previous tag — the one before this one in
+          # ``git describe``. If this is the first tag, fall back
+          # to a synthetic boundary.
+          if PREV=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null); then
+              echo "Previous tag: ${PREV}"
+              {
+                  echo "## Changes since ${PREV}"
+                  echo ""
+                  git log --pretty=format:"- %s (%h)" "${PREV}..v${VERSION}"
+              } > release_notes.md
+          else
+              echo "## Initial release" > release_notes.md
+          fi
+          echo "" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Install" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "\`\`\`bash" >> release_notes.md
+          echo "# PyPI (CLI + engine via pipx)" >> release_notes.md
+          echo "pipx install dap-cli==${VERSION}" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "# Docker (engine + dashboard, all-in-one)" >> release_notes.md
+          echo "docker pull ghcr.io/${{ github.repository_owner }}/dap:${VERSION}" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # ``v${VERSION}`` is the tag that triggered this run.
+          tag_name: ${{ github.ref_name }}
+          name: "DAP ${{ needs.build-wheels.outputs.version }}"
+          body_path: release_notes.md
+          # Pre-releases (``v0.3.0-rc1`` etc.) flagged as such so
+          # they don't claim the "latest release" slot on the
+          # repo's home page.
+          prerelease: ${{ contains(needs.build-wheels.outputs.version, '-') }}
+          # Attach every wheel + sdist so an offline / air-gapped
+          # operator can grab them straight from the release page.
+          files: dist/*
