@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Self-hosting docs (#337, sub-D5): `docs/self-hosting.md` covering
+  three install paths (PyPI / Docker / source), production checklist,
+  OAuth setup, and the troubleshooting table. README links to it from
+  the top. `.env.example` rewritten with every env var grouped by
+  concern (Auth / OAuth / CORS / Storage / Engine / providers) and a
+  per-var rationale instead of bare placeholders.
 - Admin bootstrap (#336, sub-D4): `dap init` now creates or promotes
   an admin user idempotently. Supports `--admin-email` with three
   password modes — `--admin-password=...` (flag), `--admin-password-stdin`
@@ -30,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 ### Removed
 
-## [0.3.0] — TBD (cut by D5)
+## [0.3.0] — TBD (tag during Phase E)
 
 First multi-user release. Engine + dashboard ship together for
 self-hosting; auth covers password + GitHub/Google OAuth + API
@@ -69,7 +75,15 @@ tokens; ownership enforcement covers every resource route.
   - Dashboard bundled into the `dap-cli` wheel via
     `scripts/build-dashboard-bundle.sh`; `dap start` spawns it
     inline.
-  - Release pipeline (this section).
+  - Release pipeline at `.github/workflows/release.yml` —
+    PyPI trusted-publisher OIDC + GHCR multi-platform + GitHub
+    Release on `v*.*.*` tags.
+  - `dap init` admin bootstrap: idempotent superuser creation
+    on the local SQLite (or Postgres) with three credential
+    modes (flag / stdin / interactive + random-password).
+    `dap status` surfaces the bootstrap line.
+  - Self-hosting docs (`docs/self-hosting.md`) +
+    rewritten `.env.example` covering every engine env var.
 
 ### Changed
 - Engine now requires `DAP_AUTH_JWT_SECRET` to be set explicitly
