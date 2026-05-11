@@ -48,7 +48,6 @@ const TILES: readonly Tile[] = [
     description:
       "Instance-wide view of every user's CLI tokens. Revoke if a token leaks.",
     icon: KeyRound,
-    comingIn: "C4",
   },
   {
     href: "/admin/settings",
