@@ -27,6 +27,7 @@ from dap_engine.api.settings import router as settings_router
 from dap_engine.auth import fastapi_users
 from dap_engine.auth.admin_users_routes import router as admin_users_router
 from dap_engine.auth.api_token_routes import router as api_token_router
+from dap_engine.auth.audit_routes import router as audit_router
 from dap_engine.auth.db import create_async_engine_for_url, make_async_session_factory
 from dap_engine.auth.oauth import make_github_client, make_google_client
 from dap_engine.auth.schemas import UserCreate, UserRead, UserUpdate
@@ -386,6 +387,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     # tokens themselves authenticate any other route via the api-token
     # backend wired into ``fastapi_users``.
     app.include_router(api_token_router)
+
+    # Audit log read surface (#301, sub-C3). Append-only events flow
+    # into ``audit_log`` from the auth subsystem + ownership repos;
+    # this router exposes them to the admin panel.
+    app.include_router(audit_router)
 
     # OAuth routers — only mounted when both credentials are present.
     # ``associate_by_email=True`` lets a user with an existing local

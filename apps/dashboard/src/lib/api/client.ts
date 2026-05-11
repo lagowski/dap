@@ -9,6 +9,8 @@ import type {
   AdminUser,
   AdminUserUpdate,
   Agent,
+  AuditEvent,
+  AuditEventFilters,
   AgentCreate,
   AgentDryRunRequest,
   AgentDryRunResponse,
@@ -533,4 +535,25 @@ export async function updateAdminUser(
  */
 export async function deleteAdminUser(id: string): Promise<void> {
   await request<void>(`/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// Admin — Audit log (#301, sub-C3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Paginated audit log read. Filters are exact-match on ``eventType``
+ * and ``userId``; results land newest-first (engine sorts by
+ * ``created_at DESC``).
+ */
+export async function listAuditEvents(
+  params: AuditEventFilters & { offset?: number; limit?: number } = {},
+): Promise<PaginatedList<AuditEvent>> {
+  const search = new URLSearchParams();
+  if (params.eventType) search.set("event_type", params.eventType);
+  if (params.userId) search.set("user_id", params.userId);
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return request<PaginatedList<AuditEvent>>(`/audit/events${qs ? `?${qs}` : ""}`);
 }

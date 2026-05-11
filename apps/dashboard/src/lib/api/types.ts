@@ -563,3 +563,26 @@ export interface AdminUserUpdate {
   is_superuser?: boolean;
   is_verified?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Admin — Audit log (#301, sub-C3)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row in the audit log. ``user_id`` and ``event_data`` are
+ * nullable on the column — keep that here so the table can render
+ * legitimate "no actor" events (pre-auth failures, system events)
+ * without faking values.
+ */
+export interface AuditEvent {
+  id: string;
+  user_id: string | null;
+  event_type: string;
+  event_data: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AuditEventFilters {
+  eventType?: string;
+  userId?: string;
+}
