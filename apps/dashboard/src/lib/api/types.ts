@@ -612,3 +612,38 @@ export interface AdminApiToken {
   owner_id: string;
   owner_email: string;
 }
+
+// ---------------------------------------------------------------------------
+// Admin — Instance settings (#301, sub-C5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read-only snapshot of instance-wide engine configuration the admin
+ * panel surfaces. Secrets are presence-only — the engine never echoes
+ * the actual JWT secret or OAuth client_secret values.
+ */
+export interface AdminOAuthProvider {
+  configured: boolean;
+  client_id_configured: boolean;
+  client_secret_configured: boolean;
+}
+
+export interface AdminInstanceSettings {
+  auth: {
+    jwt_secret_configured: boolean;
+    access_ttl_seconds: number;
+    log_reset_tokens: boolean;
+  };
+  oauth: {
+    github: AdminOAuthProvider;
+    google: AdminOAuthProvider;
+    redirect_url: string | null;
+  };
+  cors: {
+    origins: string[] | null;
+  };
+  storage: {
+    backend: "sqlite" | "postgresql";
+    location: string;
+  };
+}

@@ -7,6 +7,7 @@
 
 import type {
   AdminApiToken,
+  AdminInstanceSettings,
   AdminUser,
   AdminUserUpdate,
   Agent,
@@ -595,4 +596,17 @@ export async function adminRevokeApiToken(id: string): Promise<void> {
   await request<void>(`/auth/api-tokens/admin/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Admin — Instance settings (#301, sub-C5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read-only instance settings snapshot. Backend: ``GET /settings/admin``
+ * (added in sub-C5). Distinct from ``getSettings`` which covers
+ * runtime / provider health.
+ */
+export async function getAdminSettings(): Promise<AdminInstanceSettings> {
+  return request<AdminInstanceSettings>("/settings/admin");
 }

@@ -58,6 +58,7 @@ export const queryKeys = {
     offset?: number;
     limit?: number;
   }) => ["admin", "api-tokens", "list", filters ?? {}] as const,
+  adminSettings: ["admin", "settings"] as const,
 };
 
 const RUNS_LIST_REFETCH_MS = 2_000;
@@ -548,5 +549,23 @@ export function useAdminRevokeApiToken() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.adminApiTokens });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Admin — Instance settings (#301, sub-C5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Instance-wide settings snapshot. Long-cached (5 min) — instance
+ * config is env-var driven, so the value only changes on engine
+ * restart. The admin page accepts that staleness for a smoother
+ * navigation experience.
+ */
+export function useAdminSettings() {
+  return useQuery({
+    queryKey: queryKeys.adminSettings,
+    queryFn: () => api.getAdminSettings(),
+    staleTime: 5 * 60 * 1000,
   });
 }

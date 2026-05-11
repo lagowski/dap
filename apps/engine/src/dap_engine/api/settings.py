@@ -25,10 +25,12 @@ from typing import Any
 from dap_runtimes import RuntimeRegistry
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
 from dap_types import HealthStatus, RuntimeAdapter
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from dap_engine.api.deps import get_registry
+from dap_engine.auth.users import current_active_user
 from dap_engine.execution.runner import DEFAULT_RECURSION_LIMIT
+from dap_engine.persistence.models import UserORM
 
 logger = logging.getLogger("dap.engine.api.settings")
 
@@ -138,3 +140,116 @@ def _collect_engine_info(request: Request) -> dict[str, Any]:
         "checkpoint_db_path": str(checkpoint_db_path),
         "recursion_limit": DEFAULT_RECURSION_LIMIT,
     }
+
+
+# ---------------------------------------------------------------------------
+# Admin-only instance settings view (#301, sub-C5, closes #331)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/settings/admin")
+async def get_admin_settings(
+    request: Request,
+    user: UserORM = Depends(current_active_user),
+) -> dict[str, Any]:
+    """Read-only snapshot of instance-wide config for the admin panel.
+
+    Distinct from ``GET /settings`` (runtime / provider health) — this
+    surface is for security-sensitive operator knobs the admin needs
+    to verify at a glance: JWT lifetime, OAuth wiring, CORS allow-list,
+    reset-token logging flag, storage backend. No mutations; instance
+    config is env-var driven and requires a restart to change.
+
+    Anti-enumeration: non-admins get ``404`` (mirrors the rest of the
+    admin surface — sub-A4b2 series). Anonymous gets ``401`` from
+    ``current_active_user``.
+
+    **Never exposes secrets.** OAuth client_secrets and the JWT
+    secret are presence-only — the response says ``True`` /
+    ``False`` for whether they're configured, never the value.
+    Mirrors the rule the ``/audit/events`` route applies to its
+    own ``event_data`` payloads.
+    """
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found",
+        )
+
+    config = request.app.state.config
+
+    # Database backend + masked URL. For SQLite we show the path; for
+    # any other database_url we mask everything between ``//`` and
+    # ``@`` — the host/port stay visible so the admin can verify it's
+    # the right server, but credentials never reach the response.
+    db_backend, db_location = _describe_database(config)
+
+    return {
+        "auth": {
+            "jwt_secret_configured": bool(config.auth_jwt_secret),
+            "access_ttl_seconds": config.auth_access_ttl_seconds,
+            # Security-relevant: reset-token logging is dev-only.
+            # The dashboard surfaces a warning when this is on.
+            "log_reset_tokens": config.auth_log_reset_tokens,
+        },
+        "oauth": {
+            "github": {
+                "configured": bool(
+                    config.oauth_github_client_id and config.oauth_github_client_secret
+                ),
+                "client_id_configured": bool(config.oauth_github_client_id),
+                "client_secret_configured": bool(config.oauth_github_client_secret),
+            },
+            "google": {
+                "configured": bool(
+                    config.oauth_google_client_id and config.oauth_google_client_secret
+                ),
+                "client_id_configured": bool(config.oauth_google_client_id),
+                "client_secret_configured": bool(config.oauth_google_client_secret),
+            },
+            "redirect_url": config.auth_oauth_redirect_url,
+        },
+        "cors": {
+            # ``None`` means "default permissive" (no allow-list); a
+            # list means an explicit one. Operators want to tell these
+            # apart at a glance — the dashboard renders ``None`` as
+            # "(default, all origins)" with a warning chip.
+            "origins": config.cors_origins,
+        },
+        "storage": {
+            "backend": db_backend,
+            "location": db_location,
+        },
+    }
+
+
+def _describe_database(config: Any) -> tuple[str, str]:
+    """Return ``(backend, location)`` with credentials redacted.
+
+    SQLite paths are returned as-is — they're filesystem paths on the
+    engine host, not secrets. PostgreSQL URLs go through
+    credential-redaction so the response never carries the password
+    even if the env var holds one.
+    """
+    url = getattr(config, "database_url", None)
+    if url is None:
+        # SQLite path — the existing default.
+        return "sqlite", str(Path(config.db_path).resolve())
+    return "postgresql", _redact_database_url(url)
+
+
+def _redact_database_url(url: str) -> str:
+    """Mask the password in a ``scheme://user:password@host/db`` URL.
+
+    We don't try to handle every edge case (e.g. URL-encoded passwords
+    with ``@`` in them) — the goal is to make accidental credential
+    exposure visibly wrong in the dashboard. Best effort.
+    """
+    if "@" not in url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    creds, host_path = rest.rsplit("@", 1)
+    if ":" in creds:
+        user, _password = creds.split(":", 1)
+        creds = f"{user}:***"
+    return f"{scheme}://{creds}@{host_path}"
