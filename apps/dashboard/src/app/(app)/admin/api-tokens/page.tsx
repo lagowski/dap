@@ -250,21 +250,27 @@ function TokenRow({ token, isSelf, isRevoking, onRevoke }: TokenRowProps) {
         {formatTimestamp(token.last_used_at)}
       </td>
       <td className="px-4 py-3 align-middle text-right">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onRevoke}
-          disabled={isRevoking || status === "revoked"}
-          title={
-            status === "revoked"
-              ? "Already revoked"
-              : revokeLabel
-          }
-          aria-label={status === "revoked" ? "Already revoked" : revokeLabel}
-          className="text-destructive hover:text-destructive"
-        >
-          <Trash2 className="h-4 w-4" aria-hidden />
-        </Button>
+        {(() => {
+          // Keep owner/token context in the label whether the button
+          // is active or disabled — screen readers otherwise lose the
+          // "what am I about to revoke?" anchor when status flips
+          // (Copilot review on PR #330).
+          const label =
+            status === "revoked" ? `${revokeLabel} (already revoked)` : revokeLabel;
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onRevoke}
+              disabled={isRevoking || status === "revoked"}
+              title={label}
+              aria-label={label}
+              className="text-destructive hover:text-destructive"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden />
+            </Button>
+          );
+        })()}
       </td>
     </tr>
   );

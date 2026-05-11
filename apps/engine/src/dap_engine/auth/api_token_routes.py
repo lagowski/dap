@@ -216,9 +216,11 @@ async def list_all_api_tokens(
     include_revoked: bool = Query(
         default=True,
         description=(
-            "Include already-revoked tokens. Default true so the admin "
-            "can see the full revocation history; flip to false for "
-            "only-currently-valid view."
+            "Include tokens that are no longer usable — either "
+            "explicitly revoked (``revoked_at`` set) or past their "
+            "``expires_at``. Default true so the admin can see the "
+            "full lifecycle; flip to false for the currently-valid "
+            "view."
         ),
     ),
     offset: int = Query(default=0, ge=0),
@@ -239,7 +241,15 @@ async def list_all_api_tokens(
 
     where: list[ColumnElement[bool]] = []
     if not include_revoked:
+        # "Currently valid" = not revoked AND not expired. Without the
+        # expires_at clause the filter only hides explicitly-revoked
+        # rows, leaving expired ones in — which contradicts the
+        # docstring's promise (Copilot review on PR #330).
+        now = datetime.now(UTC)
         where.append(ApiTokenORM.revoked_at.is_(None))
+        where.append(
+            (ApiTokenORM.expires_at.is_(None)) | (ApiTokenORM.expires_at > now),
+        )
 
     from sqlalchemy import func as sql_func  # noqa: PLC0415 — narrow scope
 
