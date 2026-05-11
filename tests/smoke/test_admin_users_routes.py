@@ -56,7 +56,12 @@ def _login(c: TestClient, email: str) -> str:
 
 
 def _promote_to_admin(app: Any, email: str) -> None:
-    """Flip ``is_superuser`` on the user with this email via direct DB write."""
+    """Flip ``is_superuser`` on the user with this email via direct DB write.
+
+    ``asyncio.run`` (not ``get_event_loop().run_until_complete``) — the
+    latter raises ``DeprecationWarning`` on 3.10+ and breaks outright
+    if a loop is already running on the calling thread.
+    """
     import asyncio
 
     from sqlalchemy import select
@@ -72,7 +77,7 @@ def _promote_to_admin(app: Any, email: str) -> None:
             row.is_superuser = True
             await session.commit()
 
-    asyncio.get_event_loop().run_until_complete(_do())
+    asyncio.run(_do())
 
 
 def test_list_users_returns_401_for_anonymous(client: TestClient) -> None:
@@ -142,13 +147,15 @@ def test_list_users_excludes_soft_deleted_by_default(client: TestClient) -> None
         "/users",
         headers={"Authorization": f"Bearer {token}"},
     )
+    assert ghost_resp.status_code == 200, ghost_resp.text
     ghost_id = next(
         item["id"] for item in ghost_resp.json()["items"] if item["email"] == "ghost@example.com"
     )
-    client.delete(
+    delete_resp = client.delete(
         f"/users/{ghost_id}",
         headers={"Authorization": f"Bearer {token}"},
     )
+    assert delete_resp.status_code in (200, 204), delete_resp.text
 
     # Default: ghost is gone.
     resp = client.get("/users", headers={"Authorization": f"Bearer {token}"})

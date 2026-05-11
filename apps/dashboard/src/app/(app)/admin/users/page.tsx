@@ -31,11 +31,13 @@ import { cn } from "@/lib/utils";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
+  // ``new Date(<garbage>)`` returns an ``Invalid Date`` object instead of
+  // throwing, and ``toLocaleString`` then yields the literal string
+  // "Invalid Date" — surface the raw value as a fallback so the admin
+  // can at least see what came over the wire.
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 export default function AdminUsersPage() {
@@ -235,54 +237,67 @@ function UserRow({
         {formatTimestamp(user.last_login_at)}
       </td>
       <td className="px-4 py-3 align-middle text-right space-x-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onToggleRole}
-          disabled={busy || isSelf || isSoftDeleted}
-          title={
-            isSelf
-              ? "You can't change your own role here"
-              : user.is_superuser
-                ? "Demote to member"
-                : "Promote to admin"
-          }
-        >
-          {user.is_superuser ? (
-            <ShieldOff className="h-4 w-4" aria-hidden />
-          ) : (
-            <ShieldCheck className="h-4 w-4" aria-hidden />
-          )}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onToggleActive}
-          disabled={busy || isSelf || isSoftDeleted}
-          title={
-            isSelf
-              ? "You can't suspend yourself"
-              : user.is_active
-                ? "Suspend account"
-                : "Reactivate account"
-          }
-        >
-          {user.is_active ? (
-            <XCircle className="h-4 w-4" aria-hidden />
-          ) : (
-            <CheckCircle2 className="h-4 w-4" aria-hidden />
-          )}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onDelete}
-          disabled={busy || isSelf || isSoftDeleted}
-          title={isSelf ? "You can't soft-delete yourself" : "Soft-delete"}
-          className="text-destructive hover:text-destructive"
-        >
-          <Trash2 className="h-4 w-4" aria-hidden />
-        </Button>
+        {(() => {
+          // Same string is used for ``title`` (sighted hover) and
+          // ``aria-label`` (screen readers) — without an aria-label
+          // the icon-only buttons are invisible to assistive tech.
+          const roleLabel = isSelf
+            ? "You can't change your own role here"
+            : user.is_superuser
+              ? `Demote ${user.email} to member`
+              : `Promote ${user.email} to admin`;
+          const activeLabel = isSelf
+            ? "You can't suspend yourself"
+            : user.is_active
+              ? `Suspend ${user.email}`
+              : `Reactivate ${user.email}`;
+          const deleteLabel = isSelf
+            ? "You can't soft-delete yourself"
+            : `Soft-delete ${user.email}`;
+          return (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onToggleRole}
+                disabled={busy || isSelf || isSoftDeleted}
+                title={roleLabel}
+                aria-label={roleLabel}
+              >
+                {user.is_superuser ? (
+                  <ShieldOff className="h-4 w-4" aria-hidden />
+                ) : (
+                  <ShieldCheck className="h-4 w-4" aria-hidden />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onToggleActive}
+                disabled={busy || isSelf || isSoftDeleted}
+                title={activeLabel}
+                aria-label={activeLabel}
+              >
+                {user.is_active ? (
+                  <XCircle className="h-4 w-4" aria-hidden />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" aria-hidden />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onDelete}
+                disabled={busy || isSelf || isSoftDeleted}
+                title={deleteLabel}
+                aria-label={deleteLabel}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </Button>
+            </>
+          );
+        })()}
       </td>
     </tr>
   );

@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from dap_engine.auth.db import get_async_session
 from dap_engine.auth.users import current_active_user
@@ -85,17 +86,13 @@ async def list_users(
 ) -> AdminUserList:
     """Paginated user list.
 
-    Admin-only — fastapi-users' base ``current_active_user`` flags
-    superusers, and we check explicitly here so the failure surface
-    is a clean ``403`` instead of e.g. ``500`` from inside the
-    query. Non-admins get ``404`` to match the anti-enumeration
-    rule the resource routes use (sub-A4b2 series).
+    Admin-only. Non-admins get ``404`` to match the anti-enumeration
+    rule the sub-A4b2 resource routes use — a normal user hitting
+    ``/users`` must not learn that the endpoint exists. Anonymous
+    callers get ``401`` from the upstream ``current_active_user``
+    dependency before reaching this body.
     """
     if not user.is_superuser:
-        # Anti-enumeration: a normal user hitting /users/ should
-        # not learn whether the endpoint exists. The fastapi-users
-        # /users/{id} route does the same — returns 403 for
-        # unknown ids only to admins.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Not Found",
@@ -107,10 +104,18 @@ async def list_users(
             select(func.count()).select_from(UserORM).where(*where),
         )
     ) or 0
+    # ``noload(UserORM.oauth_accounts)`` overrides the model's
+    # ``lazy="joined"`` for this query specifically. Without it the
+    # OUTER JOIN would duplicate user rows per linked OAuth account,
+    # and ``offset`` / ``limit`` applied *before* ``.unique()`` would
+    # skip users or return fewer than ``limit`` — broken pagination
+    # (Copilot review on PR #328). The list view doesn't render
+    # oauth_accounts, so dropping them costs nothing.
     rows = (
         (
             await session.execute(
                 select(UserORM)
+                .options(noload(UserORM.oauth_accounts))
                 .where(*where)
                 .order_by(UserORM.created_at.desc())
                 .offset(offset)
@@ -118,7 +123,6 @@ async def list_users(
             )
         )
         .scalars()
-        .unique()
         .all()
     )
 

@@ -508,13 +508,19 @@ export async function listAdminUsers(params: {
 
 /**
  * Patch a user — admin-only when targeting someone other than self.
- * The engine uses the fastapi-users default ``PATCH /users/{id}``.
+ * The engine uses the fastapi-users default ``PATCH /users/{id}``,
+ * which returns the narrower ``UserRead`` (== ``CurrentUser`` here),
+ * **not** the admin-wide ``AdminUser`` shape — no ``created_at`` /
+ * ``last_login_at`` / ``deleted_at`` in the response. Consumers
+ * shouldn't read the returned object; the ``useUpdateAdminUser``
+ * hook re-fetches the admin list on success so the table picks
+ * up the fresh state from there.
  */
 export async function updateAdminUser(
   id: string,
   payload: AdminUserUpdate,
-): Promise<AdminUser> {
-  return request<AdminUser>(`/users/${encodeURIComponent(id)}`, {
+): Promise<CurrentUser> {
+  return request<CurrentUser>(`/users/${encodeURIComponent(id)}`, {
     method: "PATCH",
     json: payload,
   });
