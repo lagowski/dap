@@ -45,9 +45,32 @@ def root(
 @app.command("init")
 def cmd_init(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing .dap/"),
+    admin_email: str | None = typer.Option(
+        None,
+        "--admin-email",
+        help="Admin user email. Prompted interactively when omitted.",
+    ),
+    admin_password: str | None = typer.Option(
+        None,
+        "--admin-password",
+        help=(
+            "Admin password (lands in shell history — use for local dev only). "
+            "Prefer --admin-password-stdin in automation."
+        ),
+    ),
+    admin_password_stdin: bool = typer.Option(
+        False,
+        "--admin-password-stdin",
+        help="Read the admin password from stdin (kubectl-style).",
+    ),
 ) -> None:
-    """Initialize DAP project in current directory."""
-    init_command(force=force)
+    """Initialize DAP project + bootstrap admin user."""
+    init_command(
+        force=force,
+        admin_email=admin_email,
+        admin_password=admin_password,
+        admin_password_stdin=admin_password_stdin,
+    )
 
 
 @app.command("start")

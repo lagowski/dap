@@ -1,0 +1,258 @@
+"""End-to-end smoke for ``dap init`` admin bootstrap (#302 sub-D4).
+
+These tests drive ``init_command`` in-process against a throwaway
+``.dap/`` under ``tmp_path`` and verify three behaviours:
+
+1. **Flag-driven happy path** — ``--admin-email`` + ``--admin-password``
+   create a superuser whose credentials work against ``POST
+   /auth/jwt/login`` on a freshly-spawned engine app.
+2. **Idempotency** — re-running with the same email is safe; the
+   existing user is promoted to ``is_superuser=True`` and the second
+   call does not raise.
+3. **Random-password generation** — empty interactive password (or
+   non-interactive without ``--admin-password``) generates a password,
+   exposes it on ``BootstrapResult.generated_password``, and the
+   generated value logs in successfully.
+
+We exercise ``init_command`` rather than spawning ``dap`` via
+``subprocess`` so failures surface as Python tracebacks (much easier
+to debug than CLI exit codes). The ``--admin-password-stdin`` path
+*is* tested via subprocess because the function reads ``sys.stdin``
+directly — easier to feed it bytes than to monkeypatch a global.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+import pytest
+from dap_cli.bootstrap import (
+    bootstrap_marker_path,
+    ensure_admin_user,
+    read_bootstrap_marker,
+)
+from dap_cli.commands.init import init_command
+from dap_engine.app import EngineConfig, create_app
+from fastapi.testclient import TestClient
+
+# A password long enough to satisfy both the CLI's minimum and any
+# stricter engine-side rule that future migrations might add.
+GOOD_PASSWORD = "hunter12345678"
+
+
+@pytest.fixture
+def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Treat ``tmp_path`` as the CWD so ``local_dap_dir()`` resolves there.
+
+    ``dap_cli.paths.local_dap_dir()`` calls ``Path.cwd()`` — monkeypatch
+    ``os.chdir`` once and the rest of the CLI machinery follows. The
+    fixture restores the original directory on teardown via pytest's
+    ``monkeypatch`` cleanup.
+    """
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def _try_login(db_path: Path, email: str, password: str) -> bool:
+    """Spin up the engine app on the given SQLite file and POST to
+    ``/auth/jwt/login``. Returns ``True`` on a 2xx; ``False`` otherwise.
+
+    We deliberately avoid asserting on the response body — the only
+    thing the test cares about is whether the credentials pass.
+    """
+    cfg = EngineConfig(
+        db_path=str(db_path),
+        auth_jwt_secret="test-secret-for-dap-init-smoke",
+    )
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        response = client.post(
+            "/auth/jwt/login",
+            data={"username": email, "password": password},
+        )
+    return 200 <= response.status_code < 300
+
+
+# --------------------------------------------------------------------- #
+# 1. Happy path
+# --------------------------------------------------------------------- #
+
+
+def test_init_with_flags_creates_admin_who_can_log_in(
+    project_dir: Path,
+) -> None:
+    """``dap init --admin-email=... --admin-password=...`` creates an
+    admin row, writes the bootstrap marker, and the credentials work."""
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+
+    init_command(
+        admin_email=email,
+        admin_password=GOOD_PASSWORD,
+    )
+
+    dap_dir = project_dir / ".dap"
+    assert dap_dir.is_dir()
+    assert (dap_dir / "config.json").is_file()
+
+    marker = read_bootstrap_marker(bootstrap_marker_path(dap_dir))
+    assert marker is not None
+    assert marker["email"] == email
+    assert marker["promoted_existing"] is False
+    # uuid.UUID() raises on a non-UUID string — implicit format check.
+    uuid.UUID(marker["user_id"])
+
+    # The bootstrap file must be chmod 600 on POSIX systems. Skip the
+    # check on Windows (sys.platform != darwin/linux) where Python's
+    # ``Path.chmod`` is a no-op for read permission bits.
+    if sys.platform in {"linux", "darwin"}:
+        mode = (dap_dir / "bootstrap.json").stat().st_mode & 0o777
+        assert mode == 0o600, f"bootstrap.json mode is {oct(mode)}, want 0o600"
+
+    assert _try_login(dap_dir / "state.db", email, GOOD_PASSWORD), (
+        "bootstrap admin failed to authenticate with the password we set"
+    )
+
+
+# --------------------------------------------------------------------- #
+# 2. Idempotency / re-run
+# --------------------------------------------------------------------- #
+
+
+def test_init_rerun_promotes_existing_user(project_dir: Path) -> None:
+    """Re-running ``init_command`` with ``--force`` against an existing
+    user must not raise and must keep them logged-in-able."""
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+
+    init_command(admin_email=email, admin_password=GOOD_PASSWORD)
+    init_command(admin_email=email, admin_password=GOOD_PASSWORD, force=True)
+
+    dap_dir = project_dir / ".dap"
+    marker = read_bootstrap_marker(bootstrap_marker_path(dap_dir))
+    assert marker is not None
+    # The second call observed an existing row → ``promoted_existing``
+    # should be True the second time. Our marker is overwritten, so we
+    # assert against the final state.
+    assert marker["email"] == email
+    assert marker["promoted_existing"] is True
+
+    assert _try_login(dap_dir / "state.db", email, GOOD_PASSWORD)
+
+
+# --------------------------------------------------------------------- #
+# 3. Random-password generation
+# --------------------------------------------------------------------- #
+
+
+def test_ensure_admin_user_generates_password_when_none_passed(
+    tmp_path: Path,
+) -> None:
+    """``ensure_admin_user(..., password=None)`` must generate a
+    password, return it once, and the generated value must work."""
+    db_path = tmp_path / "state.db"
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+
+    result = ensure_admin_user(db_path, email=email, password=None)
+
+    assert result.generated_password is not None
+    assert len(result.generated_password) >= 16  # token_urlsafe(22) ≈ 30 chars
+    assert _try_login(db_path, email, result.generated_password)
+
+
+# --------------------------------------------------------------------- #
+# 4. stdin password (kubectl-style) — exercises the actual CLI binary
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.skipif(
+    shutil.which("python3") is None,
+    reason="subprocess test requires python3 on PATH",
+)
+def test_dap_init_reads_password_from_stdin(
+    project_dir: Path,
+) -> None:
+    """Pipe a password via stdin and assert the resulting admin works.
+
+    Runs ``python -m dap_cli`` rather than ``dap`` so the test works in
+    a checkout without a pipx install; both paths exercise the same
+    ``cmd_init`` typer entry point.
+    """
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+    pw = "stdin-pipe-password-7777"
+
+    # The env must include the venv's site-packages so the subprocess
+    # can import dap_cli + dap_engine. pytest already exposes this via
+    # the inherited PYTHONPATH; pass it through explicitly so the test
+    # is robust to non-pytest invocation too.
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dap_cli",
+            "init",
+            "--admin-email",
+            email,
+            "--admin-password-stdin",
+        ],
+        input=pw,
+        text=True,
+        capture_output=True,
+        cwd=project_dir,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, (
+        f"dap init exited {proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+
+    assert _try_login(project_dir / ".dap" / "state.db", email, pw), (
+        "stdin-supplied password didn't authenticate"
+    )
+
+
+# --------------------------------------------------------------------- #
+# 5. ``dap status`` surfaces the bootstrap section
+# --------------------------------------------------------------------- #
+
+
+def test_status_shows_bootstrap_marker(
+    project_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """After ``init``, ``status_command`` must print the admin email
+    line so operators can spot a bootstrapped instance at a glance."""
+    from dap_cli.commands.status import status_command
+
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+    init_command(admin_email=email, admin_password=GOOD_PASSWORD)
+
+    # Clear anything init might have printed.
+    capsys.readouterr()
+
+    status_command()
+    out = capsys.readouterr().out
+    assert "admin bootstrap" in out.lower()
+    assert email in out
+
+
+def test_status_hints_when_no_bootstrap(
+    project_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When ``.dap/`` exists but ``bootstrap.json`` doesn't, status
+    must nudge the operator to run ``dap init``."""
+    from dap_cli.commands.status import status_command
+
+    # Synthesise a half-initialised project: just the directory.
+    (project_dir / ".dap").mkdir()
+
+    status_command()
+    out = capsys.readouterr().out
+    # The exact wording can change — the test only locks the user-
+    # facing affordance ("run dap init").
+    assert "dap init" in out.lower()

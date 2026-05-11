@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import httpx
 from rich.console import Console
 from rich.table import Table
 
+from dap_cli.bootstrap import bootstrap_marker_path, read_bootstrap_marker
 from dap_cli.paths import local_dap_dir
 from dap_cli.process import (
     is_process_alive,
@@ -49,6 +51,22 @@ def _fetch_runtime_health(port: int, runtime_id: str) -> dict[str, Any] | None:
     return data
 
 
+def _print_bootstrap_section(dap_dir: Path) -> None:
+    """Print admin-bootstrap state (one line) above the engine status.
+
+    Reads ``.dap/bootstrap.json`` (written by ``dap init``). Stays
+    silent when it's not present *and* the project is otherwise
+    initialised — we don't want to nag every ``dap status`` call when
+    the operator hasn't bootstrapped yet, so we just show a hint."""
+    marker = read_bootstrap_marker(bootstrap_marker_path(dap_dir))
+    if marker is None:
+        console.print("[yellow]○ admin bootstrap:[/yellow] none — run `dap init` to create one")
+        return
+    email = marker.get("email", "?")
+    created = marker.get("created_at", "?")
+    console.print(f"[green]✓ admin bootstrap:[/green] {email} [dim]({created})[/dim]")
+
+
 def status_command() -> None:
     dap_dir = local_dap_dir()
 
@@ -56,6 +74,8 @@ def status_command() -> None:
         console.print("[red]✗ Not a DAP project[/red]")
         console.print("[dim]  Run `dap init` to initialize.[/dim]")
         return
+
+    _print_bootstrap_section(dap_dir)
 
     pid_info = read_pid_file()
 
