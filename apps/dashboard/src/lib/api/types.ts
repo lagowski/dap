@@ -612,3 +612,51 @@ export interface AdminApiToken {
   owner_id: string;
   owner_email: string;
 }
+
+// ---------------------------------------------------------------------------
+// Admin — Instance settings (#301, sub-C5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read-only snapshot of instance-wide engine configuration the admin
+ * panel surfaces. Secrets are presence-only — the engine never echoes
+ * the actual JWT secret or OAuth client_secret values.
+ */
+export interface AdminOAuthProvider {
+  configured: boolean;
+  client_id_configured: boolean;
+  client_secret_configured: boolean;
+}
+
+export interface AdminInstanceSettings {
+  auth: {
+    jwt_secret_configured: boolean;
+    access_ttl_seconds: number;
+    log_reset_tokens: boolean;
+  };
+  oauth: {
+    github: AdminOAuthProvider;
+    google: AdminOAuthProvider;
+    redirect_url: string | null;
+  };
+  cors: {
+    /**
+     * The *effective* allow-list — what ``CORSMiddleware`` actually
+     * uses. When the operator left ``DAP_CORS_ORIGINS`` unset this
+     * is the engine's default local-dev list, **not** an empty/
+     * permissive policy. ``using_default`` disambiguates the two.
+     */
+    origins: string[];
+    /**
+     * ``true`` when ``DAP_CORS_ORIGINS`` was unset and the engine
+     * fell back to ``DEFAULT_CORS_ORIGINS``. The dashboard renders
+     * a warning chip in this state — production deployments
+     * should set ``DAP_CORS_ORIGINS`` explicitly.
+     */
+    using_default: boolean;
+  };
+  storage: {
+    backend: "sqlite" | "postgresql";
+    location: string;
+  };
+}

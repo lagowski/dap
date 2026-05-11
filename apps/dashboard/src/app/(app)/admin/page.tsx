@@ -55,7 +55,6 @@ const TILES: readonly Tile[] = [
     description:
       "Read-only view of the engine's configured CORS origins, OAuth providers, JWT TTL.",
     icon: SettingsIcon,
-    comingIn: "C5",
   },
 ];
 
