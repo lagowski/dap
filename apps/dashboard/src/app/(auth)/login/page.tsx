@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
+import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -46,6 +47,7 @@ function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = sanitiseNext(searchParams.get("next"));
+  const oauthError = searchParams.get("oauth_error");
 
   const currentUser = useCurrentUser();
   const login = useLogin();
@@ -77,6 +79,25 @@ function LoginPageInner() {
         <CardTitle>Sign in</CardTitle>
         <CardDescription>Welcome back to DAP.</CardDescription>
       </CardHeader>
+      {oauthError && (
+        <div className="px-6 pb-4">
+          <p
+            role="alert"
+            className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            {oauthError}
+          </p>
+        </div>
+      )}
+      <div className="px-6 pb-4">
+        <OAuthButtons />
+        <div className="relative my-4 text-center">
+          <span className="bg-card px-2 text-xs uppercase tracking-wider text-muted-foreground">
+            or
+          </span>
+          <div className="absolute inset-x-0 top-1/2 -z-10 h-px bg-border" />
+        </div>
+      </div>
       <form onSubmit={form.handleSubmit(onSubmit)} noValidate>
         <CardContent className="space-y-4">
           <div className="space-y-2">

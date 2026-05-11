@@ -38,6 +38,11 @@ def main() -> None:
         # workers validate tokens against the same key.
         auth_jwt_secret=os.environ.get("DAP_AUTH_JWT_SECRET"),
         auth_access_ttl_seconds=int(os.environ.get("DAP_AUTH_ACCESS_TTL_SECONDS", "900")),
+        # When set, OAuth callbacks redirect the browser here with the
+        # JWT in ``?token=`` instead of returning JSON (#300, sub-B5).
+        # The dashboard's ``/api/auth/oauth/callback`` reads it and
+        # promotes it to an httpOnly cookie.
+        auth_oauth_redirect_url=os.environ.get("DAP_AUTH_OAUTH_REDIRECT_URL"),
         # OAuth (#299, sub-A2). Each provider activates only when both
         # client_id and client_secret are set; missing or partially-set
         # credentials are ignored without a startup error so a self-host

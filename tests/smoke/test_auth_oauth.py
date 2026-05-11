@@ -108,6 +108,31 @@ def test_google_authorize_returns_authorization_url(oauth_client: TestClient) ->
     assert "client_id=google-test-id" in payload["authorization_url"]
 
 
+def test_authorize_url_includes_dashboard_redirect_when_configured(
+    tmp_path: Path,
+) -> None:
+    """``auth_oauth_redirect_url`` lands as the ``redirect_uri`` in the
+    provider authorize URL — the dashboard callback handler in B5 reads
+    the resulting ``?token=`` and promotes it to a cookie. Without this
+    plumbing the engine would default to its own callback URL and the
+    browser would end up staring at raw JSON."""
+    from urllib.parse import parse_qs, urlparse
+
+    cfg = EngineConfig(
+        db_path=str(tmp_path / "state.db"),
+        auth_jwt_secret="oauth-smoke-secret",
+        oauth_github_client_id="gh-id",
+        oauth_github_client_secret="gh-secret",
+        auth_oauth_redirect_url="http://localhost:3000/api/auth/oauth/callback",
+    )
+    app = create_app(cfg)
+    with TestClient(app) as c:
+        resp = c.get("/auth/github/authorize")
+        assert resp.status_code == 200, resp.text
+        params = parse_qs(urlparse(resp.json()["authorization_url"]).query)
+        assert params["redirect_uri"] == ["http://localhost:3000/api/auth/oauth/callback"]
+
+
 def test_partial_credentials_do_not_mount_router(tmp_path: Path) -> None:
     """If client_id is set but secret is missing (or vice-versa), no route.
 
