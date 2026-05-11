@@ -34,7 +34,6 @@ const TILES: readonly Tile[] = [
     description:
       "List members, change roles, suspend accounts, soft-delete inactive users.",
     icon: Users2,
-    comingIn: "C2",
   },
   {
     href: "/admin/audit-log",
