@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import getpass
 import json
+import os
 import sys
+from pathlib import Path
 
 from rich.console import Console
 
@@ -82,8 +84,15 @@ def init_command(
         console.print("[dim]  Re-run `dap init --force` to retry.[/dim]")
         raise SystemExit(2) from exc
 
+    # ``DAP_DB_PATH`` (set by the standalone compose to ``/data/state.db``)
+    # wins over the in-CWD default so ``dap init`` inside the container
+    # writes to the same SQLite the engine reads from. Otherwise the
+    # bootstrap row lands in an unrelated ``./.dap/state.db`` file and
+    # the operator can't actually log in.
+    env_db_path = os.environ.get("DAP_DB_PATH", "").strip()
+    db_path = Path(env_db_path) if env_db_path else local_db_path()
     result = ensure_admin_user(
-        local_db_path(),
+        db_path,
         email=email,
         password=password,
     )

@@ -22,7 +22,11 @@ dap init --admin-email=you@example.com
 #   → prompts for a password, or pass --admin-password / --admin-password-stdin
 
 # 3. Start engine + dashboard.
-dap start                       # opens http://localhost:7332 in a browser
+dap start                       # engine on :7333, dashboard on :7332
+#   Open http://localhost:7332 manually — `dap start` doesn't auto-launch
+#   a browser. The dashboard only starts when the wheel ships the
+#   bundled Next.js build AND `node` is on PATH; otherwise it runs
+#   engine-only (dap status prints a hint when this happens).
 
 # 4. Check status whenever.
 dap status                      # admin email, engine PID/uptime, runtime adapters
@@ -44,9 +48,13 @@ Two flavours:
 ```bash
 docker run --rm \
     -e DAP_AUTH_JWT_SECRET=$(openssl rand -hex 32) \
-    -p 7332:7332 -p 7333:7333 \
+    -p 3000:3000 -p 7333:7333 \
     ghcr.io/rafeekpro/dap:0.3.0
 ```
+
+The container listens on `:3000` (dashboard) and `:7333` (engine).
+That differs from the pipx install where the dashboard binds to
+`:7332` — the Docker image follows Next.js's own port convention.
 
 This boots both processes inside the container but uses an ephemeral
 SQLite — fine for trying things, not for keeping data.
@@ -60,8 +68,12 @@ cp examples/standalone/.env.example .env
 # edit .env — DAP_AUTH_JWT_SECRET is required
 
 docker compose -f examples/standalone/docker-compose.yml up -d
+
+# Bootstrap an admin against the in-container database. ``dap init``
+# honors the same ``DAP_DB_PATH`` the engine reads, so it lands in the
+# right SQLite file regardless of CWD.
 docker compose -f examples/standalone/docker-compose.yml exec dap \
-    dap init --admin-email=you@example.com   # idempotent
+    dap init --admin-email=you@example.com --force   # idempotent
 ```
 
 The compose file mounts a named volume at `/data` for the SQLite
@@ -108,10 +120,11 @@ hardening exercise.
 - [ ] **Pin the image tag.** Use `ghcr.io/rafeekpro/dap:0.3.0`, not
       `latest`. A pin lets you upgrade on your schedule.
 - [ ] **Put DAP behind a reverse proxy** (Traefik, Caddy, nginx) that
-      terminates TLS. The container speaks plain HTTP on 7332 + 7333.
-      Only the dashboard port (3000 in compose, 7332 in pipx) needs to
-      be public — the engine's same-origin proxy at `/api/*` handles
-      backend calls.
+      terminates TLS. The container speaks plain HTTP on `3000`
+      (dashboard) + `7333` (engine); pipx uses `7332` (dashboard) +
+      `7333` (engine). Only the dashboard port needs to be public —
+      the dashboard's same-origin proxy at `/api/*` forwards backend
+      calls so the engine port can stay private.
 - [ ] **Configure OAuth providers** if your team uses them:
       - GitHub: <https://github.com/settings/developers> → New OAuth
         App. Callback: `https://<your-engine>/auth/github/callback`.

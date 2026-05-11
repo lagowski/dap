@@ -256,3 +256,43 @@ def test_status_hints_when_no_bootstrap(
     # The exact wording can change — the test only locks the user-
     # facing affordance ("run dap init").
     assert "dap init" in out.lower()
+
+
+# --------------------------------------------------------------------- #
+# 6. DAP_DB_PATH env var override (#337 sub-D5 fix — Docker compose case)
+# --------------------------------------------------------------------- #
+
+
+def test_init_respects_dap_db_path_env_var(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``dap init`` must write the admin row to the SQLite at
+    ``$DAP_DB_PATH`` (not ``.dap/state.db``) so the engine inside a
+    Docker container — which sets ``DAP_DB_PATH=/data/state.db`` —
+    can authenticate against the same row.
+
+    Regression for a Copilot-flagged bug in PR #342: the original D4
+    bootstrap always landed in ``cwd/.dap/state.db``, leaving the
+    engine looking at an empty ``/data/state.db``.
+    """
+    # Pick a non-default location outside the .dap/ skeleton. ``dap
+    # init`` should write the admin row here AND the engine looking
+    # at the same path should authenticate the supplied password.
+    external_db = project_dir / "external" / "engine.db"
+    monkeypatch.setenv("DAP_DB_PATH", str(external_db))
+
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+    init_command(admin_email=email, admin_password=GOOD_PASSWORD)
+
+    assert external_db.is_file(), "dap init didn't write to $DAP_DB_PATH"
+    assert _try_login(external_db, email, GOOD_PASSWORD), (
+        "bootstrap admin missing from the env-var-pointed DB"
+    )
+
+    # And the in-CWD .dap/state.db should NOT have been created —
+    # otherwise we've doubled the storage which is exactly the bug.
+    default_db = project_dir / ".dap" / "state.db"
+    assert not default_db.exists(), (
+        "init wrote to BOTH the env-var path AND the default — the "
+        "operator now has two databases to reconcile"
+    )

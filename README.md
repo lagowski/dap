@@ -8,7 +8,7 @@ DAP is a self-hostable, multi-user system for building and executing **determini
 
 Three supported install paths, in order of complexity:
 
-1. **PyPI** — `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`. Single-machine, single-binary. The wheel bundles the dashboard, so `dap start` launches engine + UI together.
+1. **PyPI** — `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`. Single-machine. The wheel ships with the bundled Next.js dashboard; `dap start` spawns the dashboard alongside the engine when `node` is on `PATH`, and runs engine-only otherwise (the CLI prints a hint).
 2. **Docker** — `ghcr.io/rafeekpro/dap:0.3.0` for shared / production deployments. See [`examples/standalone/`](examples/standalone/) for a working compose file with SQLite (default) or Postgres.
 3. **Source** — for contributors. The `scripts/setup` + `scripts/dev` flow below.
 
