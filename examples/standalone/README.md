@@ -93,16 +93,15 @@ state on its first line.
 The container speaks plain HTTP on its two ports. Put it behind a
 reverse proxy that terminates TLS:
 
-- **Traefik** — see `examples/standalone/docker-compose.traefik.yml`
-  (lands in D5).
-- **Caddy** — single-line config:
+- **Caddy** — single-line config (auto-TLS via Let's Encrypt):
   ```
   dap.example.com {
       reverse_proxy /api/* dap:7333
       reverse_proxy * dap:3000
   }
   ```
-- **nginx** — standard `proxy_pass` config; preserve `Host` + `X-Forwarded-*`.
+- **nginx** — standard `proxy_pass` config; preserve `Host` + `X-Forwarded-*`. Full template with rate-limiting on `/auth/*` in [`docs/security.md`](../../docs/security.md#example-nginx-no-auto-tls-you-handle-certs).
+- **Traefik** — no canned compose example shipped yet; the labels follow the same pattern as Caddy (one router for `/api/*` → engine, one for everything else → dashboard).
 
 The dashboard's same-origin proxy at `/api/*` forwards engine calls,
 so the reverse proxy only needs to route to the dashboard container —

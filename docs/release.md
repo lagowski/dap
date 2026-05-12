@@ -67,12 +67,15 @@ merges. Suggested branch protection:
    and refuses to bump the `latest` Docker tag / GitHub "latest
    release" pointer.
 
-2. **Bump versions** in every `pyproject.toml`:
+2. **Bump versions** across the workspace:
    ```bash
-   ./scripts/bump-version.sh 0.3.0    # bumps all 6 packages
+   ./scripts/bump-version.sh 0.4.0
    ```
-   (Script lands in D5 — for now edit each `pyproject.toml`
-   manually.)
+   Rewrites every `pyproject.toml` version field, the
+   `dap_cli.__version__` constant, and refreshes `uv.lock` so the
+   lock matches the bumped pyprojects. Idempotent — re-running
+   with the same value is a no-op. Validates the input shape (loose
+   semver: `x.y.z` or `x.y.z-rcN`).
 
 3. **Update `CHANGELOG.md`** with the section for this release.
    Keep-a-Changelog style:
@@ -166,3 +169,10 @@ docker buildx imagetools create \
 GitHub Releases can be deleted from the UI; this won't break
 `pipx install` for users who already got the old wheels but it
 removes the entry point from `/releases`.
+
+## Past releases
+
+| Version | Date | Notes |
+|---|---|---|
+| `0.3.0` | 2026-05-12 | First multi-user release. Auth (password + GitHub/Google OAuth + API tokens), admin panel, standalone packaging (PyPI + multi-platform Docker). See [`CHANGELOG.md`](../CHANGELOG.md#030--2026-05-12). |
+| `0.0.1` | (pre-tag) | Initial single-user release. No published artefacts. |
