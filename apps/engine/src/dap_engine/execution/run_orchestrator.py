@@ -172,8 +172,11 @@ async def execute_rewind_background(
                     mode=mode,
                 )
             except RunnerInterrupt as interrupt:
-                paused_at = interrupt.next_nodes[0] if interrupt.next_nodes else None
-                repo.pause_run(bg_session, run_id, paused_at_node=paused_at)
+                repo.pause_run(
+                    bg_session,
+                    run_id,
+                    paused_at_node=interrupt.next_nodes[0] if interrupt.next_nodes else None,
+                )
                 bg_session.commit()
                 return
             except CheckpointNotFoundError as exc:
