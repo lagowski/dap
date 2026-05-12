@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -28,8 +29,11 @@ def client() -> Iterator[TestClient]:
 
 
 def _mock_httpx_client(
-    *, status_code: int = 200, json_body: dict | None = None, side_effect: Exception | None = None
-):
+    *,
+    status_code: int = 200,
+    json_body: dict[str, object] | None = None,
+    side_effect: Exception | None = None,
+) -> Any:
     """Build a patched httpx.AsyncClient context manager mock."""
     mock_instance = AsyncMock()
     if side_effect is not None:
