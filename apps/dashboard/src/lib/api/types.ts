@@ -264,6 +264,24 @@ export const RECOMMENDED_PIPELINE_KINDS = [
 
 export type RecommendedPipelineKind = (typeof RECOMMENDED_PIPELINE_KINDS)[number];
 
+// ---- Env var validation (#350) ----
+
+export interface ValidateEnvRequest {
+  env_vars: Record<string, string>;
+}
+
+export interface EnvVarValidationResult {
+  key: string;
+  is_token: boolean;
+  valid: boolean | null;
+  login: string | null;
+  error: string | null;
+}
+
+export interface ValidateEnvResponse {
+  results: EnvVarValidationResult[];
+}
+
 // ---- Settings (dashboard /settings page) ----
 
 export interface RuntimeStatus {

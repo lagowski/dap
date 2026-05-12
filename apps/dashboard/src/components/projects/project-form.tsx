@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
-import { usePipelinesList } from "@/hooks/api";
+import { usePipelinesList, useValidateProjectEnv } from "@/hooks/api";
+import type { EnvVarValidationResult } from "@/lib/api/types";
 import {
   addBinding,
   updateBinding,
@@ -69,12 +70,38 @@ export function ProjectForm({
   const [envVars, setEnvVars] = useState<Record<string, string>>(
     () => initialValues?.env_vars ?? {},
   );
+  const [validationResults, setValidationResults] = useState<
+    Record<string, EnvVarValidationResult>
+  >({});
+  const [validationWarning, setValidationWarning] = useState<string | null>(null);
+  const validateEnv = useValidateProjectEnv();
 
   const [pipelines, setPipelines] = useState<Record<string, string>>(
     () => initialValues?.pipelines ?? {},
   );
 
   const handleSubmit = form.handleSubmit(async (values) => {
+    setValidationResults({});
+    setValidationWarning(null);
+
+    // Validate env vars before submitting.
+    try {
+      const res = await validateEnv.mutateAsync({ env_vars: envVars });
+      const byKey: Record<string, EnvVarValidationResult> = {};
+      let hasInvalid = false;
+      for (const r of res.results) {
+        byKey[r.key] = r;
+        if (r.is_token && !r.valid) hasInvalid = true;
+      }
+      setValidationResults(byKey);
+      if (hasInvalid) return; // Block save — inline feedback shown.
+    } catch {
+      // Validation itself failed (network error) — degrade to warning.
+      setValidationWarning(
+        "Could not validate GitHub tokens — saving anyway.",
+      );
+    }
+
     try {
       await onSubmit({
         name: values.name,
@@ -139,7 +166,11 @@ export function ProjectForm({
       </Field>
 
       <Field label="Project env vars">
-        <EnvVarsEditor value={envVars} onChange={setEnvVars} />
+        <EnvVarsEditor
+          value={envVars}
+          onChange={setEnvVars}
+          validationResults={validationResults}
+        />
         <p className="text-xs text-muted-foreground">
           Layered onto subprocess env (#65). Engine env (base) → these
           → per-agent runtime_config.env (highest). Keep secrets in
@@ -155,6 +186,12 @@ export function ProjectForm({
         </p>
       </Field>
 
+      {validationWarning ? (
+        <p className="text-sm text-yellow-600" role="status">
+          {validationWarning}
+        </p>
+      ) : null}
+
       {submitError ? (
         <p className="text-sm text-destructive" role="alert">
           {formatApiError(submitError)}
@@ -162,8 +199,8 @@ export function ProjectForm({
       ) : null}
 
       <div className="flex gap-2 pt-2">
-        <Button type="submit" disabled={isPending}>
-          {isPending ? "Saving…" : submitLabel}
+        <Button type="submit" disabled={isPending || validateEnv.isPending}>
+          {validateEnv.isPending ? "Validating…" : isPending ? "Saving…" : submitLabel}
         </Button>
         <Button type="button" variant="outline" asChild>
           <Link href={cancelHref}>Cancel</Link>
@@ -176,9 +213,10 @@ export function ProjectForm({
 interface EnvVarsEditorProps {
   value: Record<string, string>;
   onChange: (next: Record<string, string>) => void;
+  validationResults?: Record<string, EnvVarValidationResult>;
 }
 
-function EnvVarsEditor({ value, onChange }: EnvVarsEditorProps) {
+function EnvVarsEditor({ value, onChange, validationResults = {} }: EnvVarsEditorProps) {
   const entries = Object.entries(value);
 
   const update = (oldKey: string, nextKey: string, nextValue: string) => {
@@ -215,33 +253,49 @@ function EnvVarsEditor({ value, onChange }: EnvVarsEditorProps) {
         </p>
       ) : (
         <div className="space-y-1">
-          {entries.map(([key, val]) => (
-            <div key={key} className="flex items-center gap-2">
-              <Input
-                defaultValue={key}
-                onBlur={(e) => update(key, e.target.value, val)}
-                placeholder="KEY"
-                className="font-mono text-xs h-8 max-w-[14rem]"
-                aria-label="env var name"
-              />
-              <Input
-                value={val}
-                onChange={(e) => update(key, key, e.target.value)}
-                placeholder="value"
-                className="font-mono text-xs h-8"
-                aria-label="env var value"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => remove(key)}
-                aria-label={`Remove ${key}`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))}
+          {entries.map(([key, val]) => {
+            const vr = validationResults[key];
+            const hasError = vr?.is_token && !vr.valid;
+            return (
+              <div key={key}>
+                <div className="flex items-center gap-2">
+                  <Input
+                    defaultValue={key}
+                    onBlur={(e) => update(key, e.target.value, val)}
+                    placeholder="KEY"
+                    className="font-mono text-xs h-8 max-w-[14rem]"
+                    aria-label="env var name"
+                  />
+                  <Input
+                    value={val}
+                    onChange={(e) => update(key, key, e.target.value)}
+                    placeholder="value"
+                    className="font-mono text-xs h-8"
+                    aria-label="env var value"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => remove(key)}
+                    aria-label={`Remove ${key}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                {hasError && (
+                  <p className="text-xs text-destructive ml-1 mt-0.5">
+                    {vr.error ?? "Invalid token"}
+                  </p>
+                )}
+                {vr?.is_token && vr.valid && vr.login && (
+                  <p className="text-xs text-green-600 ml-1 mt-0.5">
+                    Authenticated as {vr.login}
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
       <Button type="button" variant="outline" size="sm" onClick={add}>
