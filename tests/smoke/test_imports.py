@@ -95,7 +95,13 @@ def test_dap_cli_importable() -> None:
     from dap_cli import __version__
     from dap_cli.__main__ import app
 
-    assert __version__ == "0.0.1"
+    # The exact version moves with each release. We only care that
+    # ``__version__`` exists, is a string, and parses as a 3-part
+    # semver — this test guards against accidental deletion of the
+    # attribute, not the value itself.
+    assert isinstance(__version__, str)
+    parts = __version__.split(".")
+    assert len(parts) >= 3, f"expected x.y.z, got {__version__!r}"
     # Typer app powinno mieć zarejestrowane komendy
     command_names = {cmd.name for cmd in app.registered_commands}
     assert {"init", "start", "stop", "status"} <= command_names

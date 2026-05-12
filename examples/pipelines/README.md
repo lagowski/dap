@@ -60,9 +60,10 @@ on prompts.
 
 ### `team-collaboration.pipeline-bundle.json`
 
-Three-node example demonstrating the v0.3 multi-user import flow. Takes a
-free-form `problem_statement` and produces a GitHub-issue-ready hand-off
-brief for a teammate.
+Three-node example demonstrating the v0.3 multi-user import flow.
+Takes a free-form problem statement (via the `description` field on
+`PipelineState`) and produces a GitHub-issue-ready hand-off brief
+for a teammate (in `implementation_notes`).
 
 ```
 __start__ → extract_scope → draft_brief → format_issue → __end__
@@ -70,9 +71,17 @@ __start__ → extract_scope → draft_brief → format_issue → __end__
 
 | Node | Runtime | Role | What it does |
 |---|---|---|---|
-| `extract_scope` | api-call (glm) | task_selector | Structures the problem into `title` / `scope` / `constraints` |
-| `draft_brief` | api-call (glm) | writer | Drafts `acceptance_criteria` / `approach` / `risks` |
-| `format_issue` | api-call (glm) | writer | Emits a GFM `github_issue_body` ready to pipe to `gh issue create --body-file -` |
+| `extract_scope` | api-call (glm) | task_selector | Reads `description`, writes structured outline (title + scope + constraints) into `implementation_notes` |
+| `draft_brief` | api-call (glm) | writer | Reads `implementation_notes`, appends acceptance criteria + approach + risks |
+| `format_issue` | api-call (glm) | writer | Reads `implementation_notes`, rewrites as GitHub issue body |
+
+**State-field contract:** every agent's `input_schema` /
+`output_schema` uses only valid `PipelineState` fields
+(`description`, `implementation_notes`) — bundle import refuses
+agent schemas referencing unknown fields. The downstream brief
+content accumulates in `implementation_notes` (a `str | None`
+field) across the three nodes; the operator reads the final
+markdown out of it at the end of the run.
 
 **Why this bundle exists:** The bundle has **no `user_id` field
 anywhere** — that's the v0.3 multi-user import contract. When you
@@ -86,10 +95,16 @@ template for the bundles you'll share within your team.
 
 - `GLM_API_KEY` exported in the engine's env (or edit the JSON to
   swap providers).
-- An initial state with `problem_statement: "..."` when triggering
-  the run. Use the dashboard's run-trigger form or `POST /runs`
-  with an `initial_state` object.
+- An initial state with `description: "..."` (and the standard
+  `run_id` / `repo` / `branch`) when triggering the run. Use the
+  dashboard's run-trigger form or `POST /runs` with an
+  `initial_state` object.
 
-**After running:** `github_issue_body` lands in the final state;
-pipe it to `gh issue create --title "<github_issue_title>" --body-file -`
-to file the actual issue for the teammate.
+**After running:** the final markdown lands in
+`state.implementation_notes`. Extract the first H1 line as the
+issue title, the rest as the body, and pipe:
+
+```bash
+TITLE="<copy from H1>"
+gh issue create --title "$TITLE" --body-file <(echo "$BODY")
+```

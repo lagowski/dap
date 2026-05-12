@@ -63,9 +63,11 @@ this version — see *Migrated* below.
   trusted-publisher OIDC + GHCR multi-platform + GitHub Release
   on `v*.*.*` tags.
 - `dap init` admin bootstrap: idempotent superuser creation on
-  the local SQLite (or Postgres via `DAP_DB_PATH`) with three
-  credential modes (flag / stdin / interactive +
-  random-password). `dap status` surfaces the bootstrap line.
+  the local SQLite (honors `DAP_DB_PATH` for the Docker compose
+  case; Postgres deployments seed via the running engine over
+  `DAP_DATABASE_URL` instead) with three credential modes
+  (flag / stdin / interactive + random-password). `dap status`
+  surfaces the bootstrap line.
 - `dap init --force --admin-password=...` now also rotates the
   password on existing admins (lost-admin-password recovery
   path).
