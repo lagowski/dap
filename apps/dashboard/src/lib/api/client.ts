@@ -408,6 +408,30 @@ export async function triggerProjectRun(
 }
 
 // ---------------------------------------------------------------------------
+// Project GitHub issues (#368)
+// ---------------------------------------------------------------------------
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  url: string;
+  labels: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listProjectIssues(
+  projectId: string,
+  state: "open" | "closed" | "all" = "open",
+): Promise<GitHubIssue[]> {
+  return request<GitHubIssue[]>(
+    `/projects/${encodeURIComponent(projectId)}/issues?state=${state}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Env var validation (#350)
 // ---------------------------------------------------------------------------
 

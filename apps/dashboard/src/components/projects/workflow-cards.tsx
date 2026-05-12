@@ -2,17 +2,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Plus, X } from "lucide-react";
+import { AlertCircle, GitBranch, Play, Plus, X } from "lucide-react";
 import {
   useTriggerProjectRun,
   useUpdateProject,
   usePipelinesList,
+  useProjectIssues,
 } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   RECOMMENDED_PIPELINE_KINDS,
   type Pipeline,
@@ -117,11 +119,34 @@ function WorkflowCard({
   const trigger = useTriggerProjectRun();
   const boundId = project.pipelines[kind] ?? "";
   const boundPipeline = pipelines.find((p) => p.id === boundId);
+  const [showIssuePicker, setShowIssuePicker] = useState(false);
 
-  const handleTrigger = async () => {
+  // Show issue picker for cortex-style pipelines when repo_url is set.
+  const canPickIssue = !!project.repo_url && kind === "cortex";
+
+  const handleTrigger = async (issueNumber?: number, issueTitle?: string, issueUrl?: string, issueBody?: string) => {
     if (!boundId) return;
     try {
-      const run = await trigger.mutateAsync({ id: project.id, kind });
+      // Extract owner/repo from repo_url for initial_state
+      const repoMatch = project.repo_url?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?$/);
+      const repo = repoMatch?.[1];
+
+      const payload = issueNumber && repo ? {
+        initial_state: {
+          run_id: `${project.name}-${issueNumber}`,
+          repo,
+          branch: project.default_branch,
+          extensions: {
+            issue_number: issueNumber,
+            issue_url: issueUrl ?? `https://github.com/${repo}/issues/${issueNumber}`,
+            issue_title: issueTitle ?? "",
+            issue_body: (issueBody ?? "").slice(0, 1000),
+            workspace: project.working_directory ?? "",
+          },
+        },
+      } : undefined;
+
+      const run = await trigger.mutateAsync({ id: project.id, kind, payload });
       router.push(`/runs/${run.id}`);
     } catch {
       // surfaced via trigger.error below
@@ -133,13 +158,9 @@ function WorkflowCard({
       <div className="flex items-center gap-2">
         <span className="font-mono text-sm font-medium">{kind}</span>
         {recommended ? (
-          <Badge variant="secondary" className="text-[10px]">
-            recommended
-          </Badge>
+          <Badge variant="secondary" className="text-[10px]">recommended</Badge>
         ) : (
-          <Badge variant="outline" className="text-[10px]">
-            custom
-          </Badge>
+          <Badge variant="outline" className="text-[10px]">custom</Badge>
         )}
         {!recommended && onRemoveKind ? (
           <Button
@@ -176,7 +197,7 @@ function WorkflowCard({
           type="button"
           size="sm"
           disabled={!boundId || trigger.isPending || isUpdating}
-          onClick={handleTrigger}
+          onClick={() => canPickIssue ? setShowIssuePicker(true) : handleTrigger()}
           title={boundId ? "" : "Bind a pipeline first"}
         >
           <Play className="h-3.5 w-3.5 mr-1" />
@@ -184,10 +205,20 @@ function WorkflowCard({
         </Button>
       </div>
 
+      {showIssuePicker && (
+        <IssuePicker
+          project={project}
+          onSelect={(num, title, url, body) => {
+            setShowIssuePicker(false);
+            handleTrigger(num, title, url, body);
+          }}
+          onCancel={() => setShowIssuePicker(false)}
+        />
+      )}
+
       {boundPipeline ? (
         <p className="text-xs text-muted-foreground">
-          Pipeline:{" "}
-          <span className="font-mono">{boundPipeline.id.slice(0, 8)}…</span>
+          Pipeline: <span className="font-mono">{boundPipeline.id.slice(0, 8)}…</span>
         </p>
       ) : (
         <p className="text-xs text-muted-foreground italic">
@@ -201,6 +232,78 @@ function WorkflowCard({
         </p>
       ) : null}
     </div>
+  );
+}
+
+function IssuePicker({
+  project,
+  onSelect,
+  onCancel,
+}: {
+  project: Project;
+  onSelect: (number: number, title: string, url: string, body: string) => void;
+  onCancel: () => void;
+}) {
+  const { data: issues, isPending, isError } = useProjectIssues(project.id);
+
+  return (
+    <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30">
+      <CardContent className="pt-3 pb-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold flex items-center gap-1">
+            <GitBranch className="h-3.5 w-3.5" />
+            Select an issue to implement
+          </p>
+          <Button type="button" variant="ghost" size="sm" className="h-6 px-1" onClick={onCancel}>
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
+        {isPending && (
+          <p className="text-xs text-muted-foreground">Loading issues…</p>
+        )}
+        {isError && (
+          <p className="text-xs text-destructive flex items-center gap-1">
+            <AlertCircle className="h-3.5 w-3.5" />
+            Could not fetch issues — check repo_url and GitHub token
+          </p>
+        )}
+        {issues && issues.length === 0 && (
+          <p className="text-xs text-muted-foreground italic">No open issues found.</p>
+        )}
+        {issues && issues.length > 0 && (
+          <ul className="space-y-1 max-h-64 overflow-y-auto">
+            {issues.map((issue) => (
+              <li key={issue.number}>
+                <button
+                  type="button"
+                  className="w-full text-left rounded px-2 py-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                  onClick={() => onSelect(issue.number, issue.title, issue.url, issue.body)}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="text-xs font-mono text-muted-foreground shrink-0 mt-0.5">
+                      #{issue.number}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate">{issue.title}</p>
+                      {issue.labels.length > 0 && (
+                        <div className="flex gap-1 mt-0.5 flex-wrap">
+                          {issue.labels.map((l) => (
+                            <span key={l} className="text-[10px] bg-blue-200 dark:bg-blue-800 rounded px-1">
+                              {l}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

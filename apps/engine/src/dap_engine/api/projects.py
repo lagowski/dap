@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 from typing import Any
 
 import httpx
@@ -179,6 +181,94 @@ def archive_project(
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{project_id}/issues")
+async def list_project_issues(
+    project_id: str,
+    state: str = Query(default="open"),
+    limit: int = Query(default=30, ge=1, le=100),
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> list[dict[str, Any]]:
+    """Fetch GitHub issues for the project's linked repo (#368).
+
+    Uses a GitHub token from the project's env_vars if present,
+    otherwise falls back to the GITHUB_TOKEN engine env var.
+    Returns a lightweight list suitable for an issue picker UI.
+    """
+    try:
+        project = repo.get_project(
+            session, project_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not project.repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Project has no repo_url configured",
+        )
+
+    # Extract owner/repo from repo_url (https or git@)
+    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", project.repo_url)
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Cannot parse owner/repo from repo_url: {project.repo_url}",
+        )
+    owner_repo = match.group(1)
+
+    # Pick the first GitHub token from project env_vars, fall back to engine env.
+    gh_token = next(
+        (v for v in (project.env_vars or {}).values() if _is_github_token(v)),
+        os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"),
+    )
+    headers: dict[str, str] = {"Accept": "application/vnd.github+json"}
+    if gh_token:
+        headers["Authorization"] = f"Bearer {gh_token}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(
+                f"https://api.github.com/repos/{owner_repo}/issues",
+                params={"state": state, "per_page": limit, "sort": "updated"},
+                headers=headers,
+                timeout=10.0,
+            )
+        except Exception as exc:
+            logger.warning("GitHub issues fetch failed for %s: %s", owner_repo, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to reach GitHub API",
+            ) from exc
+
+    if resp.status_code == httpx.codes.NOT_FOUND:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"GitHub repo not found: {owner_repo}",
+        )
+    if resp.status_code != httpx.codes.OK:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"GitHub API returned {resp.status_code}",
+        )
+
+    issues = resp.json()
+    return [
+        {
+            "number": i["number"],
+            "title": i["title"],
+            "body": (i.get("body") or "")[:500],
+            "state": i["state"],
+            "url": i["html_url"],
+            "labels": [lb["name"] for lb in i.get("labels", [])],
+            "created_at": i["created_at"],
+            "updated_at": i["updated_at"],
+        }
+        for i in issues
+        if not i.get("pull_request")  # exclude PRs which appear in issues API
+    ]
 
 
 @router.post(
