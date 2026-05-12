@@ -27,8 +27,9 @@ def client() -> Iterator[TestClient]:
         yield c
 
 
-def _mock_httpx_client(*, status_code: int = 200, json_body: dict | None = None,
-                        side_effect: Exception | None = None):
+def _mock_httpx_client(
+    *, status_code: int = 200, json_body: dict | None = None, side_effect: Exception | None = None
+):
     """Build a patched httpx.AsyncClient context manager mock."""
     mock_instance = AsyncMock()
     if side_effect is not None:
