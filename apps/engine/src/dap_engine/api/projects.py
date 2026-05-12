@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -31,6 +32,8 @@ from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 _GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "gho_")
@@ -42,16 +45,23 @@ def _is_github_token(value: str) -> bool:
 
 
 @router.post("/validate-env", response_model=ValidateEnvResponse)
-async def validate_env(payload: ValidateEnvRequest) -> ValidateEnvResponse:
-    """Probe GitHub tokens among env vars — best-effort, never blocks save."""
+async def validate_env(
+    payload: ValidateEnvRequest,
+    _user: UserORM = Depends(current_active_user),
+) -> ValidateEnvResponse:
+    """Probe GitHub tokens among env vars — best-effort, never blocks save.
+
+    Requires authentication: prevents anonymous token enumeration (#350).
+    """
     results: list[EnvVarValidationResult] = []
-    for key, value in payload.env_vars.items():
-        if not _is_github_token(value):
-            results.append(EnvVarValidationResult(key=key, is_token=False))
-            continue
-        # Token-shaped — validate against GitHub API.
-        try:
-            async with httpx.AsyncClient() as client:
+    # Re-use a single client (one TLS connection pool) for all token probes.
+    async with httpx.AsyncClient() as client:
+        for key, value in payload.env_vars.items():
+            if not _is_github_token(value):
+                results.append(EnvVarValidationResult(key=key, is_token=False))
+                continue
+            # Token-shaped — validate against GitHub API.
+            try:
                 resp = await client.get(
                     "https://api.github.com/user",
                     headers={
@@ -60,29 +70,30 @@ async def validate_env(payload: ValidateEnvRequest) -> ValidateEnvResponse:
                     },
                     timeout=10.0,
                 )
-            if resp.status_code == httpx.codes.OK:
-                login = resp.json().get("login")
-                results.append(
-                    EnvVarValidationResult(key=key, is_token=True, valid=True, login=login)
-                )
-            else:
+                if resp.status_code == httpx.codes.OK:
+                    login = resp.json().get("login")
+                    results.append(
+                        EnvVarValidationResult(key=key, is_token=True, valid=True, login=login)
+                    )
+                else:
+                    results.append(
+                        EnvVarValidationResult(
+                            key=key,
+                            is_token=True,
+                            valid=False,
+                            error=f"GitHub API returned {resp.status_code}",
+                        )
+                    )
+            except Exception as exc:
+                logger.warning("Token validation failed for key %r: %s", key, exc)
                 results.append(
                     EnvVarValidationResult(
                         key=key,
                         is_token=True,
                         valid=False,
-                        error=f"GitHub API returned {resp.status_code}",
+                        error="Network error contacting GitHub",
                     )
                 )
-        except Exception as exc:
-            results.append(
-                EnvVarValidationResult(
-                    key=key,
-                    is_token=True,
-                    valid=False,
-                    error=f"Validation failed: {exc}",
-                )
-            )
     return ValidateEnvResponse(results=results)
 
 

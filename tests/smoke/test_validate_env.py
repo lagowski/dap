@@ -198,3 +198,24 @@ def test_validate_env_schema_rejects_extra_fields(client: TestClient) -> None:
         json={"env_vars": {"X": "v"}, "bogus": 1},
     )
     assert resp.status_code == 422
+
+
+# --------------------------------------------------------------------------
+# Authentication required
+# --------------------------------------------------------------------------
+
+
+def test_validate_env_requires_authentication() -> None:
+    """Unauthenticated requests must be rejected with 401 (#350 Copilot review)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        config = EngineConfig(
+            database_url=f"sqlite+aiosqlite:///{Path(tmp)}/test.db",
+        )
+        app = create_app(config)
+        with TestClient(app, raise_server_exceptions=True) as unauthenticated:
+            resp = unauthenticated.post(
+                "/projects/validate-env",
+                json={"env_vars": {"GH_TOKEN": "ghp_abc"}},
+                # No Authorization header
+            )
+    assert resp.status_code == 401
