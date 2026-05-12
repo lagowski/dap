@@ -27,7 +27,10 @@ def client() -> Iterator[TestClient]:
         yield c
 
 
-def _create_project(client: TestClient, *, repo_url: str | None = "https://github.com/org/repo.git") -> str:
+_DEFAULT_REPO_URL = "https://github.com/org/repo.git"
+
+
+def _create_project(client: TestClient, *, repo_url: str | None = _DEFAULT_REPO_URL) -> str:
     resp = client.post(
         "/projects",
         json={
