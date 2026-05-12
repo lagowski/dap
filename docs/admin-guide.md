@@ -8,8 +8,8 @@ team — single instance, shared database, you wear the admin hat.
 Out of scope here: provider-app setup (see
 [`auth.md`](auth.md)) and deployment / env vars (see
 [`self-hosting.md`](self-hosting.md)). The security posture
-itself — what we protect against, what we don't — lands in
-`docs/security.md` (sub-E4, in flight).
+itself — what we protect against, what we don't — lives in
+[`security.md`](security.md).
 
 ## First-run flow
 
