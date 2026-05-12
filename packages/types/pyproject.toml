@@ -1,7 +1,12 @@
 [project]
-name = "dap-types"
+# PyPI distribution name. The Python import path stays ``dap_types`` —
+# that's the source directory ``src/dap_types/`` configured below. The
+# distribution name moved off ``dap-types`` because a squatter holds
+# that name on PyPI; ``dap-schemas`` is more accurate anyway (this
+# package is the Pydantic schema bag, not a generic types module).
+name = "dap-schemas"
 version = "0.3.0"
-description = "Shared Pydantic types for DAP (Agent, Pipeline, Run, State, Runtime)"
+description = "Shared Pydantic schemas for DAP (Agent, Pipeline, Run, State, Runtime)"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

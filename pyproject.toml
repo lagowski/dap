@@ -29,12 +29,12 @@ dev-dependencies = [
 ]
 
 [tool.uv.sources]
-"dap-types" = { workspace = true }
+"dap-schemas" = { workspace = true }
 "dap-runtimes" = { workspace = true }
 "dap-engine" = { workspace = true }
 "dap-cli" = { workspace = true }
 "dap-prompt-dsl" = { workspace = true }
-"cortex" = { workspace = true }
+"dap-cortex" = { workspace = true }
 # --- Ruff ---
 [tool.ruff]
 line-length = 100
