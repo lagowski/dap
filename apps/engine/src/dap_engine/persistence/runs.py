@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from typing import Final
+from typing import Any, Final
 
 from dap_types import (
     NodeExecutionLog,
@@ -73,6 +73,7 @@ def _run_from_orm(
         initial_state=PipelineState.model_validate(run.initial_state),
         current_node=run.current_node,
         paused_at_node=run.paused_at_node,
+        gate_payload=run.gate_payload,
         node_statuses=(
             node_statuses_override  # type: ignore[arg-type]
             if node_statuses_override is not None
@@ -360,12 +361,16 @@ def pause_run(
     run_id: str,
     *,
     paused_at_node: str | None = None,
+    gate_payload: dict[str, Any] | None = None,
 ) -> None:
     """Mark a run as paused without setting ended_at (resumable).
 
     ``paused_at_node`` records the gate node that triggered the interrupt
     so the dashboard can show a targeted "Approve" action instead of the
     generic "Resume" button (#363).
+
+    ``gate_payload`` stores task assignments and other gate context so the
+    dashboard can render them without querying the checkpoint store (#364).
 
     Idempotent and race-safe (#257), same atomic-UPDATE pattern as
     ``finalize_run``. A late pause attempt on an already-terminal run
@@ -380,6 +385,8 @@ def pause_run(
     }
     if paused_at_node is not None:
         values["paused_at_node"] = paused_at_node
+    if gate_payload is not None:
+        values["gate_payload"] = gate_payload
     stmt = (
         update(RunORM)
         .where(
@@ -419,6 +426,7 @@ def try_claim_resume(session: Session, run_id: str) -> bool:
             ended_at=None,
             failure_reason=None,
             paused_at_node=None,
+            gate_payload=None,
         )
     )
     # session.execute(update(...)) returns CursorResult at runtime — only

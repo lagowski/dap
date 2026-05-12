@@ -628,6 +628,18 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
     )
 
 
+def _017_runs_add_gate_payload(conn: Connection) -> None:
+    """#364 — store gate context (task_assignments, spec) on the Run row.
+
+    Allows the dashboard to display task assignments when a run is paused at
+    an approval gate, without querying the LangGraph checkpoint store.
+    Fresh DBs already have the column from ``create_all``.
+    """
+    if _column_exists(conn, "runs", "gate_payload"):
+        return
+    conn.execute(text("ALTER TABLE runs ADD COLUMN gate_payload TEXT"))
+
+
 def _016_runs_add_paused_at_node(conn: Connection) -> None:
     """#363 — store which gate node caused the run to pause.
 
@@ -673,6 +685,7 @@ MIGRATIONS: list[Migration] = [
         apply=_015_promote_system_user_to_legacy_admin,
     ),
     Migration(name="016_runs_add_paused_at_node", apply=_016_runs_add_paused_at_node),
+    Migration(name="017_runs_add_gate_payload", apply=_017_runs_add_gate_payload),
 ]
 
 

@@ -57,10 +57,18 @@ class RunnerInterrupt(Exception):
 
     Attributes:
         next_nodes: LangGraph nodes staged as next when the interrupt fired.
+        gate_state: Full graph state values at the interrupt checkpoint.
+            Stored on the Run row so the dashboard can surface gate context
+            (e.g. task_assignments) without querying the checkpoint store (#364).
     """
 
-    def __init__(self, next_nodes: list[str]) -> None:
+    def __init__(
+        self,
+        next_nodes: list[str],
+        gate_state: dict[str, Any] | None = None,
+    ) -> None:
         self.next_nodes = next_nodes
+        self.gate_state = gate_state
         super().__init__(f"Pipeline paused before: {next_nodes}")
 
 
@@ -161,7 +169,10 @@ class PipelineRunner:
             pending = list(snap.next) if snap.next else []
             if pending and any(n in approval_nodes for n in pending):
                 logger.info("run %s interrupted before approval node(s): %s", run_id, pending)
-                raise RunnerInterrupt(next_nodes=pending)
+                raise RunnerInterrupt(
+                    next_nodes=pending,
+                    gate_state=snap.values if isinstance(snap.values, dict) else None,
+                )
 
         return PipelineState.model_validate(result)
 

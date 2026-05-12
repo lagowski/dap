@@ -429,6 +429,15 @@ export interface Run {
   current_node: string | null;
   /** Gate node the run is staged before when final_status=="paused" (#363). */
   paused_at_node: string | null;
+  /** Task assignments + optional spec stored at gate interrupt time (#364). */
+  gate_payload: {
+    task_assignments?: Array<{
+      description: string;
+      agent: string;
+      priority?: string;
+    }>;
+    spec?: string;
+  } | null;
   node_statuses: Record<string, NodeStatus>;
   final_status: FinalStatus;
   /**

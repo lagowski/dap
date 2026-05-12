@@ -53,6 +53,30 @@ def _gate_node_from_interrupt(
     return next((n for n in interrupt.next_nodes if n in approval_nodes), None)
 
 
+def _gate_payload_from_interrupt(interrupt: RunnerInterrupt) -> dict[str, Any] | None:
+    """Return a serialisable gate payload for storage on the Run row (#364).
+
+    Extracts task_assignments (and optionally spec/description) from
+    ``interrupt.gate_state`` so the dashboard can show gate context without
+    querying the checkpoint store directly.
+    Returns None when gate_state is absent or contains no useful context.
+    """
+    state = interrupt.gate_state
+    if not state:
+        return None
+    # Pull the fields the dashboard needs; ignore everything else to keep
+    # the stored payload small and pipeline-agnostic.
+    extensions: dict[str, Any] = state.get("extensions") or {}
+    task_assignments = extensions.get("task_assignments")
+    if not task_assignments:
+        return None
+    payload: dict[str, Any] = {"task_assignments": task_assignments}
+    # Carry description/spec if present — useful for Reject feedback UX.
+    if spec := extensions.get("spec"):
+        payload["spec"] = spec
+    return payload
+
+
 async def execute_run_background(
     *,
     run_id: str,
@@ -103,6 +127,7 @@ async def execute_run_background(
                     bg_session,
                     run_id,
                     paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
+                    gate_payload=_gate_payload_from_interrupt(interrupt),
                 )
                 bg_session.commit()
                 return
@@ -192,6 +217,7 @@ async def execute_rewind_background(
                     bg_session,
                     run_id,
                     paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
+                    gate_payload=_gate_payload_from_interrupt(interrupt),
                 )
                 bg_session.commit()
                 return
