@@ -11,6 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
+import { usePipelinesList } from "@/hooks/api";
+import {
+  addBinding,
+  updateBinding,
+  removeBinding,
+} from "@/components/projects/pipeline-bindings";
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
@@ -22,12 +28,6 @@ const formSchema = z.object({
 
 type FormShape = z.infer<typeof formSchema>;
 
-/**
- * Project form values include the env_vars editor's state since it's
- * not driven by react-hook-form (free-form key/value pairs).
- * Pipeline bindings live on the detail page, not the form — they need
- * a pipeline picker we don't want to surface during create.
- */
 export interface ProjectFormValues {
   name: string;
   description: string;
@@ -35,6 +35,7 @@ export interface ProjectFormValues {
   repo_url: string | null;
   default_branch: string;
   env_vars: Record<string, string>;
+  pipelines: Record<string, string>;
 }
 
 interface ProjectFormProps {
@@ -69,6 +70,10 @@ export function ProjectForm({
     () => initialValues?.env_vars ?? {},
   );
 
+  const [pipelines, setPipelines] = useState<Record<string, string>>(
+    () => initialValues?.pipelines ?? {},
+  );
+
   const handleSubmit = form.handleSubmit(async (values) => {
     try {
       await onSubmit({
@@ -80,6 +85,13 @@ export function ProjectForm({
         repo_url: values.repo_url.trim() || null,
         default_branch: values.default_branch,
         env_vars: envVars,
+        // Drop incomplete bindings (blank kind or pipeline id) before submit
+        // to avoid 422s from the engine validator.
+        pipelines: Object.fromEntries(
+          Object.entries(pipelines).filter(
+            ([k, v]) => k.trim().length > 0 && v.trim().length > 0,
+          ),
+        ),
       });
     } catch {
       // Parent surfaces submitError.
@@ -132,6 +144,14 @@ export function ProjectForm({
           Layered onto subprocess env (#65). Engine env (base) → these
           → per-agent runtime_config.env (highest). Keep secrets in
           engine env — these are convenience overrides.
+        </p>
+      </Field>
+
+      <Field label="Pipeline bindings">
+        <PipelineBindingsEditor value={pipelines} onChange={setPipelines} />
+        <p className="text-xs text-muted-foreground">
+          Map a workflow kind (e.g. &quot;cortex&quot;) to a pipeline. Bindings
+          are optional — leave empty to configure later on the detail page.
         </p>
       </Field>
 
@@ -227,6 +247,75 @@ function EnvVarsEditor({ value, onChange }: EnvVarsEditorProps) {
       <Button type="button" variant="outline" size="sm" onClick={add}>
         <Plus className="h-3.5 w-3.5 mr-1" />
         Add env var
+      </Button>
+    </div>
+  );
+}
+
+interface PipelineBindingsEditorProps {
+  value: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}
+
+function PipelineBindingsEditor({ value, onChange }: PipelineBindingsEditorProps) {
+  const { data: pipelinesList } = usePipelinesList();
+  const entries = Object.entries(value);
+
+  return (
+    <div className="space-y-2">
+      {entries.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No pipeline bindings yet.
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {entries.map(([kind, pipelineId]) => (
+            <div key={kind} className="flex items-center gap-2">
+              <Input
+                defaultValue={kind}
+                onBlur={(e) =>
+                  onChange(updateBinding(value, kind, e.target.value.trim(), pipelineId))
+                }
+                placeholder="kind"
+                className="font-mono text-xs h-8 max-w-[14rem]"
+                aria-label="binding kind"
+              />
+              <select
+                value={pipelineId}
+                onChange={(e) =>
+                  onChange(updateBinding(value, kind, kind, e.target.value))
+                }
+                className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                aria-label="pipeline"
+              >
+                <option value="">Select pipeline…</option>
+                {pipelinesList?.items.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => onChange(removeBinding(value, kind))}
+                aria-label={`Remove ${kind}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => onChange(addBinding(value))}
+      >
+        <Plus className="h-3.5 w-3.5 mr-1" />
+        Add binding
       </Button>
     </div>
   );
