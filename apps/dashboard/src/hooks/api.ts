@@ -397,6 +397,15 @@ export function useTriggerProjectRun() {
   });
 }
 
+export function useProjectIssues(projectId: string | null) {
+  return useQuery({
+    queryKey: ["projects", projectId, "issues"],
+    queryFn: () => api.listProjectIssues(projectId!),
+    enabled: projectId != null,
+    staleTime: 60_000,
+  });
+}
+
 export function useSettings() {
   return useQuery({
     queryKey: queryKeys.settings,
