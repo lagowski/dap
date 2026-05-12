@@ -60,6 +60,8 @@ ignore = [
 "tests/**" = [
     "PLR2004",                  # magic values in tests OK
     "PLC0415",                  # local imports in tests are intentional (per-test isolation)
+    "RUF002",                   # EN DASH in docstrings — same house style as code
+    "RUF003",                   # EN DASH in comments — same
 ]
 "**/tests/**" = [
     "PLR2004",                  # magic values in tests OK (apps/cli/tests, apps/dashboard/*, etc.)
