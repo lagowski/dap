@@ -120,31 +120,45 @@ function WorkflowCard({
   const boundId = project.pipelines[kind] ?? "";
   const boundPipeline = pipelines.find((p) => p.id === boundId);
   const [showIssuePicker, setShowIssuePicker] = useState(false);
+  const [repoUrlError, setRepoUrlError] = useState<string | null>(null);
 
   // Show issue picker for cortex-style pipelines when repo_url is set.
   const canPickIssue = !!project.repo_url && kind === "cortex";
 
   const handleTrigger = async (issueNumber?: number, issueTitle?: string, issueUrl?: string, issueBody?: string) => {
     if (!boundId) return;
+    setRepoUrlError(null);
     try {
-      // Extract owner/repo from repo_url for initial_state
-      const repoMatch = project.repo_url?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?$/);
-      const repo = repoMatch?.[1];
+      let payload: Parameters<typeof trigger.mutateAsync>[0]["payload"] | undefined;
 
-      const payload = issueNumber && repo ? {
-        initial_state: {
-          run_id: `${project.name}-${issueNumber}`,
-          repo,
-          branch: project.default_branch,
-          extensions: {
-            issue_number: issueNumber,
-            issue_url: issueUrl ?? `https://github.com/${repo}/issues/${issueNumber}`,
-            issue_title: issueTitle ?? "",
-            issue_body: (issueBody ?? "").slice(0, 1000),
-            workspace: project.working_directory ?? "",
+      if (issueNumber) {
+        // Extract owner/repo from repo_url — fail explicitly if unparseable
+        // so the user knows to fix the project's repo_url rather than
+        // silently running without issue context (#369 Copilot review).
+        const repoMatch = project.repo_url?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?$/);
+        if (!repoMatch) {
+          setRepoUrlError(
+            `Cannot parse owner/repo from repo_url: "${project.repo_url}". ` +
+            "Edit the project and set a valid GitHub URL."
+          );
+          return;
+        }
+        const repo = repoMatch[1];
+        payload = {
+          initial_state: {
+            run_id: `${project.name}-${issueNumber}`,
+            repo,
+            branch: project.default_branch,
+            extensions: {
+              issue_number: issueNumber,
+              issue_url: issueUrl ?? `https://github.com/${repo}/issues/${issueNumber}`,
+              issue_title: issueTitle ?? "",
+              issue_body: (issueBody ?? "").slice(0, 1000),
+              workspace: project.working_directory ?? "",
+            },
           },
-        },
-      } : undefined;
+        };
+      }
 
       const run = await trigger.mutateAsync({ id: project.id, kind, payload });
       router.push(`/runs/${run.id}`);
@@ -226,6 +240,12 @@ function WorkflowCard({
         </p>
       )}
 
+      {repoUrlError ? (
+        <p className="text-xs text-destructive flex items-center gap-1" role="alert">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          {repoUrlError}
+        </p>
+      ) : null}
       {trigger.isError ? (
         <p className="text-xs text-destructive" role="alert">
           {formatApiError(trigger.error)}

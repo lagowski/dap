@@ -413,6 +413,7 @@ export interface PipelineState {
   verification_status: "pending" | "approved" | "rejected";
   verification_reason: string | null;
   final_status: FinalStatus;
+  extensions: Record<string, unknown>;  // per-pipeline extra state (#64)
 }
 
 export interface Run {
