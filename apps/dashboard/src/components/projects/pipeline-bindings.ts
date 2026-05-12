@@ -18,7 +18,8 @@ export function addBinding(
 
 /**
  * Update a binding: rename the kind key and/or change the pipeline_id.
- * Preserves insertion order by rebuilding the record.
+ * Trims the kind key. If renaming to a key that already exists, the old
+ * entry is dropped (new value wins) to avoid silent data loss.
  */
 export function updateBinding(
   bindings: Record<string, string>,
@@ -26,11 +27,12 @@ export function updateBinding(
   newKind: string,
   pipelineId: string,
 ): Record<string, string> {
+  const trimmedKind = newKind.trim();
   const next: Record<string, string> = {};
   for (const [k, v] of Object.entries(bindings)) {
     if (k === oldKind) {
-      if (newKind.length > 0) next[newKind] = pipelineId;
-    } else {
+      if (trimmedKind.length > 0) next[trimmedKind] = pipelineId;
+    } else if (k !== trimmedKind) {
       next[k] = v;
     }
   }

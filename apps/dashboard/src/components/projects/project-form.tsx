@@ -85,7 +85,13 @@ export function ProjectForm({
         repo_url: values.repo_url.trim() || null,
         default_branch: values.default_branch,
         env_vars: envVars,
-        pipelines,
+        // Drop incomplete bindings (blank kind or pipeline id) before submit
+        // to avoid 422s from the engine validator.
+        pipelines: Object.fromEntries(
+          Object.entries(pipelines).filter(
+            ([k, v]) => k.trim().length > 0 && v.trim().length > 0,
+          ),
+        ),
       });
     } catch {
       // Parent surfaces submitError.
@@ -268,7 +274,7 @@ function PipelineBindingsEditor({ value, onChange }: PipelineBindingsEditorProps
               <Input
                 defaultValue={kind}
                 onBlur={(e) =>
-                  onChange(updateBinding(value, kind, e.target.value, pipelineId))
+                  onChange(updateBinding(value, kind, e.target.value.trim(), pipelineId))
                 }
                 placeholder="kind"
                 className="font-mono text-xs h-8 max-w-[14rem]"
