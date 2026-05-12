@@ -637,7 +637,8 @@ def _017_runs_add_gate_payload(conn: Connection) -> None:
     """
     if _column_exists(conn, "runs", "gate_payload"):
         return
-    conn.execute(text("ALTER TABLE runs ADD COLUMN gate_payload TEXT"))
+    col_type = "JSONB" if conn.dialect.name == "postgresql" else "TEXT"
+    conn.execute(text(f"ALTER TABLE runs ADD COLUMN gate_payload {col_type}"))
 
 
 def _016_runs_add_paused_at_node(conn: Connection) -> None:

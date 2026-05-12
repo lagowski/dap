@@ -210,9 +210,12 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
   const approve = useApproveGate();
   const abort = useAbortRun();
 
-  const approvalNodes = new Set(pipeline?.defaults?.approval_required_nodes ?? []);
   const gateNode = run.paused_at_node!;
-  const isGate = approvalNodes.has(gateNode);
+  // Show Approve whenever paused_at_node is set — the backend already
+  // validated it's a gate. Only hide if the pipeline loaded AND explicitly
+  // says it isn't a gate (guards against stale/drifted pipeline defaults).
+  const approvalNodes = new Set(pipeline?.defaults?.approval_required_nodes ?? []);
+  const showApprove = pipeline == null || approvalNodes.has(gateNode);
   const assignments = run.gate_payload?.task_assignments ?? [];
 
   const busy = approve.isPending || abort.isPending;
@@ -236,7 +239,7 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
             </p>
           </div>
           <div className="flex gap-2">
-            {isGate && (
+            {showApprove && (
               <Button
                 size="sm"
                 disabled={busy}
@@ -267,7 +270,7 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
               {assignments.map((a, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm">
                   <Play className="h-3 w-3 mt-0.5 shrink-0 text-muted-foreground" />
-                  <span className="flex-1">{a.description}</span>
+                  <span className="flex-1">{a.task}</span>
                   <span className="text-xs font-mono text-muted-foreground shrink-0">
                     {a.agent}
                     {a.priority ? ` [${a.priority}]` : ""}

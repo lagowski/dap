@@ -432,7 +432,8 @@ export interface Run {
   /** Task assignments + optional spec stored at gate interrupt time (#364). */
   gate_payload: {
     task_assignments?: Array<{
-      description: string;
+      /** Cortex dispatcher emits this as "task" (see dispatcher.py). */
+      task: string;
       agent: string;
       priority?: string;
     }>;
