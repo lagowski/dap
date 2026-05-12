@@ -1,6 +1,6 @@
 [project]
 name = "dap-prompt-dsl"
-version = "0.0.1"
+version = "0.3.0"
 description = "Prompt Builder — Jinja2 → XML compiler for DAP agent prompts"
 readme = "README.md"
 requires-python = ">=3.13"

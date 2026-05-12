@@ -57,3 +57,39 @@ __start__ → fetch_issues → select_issue → load_prd → enrich → create_b
 dry test on individual agents (each has a Test panel — see #103), then
 run it. Each run leaves node-by-node logs at `/runs/<id>` so you can iterate
 on prompts.
+
+### `team-collaboration.pipeline-bundle.json`
+
+Three-node example demonstrating the v0.3 multi-user import flow. Takes a
+free-form `problem_statement` and produces a GitHub-issue-ready hand-off
+brief for a teammate.
+
+```
+__start__ → extract_scope → draft_brief → format_issue → __end__
+```
+
+| Node | Runtime | Role | What it does |
+|---|---|---|---|
+| `extract_scope` | api-call (glm) | task_selector | Structures the problem into `title` / `scope` / `constraints` |
+| `draft_brief` | api-call (glm) | writer | Drafts `acceptance_criteria` / `approach` / `risks` |
+| `format_issue` | api-call (glm) | writer | Emits a GFM `github_issue_body` ready to pipe to `gh issue create --body-file -` |
+
+**Why this bundle exists:** The bundle has **no `user_id` field
+anywhere** — that's the v0.3 multi-user import contract. When you
+import a bundle, the engine assigns ownership of the pipeline AND
+every bundled agent to the importing user. Two teammates can each
+import the same JSON and end up with independent copies; either
+can edit theirs without affecting the other's. Use this as a
+template for the bundles you'll share within your team.
+
+**Prerequisites:**
+
+- `GLM_API_KEY` exported in the engine's env (or edit the JSON to
+  swap providers).
+- An initial state with `problem_statement: "..."` when triggering
+  the run. Use the dashboard's run-trigger form or `POST /runs`
+  with an `initial_state` object.
+
+**After running:** `github_issue_body` lands in the final state;
+pipe it to `gh issue create --title "<github_issue_title>" --body-file -`
+to file the actual issue for the teammate.

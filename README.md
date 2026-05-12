@@ -14,6 +14,19 @@ Three supported install paths, in order of complexity:
 
 See [**docs/self-hosting.md**](docs/self-hosting.md) for full deployment, OAuth setup, production checklist, and troubleshooting.
 
+### Upgrading from 0.0.1
+
+v0.3.0 introduces multi-user auth on top of the existing engine. The first time you start it against a pre-v0.3 `.dap/state.db`, the auto-migration creates a `legacy-admin@local` admin and **prints the generated password exactly once on stdout**:
+
+```
+Migrated single-user install. Bootstrap admin: legacy-admin@local
+with password=<random>. Change immediately at /admin/users.
+```
+
+Capture the password from the engine log on first boot. If you miss it: `dap init --force --admin-email=legacy-admin@local --admin-password=<new>` re-promotes the existing row with the new password. Existing pipelines / agents / projects / runs are preserved and owned by the legacy admin — re-assign ownership from `/admin/users` as you onboard your team.
+
+Scripts that hit `localhost:7333` unauthenticated need an API token now (`/admin/api-tokens` → mint → set `Authorization: Bearer dap_*`). See [`docs/auth.md`](docs/auth.md#api-tokens) for the lifecycle.
+
 ## Requirements (source install)
 
 - Python 3.13+

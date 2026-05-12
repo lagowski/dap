@@ -1,6 +1,6 @@
 [project]
 name = "cortex"
-version = "0.0.1"
+version = "0.3.0"
 description = "Cortex pipeline nodes — runs inside DAP engine"
 readme = "README.md"
 requires-python = ">=3.13"
