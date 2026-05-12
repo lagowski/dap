@@ -35,6 +35,9 @@ class Run(BaseModel):
     # Contains the node id the graph is staged to run next, so the dashboard
     # can show "Approve" (not generic "Resume") and call the right endpoint.
     paused_at_node: str | None = None
+    # Stores task_assignments (and optionally spec) extracted from the gate
+    # checkpoint so the dashboard can render them without querying the store.
+    gate_payload: dict[str, Any] | None = None
     node_statuses: dict[str, NodeStatus] = Field(default_factory=dict)
 
     final_status: FinalStatus = "running"

@@ -2,7 +2,7 @@
 
 import { use, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Pause, Play, Square } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Pause, Play, Square } from "lucide-react";
 import {
   useAbortRun,
   useAgentsList,
@@ -108,6 +108,10 @@ export default function RunDetailPage({
         </Card>
       )}
 
+      {run.final_status === "paused" && run.paused_at_node && (
+        <GatePanel run={run} pipeline={pipeline ?? null} />
+      )}
+
       <NodeDetailPanel
         runId={run.id}
         nodeId={selectedNode}
@@ -199,5 +203,90 @@ function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) 
         Abort
       </Button>
     </>
+  );
+}
+
+function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
+  const approve = useApproveGate();
+  const abort = useAbortRun();
+
+  const gateNode = run.paused_at_node!;
+  // Show Approve whenever paused_at_node is set — the backend already
+  // validated it's a gate. Only hide if the pipeline loaded AND explicitly
+  // says it isn't a gate (guards against stale/drifted pipeline defaults).
+  const approvalNodes = new Set(pipeline?.defaults?.approval_required_nodes ?? []);
+  const showApprove = pipeline == null || approvalNodes.has(gateNode);
+  const assignments = run.gate_payload?.task_assignments ?? [];
+
+  const busy = approve.isPending || abort.isPending;
+
+  const handleAbort = () => {
+    if (window.confirm("Abort this run? This cannot be undone.")) {
+      abort.mutate(run.id);
+    }
+  };
+
+  return (
+    <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+      <CardContent className="pt-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold">
+              Paused — waiting for approval
+            </p>
+            <p className="text-xs text-muted-foreground font-mono mt-0.5">
+              gate: {gateNode}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            {showApprove && (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => approve.mutate({ runId: run.id, nodeId: gateNode })}
+              >
+                <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                {approve.isPending ? "Approving…" : "Approve"}
+              </Button>
+            )}
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy}
+              onClick={handleAbort}
+            >
+              <Square className="mr-1 h-3.5 w-3.5" />
+              Abort
+            </Button>
+          </div>
+        </div>
+
+        {assignments.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Ready to implement
+            </p>
+            <ul className="space-y-1.5">
+              {assignments.map((a, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
+                  <Play className="h-3 w-3 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span className="flex-1">{a.task}</span>
+                  <span className="text-xs font-mono text-muted-foreground shrink-0">
+                    {a.agent}
+                    {a.priority ? ` [${a.priority}]` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {approve.error && (
+          <p className="text-xs text-destructive" role="alert">
+            {formatApiError(approve.error)}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
