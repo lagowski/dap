@@ -154,7 +154,7 @@ function WorkflowCard({
               issue_url: issueUrl ?? `https://github.com/${repo}/issues/${issueNumber}`,
               issue_title: issueTitle ?? "",
               issue_body: (issueBody ?? "").slice(0, 1000),
-              workspace: project.working_directory ?? "",
+              workspace_path: project.working_directory ?? "",
             },
           },
         };
