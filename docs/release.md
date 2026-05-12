@@ -61,6 +61,9 @@ merges. Suggested branch protection:
 
 ## Per-release checklist
 
+Substitute `<version>` (e.g. `0.4.0`) consistently throughout — the
+commands below use the placeholder so you can copy them verbatim.
+
 1. **Pick a version.** Semantic versioning: `MAJOR.MINOR.PATCH`. For
    pre-releases use `MAJOR.MINOR.PATCH-rc1`, `-beta2`, etc. The
    workflow detects pre-release suffixes (a `-` in the version)
@@ -69,18 +72,18 @@ merges. Suggested branch protection:
 
 2. **Bump versions** across the workspace:
    ```bash
-   ./scripts/bump-version.sh 0.4.0
+   ./scripts/bump-version.sh <version>
    ```
-   Rewrites every `pyproject.toml` version field, the
-   `dap_cli.__version__` constant, and refreshes `uv.lock` so the
-   lock matches the bumped pyprojects. Idempotent — re-running
-   with the same value is a no-op. Validates the input shape (loose
-   semver: `x.y.z` or `x.y.z-rcN`).
+   Rewrites every `pyproject.toml` version field, every first-party
+   `__version__` constant (CLI + cortex), and refreshes `uv.lock`
+   so the lock matches the bumped pyprojects. Idempotent —
+   re-running with the same value is a no-op. Validates the input
+   shape (loose semver: `x.y.z` or `x.y.z-rcN`).
 
 3. **Update `CHANGELOG.md`** with the section for this release.
    Keep-a-Changelog style:
    ```markdown
-   ## [0.3.0] — 2026-05-12
+   ## [<version>] — YYYY-MM-DD
 
    ### Added
    - ...
@@ -98,8 +101,8 @@ merges. Suggested branch protection:
    ```bash
    git checkout main
    git pull origin main
-   git tag -a v0.3.0 -m "DAP v0.3.0"
-   git push origin v0.3.0
+   git tag -a v<version> -m "DAP v<version>"
+   git push origin v<version>
    ```
 
 6. **Watch the run.** `release.yml` should:
@@ -111,13 +114,13 @@ merges. Suggested branch protection:
 7. **Smoke test.**
    ```bash
    # PyPI
-   pipx install dap-cli==0.3.0
+   pipx install dap-cli==<version>
    dap --version
 
    # Docker
    docker run --rm -p 7333:7333 \
        -e DAP_AUTH_JWT_SECRET=$(openssl rand -hex 32) \
-       ghcr.io/<owner>/dap:0.3.0
+       ghcr.io/<owner>/dap:<version>
    curl http://127.0.0.1:7333/health
    ```
 
@@ -148,22 +151,23 @@ the dashboard bundle script without affecting real publishing.
 
 ## Rollback
 
-PyPI doesn't allow deleting a version, only yanking. To yank
-`0.3.0`:
+PyPI doesn't allow deleting a version, only yanking. To yank a
+broken `<version>`:
 
 ```bash
 pipx upgrade twine
-twine yank dap-cli==0.3.0
-# repeat for each package
+twine yank dap-cli==<version>
+# repeat for each of the six packages
 ```
 
 For Docker: keep the bad version available but bump `latest` to
-the prior good one:
+the prior good one (replace `<good-version>` with the tag you
+want `latest` to follow):
 
 ```bash
 docker buildx imagetools create \
     --tag ghcr.io/<owner>/dap:latest \
-    ghcr.io/<owner>/dap:0.2.9
+    ghcr.io/<owner>/dap:<good-version>
 ```
 
 GitHub Releases can be deleted from the UI; this won't break

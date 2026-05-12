@@ -56,21 +56,36 @@ for f in $PYPROJECTS; do
     echo "  $OLD -> $NEW: $f"
 done
 
-# The CLI also exposes ``__version__`` as a Python-level constant
-# (read by ``dap --version``). Hatchling can derive this from the
-# pyproject at build time, but the source file is what
-# ``import dap_cli`` returns during development, so keep them aligned.
-CLI_INIT="apps/cli/src/dap_cli/__init__.py"
-if [[ -f "$CLI_INIT" ]]; then
-    OLD=$(grep '^__version__ = "' "$CLI_INIT" | head -1 | sed 's/^__version__ = "\(.*\)"$/\1/')
-    if [[ "$OLD" != "$NEW" ]]; then
-        sed -i.bak 's/^__version__ = "[^"]*"$/__version__ = "'"$NEW"'"/' "$CLI_INIT"
-        rm "${CLI_INIT}.bak"
-        echo "  $OLD -> $NEW: $CLI_INIT"
-    else
-        echo "  unchanged ($NEW): $CLI_INIT"
+# Sync every first-party ``__version__`` constant we ship.
+# Hatchling can derive these from the pyproject at build time, but the
+# source files are what ``import <pkg>`` returns during development, so
+# they need to stay aligned (otherwise ``dap --version`` lies and the
+# wheel + the editable install drift apart).
+#
+# Each entry is a path; discover more with
+# ``grep -rln '^__version__ =' apps/*/src packages/*/src``.
+VERSION_FILES=(
+    "apps/cli/src/dap_cli/__init__.py"
+    "packages/cortex/src/cortex/__init__.py"
+)
+for f in "${VERSION_FILES[@]}"; do
+    if [[ ! -f "$f" ]]; then
+        echo "  skip (missing): $f"
+        continue
     fi
-fi
+    if ! grep -q '^__version__ = "' "$f"; then
+        echo "  WARN: no __version__ line in $f — manual edit needed" >&2
+        continue
+    fi
+    OLD=$(grep '^__version__ = "' "$f" | head -1 | sed 's/^__version__ = "\(.*\)"$/\1/')
+    if [[ "$OLD" == "$NEW" ]]; then
+        echo "  unchanged ($NEW): $f"
+        continue
+    fi
+    sed -i.bak 's/^__version__ = "[^"]*"$/__version__ = "'"$NEW"'"/' "$f"
+    rm "${f}.bak"
+    echo "  $OLD -> $NEW: $f"
+done
 
 # uv.lock embeds the workspace member versions; refresh it so the
 # lock matches the bumped pyprojects before we commit.
