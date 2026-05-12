@@ -5,7 +5,7 @@ description = "DAP engine — FastAPI + LangGraph + SQLAlchemy + SQLite / Postgr
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "dap-types",
+    "dap-schemas",
     "dap-runtimes",
     "dap-prompt-dsl",
     "fastapi>=0.115.0",

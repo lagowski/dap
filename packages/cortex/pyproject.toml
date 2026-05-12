@@ -1,11 +1,15 @@
 [project]
-name = "cortex"
+# PyPI distribution name. The Python import path stays ``cortex`` —
+# that's the source directory ``src/cortex/`` configured below. The
+# prefix mirrors every other first-party package (dap-cli, dap-engine,
+# dap-runtimes, ...) and dodges the squatter at https://pypi.org/project/cortex/.
+name = "dap-cortex"
 version = "0.3.0"
 description = "Cortex pipeline nodes — runs inside DAP engine"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "dap-types",
+    "dap-schemas",
     "dap-runtimes",
     "pygithub>=2.5",
     "pydantic>=2.10",
