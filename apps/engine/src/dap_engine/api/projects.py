@@ -60,7 +60,7 @@ async def validate_env(payload: ValidateEnvRequest) -> ValidateEnvResponse:
                     },
                     timeout=10.0,
                 )
-            if resp.status_code == 200:
+            if resp.status_code == httpx.codes.OK:
                 login = resp.json().get("login")
                 results.append(
                     EnvVarValidationResult(key=key, is_token=True, valid=True, login=login)
@@ -74,7 +74,7 @@ async def validate_env(payload: ValidateEnvRequest) -> ValidateEnvResponse:
                         error=f"GitHub API returned {resp.status_code}",
                     )
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             results.append(
                 EnvVarValidationResult(
                     key=key,
