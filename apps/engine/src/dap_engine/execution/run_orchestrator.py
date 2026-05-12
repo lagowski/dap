@@ -19,7 +19,7 @@ import logging
 from typing import Any
 
 from dap_runtimes import RuntimeRegistry
-from dap_types import PipelineState
+from dap_types import PipelineDefaults, PipelineState
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -35,6 +35,22 @@ from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
 
 logger = logging.getLogger("dap.engine.execution.orchestrator")
+
+
+def _gate_node_from_interrupt(
+    interrupt: RunnerInterrupt, version_orm: PipelineVersionORM
+) -> str | None:
+    """Return the first approval-gate node staged in *interrupt*, or None.
+
+    Filters ``interrupt.next_nodes`` to the pipeline's
+    ``approval_required_nodes`` so a non-gate node appearing earlier in the
+    list (which LangGraph may stage alongside the gate) doesn't shadow the
+    real gate id stored in the Run row (#363 Copilot review).
+    """
+    approval_nodes = set(
+        PipelineDefaults.model_validate(version_orm.defaults).approval_required_nodes
+    )
+    return next((n for n in interrupt.next_nodes if n in approval_nodes), None)
 
 
 async def execute_run_background(
@@ -82,12 +98,12 @@ async def execute_run_background(
                     initial_state=initial_state,
                     resume=resume,
                 )
-            except RunnerInterrupt:
-                # Graph paused at an approval-required node (interrupt_before).
-                # This is a normal stop — mark run as paused so the operator
-                # can resume via POST /runs/{id}/resume or approve via
-                # POST /runs/{id}/nodes/{node_id}/approve (#164).
-                repo.pause_run(bg_session, run_id)
+            except RunnerInterrupt as interrupt:
+                repo.pause_run(
+                    bg_session,
+                    run_id,
+                    paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
+                )
                 bg_session.commit()
                 return
             except RunnerError as exc:
@@ -171,8 +187,12 @@ async def execute_rewind_background(
                     target_node=target_node,
                     mode=mode,
                 )
-            except RunnerInterrupt:
-                repo.pause_run(bg_session, run_id)
+            except RunnerInterrupt as interrupt:
+                repo.pause_run(
+                    bg_session,
+                    run_id,
+                    paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
+                )
                 bg_session.commit()
                 return
             except CheckpointNotFoundError as exc:

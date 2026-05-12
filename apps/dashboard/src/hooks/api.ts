@@ -290,6 +290,18 @@ export function useResumeRun() {
   return useRunActionMutation(api.resumeRun);
 }
 
+export function useApproveGate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, nodeId }: { runId: string; nodeId: string }) =>
+      api.approveGate(runId, nodeId),
+    onSuccess: (_data, { runId }) => {
+      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
+      qc.invalidateQueries({ queryKey: queryKeys.runs });
+    },
+  });
+}
+
 export function usePipelineVersions(
   id: string | null,
   options?: { enabled?: boolean },

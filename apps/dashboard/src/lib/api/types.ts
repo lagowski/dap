@@ -427,6 +427,8 @@ export interface Run {
   trigger_source: "dashboard" | "cli" | "api";
   initial_state: PipelineState;
   current_node: string | null;
+  /** Gate node the run is staged before when final_status=="paused" (#363). */
+  paused_at_node: string | null;
   node_statuses: Record<string, NodeStatus>;
   final_status: FinalStatus;
   /**
