@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Security posture doc (#346, sub-E4): `docs/security.md` covering
+  threat model (single-instance multi-user isolation; not a
+  reverse-proxy replacement), secrets handling (`.env.local`
+  policy, `DAP_AUTH_JWT_SECRET` rotation, provider-key scoping),
+  password storage (Argon2id via pwdlib + 8-char minimum
+  rationale), JWT signing (HS256, 15-min TTL, no refresh-token
+  flow), API tokens (`dap_<43chars>`, SHA-256-hashed in DB,
+  separate from JWT secret), soft-delete semantics + GDPR
+  hard-delete path, network exposure with Caddy / nginx
+  reverse-proxy templates, an explicit "v0.3 does NOT do" matrix
+  (rate limiting, 2FA, SSO, refresh tokens, encrypted-at-rest),
+  and a production hardening checklist.
 - Admin operator guide (#345, sub-E3): `docs/admin-guide.md` walking
   through the first-run flow (`dap init` modes + `.dap/bootstrap.json`
   marker), `/admin/users` (create / suspend / soft-delete / role
