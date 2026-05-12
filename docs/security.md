@@ -20,13 +20,18 @@ in front of the engine.
 
 ### `.env.local` is gitignored
 
-The repo's `.gitignore` covers `.env*` (except `.env.example`).
-Real secrets — JWT key, OAuth client secrets, provider API keys —
-live in `.env.local` (dev) or the deployment's secret manager
-(prod). The pre-push hook from `scripts/setup` blocks accidental
-pushes to `main` / `develop`, but it doesn't grep diffs for
-secrets; if you commit a credential by accident, **rotate
-immediately** — git history is permanent.
+The repo's `.gitignore` covers exactly three patterns: `.env`,
+`.env.local`, and `.env.*.local` (so `.env.production.local`,
+`.env.staging.local`, etc. are all safe). Other `.env.*` shapes
+(e.g. `.env.production` without `.local`) are **not** ignored —
+if you stash secrets in one of those, you'll commit them. Stick to
+the `.env.local` convention or extend `.gitignore` first. Real
+secrets — JWT key, OAuth client secrets, provider API keys — live
+in `.env.local` (dev) or the deployment's secret manager (prod).
+The pre-push hook from `scripts/setup` blocks accidental pushes to
+`main` / `develop`, but it doesn't grep diffs for secrets; if you
+commit a credential by accident, **rotate immediately** — git
+history is permanent.
 
 ### `DAP_AUTH_JWT_SECRET`
 
@@ -34,6 +39,12 @@ Signs the dashboard's cookie session (`dap-jwt`, httpOnly). When
 unset the engine generates a per-process random — fine for local
 dev (logged-in users get logged out on every restart), broken in
 multi-replica deploys (each replica is signing with its own key).
+
+Note: the standalone **Docker entrypoint** (`docker/entrypoint.sh`)
+fails fast with exit code 64 if `DAP_AUTH_JWT_SECRET` is missing,
+so the per-process-random fallback only applies to source / pipx
+installs. Compose deployments either set the secret or refuse to
+start.
 
 **Rotation procedure:**
 
@@ -123,16 +134,23 @@ against the engine inside that 15-min window would succeed.
 (≈ 256 bits of entropy). The `dap_` prefix lets log filters and
 git-secret scanners catch them in plaintext.
 
-The first 8 chars after `dap_` are split off as an indexed
-`prefix` column in the DB (lets us look up the candidate row
-without scanning), and the entire raw token is SHA-256-hashed in
-`token_hash`. The full token is **never stored** — operators who
-lose it must mint a new one.
+The first 8 chars after `dap_` are split off and stored in the
+indexed `token_prefix` DB column (so we can look up the candidate
+row without table-scanning), and the entire raw token is
+SHA-256-hashed into `token_hash`. The full token is **never
+stored** — operators who lose it must mint a new one. The
+public-facing field on `ApiTokenRead` is named `prefix` (renamed
+from the underlying column for API ergonomics); manual SQL
+queries should use the actual `token_prefix` column name.
 
 ### Validation
 
-`hmac.compare_digest(token.token_hash, hashlib.sha256(raw).hexdigest())`
-— constant-time compare against the row located by `prefix`.
+```python
+candidate = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+hmac.compare_digest(token.token_hash, candidate)
+```
+
+Constant-time compare against the row located by `token_prefix`.
 
 ### Revocation
 
@@ -207,8 +225,9 @@ a reverse proxy that terminates TLS.**
 | Brute-force / rate limiting | Reverse proxy |
 | HSTS, security headers | Reverse proxy |
 | WAF / IP allowlists | Reverse proxy |
-| Auth / session cookies | Engine (`dap-jwt`) |
-| Authorization | Engine (ownership filters) |
+| `dap-jwt` cookie set / read | Dashboard (Next.js `/api/auth/*` route handlers) |
+| `Authorization: Bearer` header → JWT validation | Engine |
+| Authorization (ownership filters, admin role) | Engine |
 | CORS allow-list | Engine (`DAP_CORS_ORIGINS`) |
 
 ### Same-origin proxy
