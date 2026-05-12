@@ -1,4 +1,4 @@
-# dap-types
+# dap-schemas
 
 Shared Pydantic v2 types używane przez engine, runtimes i CLI.
 

@@ -1,6 +1,8 @@
-# cortex
+# dap-cortex
 
 Cortex pipeline nodes — runs inside the DAP engine.
+
+Published to PyPI as `dap-cortex` (import path remains `cortex`).
 
 This package was migrated from a standalone `cortex-project` repo and currently
 ships:
@@ -10,10 +12,19 @@ ships:
   pr_merger, tester, validators, …)
 - **`cortex.config`** — agent / pipeline configuration loaded from YAML
 
-## Usage
+## Installation
 
-This package is consumed by `dap-engine` as a workspace dependency. Not
-published to PyPI; install via the repository workspace:
+```bash
+pip install dap-cortex
+# or
+uv add dap-cortex
+```
+
+The import path is unchanged — use `from cortex.nodes import ...` as before.
+
+## Workspace usage
+
+Inside the monorepo, installed as a workspace member:
 
 ```bash
 uv sync --all-packages
