@@ -65,8 +65,10 @@ with the new password and rotates it themselves.
 **2. Self-service with `DAP_AUTH_LOG_RESET_TOKENS=1`.** Useful for
 local-dev / single-operator instances without mail delivery. The
 user posts to `/auth/forgot-password` with their email, the engine
-emits the raw reset token at WARNING level on stdout, the operator
-copies it out of the logs, and the user submits it back via
+emits the raw reset token at WARNING level in the engine logs (the
+same stream `logging.basicConfig` writes to — stderr by default,
+journald or `docker logs` under systemd / Docker), the operator
+copies it out, and the user submits it back via
 `/auth/reset-password`:
 
 ```bash
@@ -74,15 +76,17 @@ copies it out of the logs, and the user submits it back via
 curl -X POST http://localhost:7333/auth/forgot-password \
     -H 'content-type: application/json' \
     -d '{"email":"alice@example.com"}'
-# Engine logs (on stderr / journald):
-#   WARNING dap.engine.auth: user.forgot_password (token issued, email delivery TODO):
-#     user_id=<uuid> reset_token=<token>
+# Engine logs line (default format
+#   "%(asctime)s %(levelname)-7s %(name)s | %(message)s"):
+#   12:34:56 WARNING dap.engine.auth | user.forgot_password (token issued, email delivery TODO): user_id=<uuid> reset_token=<token>
 
 # User submits the token (operator hands it over)
 curl -X POST http://localhost:7333/auth/reset-password \
     -H 'content-type: application/json' \
     -d '{"token":"<token>","password":"new-password-12345"}'
 ```
+
+Grep target: ``dap.engine.auth | user.forgot_password``.
 
 **Never leave `DAP_AUTH_LOG_RESET_TOKENS=1` in production.** Reset
 tokens are account-takeover credentials; log aggregation routinely
@@ -239,15 +243,18 @@ JWT-based login.
 
 ### List
 
-`GET /auth/api-tokens` returns tokens you own (with `token_prefix`
-for identification, never the full value). Admins see every token
-across users via `/admin/api-tokens`.
+`GET /auth/api-tokens` returns tokens you own (each carries the
+`prefix` field for identification, never the full value). Admins
+see every token across users via `GET /auth/api-tokens/admin`. The
+dashboard navigates to this surface at `/admin/api-tokens` — that
+URL is a *frontend route*, not an engine endpoint.
 
 ### Revoke
 
 `DELETE /auth/api-tokens/{id}` (self) or `DELETE
-/admin/api-tokens/{id}` (admin-wide). Both fire an audit event;
-subsequent requests with that token return 401.
+/auth/api-tokens/admin/{id}` (admin-wide). Both fire an audit
+event; subsequent requests with that token return 401. The
+dashboard surfaces both flows under `/admin/api-tokens`.
 
 ---
 
