@@ -155,11 +155,29 @@ def ensure_admin_user(
             existing.is_superuser = True
             existing.is_active = True
             existing.deleted_at = None
+            # Password-reset path (sub-E3 Copilot review): when the
+            # operator supplied an **explicit** password (not the
+            # auto-generate flow), apply it on the existing row. This
+            # is the documented lost-admin-password recovery flow —
+            # ``dap init --force --admin-email=X --admin-password=Y``
+            # both promotes X to admin AND sets Y as the password.
+            # We deliberately do *not* apply auto-generated passwords
+            # to existing users; on re-run with no ``--admin-password``,
+            # the existing credentials stay intact (silently rotating
+            # to a fresh random would break the operator's working
+            # login). ``generated is None`` is the unambiguous signal
+            # for "operator supplied this value explicitly".
+            if generated is None:
+                existing.hashed_password = hashed_password
             session.commit()
             return BootstrapResult(
                 user_id=existing.id,
                 email=email,
-                generated_password=generated,
+                # Never expose a generated password for an existing
+                # user — we didn't apply it, so returning it would
+                # mislead the operator into thinking the password
+                # changed.
+                generated_password=None,
                 promoted_existing=True,
             )
 

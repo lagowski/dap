@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Admin operator guide (#345, sub-E3): `docs/admin-guide.md` walking
+  through the first-run flow (`dap init` modes + `.dap/bootstrap.json`
+  marker), `/admin/users` (create / suspend / soft-delete / role
+  toggle), `/admin/audit-log` (every emitted `event_type` catalogued,
+  filter semantics, retention story), `/admin/api-tokens` (admin-wide
+  view + revocation), and three recovery procedures (lost admin
+  password, JWT secret rotation, corrupted SQLite).
 - Auth setup guide (#344, sub-E2): `docs/auth.md` covering all four
   credential mechanisms — email+password (with admin-driven reset
   + `DAP_AUTH_LOG_RESET_TOKENS` dev workaround), GitHub OAuth
