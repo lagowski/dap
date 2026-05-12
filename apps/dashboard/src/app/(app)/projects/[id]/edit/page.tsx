@@ -56,6 +56,7 @@ export default function EditProjectPage({
               repo_url: project.repo_url,
               default_branch: project.default_branch,
               env_vars: project.env_vars,
+              pipelines: project.pipelines,
             }}
             onSubmit={async (values) => {
               await update.mutateAsync({
@@ -67,10 +68,7 @@ export default function EditProjectPage({
                   repo_url: values.repo_url,
                   default_branch: values.default_branch,
                   env_vars: values.env_vars,
-                  // Bindings are managed on the detail page; preserve
-                  // them through the update so a metadata edit doesn't
-                  // wipe the user's workflow wiring.
-                  pipelines: project.pipelines,
+                  pipelines: values.pipelines,
                 },
               });
               router.push(`/projects/${id}`);
