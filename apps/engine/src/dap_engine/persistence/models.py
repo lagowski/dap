@@ -484,6 +484,7 @@ class RunORM(Base):
     initial_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
     current_node: Mapped[str | None] = mapped_column(String, nullable=True)
+    paused_at_node: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     node_statuses: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
 
     final_status: Mapped[str] = mapped_column(String, nullable=False)

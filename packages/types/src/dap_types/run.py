@@ -31,6 +31,10 @@ class Run(BaseModel):
     initial_state: PipelineState
 
     current_node: str | None = None
+    # Populated when final_status=="paused" via an interrupt_before gate.
+    # Contains the node id the graph is staged to run next, so the dashboard
+    # can show "Approve" (not generic "Resume") and call the right endpoint.
+    paused_at_node: str | None = None
     node_statuses: dict[str, NodeStatus] = Field(default_factory=dict)
 
     final_status: FinalStatus = "running"

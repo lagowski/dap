@@ -72,6 +72,7 @@ def _run_from_orm(
         trigger_source=run.trigger_source,  # type: ignore[arg-type]
         initial_state=PipelineState.model_validate(run.initial_state),
         current_node=run.current_node,
+        paused_at_node=run.paused_at_node,
         node_statuses=(
             node_statuses_override  # type: ignore[arg-type]
             if node_statuses_override is not None
@@ -354,8 +355,17 @@ def finalize_run(
     session.flush()
 
 
-def pause_run(session: Session, run_id: str) -> None:
+def pause_run(
+    session: Session,
+    run_id: str,
+    *,
+    paused_at_node: str | None = None,
+) -> None:
     """Mark a run as paused without setting ended_at (resumable).
+
+    ``paused_at_node`` records the gate node that triggered the interrupt
+    so the dashboard can show a targeted "Approve" action instead of the
+    generic "Resume" button (#363).
 
     Idempotent and race-safe (#257), same atomic-UPDATE pattern as
     ``finalize_run``. A late pause attempt on an already-terminal run
@@ -363,17 +373,20 @@ def pause_run(session: Session, run_id: str) -> None:
     ``None`` and erase the recorded outcome.
     """
     tokens, cost = _compute_run_totals(session, run_id)
+    values: dict[str, object] = {
+        "final_status": "paused",
+        "tokens_used": tokens,
+        "cost_usd": cost,
+    }
+    if paused_at_node is not None:
+        values["paused_at_node"] = paused_at_node
     stmt = (
         update(RunORM)
         .where(
             RunORM.id == run_id,
             RunORM.final_status.notin_(_TERMINAL_STATUSES),
         )
-        .values(
-            final_status="paused",
-            tokens_used=tokens,
-            cost_usd=cost,
-        )
+        .values(**values)
     )
     result = session.execute(stmt)
     if result.rowcount == 0:  # type: ignore[attr-defined]
@@ -401,7 +414,12 @@ def try_claim_resume(session: Session, run_id: str) -> bool:
     stmt = (
         update(RunORM)
         .where(RunORM.id == run_id, RunORM.final_status == "paused")
-        .values(final_status="running", ended_at=None, failure_reason=None)
+        .values(
+            final_status="running",
+            ended_at=None,
+            failure_reason=None,
+            paused_at_node=None,
+        )
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
     # CursorResult exposes .rowcount, which the static Result[Any] type does not.

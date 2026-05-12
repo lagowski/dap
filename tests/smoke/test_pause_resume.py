@@ -533,6 +533,38 @@ def test_try_claim_resume_atomic(
     assert second is False  # Already claimed by s1 — no row matches WHERE paused.
 
 
+def test_paused_at_node_populated_on_gate_interrupt(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Run paused at an approval gate exposes paused_at_node in GET /runs/{id} (#363)."""
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    run = client.get(f"/runs/{run_id}").json()
+    assert run["final_status"] == "paused"
+    assert run["paused_at_node"] == "n2"
+
+
+def test_paused_at_node_cleared_on_resume(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """paused_at_node is cleared when the run is resumed (#363)."""
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    assert client.get(f"/runs/{run_id}").json()["paused_at_node"] == "n2"
+
+    client.post(f"/runs/{run_id}/nodes/n2/approve")
+    _wait_for_status(client, run_id, {"success", "failed"})
+
+    run = client.get(f"/runs/{run_id}").json()
+    assert run["paused_at_node"] is None
+
+
 def test_try_claim_revive_accepts_paused_and_failed() -> None:
     """try_claim_revive WHERE clause covers both 'paused' and 'failed' (#185)."""
     import datetime as dt

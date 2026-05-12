@@ -82,12 +82,12 @@ async def execute_run_background(
                     initial_state=initial_state,
                     resume=resume,
                 )
-            except RunnerInterrupt:
+            except RunnerInterrupt as interrupt:
                 # Graph paused at an approval-required node (interrupt_before).
-                # This is a normal stop — mark run as paused so the operator
-                # can resume via POST /runs/{id}/resume or approve via
-                # POST /runs/{id}/nodes/{node_id}/approve (#164).
-                repo.pause_run(bg_session, run_id)
+                # Store the gate node so the dashboard can show a targeted
+                # "Approve" action (#363).
+                paused_at = interrupt.next_nodes[0] if interrupt.next_nodes else None
+                repo.pause_run(bg_session, run_id, paused_at_node=paused_at)
                 bg_session.commit()
                 return
             except RunnerError as exc:
@@ -171,8 +171,9 @@ async def execute_rewind_background(
                     target_node=target_node,
                     mode=mode,
                 )
-            except RunnerInterrupt:
-                repo.pause_run(bg_session, run_id)
+            except RunnerInterrupt as interrupt:
+                paused_at = interrupt.next_nodes[0] if interrupt.next_nodes else None
+                repo.pause_run(bg_session, run_id, paused_at_node=paused_at)
                 bg_session.commit()
                 return
             except CheckpointNotFoundError as exc:

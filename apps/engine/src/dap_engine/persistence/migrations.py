@@ -628,6 +628,19 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
     )
 
 
+def _016_runs_add_paused_at_node(conn: Connection) -> None:
+    """#363 — store which gate node caused the run to pause.
+
+    Allows the dashboard to show a targeted "Approve" action instead of
+    the generic "Resume" button when a run is paused at an approval gate.
+    Fresh DBs already have the column from ``create_all``; this guards
+    upgrades from pre-#363 dev DBs.
+    """
+    if _column_exists(conn, "runs", "paused_at_node"):
+        return
+    conn.execute(text("ALTER TABLE runs ADD COLUMN paused_at_node TEXT"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
@@ -659,6 +672,7 @@ MIGRATIONS: list[Migration] = [
         name="015_promote_system_user_to_legacy_admin",
         apply=_015_promote_system_user_to_legacy_admin,
     ),
+    Migration(name="016_runs_add_paused_at_node", apply=_016_runs_add_paused_at_node),
 ]
 
 

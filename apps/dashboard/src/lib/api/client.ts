@@ -222,6 +222,13 @@ export async function resumeRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${encodeURIComponent(id)}/resume`, { method: "POST" });
 }
 
+export async function approveGate(runId: string, nodeId: string): Promise<Run> {
+  return request<Run>(
+    `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/approve`,
+    { method: "POST" },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Pipelines
 // ---------------------------------------------------------------------------
