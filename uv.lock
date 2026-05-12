@@ -392,7 +392,7 @@ wheels = [
 
 [[package]]
 name = "cortex"
-version = "0.0.1"
+version = "0.3.0"
 source = { editable = "packages/cortex" }
 dependencies = [
     { name = "asyncpg" },
@@ -495,7 +495,7 @@ wheels = [
 
 [[package]]
 name = "dap-cli"
-version = "0.0.1"
+version = "0.3.0"
 source = { editable = "apps/cli" }
 dependencies = [
     { name = "dap-engine" },
@@ -518,7 +518,7 @@ requires-dist = [
 
 [[package]]
 name = "dap-engine"
-version = "0.0.1"
+version = "0.3.0"
 source = { editable = "apps/engine" }
 dependencies = [
     { name = "alembic" },
@@ -557,7 +557,7 @@ requires-dist = [
 
 [[package]]
 name = "dap-prompt-dsl"
-version = "0.0.1"
+version = "0.3.0"
 source = { editable = "packages/prompt-dsl" }
 dependencies = [
     { name = "defusedxml" },
@@ -574,7 +574,7 @@ requires-dist = [
 
 [[package]]
 name = "dap-runtimes"
-version = "0.0.1"
+version = "0.3.0"
 source = { editable = "packages/runtimes" }
 dependencies = [
     { name = "anthropic" },
@@ -601,7 +601,7 @@ requires-dist = [
 
 [[package]]
 name = "dap-types"
-version = "0.0.1"
+version = "0.3.0"
 source = { editable = "packages/types" }
 dependencies = [
     { name = "pydantic" },
@@ -612,7 +612,7 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.9.2" }]
 
 [[package]]
 name = "dap-workspace"
-version = "0.0.1"
+version = "0.3.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

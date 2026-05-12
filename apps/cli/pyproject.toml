@@ -1,6 +1,6 @@
 [project]
 name = "dap-cli"
-version = "0.0.1"
+version = "0.3.0"
 description = "DAP CLI launcher (dap init / start / stop / status)"
 readme = "README.md"
 requires-python = ">=3.13"
