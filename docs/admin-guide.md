@@ -8,13 +8,18 @@ team — single instance, shared database, you wear the admin hat.
 Out of scope here: provider-app setup (see
 [`auth.md`](auth.md)) and deployment / env vars (see
 [`self-hosting.md`](self-hosting.md)). The security posture
-itself — what we protect against, what we don't — lives in
-[`security.md`](security.md).
+itself — what we protect against, what we don't — lands in
+`docs/security.md` (sub-E4, in flight).
 
 ## First-run flow
 
-A fresh DAP instance has zero users. The instance refuses every API
-call until at least one admin exists.
+A fresh DAP instance has zero users. `/health` and `POST
+/auth/register` stay open (so the dashboard and the engine itself
+can come up), but every admin-only surface
+(`/admin/*` in the dashboard, `GET /users`, `GET /audit/events`,
+`GET /auth/api-tokens/admin`) is inaccessible until you bootstrap
+an admin — the engine returns `404` on those for
+non-admin / anonymous callers.
 
 ### Bootstrap the admin
 
@@ -89,9 +94,14 @@ The admin user table. Underlying engine endpoints:
   `is_active`, email, password.
 - `DELETE /users/{id}` — soft delete (sets `deleted_at`).
 
-Non-admin users hitting these endpoints get **404** (anti-enumeration),
-not 403 — matches the rest of the ownership-aware surface so
-attackers can't probe whether an admin endpoint exists.
+The anti-enumeration rule (return **404**, not 403) covers the
+admin-only *list* endpoints DAP adds — `GET /users`,
+`GET /audit/events`, `GET /auth/api-tokens/admin` — so attackers
+can't probe whether an admin surface exists. The per-row routes
+fastapi-users provides (`PATCH /users/{id}`, `DELETE /users/{id}`)
+return its standard `403` for non-admin callers; we didn't override
+that since they only authorize against the *target* row, which is
+indexed by an opaque UUID.
 
 ### Create
 
@@ -112,9 +122,12 @@ doesn't accept `is_superuser` on register, by design).
 
 - **Email** — changing it invalidates any pending OAuth identity
   matches; the user must re-link.
-- **Password** — admin sets a temporary value; user rotates via
-  `/auth/reset-password` (with the temp password) or
-  `/admin/users` again.
+- **Password** — admin sets a temporary value via the user-edit
+  form (engine: `PATCH /users/{id}` with `password=...`); user logs
+  in with the temp value and rotates via `PATCH /users/me` from
+  `/profile`. (`/auth/reset-password` is the token-based
+  forgot-password flow, not a "change password" endpoint —
+  cf. [`auth.md`](auth.md#password-reset).)
 - **Role** — toggles `is_superuser`.
 - **Active** — toggles `is_active`. False → user can't log in, but
   audit history and owned resources are preserved.
@@ -130,10 +143,15 @@ doesn't accept `is_superuser` on register, by design).
   user — visible to admins for audit, invisible to other users.
 
 Hard delete (drop the row + all owned resources) is **out of
-scope** in v0.3. If you need it: stop the engine, open the SQLite
-file with `sqlite3`, run `DELETE FROM users WHERE id=...` after
-nulling out the FKs in `pipelines`, `agents`, `projects`,
-`runs`, `audit_log`. A managed UI for this lands in v0.4.
+scope** in v0.3. If you need it: stop the engine, then
+`DELETE FROM users WHERE id=...` against the DB. The user's
+`pipelines` / `agents` / `projects` / `runs` / `oauth_accounts` /
+`api_tokens` cascade-delete automatically (`ondelete=CASCADE` on
+each `user_id` FK to `users.id`). The `audit_log` is **not**
+FK-linked to `users` (audit integrity preserved over referential
+cleanliness) — its rows survive the user deletion with their
+original `user_id` value, which is what you want for compliance.
+A managed admin UI for hard delete lands in v0.4.
 
 ### Promote a normal user to admin
 
@@ -163,7 +181,7 @@ ownership repositories. Underlying endpoint:
 | `user.password_reset` | `POST /auth/reset-password` succeeds |
 | `user.deleted` | Soft-delete via `DELETE /users/{id}` |
 | `api_token.created` | `POST /auth/api-tokens` mint |
-| `api_token.revoked` | `DELETE /auth/api-tokens/{id}` or `/admin/{id}` |
+| `api_token.revoked` | `DELETE /auth/api-tokens/{id}` (self) or `DELETE /auth/api-tokens/admin/{id}` (admin) |
 | `agent.created` / `.updated` / `.archived` | Lifecycle on `/agents` |
 | `pipeline.created` / `.updated` / `.archived` | Lifecycle on `/pipelines` |
 | `project.created` / `.updated` / `.archived` | Lifecycle on `/projects` |
@@ -213,7 +231,12 @@ engine endpoints:
 
 The page surfaces:
 
-- Token `prefix` (e.g. `dap_abc1`) — for identification.
+- Token `prefix` — the 8-char indexed prefix used for DB lookup,
+  e.g. `abc12345`. The **raw token** is `dap_<prefix><rest>`, shown
+  exactly once at creation and never persisted. Operators identify
+  a token in the admin list by matching its prefix against the
+  first 8 chars after `dap_` in the value the user originally
+  captured.
 - Owner email + display name.
 - `name` label set at creation.
 - `created_at` / `last_used_at` / `expires_at` / `revoked_at`.
@@ -234,39 +257,44 @@ Two recovery paths depending on whether you can still reach the
 engine machine:
 
 **1. From a shell on the engine host** — re-run `dap init`. The
-command is idempotent: an existing email is *promoted* to admin
-(with the new password) without rolling back the user's data.
+command is idempotent: an existing email is *promoted* to admin,
+and **when you pass `--admin-password=<new>` explicitly, the new
+value overwrites the stored hash**. Without `--admin-password`,
+the existing credentials are preserved untouched (so you can
+re-bootstrap to fix `is_superuser`/`is_active` without rotating
+the password).
 
 ```bash
-# Local dev / single-machine
+# Local dev / single-machine — rotates password to <new>
 cd /path/to/.dap/parent
 dap init --force --admin-email=you@example.com --admin-password=<new>
 
-# Docker
+# Docker — same shape; reads $DAP_DB_PATH internally
 docker compose -f examples/standalone/docker-compose.yml exec dap \
     dap init --force --admin-email=you@example.com --admin-password=<new>
 ```
 
 `--force` is required because `.dap/` already exists; without it
-`dap init` refuses to clobber.
+`dap init` refuses to clobber the project skeleton (though the
+DB-side operations still respect `--force` semantics).
 
 **2. From raw SQL** — if `dap` isn't installed but you have DB
-access. Generate a new bcrypt-compatible hash (Argon2id is
-preferred but writes are simpler if you use a bcrypt-shaped hash
-since fastapi-users' PasswordHelper accepts both):
+access. fastapi-users' `PasswordHelper` produces an Argon2id hash
+(via `pwdlib`); that's the format the engine writes and verifies:
 
 ```bash
 python3 -c "
 from fastapi_users.password import PasswordHelper
 print(PasswordHelper().hash('your-new-password'))
 "
-# → '\$argon2id\$v=19\$m=65536,t=3,p=4\$...'
+# → '\$argon2id\$v=19\$m=65536,t=3,p=4\$<salt>\$<hash>'
 
 sqlite3 .dap/state.db \
-    "UPDATE users SET hashed_password='<hash>', is_active=1 WHERE email='you@example.com';"
+    "UPDATE users SET hashed_password='<hash>', is_active=1, is_superuser=1
+     WHERE email='you@example.com';"
 ```
 
-Log in with `your-new-password`; rotate from `/admin/users` once
+Log in with `your-new-password`; rotate again via `/profile` once
 you're in.
 
 ### Lost JWT secret / suspected key compromise

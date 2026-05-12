@@ -143,6 +143,65 @@ def test_init_rerun_promotes_existing_user(project_dir: Path) -> None:
     assert _try_login(dap_dir / "state.db", email, GOOD_PASSWORD)
 
 
+def test_init_rerun_with_new_password_resets_password(project_dir: Path) -> None:
+    """When the operator re-runs ``dap init --force`` against an
+    existing email AND passes a new ``--admin-password``, the new
+    password must take effect (lost-admin-password recovery flow).
+
+    Regression for the Copilot review on sub-E3 (#345): admin-guide.md
+    documented this as the recovery procedure, but the bootstrap was
+    only updating ``is_superuser`` / ``is_active`` and leaving the
+    existing ``hashed_password`` intact — locking operators out of
+    their own recovery path.
+    """
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+    initial_password = "initial-password-12345"
+    new_password = "rotated-password-67890"
+
+    # 1. First bootstrap with the initial password.
+    init_command(admin_email=email, admin_password=initial_password)
+    db_path = project_dir / ".dap" / "state.db"
+    assert _try_login(db_path, email, initial_password)
+
+    # 2. Operator forgets the password, re-runs with --force + new password.
+    init_command(admin_email=email, admin_password=new_password, force=True)
+
+    # 3. The new password works...
+    assert _try_login(db_path, email, new_password), (
+        "after rerun with new --admin-password, the new password should authenticate"
+    )
+    # ...and the old one doesn't (proves the rotation actually happened,
+    # not just that the new password was added alongside).
+    assert not _try_login(db_path, email, initial_password), (
+        "old password should be invalidated after rerun"
+    )
+
+
+def test_init_rerun_without_password_preserves_existing(project_dir: Path) -> None:
+    """Re-running ``dap init`` WITHOUT an explicit password (the
+    auto-generate path) against an existing user must NOT silently
+    rotate that user's credentials.
+
+    Operators trip this when they re-run ``dap init`` to fix an
+    unrelated setting (e.g. promote to admin) and would be unpleasantly
+    surprised to find their existing login broken.
+    """
+    email = f"admin-{uuid.uuid4().hex[:8]}@dap.local"
+    explicit_password = "set-by-operator-12345"
+
+    init_command(admin_email=email, admin_password=explicit_password)
+    db_path = project_dir / ".dap" / "state.db"
+
+    # Re-run WITHOUT --admin-password — bootstrap would normally
+    # auto-generate one. For an EXISTING user, the auto-generated
+    # value must not be applied.
+    init_command(admin_email=email, admin_password=None, force=True)
+
+    assert _try_login(db_path, email, explicit_password), (
+        "auto-generated password should NOT have replaced the existing one"
+    )
+
+
 # --------------------------------------------------------------------- #
 # 3. Random-password generation
 # --------------------------------------------------------------------- #
