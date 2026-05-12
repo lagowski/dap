@@ -19,7 +19,7 @@ import logging
 from typing import Any
 
 from dap_runtimes import RuntimeRegistry
-from dap_types import PipelineState
+from dap_types import PipelineDefaults, PipelineState
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -35,6 +35,22 @@ from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
 
 logger = logging.getLogger("dap.engine.execution.orchestrator")
+
+
+def _gate_node_from_interrupt(
+    interrupt: RunnerInterrupt, version_orm: PipelineVersionORM
+) -> str | None:
+    """Return the first approval-gate node staged in *interrupt*, or None.
+
+    Filters ``interrupt.next_nodes`` to the pipeline's
+    ``approval_required_nodes`` so a non-gate node appearing earlier in the
+    list (which LangGraph may stage alongside the gate) doesn't shadow the
+    real gate id stored in the Run row (#363 Copilot review).
+    """
+    approval_nodes = set(
+        PipelineDefaults.model_validate(version_orm.defaults).approval_required_nodes
+    )
+    return next((n for n in interrupt.next_nodes if n in approval_nodes), None)
 
 
 async def execute_run_background(
@@ -83,11 +99,11 @@ async def execute_run_background(
                     resume=resume,
                 )
             except RunnerInterrupt as interrupt:
-                # Graph paused at an approval-required node (interrupt_before).
-                # Store the gate node so the dashboard can show a targeted
-                # "Approve" action (#363).
-                paused_at = interrupt.next_nodes[0] if interrupt.next_nodes else None
-                repo.pause_run(bg_session, run_id, paused_at_node=paused_at)
+                repo.pause_run(
+                    bg_session,
+                    run_id,
+                    paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
+                )
                 bg_session.commit()
                 return
             except RunnerError as exc:
@@ -175,7 +191,7 @@ async def execute_rewind_background(
                 repo.pause_run(
                     bg_session,
                     run_id,
-                    paused_at_node=interrupt.next_nodes[0] if interrupt.next_nodes else None,
+                    paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
                 )
                 bg_session.commit()
                 return
