@@ -1,200 +1,239 @@
 # DAP — Deterministic Agent Pipeline
 
-Lokalna aplikacja do budowy i wykonywania deterministycznych pipeline'ów agentowych. Paperclip-like UX, DAP-owe zasady (state machine + XML prompts + runtime adapters).
+[![CI](https://github.com/rafeekpro/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rafeekpro/dap/actions/workflows/ci.yml)
 
-Pełny plan architektoniczny: [`../LOCAL_APP_PLAN.md`](../LOCAL_APP_PLAN.md)
-Dokumentacja koncepcyjna: [`../DOCUMENTATION.md`](../DOCUMENTATION.md)
+DAP is a self-hostable, multi-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control. Anti-emergent by design: the state machine, not the model, decides what runs next.
 
----
+## Install paths
 
-## Stan implementacji
+Three supported install paths, in order of complexity:
 
-### ✅ F0 — Monorepo skeleton (ukończone 2026-04-23, zweryfikowane 2026-04-24)
+1. **PyPI** — `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`. Single-machine. The wheel ships with the bundled Next.js dashboard; `dap start` spawns the dashboard alongside the engine when `node` is on `PATH`, and runs engine-only otherwise (the CLI prints a hint).
+2. **Docker** — `ghcr.io/rafeekpro/dap:0.3.0` for shared / production deployments. See [`examples/standalone/`](examples/standalone/) for a working compose file with SQLite (default) or Postgres.
+3. **Source** — for contributors. The `scripts/setup` + `scripts/dev` flow below.
 
-Scaffolding wszystkich workspace'ów, tooling, baseline REST API, persystencja SQLite, placeholdery runtime adapters.
+See [**docs/self-hosting.md**](docs/self-hosting.md) for full deployment, OAuth setup, production checklist, and troubleshooting.
 
-**Zweryfikowane end-to-end:**
-- `pnpm install` — 185 paczek, ~10s
-- `pnpm build` — Turbo 5/5 successful, ~4.5s
-- `dap --version` → `0.0.1`
-- `dap init` → tworzy `.dap/` z pełną strukturą
-- `dap start` → engine na `127.0.0.1:7333`
-- `GET /health` → `{"status":"ok","service":"@dap/engine","version":"0.0.1",...}`
-- `GET /runtimes` → lista 7 adapterów (bash, http, api-call, claude-code, gemini-cli, codex, aider)
-- `GET /runtimes/:id/health` → healthcheck per runtime (bash ✓ available, cli agents ✗ missing binary)
-- SQLite `state.db` utworzony, WAL mode aktywny (`state.db-shm`, `state.db-wal`)
+### Upgrading from 0.0.1
 
-### Planowane
-
-| Faza  | Zakres                                                              |
-| ----- | ------------------------------------------------------------------- |
-| F1    | CLI process management, stop/status, port discovery                 |
-| F2    | Engine: REST CRUD dla agents/pipelines/runs                         |
-| F3    | Runtime adapters 1st wave — `api-call`, `bash`, `claude-code`       |
-| F4    | Prompt Builder (Nunjucks → XML, schema validator)                   |
-| F5    | Pipeline execution (LangGraph.js bootstrap, state diff, checkpointing) |
-| F6    | Dashboard viewer (Runs List, Run Detail, Node Drawer)               |
-| F7    | Dashboard Pipeline Designer                                         |
-| F8    | Agent & runtime registry UI                                         |
-| F9    | Runtime adapters 2nd wave — `gemini-cli`, `codex`, `aider`, `http`  |
-| F10   | New Run wizard + GitHub PAT integration                             |
-| F11   | Polish: keychain, export/import, dark mode                          |
-| F12   | Packaging, `npm publish`, cross-platform verification               |
-
----
-
-## Struktura monorepo
+v0.3.0 introduces multi-user auth on top of the existing engine. The first time you start it against a pre-v0.3 `.dap/state.db`, the auto-migration creates a `legacy-admin@local` admin and **prints the generated password exactly once on stdout**:
 
 ```
-dap/
-├─ .gitignore, .nvmrc, README.md
-├─ package.json                    root (pnpm workspaces + Turbo)
-├─ pnpm-workspace.yaml
-├─ turbo.json
-├─ tsconfig.base.json              strict TS, ES2022, composite
-│
-├─ apps/
-│  ├─ cli/                         @dap/cli — Node launcher (commander)
-│  │  └─ src/
-│  │     ├─ index.ts               (dap init|start|stop|status|--version)
-│  │     ├─ paths.ts               (.dap/, config.json, state.db)
-│  │     └─ commands/              (init, start, stop, status)
-│  │
-│  ├─ engine/                      @dap/engine — Fastify + LangGraph.js + Drizzle
-│  │  └─ src/
-│  │     ├─ index.ts               createEngine factory
-│  │     ├─ bin.ts                 standalone entry
-│  │     ├─ api/                   (health, runtimes)
-│  │     └─ persistence/
-│  │        ├─ schema.ts           agents, pipelines, runs, snapshots, logs
-│  │        └─ db.ts               better-sqlite3 + drizzle, WAL mode
-│  │
-│  └─ dashboard/                   @dap/dashboard — placeholder (F6)
-│
-└─ packages/
-   ├─ types/                       @dap/types — Agent, Pipeline, Run, State, Runtime
-   └─ runtimes/                    @dap/runtimes — RuntimeAdapter interface + registry
-      └─ src/adapters/             bash, http, api-call, claude-code,
-                                   gemini-cli, codex, aider  (stuby F0)
+Migrated single-user install. Bootstrap admin: legacy-admin@local
+with password=<random>. Change immediately at /admin/users.
 ```
 
-## Tech stack
+Capture the password from the engine log on first boot. If you miss it: `dap init --force --admin-email=legacy-admin@local --admin-password=<new>` re-promotes the existing row with the new password. Existing pipelines / agents / projects / runs are preserved and owned by the legacy admin — re-assign ownership from `/admin/users` as you onboard your team.
 
-| Warstwa               | Wybór                                 |
-| --------------------- | ------------------------------------- |
-| Runtime               | Node.js 22 LTS                        |
-| Language              | TypeScript 5.6 (strict)               |
-| Monorepo              | pnpm 9 workspaces + Turborepo 2       |
-| CLI                   | commander.js 12                       |
-| Engine HTTP           | Fastify 5                             |
-| State machine         | @langchain/langgraph (F5+)            |
-| DB                    | better-sqlite3 + Drizzle ORM          |
-| Subprocess            | execa 9                               |
-| Schema validation     | Zod                                   |
-| Dashboard (F6)        | Next.js 15 + shadcn/ui + React Flow   |
+Scripts that hit `localhost:7333` unauthenticated need an API token now (`/admin/api-tokens` → mint → set `Authorization: Bearer dap_*`). See [`docs/auth.md`](docs/auth.md#api-tokens) for the lifecycle.
 
----
+## Requirements (source install)
 
-## Quickstart
+- Python 3.13+
+- [uv](https://docs.astral.sh/uv/) 0.8+
+- Node 22+
+- pnpm 9+
 
-Wymagania: Node 22+, pnpm 9+.
+`scripts/setup` checks all four for you, so you don't need to verify by hand. If you do want to install them yourself: `pyenv install 3.13 && pyenv local 3.13`, `curl -LsSf https://astral.sh/uv/install.sh | sh`, `nvm install 22 && nvm use 22`, `corepack enable && corepack prepare pnpm@latest --activate`.
+
+## Install (from source)
 
 ```bash
-cd /Users/rla/RLA02/PROJEKTY/Developer/dap
-
-pnpm install             # instaluje deps, linkuje workspace'y
-pnpm build               # Turbo buduje packages w kolejności zależności
-
-# Test CLI
-node apps/cli/dist/index.js --version       # → 0.0.1
-node apps/cli/dist/index.js --help
-
-# Test pełnego flow
-mkdir -p /tmp/dap-playground && cd /tmp/dap-playground
-node /Users/rla/RLA02/PROJEKTY/Developer/dap/apps/cli/dist/index.js init
-node /Users/rla/RLA02/PROJEKTY/Developer/dap/apps/cli/dist/index.js start
-# Ctrl+C żeby zatrzymać
-
-# Po F12 (packaging): npm install -g @dap/cli → `dap init`
+git clone https://github.com/rafeekpro/dap && cd dap
+./scripts/setup
 ```
 
-## Dostępne komendy CLI (F0)
+`scripts/setup` is idempotent and walks you through:
 
-| Komenda       | Status   | Opis                                                   |
-| ------------- | -------- | ------------------------------------------------------ |
-| `dap --version` | ✅     | Wersja binarki                                         |
-| `dap --help`  | ✅       | Lista komend                                           |
-| `dap init`    | ✅       | Tworzy `./.dap/` z config.json i podkatalogami         |
-| `dap start`   | ✅ partial | Spawn engine na 127.0.0.1:7333 (dashboard: F6)       |
-| `dap stop`    | 🚧 stub  | Wymaga PID management (F1)                             |
-| `dap status`  | ✅ partial | Pokazuje czy projekt zainicjowany (runtime info: F1) |
+1. Pre-flights Python / uv / Node / pnpm versions. Each missing or too-old tool fails with a one-line install hint.
+2. Copies `.env.example` → `.env.local` if it doesn't exist (gitignored — your provider keys stay local).
+3. `uv sync --all-packages` (Python deps for the engine, runtimes, types, prompt-dsl, CLI).
+4. `pnpm install` in `apps/dashboard` (Next.js + React Flow).
+5. Activates `.githooks/pre-push` (blocks accidental pushes to `main` / `develop`).
 
-## Dostępne endpointy engine (F0)
+After it finishes, edit `.env.local` and add at least one provider key — see [Provider keys](#provider-keys) below.
 
-Po `dap start`:
+## Run
 
 ```bash
-curl http://127.0.0.1:7333/health
-# → { "status": "ok", "service": "@dap/engine", "version": "0.0.1", ... }
-
-curl http://127.0.0.1:7333/runtimes
-# → lista 7 zarejestrowanych adapterów z kind (cli/api/shell/http)
-
-curl http://127.0.0.1:7333/runtimes/bash/health
-# → { "available": true, "version": "system" }
-
-curl http://127.0.0.1:7333/runtimes/claude-code/health
-# → { "available": false, "missing": ["claude binary ..."] }
+./scripts/dev
 ```
 
-## Baza danych
+Brings up engine on `http://127.0.0.1:7333` and dashboard on `http://localhost:3000` in one terminal. Both log streams are prefixed (`[engine] …` / `[dashboard] …`); Ctrl+C tears the whole stack down cleanly.
 
-Drizzle schema w `apps/engine/src/persistence/schema.ts` definiuje 5 tabel:
-
-- `agents` — wersjonowane definicje agentów (runtime + config + prompt template)
-- `pipelines` — wersjonowane DAG-i (nodes, edges, conditions)
-- `runs` — instancje wykonania (immutable FK do wersji pipeline'u)
-- `state_snapshots` — snapshoty stanu po każdym node (replay/audit)
-- `node_execution_logs` — stdout/stderr/prompt XML/output per node
-
-Generowanie migracji:
-```bash
-cd apps/engine
-pnpm db:generate
-```
-
-SQLite w WAL mode (`journal_mode = WAL`, `synchronous = NORMAL`, `foreign_keys = ON`).
-
-## Runtime adapters
-
-7 wbudowanych adapterów (F0 = szkielety, F3/F9 = implementacja):
-
-| Adapter       | Kind    | Status | Uzasadnienie                                         |
-| ------------- | ------- | ------ | ---------------------------------------------------- |
-| `bash`        | shell   | stub   | Deterministyczne pre/post steps (pytest, cov)        |
-| `http`        | http    | stub   | Wywołanie zewnętrznego endpointa                     |
-| `api-call`    | api     | stub   | Direct SDK call — tanie role (selector, verifier)    |
-| `claude-code` | cli     | stub   | Coding agent — testy, complex refactor               |
-| `gemini-cli`  | cli     | stub   | Duży context window, szybkie operacje                |
-| `codex`       | cli     | stub   | "Make tests green" loops                             |
-| `aider`       | cli     | stub   | Self-directed git-aware coding                       |
-
-Rozszerzalność przez plugin API — drop-in do `~/.dap/plugins/` (F11).
-
-## Git
-
-Repo zainicjowane (`git init`), **brak initial commita** — czeka na zgodę użytkownika.
+If you want install + immediate launch in one go:
 
 ```bash
-git status     # zobacz co zostanie dodane
+./scripts/dev --install      # delegates to scripts/setup, then starts both
 ```
 
-## Zasady niezmienne (strażnicy architektury)
+If you'd rather drive each side from its own terminal — useful when debugging one side in isolation:
 
-Powtórzone tu dla implementatorów — patrz pełny opis w `../DOCUMENTATION.md`:
+```bash
+# 1. Backend — engine + CLI + runtimes
+uv sync --all-packages
+set -a; source .env.local; set +a
+uv run dap-engine                         # binds 127.0.0.1:7333
 
-1. **LangGraph controls flow, Runtime executes steps.**
-2. **Prompt jest kodem.** Kompilowany z template + State projection. Wersjonowany.
-3. **State jest jedynym źródłem prawdy.** Runtime output parsowany do diff.
-4. **Autonomia lokalna, nie globalna.** Runtime może robić tool use — ale nie decyduje *co robić dalej* w pipeline.
-5. **Runtime to executor, nie planer.** Nawet claude-code dostaje skompilowany XML z konkretnym zadaniem + kontraktem wyjścia.
+# 2. Dashboard — in a second terminal
+cd apps/dashboard
+pnpm dev                                  # http://localhost:3000
+```
+
+## First pipeline — try it now
+
+The repo ships an importable example bundle that exercises the whole stack without you wiring anything by hand:
+
+1. Open `http://localhost:3000/pipelines` and click **Import JSON**.
+2. Pick `examples/pipelines/github-issue-triage.pipeline-bundle.json`.
+3. The engine creates the bundled agents (one bash, two GLM api-call, two more bash) and wires them into a 5-node DAG (`fetch_issues → select_issue → load_prd → enrich → create_branch`). You land on `/pipelines/<id>/edit`.
+4. Hit **Run** to trigger it. The page redirects to the live run view — you'll see each node's status, prompt, output, and cost as it executes.
+
+Prerequisites for running this specific bundle: `gh auth login` on the host, `GLM_API_KEY` in `.env.local`, and a `docs/PRD.md` in whatever repo the engine is started from. See `examples/pipelines/README.md` for details. The agents and pipeline structure are all editable from the dashboard once imported — the bundle is a starting point, not a black box.
+
+## Working with agents
+
+Each agent has:
+
+- A **runtime** (`api-call` for SDK calls, `claude-code` / `gemini-cli` / `codex` / `aider` for agentic CLIs, `bash` for shell, `http` for arbitrary REST).
+- A **prompt template** (Jinja → XML, validated against `PipelineState`).
+- An **`input_schema`** / **`output_schema`** declaring which `PipelineState` fields the agent reads and writes.
+- A **role** (`task_selector`, `prompt_builder`, `test_author`, `implementer`, `verifier`, `post_check`, or any custom string).
+
+### Test a single agent — dry-run panel
+
+On `/agents/<id>/edit` (or `/agents/new`) the **Test** panel runs the agent end-to-end against sample state without persisting anything: no `Run` row, no `NodeExecutionLog`, no state-machine effects. You see the rendered XML prompt, the actual runtime output, and a soft check of the structured output against `output_schema`. Cost is bounded by `DAP_DRY_RUN_BUDGET_USD` (default $0.50).
+
+`POST /agents/dry-run` is the same thing programmatically — the panel POSTs your draft (so you can test edits before saving).
+
+### Render preview
+
+`POST /agents/<id>/render-preview` compiles the prompt against a sample state and returns the XML without invoking the runtime. Useful to catch Jinja syntax errors / undefined vars before burning tokens.
+
+### Archive an agent
+
+`/agents` has an **Archive** action. The engine refuses (HTTP 409) if any non-archived pipeline still references the agent, listing the blocking pipelines so you can detach or archive them first. The "Used in" column on the same page shows how many pipelines reference each agent.
+
+Archiving is soft — run history keeps the agent reference intact; the agent just disappears from pickers and the active list.
+
+### Versions
+
+Every save bumps the agent's version. `/agents/<id>/versions` lists all of them; pipelines pin to the current version on save. Future pipeline edits can pin to a different version explicitly.
+
+## Working with pipelines
+
+`/pipelines/new` and `/pipelines/<id>/edit` open the React Flow designer:
+
+- Drag agents from the picker onto the canvas.
+- Wire edges; conditional edges support `field == value` / `field != value` / `is_null` etc against `PipelineState`.
+- The Inspector panel (right side) shows agent details inline (prompt, schemas, runtime config) plus a **State after this node** view that walks back through the DAG and shows the cumulative `output_schema` of every upstream agent — so you can see what fields exist in state by the time execution reaches the selected node.
+- **Validate** button runs cohesion checks (every declared `input_schema` field must be written by some upstream node).
+
+### Run a pipeline
+
+From `/pipelines`, **Run** opens a dialog where you can fill optional `initial_state` JSON, then triggers the run and redirects to `/runs/<id>`. The run page shows each node's status as it executes, plus controls:
+
+- **Pause / Resume / Abort** mid-run.
+- On a stopped (failed / paused / aborted) run: click any node and pick **Retry** (re-execute) or **Skip** (mark done, advance state machine).
+
+### Logs
+
+Every node execution writes a row to `node_execution_logs` in `./.dap/state.db`:
+
+| Column | Content |
+|---|---|
+| `prompt_xml` | Exact prompt sent to the runtime (post-Jinja) |
+| `stdout` / `stderr` | Raw runtime output |
+| `output_json` | Parsed `<output>{…}</output>` block |
+| `tokens_used` / `cost_usd` / `duration_ms` | Telemetry |
+| `status` / `error_message` | success / failed / timeout / abort |
+
+Three ways to inspect:
+
+- Dashboard: `/runs/<id>` → click a node.
+- API: `GET /runs/<id>/nodes/<node_id>`.
+- Direct: `sqlite3 .dap/state.db "select * from node_execution_logs where run_id = '<id>';"`.
+
+State snapshots after each node land in `state_snapshots`; the run summary lives in `runs.node_statuses`.
+
+## Provider keys
+
+The engine reads provider keys from process env (or `.env.local` via `scripts/dev`). You only need keys for providers you actually call:
+
+| Provider | Env var | Used by |
+|---|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` | `api-call` (provider=`anthropic`), `claude-code` CLI fallback |
+| OpenAI | `OPENAI_API_KEY` | `api-call` (provider=`openai`), `codex` CLI |
+| Google Gemini | `GEMINI_API_KEY` | `api-call` (provider=`gemini`), `gemini-cli` CLI |
+| Z.AI GLM | `GLM_API_KEY` | `api-call` (provider=`glm`) — first-class OpenAI-compatible |
+
+CLI runtimes (`claude-code`, `gemini-cli`) also accept their own OAuth login (`claude code` → `Pro`/`Max` plan, `gemini auth login` → Advanced) instead of an API key.
+
+For custom OpenAI-compatible providers (Together, OpenRouter, internal proxies, Ollama): the agent's `runtime_config` declares `api_key_env`; export whatever env var name it uses. See [`docs/providers.md`](docs/providers.md) for the full provider matrix and per-provider recipes.
+
+The `bash` runtime needs no provider key but **runs commands with the engine's privileges** — see the security note in [`packages/runtimes/README.md`](packages/runtimes/README.md).
+
+## Documentation
+
+- [`docs/self-hosting.md`](docs/self-hosting.md) — deployment paths (PyPI / Docker / source), production checklist, OAuth setup, troubleshooting.
+- [`docs/auth.md`](docs/auth.md) — email+password, GitHub OAuth, Google OAuth, API tokens. Provider-app setup walkthroughs.
+- [`docs/admin-guide.md`](docs/admin-guide.md) — operator manual for `/admin/*` (users, audit log, API tokens) + recovery procedures (lost admin password, JWT secret rotation, corrupted SQLite).
+- [`docs/security.md`](docs/security.md) — threat model, secrets handling, password / JWT / API-token internals, reverse-proxy hardening, GDPR / soft-delete semantics, explicit "out of scope" list.
+- [`docs/architecture.md`](docs/architecture.md) — components, state schema, Run lifecycle, LangGraph checkpoint model.
+- [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
+- [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
+- [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
+- [`docs/release.md`](docs/release.md) — release pipeline, per-tag publishing, rollback procedures.
+- [`packages/runtimes/README.md`](packages/runtimes/README.md) — per-runtime config reference.
+- [`examples/pipelines/`](examples/pipelines/) — importable pipeline bundles + their READMEs.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — branching, PR flow, commit style.
+- Engine API reference: `http://127.0.0.1:7333/docs` (FastAPI auto-docs while the engine runs).
+
+## Repository layout
+
+```
+apps/
+  engine/      FastAPI + LangGraph + SQLAlchemy — runs pipelines, exposes REST
+  dashboard/   Next.js 15 + React Flow + TanStack Query — visual editor + run viewer
+  cli/         Typer-based dap CLI (init, start, stop, status)
+packages/
+  types/       Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
+  runtimes/    Runtime adapter implementations
+  prompt-dsl/  Jinja2 → XML prompt compiler with sandboxing + schema validation
+examples/
+  pipelines/   Importable .pipeline-bundle.json examples
+scripts/
+  setup        First-run installer (pre-flight, .env, deps, hooks)
+  dev          Day-to-day launcher (engine + dashboard + log multiplexing)
+tests/smoke/   Cross-package end-to-end tests (FastAPI TestClient + real adapters)
+```
+
+## Common commands
+
+```bash
+# Backend
+uv run pytest                             # all smoke tests
+uv run ruff check apps packages           # lint
+uv run ruff format apps packages          # format
+uv run mypy apps packages tests           # type-check
+uv run dap-engine                         # serve engine on :7333
+uv run dap --help                         # CLI
+
+# Dashboard (run from apps/dashboard)
+pnpm dev                                  # next dev
+pnpm build                                # production build
+pnpm typecheck                            # tsc --noEmit
+pnpm lint                                 # eslint
+```
+
+## Architectural invariants
+
+1. **LangGraph controls flow, runtimes execute steps.** Edges and conditions live in the pipeline definition, not in agents.
+2. **Prompts are code.** Compiled from a template + state projection, validated against an XML schema, versioned per agent.
+3. **State is the single source of truth.** Adapter output is parsed into a state diff; nothing outside `PipelineState` survives across nodes.
+4. **Autonomy is local, not global.** A runtime may use tools internally, but never decides *what runs next* in the pipeline.
+5. **Runtimes are executors, not planners.** Even agentic runtimes (`claude-code`, `codex`) receive compiled XML with an explicit task and an output contract.
+
+## Status
+
+Backend (engine, runtimes, prompt-dsl) and the dashboard MVP are functional. See open issues and the `v0.1` milestone on GitHub for what's next.

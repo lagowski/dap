@@ -1,0 +1,5 @@
+# Placeholder so the directory always exists for hatchling's
+# force-include. The dashboard bundle (server.js, .next/, etc.)
+# is staged here on demand by scripts/build-dashboard-bundle.sh
+# and is gitignored — see the gitignore entry for
+# apps/cli/src/dap_cli/_dashboard/.

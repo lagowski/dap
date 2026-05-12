@@ -1,0 +1,82 @@
+# Standalone DAP deployment — engine + dashboard in one container.
+#
+# Suitable for: small teams (5–20 users), single-host self-hosting.
+# Not suitable for: high-availability clusters (use the K8s manifests
+# in a follow-up release instead).
+#
+# Quick start:
+#   1. cp .env.example .env  &&  edit DAP_AUTH_JWT_SECRET
+#   2. docker compose up -d
+#   3. Open http://localhost:3000, sign up the first account
+#   4. Promote that account to admin (one-line SQL in README.md)
+#
+# The interactive ``dap init`` admin bootstrap lands in D4 (#336) and
+# will replace step 3-4 with a single prompt. Until then ``/signup`` +
+# manual promotion is the documented flow.
+
+services:
+  dap:
+    # Pull the published image once D3 (release pipeline, #335) lands.
+    # Until then, ``docker compose build`` from the repo root works.
+    image: ghcr.io/rafeekpro/dap:${DAP_IMAGE_TAG:-latest}
+    # Uncomment to build from the local checkout instead of pulling:
+    # build:
+    #   context: ../..
+    #   dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${DAP_ENGINE_PORT:-7333}:7333"
+      - "${DAP_DASHBOARD_PORT:-3000}:3000"
+    environment:
+      # Required — the container refuses to start without it.
+      DAP_AUTH_JWT_SECRET: ${DAP_AUTH_JWT_SECRET:?must be set in .env}
+      # JWT TTL (default 15 min — sub-A bound on revocation latency).
+      DAP_AUTH_ACCESS_TTL_SECONDS: ${DAP_AUTH_ACCESS_TTL_SECONDS:-900}
+      # CORS — when unset the engine falls back to a local-dev allow-list.
+      # Set explicitly in prod.
+      DAP_CORS_ORIGINS: ${DAP_CORS_ORIGINS:-}
+      # OAuth (optional). Each provider activates only when both
+      # client_id and client_secret are present; partial config is
+      # ignored.
+      DAP_OAUTH_GITHUB_CLIENT_ID: ${DAP_OAUTH_GITHUB_CLIENT_ID:-}
+      DAP_OAUTH_GITHUB_CLIENT_SECRET: ${DAP_OAUTH_GITHUB_CLIENT_SECRET:-}
+      DAP_OAUTH_GOOGLE_CLIENT_ID: ${DAP_OAUTH_GOOGLE_CLIENT_ID:-}
+      DAP_OAUTH_GOOGLE_CLIENT_SECRET: ${DAP_OAUTH_GOOGLE_CLIENT_SECRET:-}
+      DAP_AUTH_OAUTH_REDIRECT_URL: ${DAP_AUTH_OAUTH_REDIRECT_URL:-}
+      # SQLite by default; uncomment + use the postgres service below
+      # to switch.
+      DAP_DB_PATH: /data/state.db
+      # DAP_DATABASE_URL: postgresql+psycopg://dap:${POSTGRES_PASSWORD}@postgres:5432/dap
+    volumes:
+      - dap-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:7333/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+
+  # Uncomment for >1 user. SQLite is fine for hobby / single-operator;
+  # Postgres survives concurrent writes without lock contention.
+  #
+  # postgres:
+  #   image: postgres:16-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: dap
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?must be set in .env}
+  #     POSTGRES_DB: dap
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U dap -d dap"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 5
+
+volumes:
+  dap-data:
+  # postgres-data:

@@ -1,0 +1,100 @@
+{
+  "schema_version": "pipeline-export/1",
+  "pipeline": {
+    "name": "GitHub Issue Triage",
+    "description": "Pick the most sensible open GitHub issue, enrich it with PRD context from docs/PRD.md, and create a feature/issue-N branch. Implementation stays on the new branch for IDE / claude-code.",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "fetch_issues",
+    "nodes": [
+      { "id": "fetch_issues", "agent_id": "tpl_triage_fetch", "position": { "x": 0, "y": 0 } },
+      { "id": "select_issue", "agent_id": "tpl_triage_select", "position": { "x": 200, "y": 0 } },
+      { "id": "load_prd", "agent_id": "tpl_triage_load_prd", "position": { "x": 400, "y": 0 } },
+      { "id": "enrich", "agent_id": "tpl_triage_enrich", "position": { "x": 600, "y": 0 } },
+      { "id": "create_branch", "agent_id": "tpl_triage_branch", "position": { "x": 800, "y": 0 } }
+    ],
+    "edges": [
+      { "id": "e1", "source": "__start__", "target": "fetch_issues" },
+      { "id": "e2", "source": "fetch_issues", "target": "select_issue" },
+      { "id": "e3", "source": "select_issue", "target": "load_prd" },
+      { "id": "e4", "source": "load_prd", "target": "enrich" },
+      { "id": "e5", "source": "enrich", "target": "create_branch" },
+      { "id": "e6", "source": "create_branch", "target": "__end__" }
+    ],
+    "defaults": {
+      "max_attempts": 1,
+      "budget_limit_usd": 0.2,
+      "approval_required_nodes": []
+    }
+  },
+  "bundled_agents": {
+    "tpl_triage_fetch": {
+      "name": "GH Issue Fetcher",
+      "role": "post_check",
+      "runtime_id": "bash",
+      "runtime_config": { "shell": "/bin/bash" },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <command>set -e\nISSUES=$(gh issue list --state open --limit 50 --json number,title,body,labels,updatedAt)\nprintf '<output>{\"available_issues\": %s}</output>\\n' \"$ISSUES\"</command>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["available_issues"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 30000
+    },
+    "tpl_triage_select": {
+      "name": "Issue Selector",
+      "role": "task_selector",
+      "runtime_id": "api-call",
+      "runtime_config": {
+        "provider": "glm",
+        "model_id": "glm-4.5",
+        "max_tokens": 1024
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <task>\n    From the \"available_issues\" list, pick exactly ONE issue that makes the most sense to work on now.\n    Rank by, in order:\n      1. Priority (labels like \"high\" / \"critical\" win)\n      2. Small surface area + clear scope (issue can be finished in one iteration)\n      3. Recency — recently updated issues take priority\n      4. No dependency on other open work\n\n    Return ONLY in the <output> block:\n      - selected_issue_ids: a single-element list containing the chosen issue number\n  </task>\n  <available_issues>{{ available_issues | tojson }}</available_issues>\n  <constraints>\n    Always pick exactly one. If the list is empty, return selected_issue_ids: [].\n  </constraints>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["selected_issue_ids"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 60000
+    },
+    "tpl_triage_load_prd": {
+      "name": "PRD Loader",
+      "role": "post_check",
+      "runtime_id": "bash",
+      "runtime_config": { "shell": "/bin/bash" },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <command>set -e\nif [ -f docs/PRD.md ]; then\n  PRD=$(cat docs/PRD.md | jq -Rs .)\nelse\n  PRD='\"(no docs/PRD.md found in working directory)\"'\nfi\nprintf '<output>{\"implementation_notes\": %s}</output>\\n' \"$PRD\"</command>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["implementation_notes"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 10000
+    },
+    "tpl_triage_enrich": {
+      "name": "Issue Enricher",
+      "role": "prompt_builder",
+      "runtime_id": "api-call",
+      "runtime_config": {
+        "provider": "glm",
+        "model_id": "glm-4.5",
+        "max_tokens": 4096
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <task>\n    Build a complete briefing for a developer / test_author working on the selected issue.\n\n    You have:\n      - \"implementation_notes\" — contains the raw PRD loaded from docs/PRD.md by the previous node.\n      - \"selected_issue_ids\" — number of the chosen issue.\n      - \"available_issues\" — full list (reference, e.g. for related-issue links).\n\n    Find the matching issue in available_issues (by number = selected_issue_ids[0]).\n    Overwrite implementation_notes with this structure:\n\n      # Issue #{number}: {title}\n\n      ## Goal\n      What the user gets when this issue is closed (1-2 sentences).\n\n      ## Context from PRD\n      Quote the relevant sections. If the PRD does not cover this area, say \"PRD does not cover this\" and propose follow-up questions.\n\n      ## Acceptance criteria\n      Bullet list of measurable conditions.\n\n      ## Suggested tests\n      Concrete scenarios (3-5) that would be enough to validate the change.\n\n      ## Related issues\n      Issue numbers from available_issues that block / depend / duplicate this one.\n\n      ## Risks / open questions\n      What is uncertain and needs a decision.\n\n    Return ONLY in the <output> block: implementation_notes with the structure above as a single string.\n  </task>\n  <selected_issue_ids>{{ selected_issue_ids }}</selected_issue_ids>\n  <implementation_notes>{{ implementation_notes }}</implementation_notes>\n  <available_issues>{{ available_issues | tojson }}</available_issues>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["implementation_notes"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 60000
+    },
+    "tpl_triage_branch": {
+      "name": "Branch Creator",
+      "role": "post_check",
+      "runtime_id": "bash",
+      "runtime_config": { "shell": "/bin/bash" },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <command>set -e\nISSUE={{ selected_issue_ids[0] }}\ngit fetch origin\ngit checkout -B \"feature/issue-$ISSUE\" origin/main\nprintf '<output>{\"branch\": \"feature/issue-%s\"}</output>\\n' \"$ISSUE\"</command>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["branch"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 15000
+    }
+  }
+}

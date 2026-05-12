@@ -1,0 +1,56 @@
+# Build artefacts — regenerated inside the multi-stage build, so
+# pulling local copies into the context just slows the build and
+# busts caches.
+**/node_modules
+**/.next
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Local state — never want a dev SQLite + LangGraph checkpoint
+# database baked into the image.
+.dap/
+**/state.db
+**/state.checkpoints.db
+*.db
+
+# Test / dev artefacts that don't belong in the runtime image.
+tests/
+docs/
+examples/
+.github/
+.husky/
+.changeset/
+scripts/
+.git/
+.gitignore
+.editorconfig
+.coverage*
+coverage/
+htmlcov/
+
+# IDE / OS noise.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets / local config.
+.env
+.env.*
+!.env.example
+
+# Markdown — most of it (CHANGELOG, top-level docs) lands in the
+# GitHub Release rather than the image. Per-package READMEs **do**
+# need to ship: hatchling refuses to build the wheels without them
+# because each pyproject.toml declares ``readme = "README.md"``.
+*.md
+!README.md
+!apps/**/README.md
+!packages/**/README.md
+
+# Lockfiles for tooling we don't ship.
+.tool-versions

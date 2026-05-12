@@ -1,0 +1,178 @@
+name: Packaging
+
+# Build + smoke-test the standalone Docker image AND the dap-cli
+# wheel-with-dashboard on every PR that touches packaging-relevant
+# files. **Doesn't push** — that lands in the release workflow (D3)
+# once it's wired.
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker/**
+      - apps/**
+      - packages/**
+      - pyproject.toml
+      - uv.lock
+      - scripts/build-dashboard-bundle.sh
+      - tests/standalone/**
+      - .github/workflows/docker-build.yml
+  push:
+    branches: [develop]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker/**
+      - apps/**
+      - packages/**
+      - pyproject.toml
+      - uv.lock
+      - scripts/build-dashboard-bundle.sh
+      - tests/standalone/**
+      - .github/workflows/docker-build.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build only — no registry login, no push. Caches via GitHub
+      # Actions cache backend so re-runs on the same PR finish fast.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: dap:pr-${{ github.event.pull_request.number || 'develop' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Smoke: start the container with a throwaway JWT secret + SQLite,
+      # wait for the healthcheck to pass, then check /health responds.
+      - name: Smoke test — engine /health
+        env:
+          IMAGE_TAG: dap:pr-${{ github.event.pull_request.number || 'develop' }}
+        run: |
+          set -euo pipefail
+          SECRET="$(openssl rand -hex 32)"
+          # Map both ports to ephemeral host ports — gives the test a
+          # stable handle without conflicting with anything else on the
+          # runner.
+          CID=$(docker run -d \
+            -e DAP_AUTH_JWT_SECRET="${SECRET}" \
+            -p 17333:7333 \
+            -p 13000:3000 \
+            "${IMAGE_TAG}")
+          echo "Container started: ${CID}"
+
+          # Engine /health usually responds in <5s, but cold migrations
+          # can push it past that. Poll for up to 90s before declaring
+          # failure.
+          deadline=$((SECONDS + 90))
+          while (( SECONDS < deadline )); do
+              if curl --silent --fail http://127.0.0.1:17333/health > /dev/null; then
+                  echo "Engine /health responded OK after $((SECONDS))s."
+                  break
+              fi
+              sleep 2
+          done
+
+          if (( SECONDS >= deadline )); then
+              echo "::error::Engine /health did not respond within 90s"
+              docker logs "${CID}"
+              docker rm -f "${CID}" || true
+              exit 1
+          fi
+
+          # Dashboard is served by Next standalone — /login is a static
+          # page that hits no engine state, so it's a good readiness probe.
+          if ! curl --silent --fail http://127.0.0.1:13000/login > /dev/null; then
+              echo "::error::Dashboard /login did not respond"
+              docker logs "${CID}"
+              docker rm -f "${CID}" || true
+              exit 1
+          fi
+
+          # Container is healthy: assert the docker healthcheck agrees.
+          # The healthcheck has a 30s ``start_period`` + 30s ``interval``,
+          # so a freshly-started container can still report ``starting``
+          # at this point. Poll for up to 60s for it to flip to ``healthy``
+          # before failing — that way a flaky cold start doesn't mask the
+          # real assertion ("the healthcheck never goes green").
+          deadline=$((SECONDS + 60))
+          status="starting"
+          while (( SECONDS < deadline )); do
+              status="$(docker inspect --format '{{.State.Health.Status}}' "${CID}" 2>/dev/null || echo "(no healthcheck)")"
+              if [[ "${status}" == "healthy" ]]; then
+                  echo "Docker healthcheck status: healthy ✓"
+                  break
+              fi
+              sleep 2
+          done
+          if [[ "${status}" != "healthy" ]]; then
+              echo "::error::Docker healthcheck did not reach 'healthy' (last status: ${status})"
+              docker logs "${CID}"
+              docker rm -f "${CID}" || true
+              exit 1
+          fi
+
+          docker rm -f "${CID}"
+
+      - name: Verify image runs as non-root
+        env:
+          IMAGE_TAG: dap:pr-${{ github.event.pull_request.number || 'develop' }}
+        run: |
+          set -euo pipefail
+          uid=$(docker run --rm --entrypoint=id "${IMAGE_TAG}" -u)
+          if [[ "${uid}" == "0" ]]; then
+              echo "::error::Image is running as root (uid=0)"
+              exit 1
+          fi
+          echo "Image runs as uid=${uid} ✓"
+
+  bundle-wheel:
+    # Validates the dap-cli wheel ships the dashboard bundle (D2,
+    # #334). Same trigger as the docker build because both consume
+    # ``apps/dashboard/`` and the bundle script.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.0.0 --activate
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.18"
+          enable-cache: true
+
+      - name: Install Python toolchain
+        # ``--all-packages`` installs every workspace member (dap-cli,
+        # dap-engine, …) so the standalone tests can ``import dap_cli``.
+        # Without it, ``uv sync`` only installs third-party deps and
+        # the test collection errors with ``ModuleNotFoundError``.
+        run: uv sync --frozen --dev --all-packages
+
+      - name: Build dashboard bundle + dap-cli wheel + smoke test
+        run: uv run pytest tests/standalone/ -v

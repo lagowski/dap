@@ -1,0 +1,652 @@
+{
+  "schema_version": "pipeline-export/1",
+  "_comment": "Cortex full pipeline \u2014 22 nodes, 3 phases, 3 human gates.\n\nThis bundle concatenates the three individual phase bundles into a single\nend-to-end DAG:\n\n  Phase 1 (nodes 1\u201311): mockup \u2192 mockup-write \u2192 specify \u2192 specify-write \u2192\n    cicd \u2192 cicd-write \u2192 dispatcher \u2192 dispatcher-write \u2192 finalize \u2192\n    finalize-write \u2192 gate-phase1\n\n  Phase 2 (nodes 12\u201317): git-branch \u2192 coder \u2192 designer \u2192 documenter \u2192\n    code-reviewer \u2192 gate-phase2\n\n  Phase 3 (nodes 18\u201322): tester \u2192 pr-creator \u2192 reviewer \u2192 gate-phase3 \u2192\n    pr-merger\n\nCross-phase edges:\n  gate-phase1 \u2192 git-branch  (replaces gate-phase1 \u2192 __end__ from phase1 bundle)\n  gate-phase2 \u2192 tester      (replaces gate-phase2 \u2192 __end__ from phase2 bundle)\n  pr-merger   \u2192 __end__     (sole terminal, unchanged from phase3 bundle)\n\nAll three gate nodes use interrupt_before via approval_required_nodes.\nNo gate node issues a POST /pause call \u2014 that pattern causes an infinite\npause loop (rafeekpro/dap#164). The gate node itself is a no-op that\nexecutes only after the operator approves via:\n  POST /runs/{id}/resume\n\nAgent IDs preserve the per-phase namespace (cx_p1_*, cx_p2_*, cx_p3_*)\nexactly as defined in the individual phase bundles \u2014 no renaming.\n\nRef: cortex-project#293 (Phase 2), cortex-project#294 (Phase 3),\n     cortex-project#295 (this bundle \u2014 Stage 1 final deliverable)",
+  "pipeline": {
+    "name": "Cortex Full Pipeline \u2014 13 Agents, 3 Phases",
+    "description": "Complete Cortex pipeline: Phase 1 issue enrichment (mockup \u2192 finalize + write nodes + gate-phase1), Phase 2 execution (git-branch \u2192 coder \u2192 designer \u2192 documenter \u2192 code-reviewer + gate-phase2), Phase 3 merge & verify (tester \u2192 pr-creator \u2192 reviewer \u2192 gate-phase3 \u2192 pr-merger). Three human gates pause the run at phase transitions.",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "mockup",
+    "nodes": [
+      {
+        "id": "mockup",
+        "agent_id": "cx_p1_mockup",
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "mockup-write",
+        "agent_id": "cx_p1_mockup_write",
+        "position": {
+          "x": 100,
+          "y": 0
+        }
+      },
+      {
+        "id": "specify",
+        "agent_id": "cx_p1_specify",
+        "position": {
+          "x": 200,
+          "y": 0
+        }
+      },
+      {
+        "id": "specify-write",
+        "agent_id": "cx_p1_specify_write",
+        "position": {
+          "x": 300,
+          "y": 0
+        }
+      },
+      {
+        "id": "cicd",
+        "agent_id": "cx_p1_cicd",
+        "position": {
+          "x": 400,
+          "y": 0
+        }
+      },
+      {
+        "id": "cicd-write",
+        "agent_id": "cx_p1_cicd_write",
+        "position": {
+          "x": 500,
+          "y": 0
+        }
+      },
+      {
+        "id": "dispatcher",
+        "agent_id": "cx_p1_dispatcher",
+        "position": {
+          "x": 600,
+          "y": 0
+        }
+      },
+      {
+        "id": "dispatcher-write",
+        "agent_id": "cx_p1_dispatcher_write",
+        "position": {
+          "x": 700,
+          "y": 0
+        }
+      },
+      {
+        "id": "finalize",
+        "agent_id": "cx_p1_finalize",
+        "position": {
+          "x": 800,
+          "y": 0
+        }
+      },
+      {
+        "id": "finalize-write",
+        "agent_id": "cx_p1_finalize_write",
+        "position": {
+          "x": 900,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate-phase1",
+        "agent_id": "cx_p1_gate",
+        "position": {
+          "x": 1000,
+          "y": 0
+        }
+      },
+      {
+        "id": "git-branch",
+        "agent_id": "cx_p2_git_branch",
+        "position": {
+          "x": 1100,
+          "y": 0
+        }
+      },
+      {
+        "id": "coder",
+        "agent_id": "cx_p2_coder",
+        "position": {
+          "x": 1200,
+          "y": 0
+        }
+      },
+      {
+        "id": "designer",
+        "agent_id": "cx_p2_designer",
+        "position": {
+          "x": 1300,
+          "y": 0
+        }
+      },
+      {
+        "id": "documenter",
+        "agent_id": "cx_p2_documenter",
+        "position": {
+          "x": 1400,
+          "y": 0
+        }
+      },
+      {
+        "id": "code-reviewer",
+        "agent_id": "cx_p2_code_reviewer",
+        "position": {
+          "x": 1500,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate-phase2",
+        "agent_id": "cx_p2_gate",
+        "position": {
+          "x": 1600,
+          "y": 0
+        }
+      },
+      {
+        "id": "tester",
+        "agent_id": "cx_p3_tester",
+        "position": {
+          "x": 1700,
+          "y": 0
+        }
+      },
+      {
+        "id": "pr-creator",
+        "agent_id": "cx_p3_pr_creator",
+        "position": {
+          "x": 1800,
+          "y": 0
+        }
+      },
+      {
+        "id": "reviewer",
+        "agent_id": "cx_p3_reviewer",
+        "position": {
+          "x": 1900,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate-phase3",
+        "agent_id": "cx_p3_gate",
+        "position": {
+          "x": 2000,
+          "y": 0
+        }
+      },
+      {
+        "id": "pr-merger",
+        "agent_id": "cx_p3_pr_merger",
+        "position": {
+          "x": 2100,
+          "y": 0
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "mockup",
+        "target": "mockup-write"
+      },
+      {
+        "id": "e2",
+        "source": "mockup-write",
+        "target": "specify"
+      },
+      {
+        "id": "e3",
+        "source": "specify",
+        "target": "specify-write"
+      },
+      {
+        "id": "e4",
+        "source": "specify-write",
+        "target": "cicd"
+      },
+      {
+        "id": "e5",
+        "source": "cicd",
+        "target": "cicd-write"
+      },
+      {
+        "id": "e6",
+        "source": "cicd-write",
+        "target": "dispatcher"
+      },
+      {
+        "id": "e7",
+        "source": "dispatcher",
+        "target": "dispatcher-write"
+      },
+      {
+        "id": "e8",
+        "source": "dispatcher-write",
+        "target": "finalize"
+      },
+      {
+        "id": "e9",
+        "source": "finalize",
+        "target": "finalize-write"
+      },
+      {
+        "id": "e10",
+        "source": "finalize-write",
+        "target": "gate-phase1"
+      },
+      {
+        "id": "e11",
+        "source": "gate-phase1",
+        "target": "git-branch"
+      },
+      {
+        "id": "e12",
+        "source": "git-branch",
+        "target": "coder"
+      },
+      {
+        "id": "e13",
+        "source": "coder",
+        "target": "designer"
+      },
+      {
+        "id": "e14",
+        "source": "designer",
+        "target": "documenter"
+      },
+      {
+        "id": "e15",
+        "source": "documenter",
+        "target": "code-reviewer"
+      },
+      {
+        "id": "e16",
+        "source": "code-reviewer",
+        "target": "gate-phase2",
+        "condition": {
+          "type": "comparison",
+          "field": "extensions.review_approved",
+          "operator": "==",
+          "value": true
+        }
+      },
+      {
+        "id": "e17",
+        "source": "code-reviewer",
+        "target": "coder",
+        "condition": {
+          "type": "and",
+          "children": [
+            {
+              "type": "comparison",
+              "field": "extensions.review_approved",
+              "operator": "==",
+              "value": false
+            },
+            {
+              "type": "comparison",
+              "field": "extensions.review_attempts",
+              "operator": "<",
+              "value": 2
+            }
+          ]
+        }
+      },
+      {
+        "id": "e18",
+        "source": "code-reviewer",
+        "target": "gate-phase2",
+        "condition": {
+          "type": "comparison",
+          "field": "extensions.review_attempts",
+          "operator": ">=",
+          "value": 2
+        }
+      },
+      {
+        "id": "e19",
+        "source": "gate-phase2",
+        "target": "tester"
+      },
+      {
+        "id": "e20",
+        "source": "tester",
+        "target": "pr-creator"
+      },
+      {
+        "id": "e21",
+        "source": "pr-creator",
+        "target": "reviewer"
+      },
+      {
+        "id": "e22",
+        "source": "reviewer",
+        "target": "gate-phase3"
+      },
+      {
+        "id": "e23",
+        "source": "gate-phase3",
+        "target": "pr-merger"
+      },
+      {
+        "id": "e24",
+        "source": "pr-merger",
+        "target": "__end__"
+      }
+    ],
+    "defaults": {
+      "max_attempts": 3,
+      "budget_limit_usd": 25.0,
+      "approval_required_nodes": [
+        "gate-phase1",
+        "gate-phase2",
+        "gate-phase3"
+      ]
+    }
+  },
+  "bundled_agents": {
+    "cx_p1_mockup": {
+      "name": "Cortex Phase 1 \u2014 Mockup",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.mockup:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_p1_mockup_write": {
+      "name": "Cortex Phase 1 \u2014 Mockup Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "section_name": "Description",
+        "agent_name": "mockup"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_specify": {
+      "name": "Cortex Phase 1 \u2014 Specify",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.specify:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 180000
+    },
+    "cx_p1_specify_write": {
+      "name": "Cortex Phase 1 \u2014 Specify Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "section_name": "Technical Specification",
+        "agent_name": "specify"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_cicd": {
+      "name": "Cortex Phase 1 \u2014 CI/CD",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.cicd:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_p1_cicd_write": {
+      "name": "Cortex Phase 1 \u2014 CI/CD Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "section_name": "Test Criteria",
+        "agent_name": "cicd"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_dispatcher": {
+      "name": "Cortex Phase 1 \u2014 Dispatcher",
+      "role": "task_selector",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.dispatcher:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_p1_dispatcher_write": {
+      "name": "Cortex Phase 1 \u2014 Dispatcher Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "section_name": "Task Assignment",
+        "agent_name": "dispatcher"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_finalize": {
+      "name": "Cortex Phase 1 \u2014 Finalize",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.finalize:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 180000
+    },
+    "cx_p1_finalize_write": {
+      "name": "Cortex Phase 1 \u2014 Finalize Write",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.enrichment_write:run_side_effects",
+        "section_name": "Review Notes",
+        "agent_name": "finalize"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "cx_p1_gate": {
+      "name": "Cortex Phase 1 \u2014 Approval Gate",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "cx_p2_git_branch": {
+      "name": "Cortex Phase 2 \u2014 Git Branch",
+      "role": "setup",
+      "runtime_id": "bash",
+      "runtime_config": {},
+      "prompt_template": "<agent_prompt><command>\ncd {{ extensions.workspace_path }} && git fetch origin && git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main\n</command></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [
+        "branch"
+      ],
+      "timeout_ms": 30000
+    },
+    "cx_p2_coder": {
+      "name": "Cortex Phase 2 \u2014 Coder",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.coder:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "cx_p2_designer": {
+      "name": "Cortex Phase 2 \u2014 Designer",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.designer:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "cx_p2_documenter": {
+      "name": "Cortex Phase 2 \u2014 Documenter",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.documenter:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "cx_p2_code_reviewer": {
+      "name": "Cortex Phase 2 \u2014 Code Reviewer",
+      "role": "reviewer",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.code_reviewer:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 300000
+    },
+    "cx_p2_gate": {
+      "name": "Cortex Phase 2 \u2014 Approval Gate",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "cx_p3_tester": {
+      "name": "Cortex Phase 3 \u2014 Tester",
+      "role": "verifier",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.tester:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 300000
+    },
+    "cx_p3_pr_creator": {
+      "name": "Cortex Phase 3 \u2014 PR Creator",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.pr_creator:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "cx_p3_reviewer": {
+      "name": "Cortex Phase 3 \u2014 Reviewer",
+      "role": "reviewer",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.reviewer:run"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 180000
+    },
+    "cx_p3_gate": {
+      "name": "Cortex Phase 3 \u2014 Approval Gate",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "cx_p3_pr_merger": {
+      "name": "Cortex Phase 3 \u2014 PR Merger",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.nodes.pr_merger:run",
+        "env": {
+          "GH_TOKEN": "{{env.GH_TOKEN_MERGE}}"
+        }
+      },
+      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    }
+  },
+  "install_instructions": {
+    "summary": "Import this bundle into a DAP engine that has cortex-project installed.",
+    "steps": [
+      "1. Ensure cortex-project is installed in the DAP engine venv: uv add --path /path/to/cortex-project",
+      "2. Set CORTEX_ env vars (GH_TOKEN_READ, GH_TOKEN_ISSUES, GH_TOKEN_CODE, GH_TOKEN_MERGE, DATABASE_URL)",
+      "3. Strip _comment and install_instructions before importing: POST /pipelines/import with {schema_version, pipeline, bundled_agents}",
+      "4. Create a run: POST /runs with pipeline_id and initial_state.extensions={issue_url, issue_number, repo, workspace_path, ...}",
+      "5. Phase 1 runs automatically (mockup \u2192 finalize, each followed by a write node updating the GitHub issue)",
+      "6. Run pauses at gate-phase1 \u2014 approve: POST /runs/{id}/resume",
+      "7. Phase 2 starts (git-branch \u2192 coder \u2192 designer \u2192 documenter \u2192 code-reviewer); code-reviewer may retry up to 2 times",
+      "8. Run pauses at gate-phase2 \u2014 approve: POST /runs/{id}/resume",
+      "9. Phase 3 starts (tester \u2192 pr-creator \u2192 reviewer); run pauses at gate-phase3",
+      "10. Approve: POST /runs/{id}/resume",
+      "11. pr-merger merges the PR using GH_TOKEN_MERGE (rlagowski \u2014 separate user from code authors)"
+    ],
+    "env_vars": [
+      "CORTEX_GH_TOKEN_READ=ghp_...",
+      "CORTEX_GH_TOKEN_ISSUES=ghp_...",
+      "CORTEX_GH_TOKEN_CODE=ghp_...",
+      "CORTEX_GH_TOKEN_MERGE=ghp_...",
+      "CORTEX_DATABASE_URL=postgresql://cortex_project:...@host:5432/cortex_project"
+    ],
+    "gate_design": "All three gates (gate-phase1, gate-phase2, gate-phase3) use interrupt_before via approval_required_nodes \u2014 NOT python-func calls to POST /pause. This avoids the infinite pause loop described in rafeekpro/dap#164. Each gate node is a no-op (cortex.dap_steps.human_gate:noop) that executes only after the operator approves."
+  }
+}

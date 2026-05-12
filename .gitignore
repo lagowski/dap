@@ -1,49 +1,87 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build outputs
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
 dist/
 build/
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# uv
+.uv-cache/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.pytype/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# --- Node (dashboard) ---
+node_modules/
+.pnpm-store/
 .next/
 out/
 *.tsbuildinfo
-
-# Turbo
 .turbo/
 
-# Environment
+# --- Environment ---
 .env
 .env.local
 .env.*.local
 
-# DAP local state
+# --- DAP local state ---
 .dap/
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
 
-# Logs
+# --- Logs ---
 logs/
 *.log
 npm-debug.log*
 pnpm-debug.log*
 
-# IDE
+# --- IDE / Agents ---
 .vscode/
 .idea/
 *.swp
 *.swo
+.claude/
 
-# OS
+# --- OS ---
 .DS_Store
 Thumbs.db
 
-# Coverage
-coverage/
-.nyc_output/
-
-# Cache
+# --- Cache ---
 .cache/
 .eslintcache
+
+# --- Built artefacts ---
+# Dashboard bundle staged into the dap-cli wheel by
+# scripts/build-dashboard-bundle.sh — regenerated on demand from
+# apps/dashboard/.next. The ``.gitkeep`` is retained so hatchling's
+# ``force-include`` always finds the directory; dev wheels built
+# without running the bundle script ship an effectively-empty
+# ``_dashboard/`` and ``dap start`` falls back to "dashboard not
+# bundled".
+apps/cli/src/dap_cli/_dashboard/*
+!apps/cli/src/dap_cli/_dashboard/.gitkeep
