@@ -191,6 +191,34 @@ class ProjectRunRequest(BaseModel):
     initial_state: dict[str, Any] = Field(default_factory=dict)
 
 
+class ValidateEnvRequest(BaseModel):
+    """Body for POST /projects/validate-env — identify and probe GH tokens."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    env_vars: dict[str, str]
+
+
+class EnvVarValidationResult(BaseModel):
+    """Per-key validation outcome."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    is_token: bool
+    valid: bool | None = None
+    login: str | None = None
+    error: str | None = None
+
+
+class ValidateEnvResponse(BaseModel):
+    """Response from POST /projects/validate-env."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[EnvVarValidationResult]
+
+
 class RenderPreviewRequest(BaseModel):
     """Body for POST /agents/{id}/render-preview."""
 

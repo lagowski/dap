@@ -14,6 +14,7 @@ import type {
   ProjectRunRequest,
   ProjectUpdate,
   RunCreateRequest,
+  ValidateEnvRequest,
 } from "@/lib/api/types";
 
 export const queryKeys = {
@@ -361,6 +362,12 @@ export function useArchiveProject() {
       qc.invalidateQueries({ queryKey: queryKeys.projects });
       qc.invalidateQueries({ queryKey: queryKeys.project(id) });
     },
+  });
+}
+
+export function useValidateProjectEnv() {
+  return useMutation({
+    mutationFn: (payload: ValidateEnvRequest) => api.validateProjectEnv(payload),
   });
 }
 

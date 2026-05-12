@@ -36,6 +36,8 @@ import type {
   RunCreateRequest,
   SettingsView,
   StateSnapshot,
+  ValidateEnvRequest,
+  ValidateEnvResponse,
   ValidationResult,
 } from "./types";
 
@@ -396,6 +398,19 @@ export async function triggerProjectRun(
     `/projects/${encodeURIComponent(id)}/run/${encodeURIComponent(kind)}`,
     { method: "POST", json: payload ?? {} },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Env var validation (#350)
+// ---------------------------------------------------------------------------
+
+export async function validateProjectEnv(
+  payload: ValidateEnvRequest,
+): Promise<ValidateEnvResponse> {
+  return request<ValidateEnvResponse>("/projects/validate-env", {
+    method: "POST",
+    json: payload,
+  });
 }
 
 // ---------------------------------------------------------------------------
