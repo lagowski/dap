@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Auth setup guide (#344, sub-E2): `docs/auth.md` covering all four
+  credential mechanisms — email+password (with admin-driven reset
+  + `DAP_AUTH_LOG_RESET_TOKENS` dev workaround), GitHub OAuth
+  (`read:user user:email` scopes, step-by-step app registration),
+  Google OAuth (default `openid email profile` scopes, Cloud Console
+  walkthrough), and opaque `dap_*` API tokens (mint / list / revoke
+  via JWT-only management endpoints).
 - Self-hosting docs (#337, sub-D5): `docs/self-hosting.md` covering
   three install paths (PyPI / Docker / source), production checklist,
   OAuth setup, and the troubleshooting table. README links to it from

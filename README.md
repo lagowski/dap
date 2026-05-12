@@ -163,6 +163,7 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 ## Documentation
 
 - [`docs/self-hosting.md`](docs/self-hosting.md) — deployment paths (PyPI / Docker / source), production checklist, OAuth setup, troubleshooting.
+- [`docs/auth.md`](docs/auth.md) — email+password, GitHub OAuth, Google OAuth, API tokens. Provider-app setup walkthroughs.
 - [`docs/architecture.md`](docs/architecture.md) — components, state schema, Run lifecycle, LangGraph checkpoint model.
 - [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
 - [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
