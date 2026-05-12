@@ -2,7 +2,7 @@
 
 import { use, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Pause, Play, Square } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Pause, Play, Square } from "lucide-react";
 import {
   useAbortRun,
   useAgentsList,
@@ -90,6 +90,10 @@ export default function RunDetailPage({
         />
         <Metric label="Duration" value={formatDuration(duration)} />
       </div>
+
+      {run.final_status === "running" && (
+        <RunningBanner currentNode={run.current_node} nodeStatuses={run.node_statuses} />
+      )}
 
       {pipeline ? (
         <PipelineGraph
@@ -203,6 +207,35 @@ function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) 
         Abort
       </Button>
     </>
+  );
+}
+
+function RunningBanner({
+  currentNode,
+  nodeStatuses,
+}: {
+  currentNode: string | null;
+  nodeStatuses: Record<string, string>;
+}) {
+  const completedCount = Object.values(nodeStatuses).filter((s) => s === "success").length;
+  const totalCount = Object.keys(nodeStatuses).length;
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 px-3 py-2 text-sm">
+      <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
+      <span className="font-medium text-blue-700 dark:text-blue-300">
+        {currentNode ? (
+          <>Running <span className="font-mono">{currentNode}</span>…</>
+        ) : (
+          "Pipeline running…"
+        )}
+      </span>
+      {totalCount > 0 && (
+        <span className="ml-auto text-xs text-blue-600 dark:text-blue-400">
+          {completedCount}/{totalCount} nodes complete
+        </span>
+      )}
+    </div>
   );
 }
 

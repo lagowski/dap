@@ -95,7 +95,9 @@ export function useRun(id: string | null) {
     enabled: id != null,
     refetchInterval: (query) => {
       const data = query.state.data;
-      if (data && data.final_status !== "running") return false;
+      // Keep polling while running OR paused (paused needs to pick up
+      // gate_payload as soon as the interrupt fires).
+      if (data && data.final_status !== "running" && data.final_status !== "paused") return false;
       return RUN_DETAIL_REFETCH_MS;
     },
   });
