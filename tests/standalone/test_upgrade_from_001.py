@@ -19,7 +19,7 @@ from __future__ import annotations
 import io
 import sqlite3
 import uuid
-from contextlib import redirect_stderr
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from dap_engine.app import EngineConfig, create_app
@@ -160,8 +160,8 @@ def _try_login(db_path: Path, email: str, password: str) -> bool:
     return 200 <= response.status_code < 300
 
 
-def _extract_password(stderr_text: str) -> str | None:
-    """Pull the generated password out of the migration's stderr line.
+def _extract_password(stdout_text: str) -> str | None:
+    """Pull the generated password out of the migration's stdout line.
 
     The migration prints exactly:
         Migrated single-user install. Bootstrap admin: legacy-admin@local
@@ -169,7 +169,7 @@ def _extract_password(stderr_text: str) -> str | None:
 
     We grep on the unambiguous ``password=`` prefix.
     """
-    for line in stderr_text.splitlines():
+    for line in stdout_text.splitlines():
         marker = "password="
         idx = line.find(marker)
         if idx == -1:
@@ -191,11 +191,11 @@ def test_upgrade_creates_legacy_admin_with_working_password(tmp_path: Path) -> N
     db_path = tmp_path / "state.db"
     _create_pre_v03_database(db_path)
 
-    # Run the rest of the chain (009..015). Capture stderr — the new
+    # Run the rest of the chain (009..015). Capture stdout — the new
     # migration prints the generated password there.
     buf = io.StringIO()
     engine = create_engine(f"sqlite:///{db_path}", future=True)
-    with redirect_stderr(buf):
+    with redirect_stdout(buf):
         applied = apply_migrations(engine)
     engine.dispose()
 
@@ -205,7 +205,7 @@ def test_upgrade_creates_legacy_admin_with_working_password(tmp_path: Path) -> N
 
     password = _extract_password(buf.getvalue())
     assert password is not None and len(password) > 8, (
-        f"didn't find generated password in stderr:\n{buf.getvalue()}"
+        f"didn't find generated password in stdout:\n{buf.getvalue()}"
     )
 
     assert _try_login(db_path, "legacy-admin@local", password), (
@@ -225,7 +225,7 @@ def test_upgrade_backfills_resource_ownership(tmp_path: Path) -> None:
     _create_pre_v03_database(db_path)
 
     engine = create_engine(f"sqlite:///{db_path}", future=True)
-    with redirect_stderr(io.StringIO()):
+    with redirect_stdout(io.StringIO()):
         apply_migrations(engine)
     engine.dispose()
 
@@ -268,7 +268,7 @@ def test_upgrade_is_idempotent_on_rerun(tmp_path: Path) -> None:
     # First run — upgrades.
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     buf1 = io.StringIO()
-    with redirect_stderr(buf1):
+    with redirect_stdout(buf1):
         apply_migrations(engine)
     engine.dispose()
     first_password = _extract_password(buf1.getvalue())
@@ -277,7 +277,7 @@ def test_upgrade_is_idempotent_on_rerun(tmp_path: Path) -> None:
     # Second run — should be a no-op.
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     buf2 = io.StringIO()
-    with redirect_stderr(buf2):
+    with redirect_stdout(buf2):
         applied = apply_migrations(engine)
     engine.dispose()
 
@@ -309,7 +309,7 @@ def test_upgrade_skips_on_fresh_install(tmp_path: Path) -> None:
     Base.metadata.create_all(engine)
 
     buf = io.StringIO()
-    with redirect_stderr(buf):
+    with redirect_stdout(buf):
         applied = apply_migrations(engine)
     engine.dispose()
 

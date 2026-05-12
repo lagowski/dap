@@ -520,16 +520,27 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
 
     Migration ``013`` created a synthetic ``system@local`` user as a
     *backfill anchor* — inactive, unrecoverable password, just enough
-    to satisfy the ``user_id NOT NULL`` constraint on existing
-    resources. That left operators upgrading from 0.0.1 with no way
-    to actually log in to the multi-user instance.
+    to satisfy the application-layer ownership contract (the
+    ``user_id`` column itself is nullable on the SQL side — SQLite
+    can't ALTER COLUMN to NOT NULL — but the route handlers refuse
+    to insert NULL going forward; see migration 012). That left
+    operators upgrading from 0.0.1 with no way to actually log in to
+    the multi-user instance — every resource was owned by an
+    unreachable account.
 
     This migration finishes the job: promote ``system@local`` to
     ``legacy-admin@local`` with a freshly-generated, *usable*
-    Argon2id-hashed password, set the row active, print + log the
-    password exactly once so the operator can capture it. Resource
+    Argon2id-hashed password and set the row active. Resource
     ownership stays linked through the same user id — no second
     UPDATE pass on the resource tables.
+
+    Output split (Copilot review of sub-E1):
+      - ``print()`` writes the password to **stdout** — captured once
+        by an interactive operator.
+      - ``logger.warning()`` writes a follow-up note *without* the
+        password to the engine's normal log channel — long-lived log
+        aggregation never contains the secret, but oncall still gets
+        a heads-up to look at stdout.
 
     Idempotent: if the row was already promoted (e.g. re-running
     migrations), or if ``legacy-admin@local`` already exists from a
@@ -540,7 +551,6 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
     ``dap init`` instead.
     """
     import secrets  # noqa: PLC0415 — lazy, like 013
-    import sys  # noqa: PLC0415
 
     from fastapi_users.password import PasswordHelper  # noqa: PLC0415
 
@@ -571,6 +581,11 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
     hashed = PasswordHelper().hash(password)
     now = datetime.now(UTC).isoformat()
 
+    # ``is_superuser = TRUE`` belt-and-suspenders: 013 already set it
+    # when it created the row, but an operator could in principle have
+    # toggled it off (e.g. via a manual SQL fix-up) between then and
+    # now. Re-asserting here guarantees the row promotion lands as an
+    # actual admin no matter what intermediate state preceded it.
     conn.execute(
         text(
             """
@@ -578,6 +593,7 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
             SET email = :legacy_email,
                 hashed_password = :hashed,
                 is_active = :is_active,
+                is_superuser = :is_superuser,
                 is_verified = :is_verified,
                 deleted_at = NULL,
                 updated_at = :updated_at
@@ -588,22 +604,28 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
             "legacy_email": legacy_email,
             "hashed": hashed,
             "is_active": True,
+            "is_superuser": True,
             "is_verified": True,
             "updated_at": now,
             "system_email": system_email,
         },
     )
 
-    # Print to stdout AND log at WARN. Operators running the engine
-    # under systemd / Docker see the log; folks running it
-    # interactively see the print. Both surfaces matter — the
-    # password is the only login path until they rotate it.
-    message = (
+    # Password to stdout (operator's terminal); separate WARN log
+    # without the password (long-term log aggregation never sees the
+    # secret). Both reference the same email so it's clear they
+    # describe the same event.
+    print(
         f"Migrated single-user install. Bootstrap admin: {legacy_email} "
-        f"with password={password}. Change immediately at /admin/users."
+        f"with password={password}. Change immediately at /admin/users.",
+        flush=True,
     )
-    print(message, file=sys.stderr, flush=True)
-    logger.warning(message)
+    logger.warning(
+        "Promoted system@local → %s during pre-v0.3 upgrade. "
+        "The generated password was printed to stdout exactly once — "
+        "capture it now and rotate at /admin/users.",
+        legacy_email,
+    )
 
 
 MIGRATIONS: list[Migration] = [
