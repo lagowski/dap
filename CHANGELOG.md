@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a quick-start code example, compatibility matrix, and cross-links
   into the deeper docs/. Picked up by PyPI on the next release
   (v0.3.1+); no immediate re-publish needed.
+- PyPI publish reverted to trusted-publisher OIDC; no long-lived
+  API token in the repo. See `docs/release.md` for setup details
+  and the v0.3.0 "bootstrap mode" history note.
+
+### Removed
+- `secrets.PYPI_API_TOKEN` is no longer referenced by any workflow.
+  Operators should delete the secret manually
+  (`gh secret delete PYPI_API_TOKEN --repo rafeekpro/dap`).
 
 ## [0.3.0] — 2026-05-12
 

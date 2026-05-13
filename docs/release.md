@@ -2,10 +2,9 @@
 
 DAP ships through three channels on every `v*.*.*` tag:
 
-- **PyPI** — six wheels (one per first-party package). v0.3.0 is in
-  **bootstrap mode** using an account-scoped API token; subsequent
-  releases switch to trusted-publisher OIDC. See the PyPI section
-  below for both states.
+- **PyPI** — six wheels (one per first-party package), published
+  via trusted-publisher OIDC so no long-lived API token has to
+  live in this repo.
 - **GHCR** — multi-platform Docker image
   (`ghcr.io/<owner>/dap:<version>`), `linux/amd64` + `linux/arm64`.
 - **GitHub Release** — release notes with auto-generated changelog
@@ -15,46 +14,28 @@ Everything runs from `.github/workflows/release.yml`. This document
 covers the **one-time operator setup** and the **per-release
 checklist**.
 
+> **History note.** v0.3.0 was published in "bootstrap mode" with
+> an account-scoped API token because PyPI's *pending* publishers
+> form rate-limited the initial registration of six new projects.
+> Once the six projects existed on PyPI, trusted-publisher rules
+> were added through the reliable Manage → Publishing → Add flow
+> on each project page. v0.3.1+ uses OIDC end-to-end.
+
 ## One-time setup
 
-### PyPI publishing
+### PyPI trusted publishers
 
-#### Current state — v0.3.0 bootstrap (API token)
+Each PyPI project (`dap-cli`, `dap-engine`, `dap-schemas`,
+`dap-runtimes`, `dap-prompt-dsl`, `dap-cortex`) needs a
+trusted-publisher rule pointing at this repo's `release.yml`
+workflow. For an existing project (which is the case for all six
+after v0.3.0):
 
-PyPI's "pending publishers" form (the only way to register a
-trusted-publisher rule for a project that **doesn't yet exist** on
-PyPI) rate-limited registrations after a couple of attempts.
-Bootstrap workaround: publish v0.3.0 with an account-scoped API
-token, then switch to trusted-publisher OIDC for v0.3.1+.
-
-One-time setup:
-
-1. Generate an account-scoped token at https://pypi.org/manage/account/token/.
-   Name: `dap-release-bootstrap-v030`. Scope: **Entire account**
-   (account-wide is required because none of the six projects exist
-   on PyPI yet — project-scoped tokens are unavailable for projects
-   the operator can't see).
-2. Add the value to repo secrets as `PYPI_API_TOKEN` at
-   https://github.com/<owner>/dap/settings/secrets/actions.
-3. The `release.yml` `publish-pypi` job reads it via the `password:`
-   parameter on `pypa/gh-action-pypi-publish`. The `environment: pypi`
-   block stays in place so the workflow honours any
-   required-reviewers / tag-pattern policy you attach via repo
-   settings (GitHub auto-creates the environment on first run).
-
-#### End state — trusted-publisher OIDC (post-bootstrap)
-
-After v0.3.0 ships and the six packages exist on PyPI, switch each
-to a trusted-publisher rule. This second flow uses a different
-backend (`Manage → Publishing → Add` on an *existing* project) than
-pending publishers; it's the reliable path.
-
-For each of `dap-cli`, `dap-engine`, `dap-schemas`, `dap-runtimes`,
-`dap-prompt-dsl`, `dap-cortex`:
-
-1. Sign in to PyPI; open the project page.
-2. **Manage** → **Publishing** → **Add a new trusted publisher**.
-3. Fill in:
+1. Sign in to PyPI as the project owner.
+2. Open the project's PyPI page → **Manage** → **Publishing**.
+   (Direct URL shape: `https://pypi.org/manage/project/<package>/settings/publishing/`,
+   exact path subject to PyPI's UI evolution.)
+3. Add a new trusted publisher (GitHub provider). Fill in:
    - **Owner**: `rafeekpro` (this repo's GitHub org/user).
    - **Repository name**: `dap`.
    - **Workflow name**: `release.yml`.
@@ -62,20 +43,10 @@ For each of `dap-cli`, `dap-engine`, `dap-schemas`, `dap-runtimes`,
 4. Save. PyPI will mint short-lived OIDC tokens for the
    `release.yml` workflow whenever it runs against a tag.
 
-Then open the cleanup PR:
-
-- Revert the `publish-pypi` job's `password:` parameter (drop it —
-  `pypa/gh-action-pypi-publish` reads the OIDC token automatically
-  when `id-token: write` is granted, which it already is at the
-  workflow level).
-- Update this section to drop the bootstrap state.
-- Delete `PYPI_API_TOKEN` from repo secrets via GitHub UI (cannot
-  be done from a PR; it's a one-click in Settings → Secrets).
-
-The `environment: pypi` block stays in both states. It scopes the
-publishing step to a specific GitHub Environment, so attach
-reviewers / tag restrictions there if you want manual gates on
-production releases beyond the workflow itself.
+The `environment: pypi` block in the workflow scopes publishing
+to a specific GitHub Environment. Attach required-reviewers or
+tag-pattern restrictions to that environment in repo settings if
+you want manual release gating on top of the OIDC flow.
 
 ### GHCR access
 
