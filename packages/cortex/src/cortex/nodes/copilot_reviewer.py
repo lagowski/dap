@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 __all__ = ["run"]
 
 # How long to wait for Copilot to post its first review (seconds).
-POLL_TIMEOUT_SEC = 600  # 10 minutes
-POLL_INTERVAL_SEC = 15
+POLL_TIMEOUT_SEC = 900  # 15 minutes — Copilot can be slow on large repos
+POLL_INTERVAL_SEC = 30
 
 # Max rounds of fix → re-review.
 MAX_FIX_ROUNDS = 2
