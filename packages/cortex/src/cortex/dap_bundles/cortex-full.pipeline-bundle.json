@@ -161,6 +161,14 @@
         }
       },
       {
+        "id": "copilot-reviewer",
+        "agent_id": "cx_p3_copilot_reviewer",
+        "position": {
+          "x": 1850.0,
+          "y": 0
+        }
+      },
+      {
         "id": "reviewer",
         "agent_id": "cx_p3_reviewer",
         "position": {
@@ -318,7 +326,7 @@
       {
         "id": "e21",
         "source": "pr-creator",
-        "target": "reviewer"
+        "target": "copilot-reviewer"
       },
       {
         "id": "e22",
@@ -334,6 +342,11 @@
         "id": "e24",
         "source": "pr-merger",
         "target": "__end__"
+      },
+      {
+        "id": "e21b",
+        "source": "copilot-reviewer",
+        "target": "reviewer"
       }
     ],
     "defaults": {
@@ -623,6 +636,26 @@
       "input_schema": [],
       "output_schema": [],
       "timeout_ms": 120000
+    },
+    "cx_p3_copilot_reviewer": {
+      "name": "Cortex Phase 3 \u2014 Copilot Reviewer",
+      "role": "copilot_reviewer",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "function": "cortex.nodes.copilot_reviewer:run"
+      },
+      "prompt_template": "",
+      "input_schema": [
+        "repo",
+        "pr_number",
+        "coder_branch_name",
+        "branch_name"
+      ],
+      "output_schema": [
+        "copilot_approved",
+        "copilot_comments"
+      ],
+      "timeout_ms": 720000
     }
   },
   "install_instructions": {
