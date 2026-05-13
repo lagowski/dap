@@ -70,11 +70,14 @@ def parse_issue_url(url: str) -> tuple[str, int]:
 
 
 def load_cortex_bundle() -> dict[str, Any]:
-    """Load cortex-full.pipeline-bundle.json from the installed cortex package.
+    """Load cortex-full.pipeline-bundle.json from the installed ``dap-cortex`` package.
 
-    Requires the ``dap-cortex`` PyPI package (extracted from this monorepo
-    to ``Dixter999/cortex-project``) to be installed in the current Python
-    environment. Raises ImportError with a clear install instruction if not.
+    Requires the ``dap-cortex`` PyPI distribution (extracted from this
+    monorepo to ``Dixter999/cortex-project``) to be installed in the
+    current Python environment. Note: distribution name is ``dap-cortex``
+    but the import namespace is ``cortex`` — the bundle is looked up via
+    ``importlib.resources.files("cortex.dap_bundles")``. Raises
+    ImportError with a clear install instruction if not.
     """
     try:
         bundle_ref = importlib.resources.files("cortex.dap_bundles") / CORTEX_BUNDLE_NAME
