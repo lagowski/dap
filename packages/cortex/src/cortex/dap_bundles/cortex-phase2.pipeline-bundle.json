@@ -1,9 +1,9 @@
 {
   "schema_version": "pipeline-export/1",
-  "_comment": "Cortex Phase 2 execution pipeline \u2014 6 nodes total.\n\nPhase 2 runs three execution agents (coder, designer, documenter) that\nbranch from main and make code/design/doc changes. Each agent delegates\nwrites internally via run_execution_node \u2014 no separate write nodes needed\n(unlike Phase 1 enrichment agents which update the issue body).\n\nAfter the three execution agents, code-reviewer diffs each agent's branch\nagainst main and returns extensions.review_status:\n  - \"clean\"      \u2192 advance to gate-phase2\n  - \"needs_work\" \u2192 retry from coder (max 2 attempts via extensions.review_attempts)\n  - attempts \u2265 2 \u2192 fallback to gate-phase2 (prevents infinite retry)\n\nThe gate node (gate-phase2) uses cortex.dap_steps.human_gate:noop \u2014 a\npass-through that does nothing. The actual pause is driven by the engine\nvia interrupt_before when approval_required_nodes includes 'gate-phase2'.\nThe operator approves with:\n  POST /runs/{id}/nodes/gate-phase2/approve\nor simply:\n  POST /runs/{id}/resume\n\nVocabulary note: code_reviewer.py returns review_approved (bool) and\naction (\"approved\"/\"needs_work\"). The state adapter\n(cortex/adapters/pipeline_state.py) translates review_approved=True \u2192\nextensions.review_status=\"clean\". This bundle uses the DAP-side\nvocabulary (\"clean\"/\"needs_work\").\n\nRef: rafeekpro/dap#164 (interrupt_before + /approve endpoint)",
+  "_comment": "Cortex Phase 2 execution pipeline — 6 nodes total.\n\nPhase 2 runs three execution agents (coder, designer, documenter) that\nbranch from main and make code/design/doc changes. Each agent delegates\nwrites internally via run_execution_node — no separate write nodes needed\n(unlike Phase 1 enrichment agents which update the issue body).\n\nAfter the three execution agents, code-reviewer diffs each agent's branch\nagainst main and returns extensions.review_status:\n  - \"clean\"      → advance to gate-phase2\n  - \"needs_work\" → retry from coder (max 2 attempts via extensions.review_attempts)\n  - attempts ≥ 2 → fallback to gate-phase2 (prevents infinite retry)\n\nThe gate node (gate-phase2) uses cortex.dap_steps.human_gate:noop — a\npass-through that does nothing. The actual pause is driven by the engine\nvia interrupt_before when approval_required_nodes includes 'gate-phase2'.\nThe operator approves with:\n  POST /runs/{id}/nodes/gate-phase2/approve\nor simply:\n  POST /runs/{id}/resume\n\nVocabulary note: code_reviewer.py returns review_approved (bool) and\naction (\"approved\"/\"needs_work\"). The state adapter\n(cortex/adapters/pipeline_state.py) translates review_approved=True →\nextensions.review_status=\"clean\". This bundle uses the DAP-side\nvocabulary (\"clean\"/\"needs_work\").\n\nRef: rafeekpro/dap#164 (interrupt_before + /approve endpoint)",
   "pipeline": {
-    "name": "Cortex Phase 2 \u2014 Execution",
-    "description": "Phase 2 pipeline: git-branch \u2192 coder \u2192 designer \u2192 documenter \u2192 code-reviewer (conditional retry) \u2192 gate-phase2. Execution agents branch from main and make code changes; code-reviewer validates and can retry up to 2 times.",
+    "name": "Cortex Phase 2 — Execution",
+    "description": "Phase 2 pipeline: git-branch → coder → designer → documenter → code-reviewer (conditional retry) → gate-phase2. Execution agents branch from main and make code changes; code-reviewer validates and can retry up to 2 times.",
     "schema_version": "langgraph/1.0",
     "state_schema_ref": "PipelineState.v1",
     "entry_point": "git-branch",
@@ -138,11 +138,11 @@
   },
   "bundled_agents": {
     "cx_p2_git_branch": {
-      "name": "Cortex Phase 2 \u2014 Git Branch",
+      "name": "Cortex Phase 2 — Git Branch",
       "role": "setup",
       "runtime_id": "bash",
       "runtime_config": {},
-      "prompt_template": "<agent_prompt><command>cd {{ extensions.workspace_path }} && git fetch origin && git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main</command></agent_prompt>",
+      "prompt_template": "<agent_prompt><command>cd {{ extensions.workspace_path }} &amp;&amp; git fetch origin &amp;&amp; git checkout -b cortex/issue-{{ extensions.issue_number }}/coder origin/main</command></agent_prompt>",
       "input_schema": [],
       "output_schema": [
         "branch"
@@ -150,7 +150,7 @@
       "timeout_ms": 30000
     },
     "cx_p2_coder": {
-      "name": "Cortex Phase 2 \u2014 Coder",
+      "name": "Cortex Phase 2 — Coder",
       "role": "executor",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -165,7 +165,7 @@
       "timeout_ms": 60000
     },
     "cx_p2_designer": {
-      "name": "Cortex Phase 2 \u2014 Designer",
+      "name": "Cortex Phase 2 — Designer",
       "role": "executor",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -180,7 +180,7 @@
       "timeout_ms": 60000
     },
     "cx_p2_documenter": {
-      "name": "Cortex Phase 2 \u2014 Documenter",
+      "name": "Cortex Phase 2 — Documenter",
       "role": "executor",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -195,7 +195,7 @@
       "timeout_ms": 60000
     },
     "cx_p2_code_reviewer": {
-      "name": "Cortex Phase 2 \u2014 Code Reviewer",
+      "name": "Cortex Phase 2 — Code Reviewer",
       "role": "reviewer",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -209,7 +209,7 @@
       "timeout_ms": 300000
     },
     "cx_p2_gate": {
-      "name": "Cortex Phase 2 \u2014 Approval Gate",
+      "name": "Cortex Phase 2 — Approval Gate",
       "role": "post_check",
       "runtime_id": "python-func",
       "runtime_config": {
@@ -228,7 +228,7 @@
       "2. Set CORTEX_ env vars (GH_TOKEN_READ, GH_TOKEN_ISSUES, GH_TOKEN_CODE, GH_TOKEN_MERGE, DATABASE_URL)",
       "3. Strip _comment and install_instructions before importing: POST /pipelines/import with {schema_version, pipeline, bundled_agents}",
       "4. Create a run: POST /runs with pipeline_id and initial_state.extensions={issue_url, issue_number, repo, workspace_path, ...}",
-      "5. Phase 2 starts with git-branch (creates working branch), then runs coder \u2192 designer \u2192 documenter sequentially",
+      "5. Phase 2 starts with git-branch (creates working branch), then runs coder → designer → documenter sequentially",
       "6. code-reviewer validates the diff; on 'needs_work' the loop retries from coder (max 2 attempts)",
       "7. When complete (or retries exhausted), run pauses at gate-phase2",
       "8. Approve: POST /runs/{id}/nodes/gate-phase2/approve  (or /resume)"

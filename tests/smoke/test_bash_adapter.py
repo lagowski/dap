@@ -344,7 +344,13 @@ def test_full_bundle_git_branch_omits_explicit_shell() -> None:
 
 
 def test_full_bundle_git_branch_command_uses_and_chaining() -> None:
-    """git-branch prompt template must use && not ; so cd failure aborts the chain."""
+    """git-branch prompt template must use && not ; so cd failure aborts the chain.
+
+    The template is valid XML so && is stored as &amp;&amp;.  Decode entities
+    before checking so the assertion operates on the actual shell command that
+    BashAdapter will execute (which calls html.unescape on extraction).
+    """
+    import html
     import re
 
     bundle = _load_bundle("cortex-full.pipeline-bundle.json")
@@ -353,7 +359,7 @@ def test_full_bundle_git_branch_command_uses_and_chaining() -> None:
     pt = agent.get("prompt_template", "")
     m = re.search(r"<command>(.*?)</command>", pt, re.DOTALL)
     assert m is not None, "git-branch prompt_template has no <command> block"
-    cmd = m.group(1)
+    cmd = html.unescape(m.group(1))
     assert ";" not in cmd, (
         "git-branch command uses ';' chaining — use '&&' so cd failure aborts "
         f"subsequent git commands. command: {cmd!r}"
