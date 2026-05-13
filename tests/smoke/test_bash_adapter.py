@@ -6,7 +6,6 @@ import asyncio
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import pytest
 from dap_runtimes import BashAdapter
