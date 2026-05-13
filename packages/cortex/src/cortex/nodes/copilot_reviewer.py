@@ -63,9 +63,7 @@ RULES:
 """
 
 
-def _get_copilot_comments(
-    repo_full: str, pr_number: int, token: str
-) -> tuple[list[dict], bool]:
+def _get_copilot_comments(repo_full: str, pr_number: int, token: str) -> tuple[list[dict], bool]:
     """Return (inline_comments, copilot_approved).
 
     inline_comments: list of {path, line, body} dicts from Copilot's review.
@@ -95,18 +93,18 @@ def _get_copilot_comments(
     for comment in pr.get_review_comments():
         if comment.user.login != COPILOT_BOT:
             continue
-        inline_comments.append({
-            "path": comment.path,
-            "line": comment.position or comment.original_position,
-            "body": comment.body,
-        })
+        inline_comments.append(
+            {
+                "path": comment.path,
+                "line": comment.position or comment.original_position,
+                "body": comment.body,
+            }
+        )
 
     return inline_comments, False
 
 
-def _poll_for_copilot(
-    repo_full: str, pr_number: int, token: str
-) -> tuple[list[dict], bool]:
+def _poll_for_copilot(repo_full: str, pr_number: int, token: str) -> tuple[list[dict], bool]:
     """Poll until Copilot posts a review or POLL_TIMEOUT_SEC elapses.
 
     Returns (inline_comments, copilot_approved).
@@ -118,9 +116,7 @@ def _poll_for_copilot(
             logger.info("copilot_reviewer: Copilot approved the PR")
             return [], True
         if comments:
-            logger.info(
-                "copilot_reviewer: Copilot left %d comment(s)", len(comments)
-            )
+            logger.info("copilot_reviewer: Copilot left %d comment(s)", len(comments))
             return comments, False
         logger.debug(
             "copilot_reviewer: no Copilot review yet, retrying in %ds",
@@ -220,28 +216,38 @@ async def run(state: dict, config: dict) -> dict:
 
     if not pr_number:
         logger.warning("copilot_reviewer: no pr_number in state — skipping")
-        return preserve_extensions(cortex_to_dap({
-            "copilot_approved": False,
-            "copilot_comments": [],
-            "decisions": [
-                *state.get("decisions", []),
-                _decision("skipped", "no pr_number in state"),
-            ],
-        }), original_extensions)
+        return preserve_extensions(
+            cortex_to_dap(
+                {
+                    "copilot_approved": False,
+                    "copilot_comments": [],
+                    "decisions": [
+                        *state.get("decisions", []),
+                        _decision("skipped", "no pr_number in state"),
+                    ],
+                }
+            ),
+            original_extensions,
+        )
 
     workspace = repo_clone_path(repo)
 
     comments, approved = _poll_for_copilot(repo, pr_number, read_token)
 
     if approved:
-        return preserve_extensions(cortex_to_dap({
-            "copilot_approved": True,
-            "copilot_comments": [],
-            "decisions": [
-                *state.get("decisions", []),
-                _decision("approved", "Copilot approved the PR"),
-            ],
-        }), original_extensions)
+        return preserve_extensions(
+            cortex_to_dap(
+                {
+                    "copilot_approved": True,
+                    "copilot_comments": [],
+                    "decisions": [
+                        *state.get("decisions", []),
+                        _decision("approved", "Copilot approved the PR"),
+                    ],
+                }
+            ),
+            original_extensions,
+        )
 
     # Fix loop
     fix_round = 0
@@ -252,11 +258,11 @@ async def run(state: dict, config: dict) -> dict:
         fix_round += 1
         logger.info(
             "copilot_reviewer: fix round %d/%d — %d comment(s)",
-            fix_round, MAX_FIX_ROUNDS, len(comments),
+            fix_round,
+            MAX_FIX_ROUNDS,
+            len(comments),
         )
-        addressed_comments.extend(
-            f"{c['path']}:{c['line']} — {c['body'][:80]}" for c in comments
-        )
+        addressed_comments.extend(f"{c['path']}:{c['line']} — {c['body'][:80]}" for c in comments)
         if workspace.exists():
             _run_fix(comments, repo, branch_name, code_token, workspace)
 
@@ -266,8 +272,10 @@ async def run(state: dict, config: dict) -> dict:
             break
 
     action = (
-        "approved_after_fix" if approved
-        else "timed_out" if timed_out
+        "approved_after_fix"
+        if approved
+        else "timed_out"
+        if timed_out
         else f"max_rounds_reached ({MAX_FIX_ROUNDS})"
     )
 
@@ -280,11 +288,16 @@ async def run(state: dict, config: dict) -> dict:
             f"{'pending/no review' if timed_out else 'still requesting changes'}"
         )
     )
-    return preserve_extensions(cortex_to_dap({
-        "copilot_approved": approved,
-        "copilot_comments": addressed_comments,
-        "decisions": [
-            *state.get("decisions", []),
-            _decision(action, verdict),
-        ],
-    }), original_extensions)
+    return preserve_extensions(
+        cortex_to_dap(
+            {
+                "copilot_approved": approved,
+                "copilot_comments": addressed_comments,
+                "decisions": [
+                    *state.get("decisions", []),
+                    _decision(action, verdict),
+                ],
+            }
+        ),
+        original_extensions,
+    )

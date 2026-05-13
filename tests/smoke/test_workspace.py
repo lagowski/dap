@@ -85,8 +85,13 @@ def test_workspace_status_real_git_repo(client: TestClient) -> None:
             cwd=tmp,
             check=True,
             capture_output=True,
-            env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                 "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
         )
         pid = _create_project(client, working_directory=tmp)
         resp = client.get(f"/projects/{pid}/workspace/status")
@@ -135,8 +140,13 @@ def test_workspace_init_idempotent_if_already_exists(client: TestClient) -> None
             cwd=tmp,
             check=True,
             capture_output=True,
-            env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                 "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
         )
         pid = _create_project(client, working_directory=tmp)
         resp = client.post(f"/projects/{pid}/workspace/init")
