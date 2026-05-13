@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy-pasteable flow. Each path includes preflight checks,
   exact commands, verification steps, and pointers into deeper
   docs.
+- `docs/quick-start.md` "Runtime adapters" section — explains
+  the 7 runtimes (api-call, claude-code, gemini-cli, codex,
+  aider, bash, http), the three Docker strategies for CLI
+  runtimes (api-call-only, custom image with OAuth mount,
+  no-Docker pipx), and a single-stop "where the config lives"
+  map covering engine startup env, per-agent `runtime_config`,
+  per-run state, and provider OAuth state directories. Aimed at
+  operators choosing between "pay per token" vs "reuse my
+  Claude Code Pro subscription" deployments.
 
 ## [0.3.0] — 2026-05-12
 

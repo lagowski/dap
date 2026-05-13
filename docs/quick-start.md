@@ -283,6 +283,166 @@ in [`self-hosting.md`](self-hosting.md#troubleshooting).
 
 ---
 
+## Runtime adapters — how DAP talks to LLMs
+
+After install, every agent needs to know **which LLM to call** and
+**how to authenticate**. DAP ships 7 runtime adapters; you pick one
+per agent in `runtime_config`. The choice has big consequences for
+deployment, especially in Docker.
+
+### The 7 runtimes
+
+| Runtime | What it does | Needs binary on PATH? | Auth |
+|---|---|---|---|
+| `api-call` | HTTPS to provider's API | ❌ No | Env var (e.g. `ANTHROPIC_API_KEY`) |
+| `claude-code` | `subprocess` to `claude` CLI | ✅ Yes | `~/.claude/` OAuth state OR `ANTHROPIC_API_KEY` |
+| `gemini-cli` | `subprocess` to `gemini` CLI | ✅ Yes | `~/.config/google-generative-ai/` OAuth OR `GEMINI_API_KEY` |
+| `codex` | `subprocess` to `codex` CLI | ✅ Yes | `~/.codex/` OAuth OR `OPENAI_API_KEY` |
+| `aider` | `subprocess` to `aider` CLI | ✅ Yes | provider's API key env var |
+| `bash` | Arbitrary shell command | system `bash` | n/a (whatever the script needs) |
+| `http` | Generic HTTP request | ❌ No | Whatever the endpoint wants |
+
+CLI runtimes (`claude-code`, `gemini-cli`, `codex`, `aider`) let you
+reuse provider OAuth logins (e.g. Claude Code Pro / Max plan
+without per-token billing). `api-call` is simpler but pays per
+token.
+
+### The fork in the road for Docker users
+
+The default Docker image (`ghcr.io/rafeekpro/dap:0.3.0`) ships with
+**Python + Node + the bundled dashboard** — NOT with the LLM
+CLIs. If you want `claude-code` / `gemini-cli` / `codex` /
+`aider` to work from a Dockerised DAP, you have three options:
+
+#### Strategy 1 — `api-call` only (simplest)
+
+Skip CLI runtimes entirely. Everything `claude-code` does, you can
+do via `api-call` with `provider: "anthropic"`. Pass the API keys
+as env vars to the container.
+
+```yaml
+# docker-compose.yml
+services:
+  dap:
+    image: ghcr.io/rafeekpro/dap:0.3.0
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GLM_API_KEY: ${GLM_API_KEY}
+```
+
+Then in each agent's `runtime_config` (dashboard → `/agents/<id>/edit`):
+
+```json
+{
+  "provider": "anthropic",
+  "model_id": "claude-opus-4-7",
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "max_tokens": 4096
+}
+```
+
+The engine reads `os.environ["ANTHROPIC_API_KEY"]` at call time.
+The key never lands in the database or logs. Covers >90% of use
+cases.
+
+#### Strategy 2 — extend the Docker image with the CLIs
+
+If you need a CLI runtime (e.g. using a Claude Code Pro
+subscription, or `aider` for repo-scoped edits):
+
+```dockerfile
+# Dockerfile.dap-with-clis
+FROM ghcr.io/rafeekpro/dap:0.3.0
+
+USER root
+RUN npm install -g @anthropic-ai/claude-code @google-ai/gemini-cli \
+    && pip install aider-chat \
+    # codex CLI install per its own README
+    && true
+USER 1000
+```
+
+```yaml
+# docker-compose.yml
+services:
+  dap:
+    build:
+      context: .
+      dockerfile: Dockerfile.dap-with-clis
+    volumes:
+      # Share OAuth state from host (read-only).
+      - ${HOME}/.claude:/home/dap/.claude:ro
+      - ${HOME}/.config/google-generative-ai:/home/dap/.config/google-generative-ai:ro
+    environment:
+      HOME: /home/dap   # CLIs look up $HOME/.claude etc.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}  # fallback for api-call agents
+```
+
+**Limitations:**
+
+- The mounted OAuth state is read-only. `claude auth login` from
+  inside the container won't work (no browser, no `$DISPLAY`).
+  Log in on the host first, container just reads the state.
+- Anyone with root in the container can read your OAuth tokens.
+  Acceptable for self-hosted single-team, not "secure by default".
+- CLI updates require image rebuild.
+
+#### Strategy 3 — skip Docker, use pipx (no-Docker install)
+
+If the host already has `claude` / `gemini` / `codex` configured
+and you have permission to install Python packages there, this is
+the cleanest path:
+
+```bash
+# Single host, single $HOME, native processes — no container.
+pipx install dap-cli
+dap init --admin-email=ops@example.com --admin-password=$(openssl rand -hex 16)
+dap start
+```
+
+DAP runs as your user, uses your `$PATH` (finds `claude` etc.),
+reads your `~/.claude/` directly. Zero duplication of credentials,
+zero mounts.
+
+**Strategy 3 is also the answer for any environment where Docker
+isn't available** (locked-down VPS, internal STG / dev hosts with
+strict admin policies, etc.). Python 3.13+ is the only hard
+requirement. Add a `systemd` unit if you need it to survive
+reboots — see [`self-hosting.md`](self-hosting.md#install-paths)
+for the unit file template.
+
+### Where the config actually lives — one-stop map
+
+| Layer | Where | What it controls |
+|---|---|---|
+| **Engine startup** | `docker-compose.yml` `environment:` (Docker) OR `.env.local` sourced before `dap start` (pipx) OR systemd `Environment=` directive | `DAP_AUTH_JWT_SECRET`, `DAP_DATABASE_URL`, `DAP_CORS_ORIGINS`, provider keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GLM_API_KEY`, ...) |
+| **Per-agent runtime** | Dashboard `/agents/<id>/edit` → "Runtime config" block, stored in `agents.runtime_config` JSON column | Which runtime, which provider, which model, `api_key_env` (name of env var to read), `max_tokens`, `temperature`, CLI-specific paths |
+| **Per-pipeline run** | Trigger form / `POST /runs` `initial_state` | Per-run overrides — input values fed into the first agent |
+| **Provider OAuth state** | Host filesystem (`~/.claude/`, `~/.config/google-generative-ai/`, etc.) — bind-mounted into Docker via volumes if needed | Long-lived OAuth tokens for CLI runtimes when you don't want per-token API keys |
+
+When you change `runtime_config` on an agent, the change is
+immediate — every subsequent run uses the new config. Existing
+in-flight runs keep their snapshot. Engine doesn't need a restart.
+
+When you change a startup env var (`ANTHROPIC_API_KEY`, etc.),
+you **do** need to restart the engine for it to pick up the new
+value (`docker compose restart dap`, or `dap stop && dap start`).
+The engine reads env at startup only, not per-request.
+
+### Recommendation by deployment shape
+
+| Your situation | Use |
+|---|---|
+| Local laptop, you already have `claude` CLI logged in | Strategy 3 (pipx) — your `claude auth` state just works |
+| VPS without Docker, want simple ops | Strategy 3 + systemd unit |
+| VPS with Docker, ops via compose, fine paying per-token | Strategy 1 — `api-call` only, API keys in `.env` |
+| VPS with Docker, want Claude Code Pro subscription | Strategy 2 — custom image + OAuth mount |
+| Mixed team, some pipelines per-token, some CLI | Strategy 2 — covers both since `api-call` agents just ignore the bundled CLIs |
+
+---
+
 ## Going further
 
 Once you're logged in:
