@@ -53,6 +53,62 @@ def _gate_node_from_interrupt(
     return next((n for n in interrupt.next_nodes if n in approval_nodes), None)
 
 
+_TERMINAL_FINAL_STATUSES: frozenset[str] = frozenset({"success", "failed", "aborted"})
+
+
+def _resolve_terminal_status(
+    final_state: PipelineState,
+    *,
+    requires_terminal: bool,
+) -> tuple[str, str | None]:
+    """Map a runner-completed ``PipelineState`` to the row-level final status.
+
+    Used by ``execute_run_background`` and ``execute_rewind_background``
+    after the runner returns cleanly. Returns ``(status, failure_reason)``
+    where ``failure_reason`` is non-None only on the defensive failure
+    paths so the caller knows whether to persist a reason.
+
+    Behaviour (#381):
+
+    - Explicit terminal values (``success`` / ``failed`` / ``aborted``)
+      pass through unchanged. The orchestrator must never overwrite a
+      deliberate node-set status.
+    - When ``requires_terminal=False`` (the default for generic
+      pipelines), a non-terminal ``final_status`` is silently coerced
+      to ``success`` — preserves the historical "no node raised" =
+      "successful run" contract for pipelines that don't manage
+      state-level ``final_status``.
+    - When ``requires_terminal=True`` (cortex bundle opts in via
+      ``PipelineDefaults.requires_terminal_final_status``), a residual
+      ``running`` means *no node ever set a terminal status* and is
+      treated as ``failed`` with an operator-readable reason. A
+      residual ``paused`` would also be a bug (a real pause raises
+      ``RunnerInterrupt`` long before this code runs) and any other
+      value is rejected on the same grounds.
+    """
+    status = final_state.final_status
+    if status in _TERMINAL_FINAL_STATUSES:
+        return status, None
+
+    if not requires_terminal:
+        # Historical default: trust that the runner completing without
+        # exceptions means the pipeline reached its goal, even if no
+        # node bothered to set state.final_status.
+        return "success", None
+
+    if status == "running":
+        return "failed", (
+            "pipeline finished without setting a terminal final_status "
+            "(a node likely returned success without updating state on refusal)"
+        )
+    if status == "paused":
+        return "failed", (
+            "pipeline finished with final_status='paused' but the runner "
+            "did not signal a real pause — treating as failure"
+        )
+    return "failed", f"pipeline finished with unknown final_status={status!r}"
+
+
 def _gate_payload_from_interrupt(interrupt: RunnerInterrupt) -> dict[str, Any] | None:
     """Return a serialisable gate payload for storage on the Run row (#364).
 
@@ -137,10 +193,18 @@ async def execute_run_background(
                 bg_session.commit()
                 return
 
-            final_status = final_state.final_status
-            if final_status not in {"success", "failed", "aborted"}:
-                final_status = "success"
-            repo.finalize_run(bg_session, run_id, final_status=final_status)
+            requires_terminal = PipelineDefaults.model_validate(
+                version_orm.defaults
+            ).requires_terminal_final_status
+            final_status, failure_reason = _resolve_terminal_status(
+                final_state, requires_terminal=requires_terminal
+            )
+            repo.finalize_run(
+                bg_session,
+                run_id,
+                final_status=final_status,
+                failure_reason=failure_reason,
+            )
             bg_session.commit()
     except asyncio.CancelledError:
         # Cancelled via pause() or abort(). Distinguish via was_paused() flag —
@@ -232,10 +296,18 @@ async def execute_rewind_background(
                 bg_session.commit()
                 return
 
-            final_status = final_state.final_status
-            if final_status not in {"success", "failed", "aborted"}:
-                final_status = "success"
-            repo.finalize_run(bg_session, run_id, final_status=final_status)
+            requires_terminal = PipelineDefaults.model_validate(
+                version_orm.defaults
+            ).requires_terminal_final_status
+            final_status, failure_reason = _resolve_terminal_status(
+                final_state, requires_terminal=requires_terminal
+            )
+            repo.finalize_run(
+                bg_session,
+                run_id,
+                final_status=final_status,
+                failure_reason=failure_reason,
+            )
             bg_session.commit()
     except asyncio.CancelledError:
         was_paused = run_registry.was_paused(run_id)

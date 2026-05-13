@@ -67,6 +67,18 @@ class PipelineDefaults(BaseModel):
     max_attempts: int = 3
     budget_limit_usd: float = 5.0
     approval_required_nodes: list[str] = Field(default_factory=list)
+    requires_terminal_final_status: bool = Field(
+        default=False,
+        description=(
+            "When true, the orchestrator treats a run that finishes with "
+            "``final_status='running'`` as a failed run (#381). Cortex-style "
+            "pipelines, where the last node decides success/failure "
+            "explicitly (e.g. pr-merger refuses to merge), should opt in. "
+            "Generic pipelines that don't manage state-level final_status "
+            "leave this off and rely on the 'no node raised' = 'success' "
+            "default."
+        ),
+    )
 
 
 class Pipeline(BaseModel):
