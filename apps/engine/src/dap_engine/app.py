@@ -4,7 +4,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -202,6 +202,17 @@ class EngineConfig:
     # the callback falls back to returning JSON — useful for
     # CLI-only deployments.
     auth_oauth_redirect_url: str | None = None
+    # Template registry (issue #385). When ``template_registry_allowed_hosts``
+    # is empty (default), ``POST /pipelines/import-from-url`` returns 422
+    # — the feature is opt-in. Operators populate the list with literal
+    # hostnames (no wildcards) of trusted bundle sources; the endpoint
+    # rejects URLs whose hostname isn't an exact match.
+    #
+    # ``template_registry_auth_token``: optional Bearer token sent on
+    # every fetch. Common case: a fine-grained GitHub PAT scoped to one
+    # private bundle repo. Per-host tokens land in a follow-up ticket.
+    template_registry_allowed_hosts: list[str] = field(default_factory=list)
+    template_registry_auth_token: str | None = None
 
 
 def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:

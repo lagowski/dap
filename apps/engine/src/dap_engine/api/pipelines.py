@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
+import httpx
 from dap_types import Pipeline
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from dap_engine.api.agents import build_agent_export_payload
@@ -19,6 +21,7 @@ from dap_engine.api.schemas import (
     PipelineExportPayload,
     PipelineImportRequest,
 )
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import AgentCreate, PipelineCreate, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
@@ -148,35 +151,35 @@ def validate_pipeline(
     return validate_pipeline_dag(payload, session)
 
 
-@router.post(
-    "/import",
-    status_code=status.HTTP_201_CREATED,
-    response_model=Pipeline,
-)
-def import_pipeline(
+def _materialise_pipeline_import(
     payload: PipelineImportRequest,
-    session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
+    session: Session,
+    user: UserORM,
 ) -> Pipeline:
-    """Create a new pipeline (v1) from an exported JSON payload (#124).
+    """Create a new pipeline (v1) from a parsed import payload.
 
-    Two paths share this endpoint:
+    Shared body for ``POST /pipelines/import`` (file upload) and
+    ``POST /pipelines/import-from-url`` (private template registry,
+    #385). Caller controls *how* the payload arrived; this function
+    owns the bundled-agent registration + DAG validation + pipeline
+    creation.
 
-    - **Pipeline-only** (``bundled_agents`` absent): same as Phase 1.
-      Referenced agents must already exist in this DB or the DAG
-      validator returns 422.
+    Two paths share this code:
+
+    - **Pipeline-only** (``bundled_agents`` absent): referenced
+      agents must already exist in this DB or the DAG validator
+      returns 422.
     - **Bundle** (``bundled_agents`` present, #126): creates each
       bundled agent first, builds an ``old_id → new_id`` remap,
       rewrites every ``node.agent_id`` in the pipeline payload,
       then runs the standard validator + create path. The whole
       thing rides the request session, so a failure anywhere
-      (agent validation, pipeline validation, repo write) rolls
-      back the agents that were created earlier — no orphans
-      land in the DB.
+      rolls back the agents created earlier — no orphans land in
+      the DB.
 
-    Round-trips agents/pipeline through their ``Create`` types so
-    any future field added flows automatically rather than relying
-    on this function staying in lockstep with three models.
+    Errors raise ``HTTPException`` shapes identical to the legacy
+    file-upload endpoint, so client error-handling code that worked
+    for ``/pipelines/import`` works unchanged here.
     """
     bundled = payload.bundled_agents
     pipeline_payload = payload.pipeline
@@ -241,6 +244,281 @@ def import_pipeline(
     # tears down the bundled agents created above — no orphans.
     _enforce_validation(create_payload, session)
     return repo.create_pipeline(session, create_payload, user_id=user.id)
+
+
+@router.post(
+    "/import",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Pipeline,
+)
+def import_pipeline(
+    payload: PipelineImportRequest,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Pipeline:
+    """Create a new pipeline (v1) from an exported JSON payload (#124).
+
+    Pure file-upload path: the caller embeds the entire bundle JSON
+    in the request body. For the URL-based registry flow see
+    ``POST /pipelines/import-from-url``.
+    """
+    return _materialise_pipeline_import(payload, session, user)
+
+
+# ---------------------------------------------------------------------------
+# Private template registry — import from URL (#385)
+# ---------------------------------------------------------------------------
+
+
+# Bundles bigger than this are almost certainly attempting to DoS the
+# import path; a real ``.pipeline-bundle.json`` (5-node pipeline, 5
+# bundled agents with full prompt templates) sits around 50-100 KB.
+_BUNDLE_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+_BUNDLE_FETCH_TIMEOUT_SECONDS = 10.0
+
+
+class ImportFromUrlRequest(BaseModel):
+    """Body of ``POST /pipelines/import-from-url`` (#385)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(
+        description=(
+            "Absolute URL of a ``.pipeline-bundle.json`` file. Hostname "
+            "must match an entry in ``DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS`` "
+            "(set on the engine). HTTPS required except for ``localhost`` "
+            "/ ``127.0.0.1`` (dev only)."
+        )
+    )
+
+
+def _validate_registry_url(url: str, allowed_hosts: list[str]) -> str:
+    """Reject URLs that aren't on the operator-configured allow-list.
+
+    Returns the parsed hostname (caller logs it). Raises HTTPException
+    with the precise reason on the first violation — operators get a
+    clear 422 instead of a confusing downstream timeout / DNS error.
+    """
+    if not allowed_hosts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "import-from-url is disabled. Set "
+                "DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS on the engine to a "
+                "CSV of trusted hostnames (e.g. "
+                "raw.githubusercontent.com,gitlab.internal.com)."
+            ),
+        )
+
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"malformed url: {exc}",
+        ) from exc
+
+    if parsed.scheme not in {"https", "http"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"url scheme must be https (got {parsed.scheme!r})",
+        )
+
+    # Userinfo (``https://user:pass@host/...``) is rejected outright:
+    # the URL is persisted to the audit log + may appear in error
+    # responses, so accepting credentials in the URL would leak them.
+    # Operators authenticate via the engine-side
+    # ``DAP_TEMPLATE_REGISTRY_AUTH_TOKEN`` env var instead.
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "url must not contain userinfo (user:pass@). "
+                "Use DAP_TEMPLATE_REGISTRY_AUTH_TOKEN for authentication."
+            ),
+        )
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="url has no hostname",
+        )
+
+    # Block link-local + cloud metadata + multicast bypass attempts
+    # even if the operator accidentally allow-lists ``0.0.0.0``. The
+    # only legitimate loopback use is dev with an explicit
+    # ``localhost`` / ``127.0.0.1`` entry on the allow-list.
+    _LOOPBACK_BYPASS = {"0.0.0.0", "169.254.169.254"}
+    if hostname in _LOOPBACK_BYPASS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"hostname {hostname!r} is blocked (SSRF guard)",
+        )
+
+    # ``localhost`` / ``127.0.0.1`` accept either http or https when
+    # explicitly on the allow-list — useful for testing against a
+    # local registry mock where HTTPS isn't always set up. Every
+    # other host MUST be https; plain http to a remote registry is
+    # rejected even if the host is allow-listed.
+    if hostname not in {"localhost", "127.0.0.1"} and parsed.scheme != "https":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "url scheme must be https for remote hosts "
+                "(http is allowed only for localhost/127.0.0.1 in dev)"
+            ),
+        )
+
+    if hostname not in {h.lower() for h in allowed_hosts}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"hostname {hostname!r} not in allow-list (DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS)"
+            ),
+        )
+
+    return hostname
+
+
+@router.post(
+    "/import-from-url",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Pipeline,
+)
+def import_pipeline_from_url(
+    payload: ImportFromUrlRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Pipeline:
+    """Fetch a ``.pipeline-bundle.json`` from a trusted URL + import (#385).
+
+    Iter 1 of the private template registry. The endpoint:
+
+    1. Validates the URL against ``DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS``.
+    2. GETs the bundle with a 10s timeout and a 10MB response cap.
+    3. Optionally attaches ``Authorization: Bearer
+       $DAP_TEMPLATE_REGISTRY_AUTH_TOKEN`` if the engine is configured
+       with a token (private GitHub/GitLab repos).
+    4. Parses the response as ``PipelineImportRequest`` and delegates
+       to the shared import path.
+    5. Writes a ``pipeline.imported_from_url`` audit event with the
+       source URL and resulting pipeline id, so operators have an
+       auditable trail of *where* each pipeline came from.
+
+    Trust model: only operators with write access to the engine's
+    config can add hosts to the allow-list, so a misbehaving user
+    can't redirect the engine at an internal SSRF target.
+    """
+    cfg = request.app.state.config
+    allowed_hosts: list[str] = cfg.template_registry_allowed_hosts or []
+    auth_token: str | None = cfg.template_registry_auth_token
+
+    hostname = _validate_registry_url(payload.url, allowed_hosts)
+
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    # Stream the body in chunks rather than buffering everything into
+    # ``response.content`` first — a malicious / buggy upstream could
+    # otherwise burn unbounded bandwidth + memory before the size
+    # check fires. We also short-circuit on ``Content-Length`` when
+    # it's set and already over the cap, so we don't even start the
+    # transfer.
+    try:
+        with (
+            httpx.Client(timeout=_BUNDLE_FETCH_TIMEOUT_SECONDS) as client,
+            client.stream("GET", payload.url, headers=headers, follow_redirects=False) as response,
+        ):
+            if response.status_code != 200:  # noqa: PLR2004 — HTTP 200 is the protocol contract, not a magic value
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"bundle URL returned HTTP {response.status_code}",
+                )
+
+            advertised = response.headers.get("content-length")
+            if advertised is not None:
+                try:
+                    advertised_bytes = int(advertised)
+                except ValueError:
+                    advertised_bytes = -1
+                if advertised_bytes > _BUNDLE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=(
+                            f"bundle Content-Length is {advertised_bytes} bytes — "
+                            f"exceeds {_BUNDLE_MAX_BYTES} byte limit"
+                        ),
+                    )
+
+            # Read in 64 KB chunks. Abort the moment we cross the
+            # cap so we never materialise an arbitrarily large
+            # response in memory.
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                total += len(chunk)
+                if total > _BUNDLE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=(
+                            f"bundle exceeds {_BUNDLE_MAX_BYTES} byte limit "
+                            f"(aborted streaming at {total} bytes)"
+                        ),
+                    )
+                chunks.append(chunk)
+            raw_body = b"".join(chunks)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"timeout fetching bundle from {hostname!r} after "
+                f"{_BUNDLE_FETCH_TIMEOUT_SECONDS:.0f}s"
+            ),
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"http error fetching bundle: {exc}",
+        ) from exc
+
+    try:
+        import_request = PipelineImportRequest.model_validate_json(raw_body)
+    except ValidationError as exc:
+        # ``exc.errors()`` for ``json_invalid`` errors carries the raw
+        # body as ``input: bytes``, which FastAPI's JSON serialiser
+        # can't render. Strip the raw input + keep only the human-
+        # readable summary so the response stays JSON-safe.
+        sanitized = [
+            {"type": err["type"], "loc": list(err["loc"]), "msg": err["msg"]}
+            for err in exc.errors()
+        ]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"errors": ["bundle JSON failed validation"], "details": sanitized},
+        ) from exc
+
+    pipeline = _materialise_pipeline_import(import_request, session, user)
+
+    # Audit trail — operators need to know *where* this pipeline came
+    # from later. We log the URL (operator already controls the
+    # allow-list so the URL isn't sensitive) + the resulting pipeline id.
+    try:
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type="pipeline.imported_from_url",
+            event_data={"url": payload.url, "pipeline_id": pipeline.id},
+        )
+    except Exception:
+        # Audit-log failures shouldn't block a successful import; we
+        # already paid the network + bundle materialisation cost. The
+        # repo layer logs the underlying error.
+        logger.exception("audit-log write failed for imported pipeline %s", pipeline.id)
+
+    return pipeline
 
 
 @router.get("/{pipeline_id}", response_model=Pipeline)
