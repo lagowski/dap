@@ -299,6 +299,7 @@ def _clone_token(project: Project) -> str | None:
 
 def _workspace_status(workspace: str) -> dict[str, Any]:
     """Collect git status for an existing workspace clone."""
+
     def git(*args: str) -> str:
         try:
             return subprocess.check_output(
@@ -344,8 +345,11 @@ def get_workspace_status(
 
     if not os.path.isdir(os.path.join(workspace, ".git")):
         return {
-            "exists": False, "path": workspace,
-            "branch": None, "clean": None, "last_commit": None,
+            "exists": False,
+            "path": workspace,
+            "branch": None,
+            "clean": None,
+            "last_commit": None,
         }
 
     return _workspace_status(workspace)
@@ -391,8 +395,7 @@ async def init_workspace(
         m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", project.repo_url)
         slug = m.group(1) if m else None
         clone_url = (
-            f"https://x-access-token:{token}@github.com/{slug}.git"
-            if slug else project.repo_url
+            f"https://x-access-token:{token}@github.com/{slug}.git" if slug else project.repo_url
         )
     else:
         clone_url = project.repo_url
@@ -400,7 +403,10 @@ async def init_workspace(
     os.makedirs(os.path.dirname(workspace), exist_ok=True)
 
     proc = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
-        "git", "clone", clone_url, workspace,
+        "git",
+        "clone",
+        clone_url,
+        workspace,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -458,8 +464,11 @@ async def sync_workspace(
 
     async def run_git(*args: str) -> tuple[int, str]:
         p = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
-            "git", *args, cwd=workspace,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            "git",
+            *args,
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         _, err = await asyncio.wait_for(p.communicate(), timeout=60)
         return p.returncode or 0, err.decode("utf-8", errors="replace")[:200]
