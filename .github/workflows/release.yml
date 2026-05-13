@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for pkg in packages/types packages/runtimes packages/prompt-dsl packages/cortex apps/engine apps/cli; do
+          for pkg in packages/types packages/runtimes packages/prompt-dsl apps/engine apps/cli; do
               actual=$(grep -E '^version = ' "${pkg}/pyproject.toml" | head -1 | sed -E 's/version = "(.*)"/\1/')
               if [[ "${actual}" != "${EXPECTED}" ]]; then
                   echo "::error file=${pkg}/pyproject.toml::version=${actual} but tag is v${EXPECTED}"
@@ -126,7 +126,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for pkg in packages/types packages/runtimes packages/prompt-dsl packages/cortex apps/engine apps/cli; do
+          for pkg in packages/types packages/runtimes packages/prompt-dsl apps/engine apps/cli; do
               echo "==> building $pkg"
               uv build --out-dir dist/ "$pkg"
           done

@@ -2,10 +2,9 @@
 
 The command-line launcher for [DAP](https://github.com/rafeekpro/dap)
 (Deterministic Agent Pipeline). Installs as a single binary that
-spawns both the engine and the Next.js dashboard, with all six
+spawns both the engine and the Next.js dashboard, with all five
 first-party packages (`dap-engine`, `dap-schemas`, `dap-runtimes`,
-`dap-prompt-dsl`, `dap-cortex`, and this CLI) pulled in as
-dependencies.
+`dap-prompt-dsl`, and this CLI) pulled in as dependencies.
 
 For most installations, `dap-cli` is the only package you install
 directly — everything else arrives transitively.
