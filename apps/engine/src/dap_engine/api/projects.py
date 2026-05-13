@@ -467,7 +467,7 @@ async def init_workspace(
             git_cmd += ["-c", f"http.extraheader=Authorization: Bearer {token}"]
         git_cmd += ["clone", canonical_url, tmp_dir]
 
-        proc = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
+        proc = await asyncio.create_subprocess_exec(
             *git_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -482,7 +482,7 @@ async def init_workspace(
 
         # Checkout the project's configured default branch.
         branch = project.default_branch or "main"
-        co_proc = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
+        co_proc = await asyncio.create_subprocess_exec(
             "git",
             "checkout",
             branch,
@@ -548,7 +548,7 @@ async def sync_workspace(
     branch = project.default_branch or "main"
 
     async def run_git(*args: str) -> tuple[int, str]:
-        p = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
+        p = await asyncio.create_subprocess_exec(
             "git",
             *args,
             cwd=workspace,
