@@ -1,11 +1,12 @@
 # dap-runtimes
 
 Runtime adapters for [DAP](https://github.com/rafeekpro/dap). Every
-agent in a pipeline picks one runtime — this package implements all
-seven. Each adapter delegates the actual work to a specific executor
-(LLM SDK, agentic CLI, shell, HTTP endpoint, or in-process Python
-callable) while exposing the uniform `RuntimeAdapter` protocol the
-engine relies on.
+agent in a pipeline picks one runtime; `create_default_registry()`
+ships eight adapters (seven implemented + one stub). Each adapter
+delegates the actual work to a specific executor (LLM SDK, agentic
+CLI, shell, HTTP endpoint, or in-process Python callable) while
+exposing the uniform `RuntimeAdapter` protocol the engine relies
+on.
 
 ## Status
 

@@ -15,15 +15,18 @@ pipelines, runs, and runtime tasks.
 
 | Schema | Lives in `dap_types.` | Purpose |
 |---|---|---|
-| `Agent` / `AgentRead` / `AgentDraft` | `agent` | Versioned agent definition: runtime, prompt template, input/output schema, role |
-| `Pipeline` / `PipelineRead` / `PipelineDraft` | `pipeline` | DAG of agent nodes + edges + entry point + run defaults |
-| `PipelineState` | `state` | Execution state passed between nodes; every agent's `input_schema` / `output_schema` references fields here |
-| `Run` / `RunRead` | `run` | A single execution of a pipeline, with status, started_at, final_status, cost |
-| `Project` | `project` | Workspace layer — binds workflow kinds to pipelines, env-var overrides |
-| `RuntimeAdapter` (Protocol) | `runtime` | The interface every adapter in `dap-runtimes` implements |
+| `Agent` + `AgentRole` | `agent` | Versioned agent definition: runtime, prompt template, input/output schema, role enum |
+| `Pipeline` + `PipelineNode` / `PipelineEdge` / `PipelineDefaults` + `EdgeCondition` (`ComparisonCondition`, `LogicalCondition`) | `pipeline` | DAG of agent nodes + edges + entry point + run defaults |
+| `PipelineState` + `StateSnapshot` + `FinalStatus` / `VerificationStatus` | `state` | Execution state passed between nodes; every agent's `input_schema` / `output_schema` references fields here |
+| `Run` + `NodeExecutionLog` + `NodeStatus` | `run` | A single execution of a pipeline, with status, started_at, final_status, cost |
+| `Project` + `RECOMMENDED_PIPELINE_KINDS` | `project` | Workspace layer — binds workflow kinds to pipelines, env-var overrides |
+| `RuntimeAdapter` (Protocol) + `RuntimeKind` + `HealthStatus` | `runtime` | The interface every adapter in `dap-runtimes` implements |
 | `RuntimeTask` / `RuntimeResult` | `runtime` | I/O shape exchanged between the engine and runtime adapters |
-| `AuditLogEntry` | `audit` | Append-only event row (login, password reset, role change, ...) |
-| `UserRead` / `UserCreate` / `UserUpdate` | `user` | fastapi-users-compatible user shapes used by the engine's `/auth/*` and `/users/*` endpoints |
+| `agent_output_model` / `role_output_model` / `resolve_output_validator` / `ROLE_FIELDS` | `role_outputs` | Helpers for building Pydantic validators against an agent's declared `output_schema` |
+
+Audit, user, and API-token schemas live in the engine package
+(`dap_engine.persistence.models`) rather than here — they don't
+need to cross the wire to third-party consumers.
 
 All models use `model_config = ConfigDict(extra="forbid")` — unknown
 fields are rejected on parse, so a typo in a pipeline export is caught

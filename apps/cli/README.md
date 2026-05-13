@@ -73,9 +73,16 @@ Docker container (where compose sets `DAP_DB_PATH=/data/state.db`).
 
 ### `dap start`
 
-Starts both processes in parallel under the current shell. Both log
-streams are prefixed (`[engine] …` / `[dashboard] …`); Ctrl-C tears
-the whole stack down cleanly.
+Starts both processes in parallel under the current shell. The
+engine runs in-process (so its uvicorn logs print directly to
+stdout/stderr), and the dashboard is spawned as a subprocess whose
+stdout/stderr is inherited unchanged — both streams interleave on
+your terminal without an extra prefix. Ctrl-C tears the whole stack
+down cleanly.
+
+(The `./scripts/dev` wrapper used during source-checkout development
+*does* prefix lines with `[engine]` / `[dashboard]`. The packaged
+`dap start` does not — keeping the install-from-PyPI binary simple.)
 
 Flags:
 

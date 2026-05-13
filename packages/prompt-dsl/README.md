@@ -26,12 +26,14 @@ principle intact, the prompt compiler must be:
 
 ## What's in here
 
-| Function / class | Purpose |
+| Symbol | Purpose |
 |---|---|
-| `build_prompt(template, context)` | Single entry point. Renders the Jinja2 template under the supplied context, parses the result as XML, returns a `BuildResult`. |
-| `BuildResult` | `(xml: str, valid: bool, warnings: list[str], errors: list[str])` — `valid` is False when XML parsing or schema validation fails; details land in `errors`. |
-| `SandboxedEnvironment` (subclass) | Jinja2 sandbox configured with DAP-specific filters (`tojson`, `pluralize`, ...) and default-deny on dunder access, attribute traversal into Python builtins, etc. |
-| `defused_parser` | `defusedxml.ElementTree`-based parser that rejects XXE, billion-laughs, external entities, and DTDs. |
+| `build_prompt(template, context)` | Single entry point. Renders the Jinja2 template under the supplied context, parses the result as XML, returns a `BuildResult`. Internally wires Jinja2's stock `SandboxedEnvironment` (via a private `_make_sandbox()` factory) to the rendering step. |
+| `BuildResult` | Dataclass describing the compiled prompt: `xml`, the rendered string; `validation`, a `ValidationOutcome`; plus metadata fields (`role`, `agent_id`, `template_hash`, ...). |
+| `PromptBuildError` | Raised when rendering or validation fails — wraps the underlying Jinja / XML / schema error with the offending template context. |
+| `validate_xml(xml: str)` → `ValidationOutcome` | Standalone XML validator (also in `dap_prompt_dsl.validator`). Parses with `defusedxml.ElementTree` under the hood, so XXE / billion-laughs / external-entity attacks are rejected; checks the `<agent_prompt>` envelope shape. Useful for linting a template's *expected* output without doing a full Jinja render. |
+| `PromptContextBase` + role-specific subclasses (`TestAuthorContext`, `ImplementerContext`, `VerifierContext`) | Pydantic models describing what each agent role gets passed into its template context. |
+| `RESERVED_METADATA_KEYS` | Set of keys the builder reserves for its own metadata (`agent_id`, `template_hash`, ...). Templates can't shadow these in their context. |
 
 ## Installation
 

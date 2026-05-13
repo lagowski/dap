@@ -56,7 +56,7 @@ when the engine is running. Major resource groups:
 
 | Group | Routes | Notes |
 |---|---|---|
-| `/health` | health check | Returns `{"status":"ok","version":"0.3.0"}` |
+| `/health` | health check | Returns `{"status":"ok","service":"dap-engine","version":"<x.y.z>","db_dialect":"sqlite"\|"postgresql","timestamp":"..."}` — anonymous-readable, useful for liveness probes |
 | `/auth/jwt/*` | login, logout, refresh | fastapi-users default JWT backend |
 | `/auth/register`, `/auth/forgot-password`, `/auth/reset-password` | password lifecycle | Password reset is token-based; no SMTP shipped in v0.3 |
 | `/auth/github/*`, `/auth/google/*` | OAuth | Mounted only when the corresponding env vars are set |
