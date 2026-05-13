@@ -1,8 +1,41 @@
 # dap-runtimes
 
-Runtime adapters dla DAP. Każdy adapter deleguje zadanie do konkretnego executora (CLI agent, SDK, shell, HTTP).
+Runtime adapters for [DAP](https://github.com/rafeekpro/dap). Every
+agent in a pipeline picks one runtime; `create_default_registry()`
+ships eight adapters (seven implemented + one stub). Each adapter
+delegates the actual work to a specific executor (LLM SDK, agentic
+CLI, shell, HTTP endpoint, or in-process Python callable) while
+exposing the uniform `RuntimeAdapter` protocol the engine relies
+on.
 
-Stan: `api-call` (multi-provider: Anthropic + OpenAI + OpenAI-compat + Gemini), `bash`, `claude-code`, `codex`, `gemini-cli` i `http` są w pełni zaimplementowane; `aider` — stub (przyjdzie później).
+## Status
+
+| Runtime | State |
+|---|---|
+| `api-call` (Anthropic + OpenAI + OpenAI-compat + Gemini) | ✅ Implemented |
+| `bash` | ✅ Implemented |
+| `claude-code` | ✅ Implemented |
+| `codex` | ✅ Implemented |
+| `gemini-cli` | ✅ Implemented |
+| `http` | ✅ Implemented |
+| `python-func` | ✅ Implemented |
+| `aider` | 🚧 Stub (lands later) |
+
+## Installation
+
+Usually installed transitively via `dap-cli`:
+
+```bash
+pipx install dap-cli
+```
+
+Standalone:
+
+```bash
+pip install dap-runtimes
+```
+
+## Quick start
 
 ```python
 import asyncio
@@ -17,53 +50,59 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## api-call
+The engine builds its adapter set the same way at lifespan startup
+and dispatches every runtime task through the matching adapter.
 
-Wywołanie LLM przez SDK — single-shot, bez tool use, bez streamowania.
-Provider wybierany przez `runtime_config.provider`; każdy provider ma
-własne pricing + token extraction w module pod `_providers/`.
+---
 
-| `provider`        | SDK                                | Wymagany env                                    | Pricing                                                  |
-| ----------------- | ---------------------------------- | ----------------------------------------------- | -------------------------------------------------------- |
-| `anthropic` (default) | `anthropic.AsyncAnthropic`     | `ANTHROPIC_API_KEY`                             | Pełne (Claude 4.x rodzina + cache mnożniki)              |
-| `openai`          | `openai.AsyncOpenAI`               | `OPENAI_API_KEY`                                | Pełne (gpt-5, o-series)                                  |
-| `openai-compat`   | `openai.AsyncOpenAI(base_url=…)`   | env nazwany w `runtime_config.api_key_env`      | None (nie znamy cen third-party)                         |
-| `gemini`          | `google.genai.Client`              | `GEMINI_API_KEY`                                | Pełne (Gemini 2.x / 3.x)                                 |
+## `api-call`
 
-`runtime_config` (wspólne):
+Single-shot LLM call via the provider's official SDK — no tool use,
+no streaming. The provider is selected by `runtime_config.provider`;
+each provider has its own pricing tables and token-extraction logic
+under `_providers/`.
 
-| key                | type           | description                                                                  |
-| ------------------ | -------------- | ---------------------------------------------------------------------------- |
-| `provider`         | `str`          | `anthropic` (domyślnie) / `openai` / `openai-compat` / `gemini`              |
-| `model_id`         | `str`          | ID modelu (np. `claude-haiku-4-5`, `gpt-5-mini`, `gemini-3.0-flash`)          |
-| `max_tokens`       | `int`          | Domyślnie 4096                                                               |
-| `system_prompt`    | `str?`         | Prepend przed `prompt_xml` w roli system                                      |
+| `provider` | SDK | Required env | Pricing |
+|---|---|---|---|
+| `anthropic` (default) | `anthropic.AsyncAnthropic` | `ANTHROPIC_API_KEY` | Full (Claude 4.x family + cache multipliers) |
+| `openai` | `openai.AsyncOpenAI` | `OPENAI_API_KEY` | Full (gpt-5, o-series) |
+| `openai-compat` | `openai.AsyncOpenAI(base_url=…)` | env named in `runtime_config.api_key_env` | None (third-party prices not bundled) |
+| `gemini` | `google.genai.Client` | `GEMINI_API_KEY` | Full (Gemini 2.x / 3.x) |
 
-Specyficzne dla `anthropic`:
+Common `runtime_config`:
 
-| key               | type                                                | description                              |
-| ----------------- | --------------------------------------------------- | ---------------------------------------- |
-| `prompt_cache`    | `bool`                                              | Włącza ephemeral cache control           |
-| `enable_thinking` | `bool`                                              | Adaptive thinking                        |
-| `effort`          | `low`/`medium`/`high`/`xhigh`/`max`                 | Reasoning effort                          |
+| key | type | description |
+|---|---|---|
+| `provider` | `str` | `anthropic` (default) / `openai` / `openai-compat` / `gemini` |
+| `model_id` | `str` | Model identifier (e.g. `claude-haiku-4-5`, `gpt-5-mini`, `gemini-3.0-flash`) |
+| `max_tokens` | `int` | Defaults to 4096 |
+| `system_prompt` | `str?` | Prepended before `prompt_xml` in the system role |
 
-Specyficzne dla `openai-compat`:
+Anthropic-specific:
 
-| key            | type   | required | description                                                          |
-| -------------- | ------ | :------: | -------------------------------------------------------------------- |
-| `base_url`     | `str`  |   tak    | OpenAI-compat endpoint (np. `https://api.z.ai/api/coding/paas/v4`)   |
-| `api_key_env`  | `str`  |   tak    | Nazwa env var trzymającej klucz (np. `GLM_API_KEY`)                  |
+| key | type | description |
+|---|---|---|
+| `prompt_cache` | `bool` | Enables ephemeral cache control |
+| `enable_thinking` | `bool` | Adaptive thinking mode |
+| `effort` | `low`/`medium`/`high`/`xhigh`/`max` | Reasoning effort |
 
-Specyficzne dla `gemini`:
+OpenAI-compat-specific:
 
-| key                | type   | description                                       |
-| ------------------ | ------ | ------------------------------------------------- |
-| `temperature`      | `float`| Domyślnie SDK default                             |
-| `thinking_budget`  | `int`  | Limit tokenów na reasoning                        |
+| key | type | required | description |
+|---|---|:---:|---|
+| `base_url` | `str` | yes | OpenAI-compatible endpoint (e.g. `https://api.z.ai/api/coding/paas/v4`) |
+| `api_key_env` | `str` | yes | Name of the env var holding the API key (e.g. `GLM_API_KEY`) |
 
-### Przykłady
+Gemini-specific:
 
-**DeveloperJr (GLM przez OpenAI-compat):**
+| key | type | description |
+|---|---|---|
+| `temperature` | `float` | Defaults to the SDK default |
+| `thinking_budget` | `int` | Reasoning-token cap |
+
+### Examples
+
+**GLM via OpenAI-compat:**
 
 ```json
 {
@@ -75,7 +114,7 @@ Specyficzne dla `gemini`:
 }
 ```
 
-**DeveloperFrontend (Gemini API):**
+**Gemini API:**
 
 ```json
 {
@@ -86,158 +125,183 @@ Specyficzne dla `gemini`:
 }
 ```
 
-## bash
+---
 
-Wykonuje pojedynczą komendę shellową w `task.working_directory`, z timeoutem
-z `task.timeout_ms`. Zwraca `success=False` przy non-zero exit / timeout;
-stdout trafia do `output`, stderr i exit_code do `structured`.
+## `bash`
 
-`runtime_config`:
-
-| key       | type             | required | description                                                       |
-| --------- | ---------------- | :------: | ----------------------------------------------------------------- |
-| `command` | `str`            |    no    | Komenda do uruchomienia. Pierwszeństwo nad `<command>` w prompcie. |
-| `shell`   | `str`            |    no    | Domyślnie `/bin/bash`. Override też przez `DAP_BASH_SHELL`.        |
-| `env`     | `dict[str, str]` |    no    | Dodatkowe zmienne środowiskowe (zlewane na proces.env).           |
-
-Jeśli `command` nie jest ustawione, adapter wyciąga zawartość pierwszego
-`<command>...</command>` z `prompt_xml` — pozwala to na komendy wyliczane
-z `PipelineState` przez Jinja w template'cie agenta.
-
-### Model bezpieczeństwa (v0.1)
-
-**Single-user, local-trust.** Komenda działa z uprawnieniami procesu engine'a
-w skonfigurowanym `working_directory` — **bez sandboxa, bez izolacji sieci,
-bez confinementu plików**. Każda definicja agenta używającego runtime'u `bash`
-ma faktyczną kontrolę nad maszyną. Multi-user setup wymaga najpierw auth
-(#38) i dodatkowej warstwy izolacji (firejail / Docker / nsjail) zanim ten
-runtime można wystawić niezaufanym definicjom agentów.
-
-## Env layering (v0.6)
-
-Subprocess-spawning adapters (`bash`, `claude-code`, `codex`, `gemini-cli`)
-budują env subprocesa w trzech warstwach. Wyższa warstwa wygrywa nad niższą:
-
-1. **Engine process env** (najniższa) — env, w którym działa `dap-engine`.
-   Trzymaj tu sekrety (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`).
-2. **Project `env_vars`** (overlay) — `Project.env_vars` projektu związanego z
-   runem (#65). Wartości wyższe od engine env, niższe od per-agent. Convenience
-   dla nie-sekretnych zmiennych typu `WORKSPACE_NAME`, feature flagów, ścieżek
-   per-projekt.
-3. **Per-agent `runtime_config.env`** (najwyższa) — wprost w agent definition.
-   Ostatnia szansa na override per-call.
-
-Ad-hoc runs (bez `project_id`) widzą tylko warstwy 1 + 3 — warstwa 2 jest pustym
-dictem. `api-call` adapter nie spawnuje subprocesów, więc env layering go nie
-dotyczy (klucz API czyta SDK z `os.environ` bezpośrednio).
-
-## claude-code
-
-Wywołuje Claude Code CLI w trybie `--print --output-format json`. Prompt
-XML idzie przez stdin, odpowiedź to structured JSON (`result`, `usage`,
-`total_cost_usd`, `session_id`, `num_turns`). Cost i token usage
-populują `RuntimeResult` automatycznie.
-
-Kiedy `claude-code` zamiast `api-call` (Anthropic):
-
-| Potrzeba                                              | Użyj                |
-| ----------------------------------------------------- | ------------------- |
-| Single-shot LLM, deterministycznie, bez tooli         | `api-call`          |
-| Agentic loop z file edits, bashem, MCP tools          | `claude-code`       |
+Executes a single shell command in `task.working_directory` with the
+timeout from `task.timeout_ms`. Returns `success=False` on non-zero
+exit or timeout; stdout lands in `output`, while stderr and the exit
+code go into `structured`.
 
 `runtime_config`:
 
-| key            | type        | required | description                                                              |
-| -------------- | ----------- | :------: | ------------------------------------------------------------------------ |
-| `model_id`     | `str`       |    tak   | Anthropic model (np. `claude-opus-4-7`, `claude-sonnet-4-6`)              |
-| `binary_path`  | `str`       |    no    | Domyślnie `claude` na PATH. Override przy wielu instalacjach.            |
-| `extra_args`   | `list[str]` |    no    | Dopisane do CLI invocation, np. `["--allowed-tools","Read,Edit,Bash"]`  |
+| key | type | required | description |
+|---|---|:---:|---|
+| `command` | `str` | no | Command to run. Takes precedence over `<command>` in the prompt. |
+| `shell` | `str` | no | Defaults to `/bin/bash`. Also overridable via `DAP_BASH_SHELL`. |
+| `env` | `dict[str, str]` | no | Extra environment variables (merged onto the subprocess env). |
 
-Klucz API: `ANTHROPIC_API_KEY` w env engine'a — Claude Code CLI czyta go
-sam, adapter nie wstrzykuje.
+If `command` isn't set, the adapter extracts the contents of the
+first `<command>...</command>` block from `prompt_xml` — this allows
+commands derived from `PipelineState` via Jinja in the agent's
+template.
 
-Process lifecycle identyczny jak w `bash`: POSIX session group +
-`asyncio.shield(wait)` cleanup + obsługa `CancelledError`. Engine
-pause/abort zabija całą grupę procesów (CLI + jego subprocessy), bez
-zombie.
+### Security model (v0.1)
 
-## codex
+**Single-user, local-trust.** The command runs with the engine
+process's permissions inside the configured `working_directory` —
+**no sandbox, no network isolation, no file confinement**. Every
+agent definition that uses the `bash` runtime effectively controls
+the host. A multi-user deployment requires auth (which ships in
+v0.3) **plus** an additional isolation layer (firejail / Docker /
+nsjail) before this runtime can safely accept untrusted agent
+definitions.
 
-Wywołuje OpenAI Codex CLI w trybie `exec --json --model {model_id}`.
-Prompt XML idzie przez stdin, wynik to structured JSON. Token usage
-wyciągamy z `usage` z fallbackami nazw (snake_case z OpenAI SDK,
-camelCase z niektórych buildów, oraz wariant `prompt_tokens` /
-`completion_tokens`). Tekst odpowiedzi szukamy kolejno w
-`output_text` → `result` → `response` → `text` → `output`. Cost
-zwracany jako `None` (CLI nie raportuje; jeśli chcesz pricing — użyj
-`api-call` z `provider="openai"`).
+---
 
-Kiedy `codex` zamiast `api-call` (OpenAI):
+## Env layering
 
-| Potrzeba                                              | Użyj                |
-| ----------------------------------------------------- | ------------------- |
-| Single-shot LLM, deterministycznie, bez tooli         | `api-call`          |
-| Agentic loop z file edits, bashem, MCP tools          | `codex`             |
+Subprocess-spawning adapters (`bash`, `claude-code`, `codex`,
+`gemini-cli`) compose the subprocess environment in three layers.
+Higher layers override lower ones:
 
-`runtime_config`:
+1. **Engine process env** (lowest) — the environment the
+   `dap-engine` process inherits. Keep secrets here
+   (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`).
+2. **Project `env_vars`** (overlay) — `Project.env_vars` on the
+   project bound to the run. Higher than engine env, lower than
+   per-agent. Convenient for non-secret values like
+   `WORKSPACE_NAME`, feature flags, per-project paths.
+3. **Per-agent `runtime_config.env`** (highest) — declared inline
+   in the agent definition. The final per-call override.
 
-| key            | type        | required | description                                                              |
-| -------------- | ----------- | :------: | ------------------------------------------------------------------------ |
-| `model_id`     | `str`       |    tak   | OpenAI model (np. `gpt-5-codex`, `gpt-5`, `o3`)                          |
-| `binary_path`  | `str`       |    no    | Domyślnie `codex` na PATH. Override przy wielu instalacjach.            |
-| `extra_args`   | `list[str]` |    no    | Dopisane do CLI invocation, np. `["--sandbox","workspace-write"]`       |
+Ad-hoc runs (without a `project_id`) see only layers 1 + 3; layer 2
+is an empty dict. The `api-call` adapter doesn't spawn subprocesses,
+so env layering doesn't apply (the SDK reads its API key directly
+from `os.environ`).
 
-Klucz API: `OPENAI_API_KEY` w env engine'a — Codex CLI czyta go sam,
-adapter nie wstrzykuje.
+---
 
-Process lifecycle identyczny jak w `bash` / `claude-code`. Cały payload
-JSON z CLI ląduje w `RuntimeResult.structured.payload` — pozwala
-debugować shape drift między releasami CLI bez zmian adaptera.
+## `claude-code`
 
-## gemini-cli
+Invokes the Claude Code CLI in `--print --output-format json` mode.
+The XML prompt is sent via stdin; the response is structured JSON
+(`result`, `usage`, `total_cost_usd`, `session_id`, `num_turns`).
+Cost and token usage populate `RuntimeResult` automatically.
 
-Wywołuje Google Gemini CLI z `-m {model_id} -o json`, prompt XML idzie
-przez stdin, wynik to structured JSON. Token usage wyciągamy z
-`usage_metadata` (snake_case z SDK lub camelCase z niektórych buildów —
-adapter próbuje obu). Cost zwracany jako `None` (CLI nie raportuje;
-jeśli chcesz pricing — użyj `api-call` z `provider="gemini"`).
+When to use `claude-code` instead of `api-call` (Anthropic):
 
-`runtime_config`:
-
-| key                | type   | required | description                                                              |
-| ------------------ | ------ | :------: | ------------------------------------------------------------------------ |
-| `model_id`         | `str`  |    tak   | Gemini model (np. `gemini-3.0-pro`, `gemini-3.0-flash`)                   |
-| `binary_path`      | `str`  |    no    | Domyślnie `gemini` na PATH                                                |
-| `thinking_budget`  | `int`  |    no    | Limit tokenów na reasoning (mappowany do `--thinking-budget`)             |
-
-Klucz API: `GEMINI_API_KEY` w env engine'a — albo `GOOGLE_API_KEY` jako
-fallback (Gemini CLI akceptuje oba). Adapter nie wstrzykuje, CLI czyta
-sam.
-
-Process lifecycle identyczny jak w `bash` / `claude-code`.
-
-## http
-
-Generic POST do dowolnego JSON-speaking serwisu — Ollama, llama.cpp,
-custom gatewaye, OpenAI/Anthropic-compatible proxy, własne API teamu.
-Request body to Jinja2 template (sandboxed) renderowany ze scope'm
-`{prompt_xml, runtime_config}`; response parsowany przez JSONPath.
+| Need | Use |
+|---|---|
+| Single-shot LLM, deterministic, no tools | `api-call` |
+| Agentic loop with file edits, bash, MCP tools | `claude-code` |
 
 `runtime_config`:
 
-| key                  | type            | required | description                                                                  |
-| -------------------- | --------------- | :------: | ---------------------------------------------------------------------------- |
-| `url`                | `str`           |    tak   | Endpoint (http:// lub https://)                                              |
-| `method`             | `str`           |    no    | `POST` (default) lub `PUT`                                                    |
-| `request_template`   | `dict`/`list`/`str` | tak | Template z Jinja2 placeholders. Stringi templatowane, inne typy as-is.       |
-| `response_extractor` | `dict[str, str]` |   tak   | Mapa nazw → JSONPath. **Musi zawierać `output`**. Np. `{"output":"$.response"}` |
-| `auth`               | `dict`          |    no    | `{"type":"bearer","env":"OLLAMA_API_KEY"}` / `{"type":"header","name":"...","env":"..."}` / `{"type":"basic","user_env":"...","pass_env":"..."}` |
-| `headers`            | `dict[str,str]` |    no    | Dodatkowe statyczne headery                                                  |
+| key | type | required | description |
+|---|---|:---:|---|
+| `model_id` | `str` | yes | Anthropic model (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`) |
+| `binary_path` | `str` | no | Defaults to `claude` on `PATH`. Override for multiple installations. |
+| `extra_args` | `list[str]` | no | Appended to the CLI invocation, e.g. `["--allowed-tools","Read,Edit,Bash"]` |
 
-Klucze API: zawsze przez env vary nazwane w `auth.env` / `auth.user_env`
-/ `auth.pass_env` — nigdy nie persystowane w bazie.
+API key: `ANTHROPIC_API_KEY` in the engine's env — the Claude Code
+CLI reads it itself; the adapter doesn't inject. Alternative: a
+`claude auth login` OAuth session at `$HOME/.claude/` (e.g. for Pro
+or Max plans). Bind-mount that dir into Docker if the engine runs
+in a container — see [`docs/quick-start.md`](https://github.com/rafeekpro/dap/blob/main/docs/quick-start.md#runtime-adapters--how-dap-talks-to-llms).
 
-Przykład Ollama:
+Process lifecycle is identical to `bash`: POSIX session group +
+`asyncio.shield(wait)` cleanup + `CancelledError` handling. Engine
+pause/abort kills the entire process group (CLI + its subprocesses),
+no zombies.
+
+---
+
+## `codex`
+
+Invokes the OpenAI Codex CLI in `exec --json --model {model_id}`
+mode. The XML prompt goes via stdin; the result is structured JSON.
+Token usage is extracted from `usage` with name fallbacks
+(snake_case from the OpenAI SDK, camelCase in some builds, plus the
+`prompt_tokens` / `completion_tokens` variant). The response text is
+looked up in `output_text` → `result` → `response` → `text` →
+`output`. Cost is returned as `None` (the CLI doesn't report it; if
+you want pricing, use `api-call` with `provider="openai"`).
+
+When to use `codex` instead of `api-call` (OpenAI):
+
+| Need | Use |
+|---|---|
+| Single-shot LLM, deterministic, no tools | `api-call` |
+| Agentic loop with file edits, bash, MCP tools | `codex` |
+
+`runtime_config`:
+
+| key | type | required | description |
+|---|---|:---:|---|
+| `model_id` | `str` | yes | OpenAI model (e.g. `gpt-5-codex`, `gpt-5`, `o3`) |
+| `binary_path` | `str` | no | Defaults to `codex` on `PATH`. |
+| `extra_args` | `list[str]` | no | Appended to the CLI invocation, e.g. `["--sandbox","workspace-write"]` |
+
+API key: `OPENAI_API_KEY` in the engine's env — the Codex CLI reads
+it itself; the adapter doesn't inject.
+
+Process lifecycle is identical to `bash` / `claude-code`. The full
+JSON payload from the CLI lands in `RuntimeResult.structured.payload`
+— this lets you debug shape drift between CLI releases without
+adapter changes.
+
+---
+
+## `gemini-cli`
+
+Invokes the Google Gemini CLI with `-m {model_id} -o json`; the XML
+prompt goes via stdin and the result is structured JSON. Token usage
+is extracted from `usage_metadata` (snake_case from the SDK or
+camelCase from some builds — the adapter tries both). Cost is
+returned as `None` (the CLI doesn't report it; if you want pricing,
+use `api-call` with `provider="gemini"`).
+
+`runtime_config`:
+
+| key | type | required | description |
+|---|---|:---:|---|
+| `model_id` | `str` | yes | Gemini model (e.g. `gemini-3.0-pro`, `gemini-3.0-flash`) |
+| `binary_path` | `str` | no | Defaults to `gemini` on `PATH`. |
+| `thinking_budget` | `int` | no | Reasoning-token cap (mapped to `--thinking-budget`) |
+
+API key: `GEMINI_API_KEY` in the engine's env — or `GOOGLE_API_KEY`
+as a fallback (the Gemini CLI accepts either). The adapter doesn't
+inject; the CLI reads them itself.
+
+Process lifecycle is identical to `bash` / `claude-code`.
+
+---
+
+## `http`
+
+Generic POST to any JSON-speaking service — Ollama, llama.cpp,
+custom gateways, OpenAI/Anthropic-compatible proxies, your team's
+internal API. The request body is a Jinja2 template (sandboxed)
+rendered against the scope `{prompt_xml, runtime_config}`; the
+response is parsed via JSONPath.
+
+`runtime_config`:
+
+| key | type | required | description |
+|---|---|:---:|---|
+| `url` | `str` | yes | Endpoint (http:// or https://) |
+| `method` | `str` | no | `POST` (default) or `PUT` |
+| `request_template` | `dict` / `list` / `str` | yes | Template with Jinja2 placeholders. Strings are templated; other types pass through as-is. |
+| `response_extractor` | `dict[str, str]` | yes | Map of names → JSONPath. **Must include `output`.** E.g. `{"output":"$.response"}` |
+| `auth` | `dict` | no | `{"type":"bearer","env":"OLLAMA_API_KEY"}` / `{"type":"header","name":"...","env":"..."}` / `{"type":"basic","user_env":"...","pass_env":"..."}` |
+| `headers` | `dict[str,str]` | no | Extra static headers |
+
+API keys: always via env var names declared in `auth.env` /
+`auth.user_env` / `auth.pass_env` — never persisted in the database.
+
+Ollama example:
 
 ```json
 {
@@ -255,25 +319,29 @@ Przykład Ollama:
 }
 ```
 
-Cancellation: httpx connection cancel'owane przez context manager
-(`async with`); engine pause/abort kończy request bez residue.
+Cancellation: httpx connections are cancelled via the async context
+manager (`async with`); engine pause/abort ends the request without
+residue.
 
-## python-func
+---
 
-Wykonuje dowolny Python callable (sync lub async) jako agenta DAP.
-Entrypoint rozwiązywany w momencie wywołania — instalacja pakietu
-nie wymaga restartu engine'a.
+## `python-func`
 
-### Sygnatura funkcji
+Executes any Python callable (sync or async) as a DAP agent. The
+entry point is resolved at invocation time — installing a package
+doesn't require an engine restart.
+
+### Function signature
 
 ```python
 async def run(state: dict, config: dict) -> dict:
     """
-    state  — dict budowany z pól przełączanych przez pass_prompt / pass_context.
-    config — runtime_config z definicji agenta.
-    returns — dict pól do scalenia z PipelineState.
-              Zarezerwowany klucz __audit: dict jest wyciągany przez adapter
-              i trafia do RuntimeResult.structured["audit"] (NIE do state_delta).
+    state  — dict built from the fields toggled by pass_prompt / pass_context.
+    config — runtime_config from the agent definition.
+    returns — dict of fields to merge into PipelineState.
+              Reserved key __audit: dict is extracted by the adapter
+              and lands in RuntimeResult.structured["audit"] (NOT in
+              state_delta).
     """
     return {
         "output_field": result_text,
@@ -281,24 +349,25 @@ async def run(state: dict, config: dict) -> dict:
     }
 ```
 
-Sync `def run(state, config)` też działa — adapter owija w `loop.run_in_executor(None, ...)`.
+A sync `def run(state, config)` also works — the adapter wraps it
+in `loop.run_in_executor(None, ...)`.
 
 `runtime_config`:
 
-| key             | type   | required | description                                                                         |
-| --------------- | ------ | :------: | ----------------------------------------------------------------------------------- |
-| `callable_path` | `str`  |    tak   | `"package.module:func_name"`. Pakiet musi być zainstalowany w venv engine'a.        |
-| `pass_prompt`   | `bool` |    no    | Czy wstrzyknąć `prompt_xml` do `state["prompt_xml"]`. Domyślnie `True`.             |
-| `pass_context`  | `bool` |    no    | Czy wstrzyknąć `RuntimeContext` do `state["context"]`. Domyślnie `False`.           |
+| key | type | required | description |
+|---|---|:---:|---|
+| `callable_path` | `str` | yes | `"package.module:func_name"`. The package must be installed in the engine's venv. |
+| `pass_prompt` | `bool` | no | Whether to inject `prompt_xml` into `state["prompt_xml"]`. Defaults to `True`. |
+| `pass_context` | `bool` | no | Whether to inject `RuntimeContext` into `state["context"]`. Defaults to `False`. |
 
 `RuntimeResult.structured`:
 
-| key           | type   | description                                                          |
-| ------------- | ------ | -------------------------------------------------------------------- |
-| `state_delta` | `dict` | Zwrot funkcji po usunięciu `__audit` — gotowy do scalenia ze statem. |
-| `audit`       | `dict` | Zawartość `__audit` z returna (tokeny, koszt, custom pola).          |
+| key | type | description |
+|---|---|---|
+| `state_delta` | `dict` | The function's return after `__audit` is stripped — ready to merge into state. |
+| `audit` | `dict` | The `__audit` payload from the return value (tokens, cost, custom fields). |
 
-### Przykład
+### Example
 
 ```json
 {
@@ -310,21 +379,35 @@ Sync `def run(state, config)` też działa — adapter owija w `loop.run_in_exec
 }
 ```
 
-### Instalacja pakietów
+### Package installation
 
-> **Note**: The package containing the callable must be installed in the
-> engine's venv separately. It is not a build dependency of `dap-engine`.
->
-> The `python-func` adapter resolves `callable_path` with `importlib` at
-> invocation time — the engine starts fine without the package and only
-> fails when that specific node runs. Install the package in the engine's
-> venv on the host where `dap-engine` runs (e.g. `uv pip install -e
-> /path/to/cortex-project`).
+The package containing the callable must be installed in the engine's
+venv separately. It is **not** a build dependency of `dap-engine`.
 
-### Model bezpieczeństwa (v0.1)
+The `python-func` adapter resolves `callable_path` with `importlib`
+at invocation time — the engine starts fine without the package and
+only fails when that specific node runs. Install the package in the
+engine's venv on the host where `dap-engine` runs (e.g.
+`uv pip install -e /path/to/cortex-project`).
 
-**Single-user, local-trust.** Ten sam poziom zaufania co `bash` — callable
-działa z uprawnieniami procesu engine'a, **bez sandboxa, bez izolacji importów,
-bez confinementu sieci**. Pakiet musi być zainstalowany w venv engine'a.
-Multi-user setup wymaga najpierw auth (#38) i dodatkowej warstwy izolacji
-zanim ten runtime można wystawić niezaufanym definicjom agentów.
+### Security model (v0.1)
+
+**Single-user, local-trust.** Same trust level as `bash` — the
+callable runs with the engine process's permissions, **no sandbox,
+no import isolation, no network confinement**. The package must be
+installed in the engine's venv. A multi-user deployment requires
+auth (which ships in v0.3) **plus** an additional isolation layer
+before this runtime can safely accept untrusted agent definitions.
+
+---
+
+## See also
+
+- [DAP project README](https://github.com/rafeekpro/dap) — full architecture.
+- [`docs/runtimes.md`](https://github.com/rafeekpro/dap/blob/main/docs/runtimes.md) — design notes on adding a new adapter.
+- [`docs/providers.md`](https://github.com/rafeekpro/dap/blob/main/docs/providers.md) — per-provider setup recipes.
+- [`docs/quick-start.md`](https://github.com/rafeekpro/dap/blob/main/docs/quick-start.md#runtime-adapters--how-dap-talks-to-llms) — choosing between `api-call` and CLI runtimes per deployment shape.
+
+## License
+
+See the [main repository](https://github.com/rafeekpro/dap) for licensing details.
