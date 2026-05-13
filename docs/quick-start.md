@@ -44,10 +44,10 @@ lives in `./.dap/state.db` next to wherever you run `dap`.
 |---|---|---|
 | Python | 3.13+ | `python3 --version` |
 | pipx | any | `pipx --version` |
-| Node | 22+ (optional — for bundled dashboard) | `node --version` |
+| Node | 20+ (optional — for bundled dashboard) | `node --version` |
 
 If `node` is missing, `dap start` will run engine-only and print a
-hint. Install Node 22+ later via `nvm install 22` if you want the
+hint. Install Node 20+ later via `nvm install 20` if you want the
 web UI.
 
 ### Install
@@ -74,11 +74,12 @@ dap start
 ```bash
 # In a second terminal:
 curl http://localhost:7333/health
-#   → {"status":"ok","version":"0.3.0"}
+#   → {"status":"ok","service":"dap-engine","version":"<x.y.z>",
+#      "db_dialect":"sqlite","timestamp":"..."}
 
 dap status
-#   ✓ admin bootstrap: you@example.com (2026-05-13T...)
-#   ● engine: running  PID 12345 port 7333 uptime 30s
+#   ✓ admin bootstrap: you@example.com (...)
+#   ● engine: running  PID <pid> port 7333 uptime <duration>
 ```
 
 Login via the dashboard with the credentials you passed to
@@ -121,19 +122,23 @@ curl -O https://raw.githubusercontent.com/rafeekpro/dap/main/examples/standalone
 # 2. Configure secrets.
 cp .env.example .env
 # Edit .env — the only REQUIRED value is DAP_AUTH_JWT_SECRET.
-# Mint one with: openssl rand -hex 32
+# Mint one with: openssl rand -hex 32.
+# Also pin DAP_IMAGE_TAG=0.3.0 (or whichever tag you intend), so
+# compose doesn't silently pull `latest`.
 nano .env
 
 # 3. Start.
-docker compose pull        # fetches ghcr.io/rafeekpro/dap:0.3.0
+docker compose pull        # fetches ghcr.io/rafeekpro/dap:$DAP_IMAGE_TAG
 docker compose up -d
 
 # 4. Bootstrap the admin (idempotent — re-run with --force later
 #    if you forget the password).
+#    Omitting --admin-password triggers auto-generation; the random
+#    password is printed exactly once on stdout, capture it from
+#    the command output below.
 docker compose exec dap dap init \
-    --admin-email=you@example.com \
-    --admin-password=$(openssl rand -hex 16) --force
-# Capture the password it prints; you'll need it to log in.
+    --admin-email=you@example.com --force
+# → "⚠ Generated random password — copy it now: <random>"
 ```
 
 ### Verify
@@ -191,8 +196,8 @@ recovery, automated upgrades.
                    │ HTTP :3000
                    ▼
         ┌──────────────────┐
-        │ DAP container    │  ghcr.io/rafeekpro/dap:0.3.0
-        │  - Engine :7333  │  (engine + dashboard, monolit)
+        │ DAP container    │  ghcr.io/rafeekpro/dap:<version>
+        │  - Engine :7333  │  (engine + dashboard, monolith)
         │  - Dashboard:3000│
         └────────┬─────────┘
                  │ TCP :5432 over private network or internet+TLS
@@ -226,20 +231,48 @@ echo 'DAP_DATABASE_URL=postgresql+asyncpg://dap:secret@db.example.com:5432/dap_p
 #    alembic step).
 docker compose up -d
 
-# 5. Bootstrap admin against the Postgres DB.
-docker compose exec dap dap init \
-    --admin-email=you@example.com \
-    --admin-password=$(openssl rand -hex 16) --force
+# 5. Bootstrap admin against Postgres.
+#    NOTE: `dap init` is SQLite-only today; for Postgres deployments
+#    the admin user is created via the running engine's HTTP API:
+docker compose exec dap python -c "
+import httpx
+r = httpx.post('http://127.0.0.1:7333/auth/register',
+               json={'email': 'you@example.com', 'password': 'CHANGE_ME_xyz'})
+print(r.status_code, r.text)
+"
+#    Then promote that row to admin (in-DB UPDATE — no admin endpoint
+#    for this yet; a managed UI lands in v0.4):
+docker compose exec dap python -c "
+import asyncio
+from dap_engine.persistence.db import create_async_engine_for_url
+from sqlalchemy import text
+async def main():
+    eng = create_async_engine_for_url(
+        'postgresql+asyncpg://dap:secret@db.example.com:5432/dap_prod', None)
+    async with eng.begin() as conn:
+        await conn.execute(
+            text(\"UPDATE users SET is_superuser=TRUE WHERE email=:e\"),
+            {'e': 'you@example.com'})
+asyncio.run(main())
+"
 ```
+
+A `dap init` Postgres mode is on the v0.4 roadmap; until then the
+two-step register-then-promote above is the documented path.
 
 ### Verify
 
 ```bash
-# Same as Path B; additionally:
+# 1. Confirm engine started against Postgres (not silently fell
+#    back to SQLite). The /health endpoint returns the active
+#    SQLAlchemy dialect:
+docker compose exec dap curl -s http://127.0.0.1:7333/health
+# → {"status":"ok",...,"db_dialect":"postgresql","timestamp":"..."}
 
-# Confirm engine actually used Postgres (not silently fell back to SQLite).
-docker compose exec dap psql "$DAP_DATABASE_URL" -c '\dt'
-# Should list users, agents, pipelines, audit_log, etc.
+# 2. Check the engine log line that announces which backend it
+#    bound to on startup:
+docker compose logs dap | grep -i "database"
+# → engine.db ... using Postgres backend (postgresql+asyncpg)
 ```
 
 ### TLS + reverse proxy
