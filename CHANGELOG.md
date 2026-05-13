@@ -38,6 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a quick-start code example, compatibility matrix, and cross-links
   into the deeper docs/. Picked up by PyPI on the next release
   (v0.3.1+); no immediate re-publish needed.
+- **`release.yml` reverted to trusted-publisher OIDC.** v0.3.0 was
+  published in "bootstrap mode" using an account-scoped API token
+  because PyPI's pending-publishers form rate-limited the initial
+  registration of six new projects. After v0.3.0 shipped, trusted
+  publisher rules were added through the reliable
+  Manage → Publishing → Add flow on each of the six project pages,
+  and the `publish-pypi` job is now back to OIDC end-to-end —
+  no long-lived API token in the repo. `docs/release.md` updated
+  with a history note explaining the v0.3.0 anomaly.
+
+### Removed
+- `secrets.PYPI_API_TOKEN` repo secret is no longer used by any
+  workflow. Operators should delete it via
+  Settings → Secrets and variables → Actions (cannot be removed
+  via a PR — has to be a UI / `gh secret delete` action).
 
 ## [0.3.0] — 2026-05-12
 
