@@ -250,6 +250,19 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
     }
   };
 
+  // Optimistic: once approved, show a resuming state immediately without
+  // waiting for the next poll to confirm final_status=running.
+  if (approve.isPending) {
+    return (
+      <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30">
+        <CardContent className="pt-4 pb-4 flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+          Resuming pipeline…
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
       <CardContent className="pt-4 space-y-3">
@@ -270,7 +283,7 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
                 onClick={() => approve.mutate({ runId: run.id, nodeId: gateNode })}
               >
                 <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
-                {approve.isPending ? "Approving…" : "Approve"}
+                Approve
               </Button>
             )}
             <Button

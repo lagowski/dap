@@ -64,6 +64,7 @@ export const queryKeys = {
 
 const RUNS_LIST_REFETCH_MS = 2_000;
 const RUN_DETAIL_REFETCH_MS = 2_000;
+const RUN_DETAIL_BURST_MS = 500; // fast poll right after approve
 
 export function useRunsList(
   filters?: {
@@ -298,12 +299,16 @@ export function useApproveGate() {
     mutationFn: ({ runId, nodeId }: { runId: string; nodeId: string }) =>
       api.approveGate(runId, nodeId),
     onSuccess: (_data, { runId }) => {
+      // Immediate invalidate + burst-poll for 3s so the UI snaps to
+      // "running" without waiting for the normal 2s interval.
       qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
       qc.invalidateQueries({ queryKey: queryKeys.runs });
+      const burst = setInterval(() => {
+        qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
+      }, RUN_DETAIL_BURST_MS);
+      setTimeout(() => clearInterval(burst), 3_000);
     },
     onError: (_err, { runId }) => {
-      // "Run is not paused" means the run already resumed — refresh so the
-      // stale GatePanel disappears and the UI shows the current run state.
       qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
       qc.invalidateQueries({ queryKey: queryKeys.runs });
     },
