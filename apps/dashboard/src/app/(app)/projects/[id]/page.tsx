@@ -3,8 +3,8 @@
 import { use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ArrowLeft, Pencil } from "lucide-react";
-import { useArchiveProject, useProject, useRunsList } from "@/hooks/api";
+import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, GitBranch, Loader2, Pencil, RefreshCw } from "lucide-react";
+import { useArchiveProject, useInitWorkspace, useProject, useRunsList, useSyncWorkspace, useWorkspaceStatus } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -111,6 +111,8 @@ export default function ProjectDetailPage({
         <Metric label="ID" value={project.id.slice(0, ID_PREFIX) + "…"} mono />
       </div>
 
+      {project.repo_url ? <WorkspaceCard projectId={project.id} /> : null}
+
       <Card>
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-center justify-between">
@@ -183,6 +185,90 @@ function RecentRuns({ projectId }: { projectId: string }) {
               </li>
             ))}
           </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function WorkspaceCard({ projectId }: { projectId: string }) {
+  const { data: ws, isPending } = useWorkspaceStatus(projectId);
+  const init = useInitWorkspace(projectId);
+  const sync = useSyncWorkspace(projectId);
+
+  const busy = init.isPending || sync.isPending;
+
+  return (
+    <Card>
+      <CardContent className="pt-4 pb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="text-sm font-medium">Workspace</span>
+            {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            {ws?.exists && (
+              <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {ws.branch}
+                {ws.clean === false && (
+                  <span className="ml-1 text-amber-500 flex items-center gap-0.5">
+                    <AlertTriangle className="h-3 w-3" /> dirty
+                  </span>
+                )}
+              </span>
+            )}
+            {ws && !ws.exists && !isPending && (
+              <span className="text-xs text-destructive flex items-center gap-1">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Not initialised
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {ws?.exists ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => sync.mutate()}
+                className="h-7 text-xs"
+              >
+                <RefreshCw className={`h-3 w-3 mr-1 ${sync.isPending ? "animate-spin" : ""}`} />
+                Sync
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={busy || isPending}
+                onClick={() => init.mutate()}
+                className="h-7 text-xs"
+              >
+                {init.isPending ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Cloning…</>
+                ) : (
+                  "Initialize Workspace"
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {ws?.exists && ws.last_commit && (
+          <p className="mt-1.5 text-xs text-muted-foreground font-mono truncate pl-6">
+            {ws.path} · {ws.last_commit}
+          </p>
+        )}
+        {ws && !ws.exists && ws.path && (
+          <p className="mt-1 text-xs text-muted-foreground font-mono truncate pl-6">
+            Will clone to: {ws.path}
+          </p>
+        )}
+
+        {(init.isError || sync.isError) && (
+          <p className="mt-1 text-xs text-destructive pl-6">
+            {formatApiError(init.error ?? sync.error)}
+          </p>
         )}
       </CardContent>
     </Card>

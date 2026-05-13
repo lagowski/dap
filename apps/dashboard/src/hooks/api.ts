@@ -399,6 +399,54 @@ export function useTriggerProjectRun() {
   });
 }
 
+export function useWorkspaceStatus(projectId: string | null) {
+  return useQuery({
+    queryKey: ["projects", projectId, "workspace"],
+    queryFn: () =>
+      api.request<{
+        exists: boolean;
+        path: string | null;
+        branch: string | null;
+        clean: boolean | null;
+        last_commit: string | null;
+      }>(`/projects/${encodeURIComponent(projectId!)}/workspace/status`),
+    enabled: projectId != null,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d?.exists ? false : 10_000;
+    },
+  });
+}
+
+export function useInitWorkspace(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.request<{ exists: boolean; path: string; branch: string; initialized: boolean }>(
+        `/projects/${encodeURIComponent(projectId)}/workspace/init`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects", projectId, "workspace"] });
+      qc.invalidateQueries({ queryKey: queryKeys.project(projectId) });
+    },
+  });
+}
+
+export function useSyncWorkspace(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.request<{ exists: boolean; path: string; branch: string }>(
+        `/projects/${encodeURIComponent(projectId)}/workspace/sync`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects", projectId, "workspace"] });
+    },
+  });
+}
+
 export function useProjectIssues(projectId: string | null) {
   return useQuery({
     queryKey: ["projects", projectId, "issues"],

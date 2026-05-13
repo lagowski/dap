@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import re
+import subprocess
 from typing import Any
 
 import httpx
@@ -269,6 +272,211 @@ async def list_project_issues(
         for i in issues
         if not i.get("pull_request")  # exclude PRs which appear in issues API
     ]
+
+
+def _workspace_path(repo_url: str) -> str:
+    """Return the local workspace path for a repo_url.
+
+    Mirrors the cortex CLI convention:
+    ``~/.cortex/projects/{owner}-{repo}/repo``
+    """
+    match = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$", repo_url)
+    if not match:
+        raise ValueError(f"Cannot parse owner/repo from repo_url: {repo_url!r}")
+    owner, repo_name = match.group(1), match.group(2)
+    base = os.path.expanduser(f"~/.cortex/projects/{owner}-{repo_name}")
+    return str(os.path.join(base, "repo"))
+
+
+def _clone_token(project: Project) -> str | None:
+    """Return first GitHub token from project env_vars, else engine env."""
+    token = next(
+        (v for v in (project.env_vars or {}).values() if _is_github_token(v)),
+        None,
+    )
+    return token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+
+
+def _workspace_status(workspace: str) -> dict[str, Any]:
+    """Collect git status for an existing workspace clone."""
+    def git(*args: str) -> str:
+        try:
+            return subprocess.check_output(
+                ["git", *args], cwd=workspace, stderr=subprocess.DEVNULL, text=True
+            ).strip()
+        except Exception:
+            return ""
+
+    branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    last = git("log", "-1", "--format=%h %s")
+    clean = git("status", "--porcelain") == ""
+    return {
+        "exists": True,
+        "path": workspace,
+        "branch": branch or "unknown",
+        "clean": clean,
+        "last_commit": last or "—",
+    }
+
+
+@router.get("/{project_id}/workspace/status")
+def get_workspace_status(
+    project_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> dict[str, Any]:
+    """Return the local git workspace status for a project (#371)."""
+    try:
+        project = repo.get_project(
+            session, project_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    # Determine workspace path
+    workspace = project.working_directory
+    if not workspace and project.repo_url:
+        with contextlib.suppress(ValueError):
+            workspace = _workspace_path(project.repo_url)
+
+    if not workspace:
+        return {"exists": False, "path": None, "branch": None, "clean": None, "last_commit": None}
+
+    if not os.path.isdir(os.path.join(workspace, ".git")):
+        return {
+            "exists": False, "path": workspace,
+            "branch": None, "clean": None, "last_commit": None,
+        }
+
+    return _workspace_status(workspace)
+
+
+@router.post("/{project_id}/workspace/init")
+async def init_workspace(
+    project_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> dict[str, Any]:
+    """Clone the project repo locally and set working_directory (#371).
+
+    Uses the first GitHub token found in project env_vars, falling back
+    to the GITHUB_TOKEN / GH_TOKEN engine environment variable.
+    """
+    try:
+        project = repo.get_project(
+            session, project_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not project.repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Project has no repo_url configured",
+        )
+
+    try:
+        workspace = _workspace_path(project.repo_url)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+
+    # Already initialised — just return current status.
+    if os.path.isdir(os.path.join(workspace, ".git")):
+        return {**_workspace_status(workspace), "initialized": False}
+
+    token = _clone_token(project)
+    if token:
+        m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", project.repo_url)
+        slug = m.group(1) if m else None
+        clone_url = (
+            f"https://x-access-token:{token}@github.com/{slug}.git"
+            if slug else project.repo_url
+        )
+    else:
+        clone_url = project.repo_url
+
+    os.makedirs(os.path.dirname(workspace), exist_ok=True)
+
+    proc = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
+        "git", "clone", clone_url, workspace,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+    if proc.returncode != 0:
+        err = stderr.decode("utf-8", errors="replace").replace(token or "", "<token>")[:300]
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"git clone failed: {err}",
+        )
+
+    # Persist working_directory on the project row.
+    repo.update_project(
+        session,
+        project_id,
+        ProjectUpdate(
+            name=project.name,
+            description=project.description,
+            working_directory=workspace,
+            repo_url=project.repo_url,
+            default_branch=project.default_branch,
+            pipelines=project.pipelines,
+            env_vars=project.env_vars,
+        ),
+        actor_id=user.id,
+        is_admin=user.is_superuser,
+    )
+    logger.info("workspace initialised: %s", workspace)
+    return {**_workspace_status(workspace), "initialized": True}
+
+
+@router.post("/{project_id}/workspace/sync")
+async def sync_workspace(
+    project_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> dict[str, Any]:
+    """git fetch + checkout default_branch + pull on an existing workspace (#371)."""
+
+    try:
+        project = repo.get_project(
+            session, project_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    workspace = project.working_directory
+    if not workspace or not os.path.isdir(os.path.join(workspace, ".git")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Workspace not initialised — call /workspace/init first",
+        )
+
+    branch = project.default_branch or "main"
+
+    async def run_git(*args: str) -> tuple[int, str]:
+        p = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
+            "git", *args, cwd=workspace,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await asyncio.wait_for(p.communicate(), timeout=60)
+        return p.returncode or 0, err.decode("utf-8", errors="replace")[:200]
+
+    for cmd in (
+        ("fetch", "--prune", "origin"),
+        ("checkout", branch),
+        ("pull", "--ff-only", "origin", branch),
+    ):
+        rc, err = await run_git(*cmd)
+        if rc != 0:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"git {cmd[0]} failed: {err}",
+            )
+
+    return _workspace_status(workspace)
 
 
 @router.post(
