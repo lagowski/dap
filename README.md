@@ -12,7 +12,9 @@ Three supported install paths, in order of complexity:
 2. **Docker** — `ghcr.io/rafeekpro/dap:0.3.0` for shared / production deployments. See [`examples/standalone/`](examples/standalone/) for a working compose file with SQLite (default) or Postgres.
 3. **Source** — for contributors. The `scripts/setup` + `scripts/dev` flow below.
 
-See [**docs/self-hosting.md**](docs/self-hosting.md) for full deployment, OAuth setup, production checklist, and troubleshooting.
+**First time installing?** → [**docs/quick-start.md**](docs/quick-start.md) walks you through the three paths with a 3-question decision tree and copy-pasteable commands.
+
+For the full deployment + production checklist + troubleshooting see [**docs/self-hosting.md**](docs/self-hosting.md).
 
 ### Upgrading from 0.0.1
 
@@ -175,6 +177,7 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 
 ## Documentation
 
+- [`docs/quick-start.md`](docs/quick-start.md) — pick your install path via a 3-question decision tree; concrete commands for each of the three deployment shapes. **Start here on a first install.**
 - [`docs/self-hosting.md`](docs/self-hosting.md) — deployment paths (PyPI / Docker / source), production checklist, OAuth setup, troubleshooting.
 - [`docs/auth.md`](docs/auth.md) — email+password, GitHub OAuth, Google OAuth, API tokens. Provider-app setup walkthroughs.
 - [`docs/admin-guide.md`](docs/admin-guide.md) — operator manual for `/admin/*` (users, audit log, API tokens) + recovery procedures (lost admin password, JWT secret rotation, corrupted SQLite).

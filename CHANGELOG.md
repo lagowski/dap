@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet — v0.3.0 just shipped. Next changes land here._
+### Added
+- `docs/quick-start.md` — single-page install guide with a
+  3-question decision tree (Path A: local single-user via pipx +
+  SQLite, Path B: VPS self-host via Docker compose, Path C:
+  production with managed Postgres + TLS reverse proxy). Pulls
+  together the install paths previously scattered across
+  README + self-hosting.md + admin-guide.md into one
+  copy-pasteable flow. Each path includes preflight checks,
+  exact commands, verification steps, and pointers into deeper
+  docs.
 
 ## [0.3.0] — 2026-05-12
 
