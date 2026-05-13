@@ -99,7 +99,7 @@ export function formatApiError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init?: RequestInit & { json?: unknown; skipAuthRedirect?: boolean },
 ): Promise<T> {

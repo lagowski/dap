@@ -8,6 +8,7 @@ import {
   useUpdateProject,
   usePipelinesList,
   useProjectIssues,
+  useWorkspaceStatus,
 } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -122,6 +123,10 @@ function WorkflowCard({
   const [showIssuePicker, setShowIssuePicker] = useState(false);
   const [repoUrlError, setRepoUrlError] = useState<string | null>(null);
 
+  // Workspace must exist before triggering cortex (#371).
+  const { data: wsStatus } = useWorkspaceStatus(project.repo_url ? project.id : null);
+  const workspaceMissing = project.repo_url != null && wsStatus != null && !wsStatus.exists;
+
   // Show issue picker for cortex-style pipelines when repo_url is set.
   const canPickIssue = !!project.repo_url && kind === "cortex";
 
@@ -210,9 +215,13 @@ function WorkflowCard({
         <Button
           type="button"
           size="sm"
-          disabled={!boundId || trigger.isPending || isUpdating}
+          disabled={!boundId || trigger.isPending || isUpdating || workspaceMissing}
           onClick={() => canPickIssue ? setShowIssuePicker(true) : handleTrigger()}
-          title={boundId ? "" : "Bind a pipeline first"}
+          title={
+            !boundId ? "Bind a pipeline first"
+            : workspaceMissing ? "Initialize workspace first"
+            : ""
+          }
         >
           <Play className="h-3.5 w-3.5 mr-1" />
           {trigger.isPending ? "Triggering…" : "Trigger"}
