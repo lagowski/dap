@@ -47,7 +47,6 @@ WORKDIR /build
 COPY pyproject.toml uv.lock README.md ./
 COPY apps/cli/pyproject.toml apps/cli/README.md ./apps/cli/
 COPY apps/engine/pyproject.toml apps/engine/README.md ./apps/engine/
-COPY packages/cortex/pyproject.toml packages/cortex/README.md ./packages/cortex/
 COPY packages/prompt-dsl/pyproject.toml packages/prompt-dsl/README.md ./packages/prompt-dsl/
 COPY packages/runtimes/pyproject.toml packages/runtimes/README.md ./packages/runtimes/
 COPY packages/types/pyproject.toml packages/types/README.md ./packages/types/
@@ -56,11 +55,10 @@ COPY packages/types/pyproject.toml packages/types/README.md ./packages/types/
 # workspace layout without touching real source. They get overwritten
 # in the COPY below.
 RUN mkdir -p apps/cli/src/dap_cli apps/engine/src/dap_engine \
-    packages/cortex/src/cortex packages/prompt-dsl/src/dap_prompt_dsl \
+    packages/prompt-dsl/src/dap_prompt_dsl \
     packages/runtimes/src/dap_runtimes packages/types/src/dap_types \
     && touch apps/cli/src/dap_cli/__init__.py \
     && touch apps/engine/src/dap_engine/__init__.py \
-    && touch packages/cortex/src/cortex/__init__.py \
     && touch packages/prompt-dsl/src/dap_prompt_dsl/__init__.py \
     && touch packages/runtimes/src/dap_runtimes/__init__.py \
     && touch packages/types/src/dap_types/__init__.py
@@ -78,7 +76,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Now copy the actual first-party source.
 COPY apps/cli/src ./apps/cli/src
 COPY apps/engine/src ./apps/engine/src
-COPY packages/cortex/src ./packages/cortex/src
 COPY packages/prompt-dsl/src ./packages/prompt-dsl/src
 COPY packages/runtimes/src ./packages/runtimes/src
 COPY packages/types/src ./packages/types/src

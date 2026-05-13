@@ -66,7 +66,6 @@ done
 # ``grep -rln '^__version__ =' apps/*/src packages/*/src``.
 VERSION_FILES=(
     "apps/cli/src/dap_cli/__init__.py"
-    "packages/cortex/src/cortex/__init__.py"
 )
 for f in "${VERSION_FILES[@]}"; do
     if [[ ! -f "$f" ]]; then
