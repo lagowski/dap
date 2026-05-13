@@ -11,6 +11,7 @@ import re
 from datetime import UTC, datetime
 
 from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
+from cortex.backends.base import BackendError
 from cortex.config.settings import load_settings
 from cortex.tools.github import merge_pull_request
 
@@ -100,82 +101,13 @@ async def run(state: dict, config: dict) -> dict:
             )
             # Fall through to the merge path; do not block.
         else:
-            return preserve_extensions(
-                cortex_to_dap(
-                    {
-                        "merged": False,
-                        "merge_sha": "",
-                        "current_phase": "pr_merger_refused",
-                        "error": "Cannot merge: tests did not pass",
-                        "__audit": _audit_base,
-                        "decisions": [
-                            *state.get("decisions", []),
-                            {
-                                "node": "pr_merger",
-                                "action": "refused",
-                                "reasoning": "Tests did not pass — merge blocked",
-                                "backend": "",
-                                "model": "",
-                                "tokens": "",
-                                "timestamp": now,
-                            },
-                        ],
-                    }
-                ),
-                original_extensions,
-            )
+            raise BackendError("Cannot merge: tests did not pass")
 
     if not review_approved:
-        return preserve_extensions(
-            cortex_to_dap(
-                {
-                    "merged": False,
-                    "merge_sha": "",
-                    "current_phase": "pr_merger_refused",
-                    "error": "Cannot merge: reviewer did not approve",
-                    "__audit": _audit_base,
-                    "decisions": [
-                        *state.get("decisions", []),
-                        {
-                            "node": "pr_merger",
-                            "action": "refused",
-                            "reasoning": "Reviewer did not approve — merge blocked",
-                            "backend": "",
-                            "model": "",
-                            "tokens": "",
-                            "timestamp": now,
-                        },
-                    ],
-                }
-            ),
-            original_extensions,
-        )
+        raise BackendError("Cannot merge: reviewer did not approve")
 
     if not pr_number:
-        return preserve_extensions(
-            cortex_to_dap(
-                {
-                    "merged": False,
-                    "merge_sha": "",
-                    "current_phase": "pr_merger_failed",
-                    "error": "No PR number in state",
-                    "__audit": _audit_base,
-                    "decisions": [
-                        *state.get("decisions", []),
-                        {
-                            "node": "pr_merger",
-                            "action": "failed",
-                            "reasoning": "No PR number available in state",
-                            "backend": "",
-                            "model": "",
-                            "tokens": "",
-                            "timestamp": now,
-                        },
-                    ],
-                }
-            ),
-            original_extensions,
-        )
+        raise BackendError("Cannot merge: no PR number in state (pr-creator may have failed)")
 
     # Use MERGE token (rlagowski — different user from code token)
     settings = load_settings()
@@ -190,30 +122,7 @@ async def run(state: dict, config: dict) -> dict:
     )
 
     if "error" in merge_result:
-        return preserve_extensions(
-            cortex_to_dap(
-                {
-                    "merged": False,
-                    "merge_sha": "",
-                    "current_phase": "pr_merger_failed",
-                    "error": merge_result["error"],
-                    "__audit": _audit_base,
-                    "decisions": [
-                        *state.get("decisions", []),
-                        {
-                            "node": "pr_merger",
-                            "action": "failed",
-                            "reasoning": merge_result["error"],
-                            "backend": "",
-                            "model": "",
-                            "tokens": "",
-                            "timestamp": now,
-                        },
-                    ],
-                }
-            ),
-            original_extensions,
-        )
+        raise BackendError(f"Merge failed: {merge_result['error']}")
 
     merge_sha = merge_result.get("sha", "")
 

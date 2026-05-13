@@ -305,9 +305,11 @@ coder:
     # max_turns cap of 100.
     # small bumped 10→15 (#281): multi-file bug fixes (3-4 files + tests)
     # exhaust 10 turns before reaching git commit.
-    small:  { max_turns: 15, timeout_sec: 360 }
-    medium: { max_turns: 25, timeout_sec: 600 }
-    large:  { max_turns: 40, timeout_sec: 900 }
+    # small bumped 15→25: dogfood run 560c378d (ClaudeAutoPM #581) assigned
+    # small tier for a 6-file fix; coder exhausted 15 turns before commit.
+    small:  { max_turns: 25, timeout_sec: 360 }
+    medium: { max_turns: 35, timeout_sec: 600 }
+    large:  { max_turns: 50, timeout_sec: 900 }
   # Claude via CLI — writes code, creates branches, commits.
 
 designer:

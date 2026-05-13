@@ -20,6 +20,7 @@ import subprocess
 from datetime import UTC, datetime
 
 from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
+from cortex.backends.base import BackendError
 from cortex.init.profile import load_profile, profile_exists, repo_clone_path
 from cortex.nodes.execution import checkout_agent_branch
 
@@ -251,12 +252,14 @@ async def run(state: dict, config: dict) -> dict:
         )
 
     if not profile_exists(repo):
-        return _fail(f"no project profile for {repo} — run `cortex init {repo}`")
+        raise BackendError(f"no project profile for {repo} — run `cortex init {repo}`")
 
     profile = load_profile(repo)
     test_cmd = profile.test_command
     if not test_cmd:
-        return _fail(f"no test_command in profile for {repo} — set it via `cortex init --edit`")
+        raise BackendError(
+            f"no test_command in profile for {repo} — set it via `cortex init --edit`"
+        )
 
     workspace = repo_clone_path(repo)
     if not workspace.exists():
