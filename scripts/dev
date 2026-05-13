@@ -124,7 +124,11 @@ echo "[dap] starting engine on http://127.0.0.1:${ENGINE_PORT}"
 # real engine PID, not the awk prefixer's. With ``set -m`` above, $! is also
 # the process group id we'll target in cleanup.
 # awk fflush() keeps logs interactive on both BSD and GNU awk.
-uv run dap-engine > >(awk '{ print "[engine] " $0; fflush(); }') 2>&1 &
+# Use .venv/bin/dap-engine directly instead of `uv run` so that env vars
+# loaded from .env.local (including DAP_DATABASE_URL) are reliably inherited
+# by the engine process. `uv run` on some platforms creates a subprocess
+# environment that does not carry through all exported shell variables.
+.venv/bin/dap-engine > >(awk '{ print "[engine] " $0; fflush(); }') 2>&1 &
 ENGINE_PID=$!
 
 echo "[dap] starting dashboard on http://localhost:3000"
