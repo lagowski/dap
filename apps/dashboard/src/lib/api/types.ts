@@ -169,6 +169,7 @@ export interface PipelineExportPayload {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   /** Dashboard layout metadata (node positions etc.) — preserved through export/import (#226). */
   ui_metadata?: Record<string, unknown>;
@@ -382,6 +383,7 @@ export interface Pipeline {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   created_at: string;
   updated_at: string;
@@ -512,6 +514,7 @@ export interface PipelineCreate {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   ui_metadata?: Record<string, unknown>;
 }
@@ -528,6 +531,7 @@ export interface PipelineUpdate {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   ui_metadata?: Record<string, unknown>;
 }

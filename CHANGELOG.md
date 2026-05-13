@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Opt-in terminal-status enforcement (#381)** — new
+  ``PipelineDefaults.requires_terminal_final_status`` flag (default
+  ``false``). When a pipeline opts in, the orchestrator treats a run
+  that finishes with ``final_status='running'`` (or any other
+  non-terminal value) as a **failed** run with a clear
+  ``failure_reason`` recorded on the Run row instead of silently
+  coercing it to ``success``. Targets the cortex case where
+  ``pr-merger`` refuses to merge but the node-level result is
+  ``success``: the bundle now flips the flag on, so a refused merge
+  surfaces as red in the UI. Generic pipelines without the flag keep
+  the historical "no node raised" = "successful run" contract.
+  ``finalize_run`` gains an optional ``failure_reason`` argument that
+  routes into the existing ``runs.failure_reason`` column (introduced
+  in #260).
 - **Private template registry (#385, Iter 1)** — new endpoint
   `POST /pipelines/import-from-url` lets operators import
   pipeline bundles from a trusted private URL (e.g. a

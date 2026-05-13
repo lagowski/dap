@@ -313,6 +313,7 @@ def finalize_run(
     run_id: str,
     *,
     final_status: str,
+    failure_reason: str | None = None,
 ) -> None:
     """Mark a run as completed (success/failed/aborted) and aggregate metrics.
 
@@ -327,20 +328,30 @@ def finalize_run(
     commits ``finalize_run("failed")`` and the outer ``except
     CancelledError`` handler then calls ``finalize_run("aborted")`` from
     a fresh session; the second call no-ops.
+
+    ``failure_reason`` (#381): when the orchestrator detects a defensive
+    failure (e.g. pipeline finished without setting a terminal
+    ``final_status``), the reason lands in ``runs.failure_reason`` so
+    the dashboard surfaces it next to the red badge. ``None`` leaves
+    the column untouched — succeeding runs and aborts don't write a
+    reason. Same column shape used by ``mark_stale_running_runs_as_failed``.
     """
     tokens, cost = _compute_run_totals(session, run_id)
+    values: dict[str, Any] = {
+        "final_status": final_status,
+        "ended_at": _now(),
+        "tokens_used": tokens,
+        "cost_usd": cost,
+    }
+    if failure_reason is not None:
+        values["failure_reason"] = failure_reason
     stmt = (
         update(RunORM)
         .where(
             RunORM.id == run_id,
             RunORM.final_status.notin_(_TERMINAL_STATUSES),
         )
-        .values(
-            final_status=final_status,
-            ended_at=_now(),
-            tokens_used=tokens,
-            cost_usd=cost,
-        )
+        .values(**values)
     )
     result = session.execute(stmt)
     # ``CursorResult.rowcount`` exposed only at runtime; static type is

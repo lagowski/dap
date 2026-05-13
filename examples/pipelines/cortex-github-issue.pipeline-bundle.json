@@ -231,7 +231,8 @@
         "phase1_gate",
         "phase2_gate",
         "phase3_gate"
-      ]
+      ],
+      "requires_terminal_final_status": true
     }
   },
   "bundled_agents": {
