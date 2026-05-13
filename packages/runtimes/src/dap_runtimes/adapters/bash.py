@@ -23,6 +23,7 @@ runtime to untrusted agent definitions.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import re
@@ -193,7 +194,7 @@ def _resolve_command(config: dict[str, Any], prompt_xml: str) -> str | None:
 
     match = COMMAND_TAG_PATTERN.search(prompt_xml)
     if match is not None:
-        extracted = match.group(1).strip()
+        extracted = html.unescape(match.group(1).strip())
         if extracted:
             return extracted
 

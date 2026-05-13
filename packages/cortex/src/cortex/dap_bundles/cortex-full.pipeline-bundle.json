@@ -644,7 +644,7 @@
       "runtime_config": {
         "callable_path": "cortex.nodes.copilot_reviewer:run"
       },
-      "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+      "prompt_template": "<agent_prompt><repo>{{ repo }}</repo></agent_prompt>",
       "input_schema": [
         "repo",
         "extensions"
