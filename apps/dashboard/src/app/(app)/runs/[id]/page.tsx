@@ -137,7 +137,6 @@ function Metric({ label, value }: { label: string; value: string }) {
 function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
   const pause = usePauseRun();
   const resume = useResumeRun();
-  const approve = useApproveGate();
   const abort = useAbortRun();
 
   const status = run.final_status;
@@ -145,9 +144,8 @@ function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) 
     return null;
   }
 
-  const busy =
-    pause.isPending || resume.isPending || approve.isPending || abort.isPending;
-  const lastError = pause.error ?? resume.error ?? approve.error ?? abort.error;
+  const busy = pause.isPending || resume.isPending || abort.isPending;
+  const lastError = pause.error ?? resume.error ?? abort.error;
 
   const approvalNodes = new Set(pipeline?.defaults?.approval_required_nodes ?? []);
   const gateNode = run.paused_at_node ?? null;
@@ -177,15 +175,8 @@ function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) 
           Pause
         </Button>
       ) : isAtGate ? (
-        <Button
-          variant="default"
-          size="sm"
-          disabled={busy}
-          onClick={() => approve.mutate({ runId: run.id, nodeId: gateNode! })}
-        >
-          <Play className="mr-1 h-3.5 w-3.5" />
-          Approve
-        </Button>
+        // GatePanel renders its own Approve button — don't duplicate here.
+        null
       ) : (
         <Button
           variant="outline"
