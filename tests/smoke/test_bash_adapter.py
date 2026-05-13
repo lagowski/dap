@@ -294,5 +294,3 @@ async def test_structured_shape_is_consistent_across_outcomes(
     missing_cmd = await adapter.execute(_task())
     assert missing_cmd.structured is not None
     assert set(missing_cmd.structured.keys()) == expected_keys
-
-
