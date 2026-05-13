@@ -19,22 +19,21 @@ Behaviour:
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from github import Auth, Github
 
-from cortex.adapters.pipeline_state import dap_or_native, dap_to_cortex
+from cortex.adapters.pipeline_state import cortex_to_dap, dap_to_cortex, preserve_extensions
 from cortex.backends.base import BackendError, LLMRequest
 from cortex.backends.registry import create_backend_with_fallback as create_backend
 from cortex.config.settings import get_agent_backend_config, load_settings
 from cortex.init.profile import repo_clone_path
 from cortex.nodes.execution import (
+    _clean_workspace_for_agent,
     _push_branch,
     checkout_agent_branch,
-    _clean_workspace_for_agent,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,7 +56,8 @@ GitHub Copilot on a pull request.
 RULES:
 - Fix ONLY the specific issues Copilot flagged — do NOT refactor unrelated code
 - Use the Edit tool for existing files, Write for new ones
-- After edits, stage + commit: `git add <files> && git commit -m "fix: address Copilot review comments"`
+- After edits, stage + commit:
+  `git add <files> && git commit -m "fix: address Copilot review comments"`
 - Do NOT push — the pipeline handles that
 - Output one line per comment addressed: "fixed <file>:<line> — <brief>"
 """
@@ -210,34 +210,38 @@ async def run(state: dict, config: dict) -> dict:
     pr_number = int(state.get("pr_number") or 0)
     branch_name = str(state.get("coder_branch_name") or state.get("branch_name") or "")
 
+    def _decision(action: str, reasoning: str) -> dict:
+        return {
+            "node": "copilot_reviewer",
+            "action": action,
+            "reasoning": reasoning,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
     if not pr_number:
         logger.warning("copilot_reviewer: no pr_number in state — skipping")
-        return dap_or_native({
+        return preserve_extensions(cortex_to_dap({
             "copilot_approved": False,
             "copilot_comments": [],
-            "decisions": state.get("decisions", []) + [{
-                "node": "copilot_reviewer",
-                "action": "skipped",
-                "reasoning": "no pr_number in state",
-                "timestamp": datetime.now(UTC).isoformat(),
-            }],
-        }, original_extensions)
+            "decisions": [
+                *state.get("decisions", []),
+                _decision("skipped", "no pr_number in state"),
+            ],
+        }), original_extensions)
 
     workspace = repo_clone_path(repo)
 
     comments, approved = _poll_for_copilot(repo, pr_number, read_token)
 
     if approved:
-        return dap_or_native({
+        return preserve_extensions(cortex_to_dap({
             "copilot_approved": True,
             "copilot_comments": [],
-            "decisions": state.get("decisions", []) + [{
-                "node": "copilot_reviewer",
-                "action": "approved",
-                "reasoning": "Copilot approved the PR",
-                "timestamp": datetime.now(UTC).isoformat(),
-            }],
-        }, original_extensions)
+            "decisions": [
+                *state.get("decisions", []),
+                _decision("approved", "Copilot approved the PR"),
+            ],
+        }), original_extensions)
 
     # Fix loop
     fix_round = 0
@@ -267,18 +271,20 @@ async def run(state: dict, config: dict) -> dict:
         else f"max_rounds_reached ({MAX_FIX_ROUNDS})"
     )
 
-    return dap_or_native({
+    verdict = (
+        f"Copilot approved after {fix_round} fix round(s)"
+        if approved
+        else (
+            f"Addressed {len(addressed_comments)} comment(s), "
+            f"Copilot verdict: "
+            f"{'pending/no review' if timed_out else 'still requesting changes'}"
+        )
+    )
+    return preserve_extensions(cortex_to_dap({
         "copilot_approved": approved,
         "copilot_comments": addressed_comments,
-        "decisions": state.get("decisions", []) + [{
-            "node": "copilot_reviewer",
-            "action": action,
-            "reasoning": (
-                f"Copilot approved after {fix_round} fix round(s)"
-                if approved
-                else f"Addressed {len(addressed_comments)} comment(s), "
-                     f"Copilot verdict: {'pending/no review' if timed_out else 'still requesting changes'}"
-            ),
-            "timestamp": datetime.now(UTC).isoformat(),
-        }],
-    }, original_extensions)
+        "decisions": [
+            *state.get("decisions", []),
+            _decision(action, verdict),
+        ],
+    }), original_extensions)
