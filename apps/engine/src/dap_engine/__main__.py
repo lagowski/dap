@@ -63,6 +63,17 @@ def main() -> None:
         oauth_github_client_secret=os.environ.get("DAP_OAUTH_GITHUB_CLIENT_SECRET"),
         oauth_google_client_id=os.environ.get("DAP_OAUTH_GOOGLE_CLIENT_ID"),
         oauth_google_client_secret=os.environ.get("DAP_OAUTH_GOOGLE_CLIENT_SECRET"),
+        # Template registry (#385). CSV of trusted hostnames the
+        # ``/pipelines/import-from-url`` endpoint will fetch from.
+        # Empty (default) → endpoint returns 422 (opt-in feature).
+        template_registry_allowed_hosts=[
+            h.strip()
+            for h in os.environ.get("DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        ],
+        template_registry_auth_token=(
+            os.environ.get("DAP_TEMPLATE_REGISTRY_AUTH_TOKEN", "").strip() or None
+        ),
     )
 
     app = create_app(config)

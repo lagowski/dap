@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Private template registry (#385, Iter 1)** — new endpoint
+  `POST /pipelines/import-from-url` lets operators import
+  pipeline bundles from a trusted private URL (e.g. a
+  company-internal git repo with `.pipeline-bundle.json`
+  files). Off by default; activates when
+  `DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS` is set to a CSV of
+  literal hostnames. Optional Bearer token via
+  `DAP_TEMPLATE_REGISTRY_AUTH_TOKEN` for private repos. SSRF
+  guard (literal hostname match, loopback-bypass blocked,
+  HTTPS-only except for dev localhost), 10 MB response cap,
+  10 s timeout, `pipeline.imported_from_url` audit event on
+  every successful import. Internal refactor — both
+  `/pipelines/import` and the new endpoint delegate to a
+  shared `_materialise_pipeline_import()` helper.
+  See `docs/auth.md` "Private template registry" section.
 - `docs/quick-start.md` — single-page install guide with a
   3-question decision tree (Path A: local single-user via pipx +
   SQLite, Path B: VPS self-host via Docker compose, Path C:
