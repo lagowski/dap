@@ -19,8 +19,7 @@ checklist**.
 > form rate-limited the initial registration of six new projects.
 > Once the six projects existed on PyPI, trusted-publisher rules
 > were added through the reliable Manage → Publishing → Add flow
-> on each project page, and the token path was reverted to OIDC
-> (commit landing this doc revision). v0.3.1+ uses OIDC end-to-end.
+> on each project page. v0.3.1+ uses OIDC end-to-end.
 
 ## One-time setup
 
@@ -33,9 +32,10 @@ workflow. For an existing project (which is the case for all six
 after v0.3.0):
 
 1. Sign in to PyPI as the project owner.
-2. Open `https://pypi.org/manage/project/<package>/settings/publishing/`.
-3. Under **Manage current publishers** → **Add a new publisher**
-   (GitHub tab). Fill in:
+2. Open the project's PyPI page → **Manage** → **Publishing**.
+   (Direct URL shape: `https://pypi.org/manage/project/<package>/settings/publishing/`,
+   exact path subject to PyPI's UI evolution.)
+3. Add a new trusted publisher (GitHub provider). Fill in:
    - **Owner**: `rafeekpro` (this repo's GitHub org/user).
    - **Repository name**: `dap`.
    - **Workflow name**: `release.yml`.
