@@ -2,26 +2,19 @@ name: Release
 
 # Triggered by ``git push`` of a ``v*.*.*`` tag (or ``v*.*.*-rc*`` for
 # pre-releases). Builds every first-party wheel, ships the dashboard
-# bundle inside dap-cli, publishes to PyPI, builds a multi-platform
-# Docker image, pushes to GHCR, and creates a GitHub Release with the
-# auto-generated changelog between this tag and the previous one.
-#
-# **PyPI auth mode (v0.3.0 bootstrap).** This release uses an
-# account-scoped API token from ``secrets.PYPI_API_TOKEN`` because
-# PyPI's "pending publishers" form was rate-limiting registration
-# attempts for new accounts. Once all six packages exist on PyPI
-# (after this release), switch each to a trusted-publisher rule via
-# their PyPI project page → Manage → Publishing → Add (that flow is
-# a different, reliable code path) and revert this commit. See
-# ``docs/release.md`` for the full bootstrap-and-revert plan.
+# bundle inside dap-cli, publishes to PyPI via trusted-publisher OIDC,
+# builds a multi-platform Docker image, pushes to GHCR, and creates a
+# GitHub Release with the auto-generated changelog between this tag
+# and the previous one.
 #
 # Operator-side prerequisites (one-time, see docs/release.md):
-#   1. ``secrets.PYPI_API_TOKEN`` set on the repo (bootstrap mode).
-#      In end state (post-bootstrap), each package has a trusted-
-#      publisher rule and the token is removed.
-#   2. ``contents: write`` + ``packages: write`` permissions enabled
-#      at the workflow level (declared below). ``id-token: write``
-#      stays scoped at workflow level for the post-bootstrap revert.
+#   1. Each PyPI project has a trusted-publisher rule pointing at
+#      this repo + ``release.yml`` + ``pypi`` environment. No
+#      long-lived API token needs to live in the repo — the
+#      ``pypa/gh-action-pypi-publish`` step mints a short-lived OIDC
+#      token at the moment of publish.
+#   2. ``contents: write`` + ``id-token: write`` + ``packages: write``
+#      permissions enabled at the workflow level (declared below).
 #
 # Smoke-friendly: a ``workflow_dispatch`` trigger lets the operator
 # rehearse the build steps without cutting a real tag (with PyPI
@@ -37,7 +30,7 @@ on:
 permissions:
   contents: write       # github-release creation
   packages: write       # GHCR push
-  id-token: write       # kept for post-bootstrap trusted-publisher OIDC
+  id-token: write       # PyPI trusted-publisher OIDC
 
 concurrency:
   # One release at a time per tag. Don't cancel-in-progress — a
@@ -147,23 +140,20 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # Stage 2: publish wheels + sdists to PyPI.
+  # Stage 2: publish wheels + sdists to PyPI via trusted-publisher OIDC.
   #
-  # **v0.3.0 bootstrap mode.** Uses an account-scoped API token from
-  # ``secrets.PYPI_API_TOKEN``. PyPI's "pending publishers" form
-  # rate-limited the initial registration attempts; this token path
-  # doesn't go through that flow. Once all six packages exist on PyPI,
-  # each can be switched to trusted-publisher OIDC via the project's
-  # Manage → Publishing → Add (a different, reliable code path), at
-  # which point this commit gets reverted.
+  # Auth model: ``pypa/gh-action-pypi-publish`` reads the OIDC token
+  # automatically when the workflow has ``id-token: write`` (declared
+  # at the workflow level above). No ``password:`` parameter — the
+  # short-lived OIDC token is minted at publish time by PyPI's
+  # trusted-publisher rule for each project.
   #
-  # ``environment: pypi`` is kept on purpose even in bootstrap mode:
-  # it scopes the token to this specific GitHub Environment, so the
-  # operator can attach required-reviewers / tag-pattern restrictions
-  # in repo settings without re-editing the workflow. The token
-  # itself must be stored as a **repository** secret (not an
-  # environment secret) until the environment is created on first
-  # use — GitHub auto-creates the environment when this job runs.
+  # ``environment: pypi`` scopes publishing to a specific GitHub
+  # Environment. PyPI's trusted-publisher rule for each of the six
+  # projects requires environment name ``pypi`` to match — see
+  # ``docs/release.md`` for the one-time registration steps.
+  # Attach required-reviewers / tag-pattern restrictions to this
+  # environment in repo settings if you want manual release gating.
   #
   # Skipped on workflow_dispatch (no tag → no release).
   # ---------------------------------------------------------------
@@ -187,10 +177,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          # Bootstrap-mode API token (see job comment above for the
-          # revert plan once trusted publishers are added to each
-          # of the six existing projects).
-          password: ${{ secrets.PYPI_API_TOKEN }}
           # ``skip-existing`` so re-running the workflow on a tag
           # already partially published doesn't fail on the
           # already-uploaded packages.
