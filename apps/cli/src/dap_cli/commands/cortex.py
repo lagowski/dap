@@ -1,10 +1,13 @@
 """Cortex pipeline operations — implementation behind `dap project run/approve/reject/state cortex`.
 
-Calls the DAP engine REST API. Does NOT import from ``cortex.*`` directly —
-the cortex package lives in the external ``Dixter999/cortex-project`` repo
-(extracted from this monorepo in c3730a4) and ships to PyPI as ``dap-cortex``.
-This file loads the bundle JSON via ``importlib.resources`` from the
-installed ``dap-cortex`` package; no other coupling.
+Calls the DAP engine REST API. Does NOT import Cortex runtime code (nodes,
+adapters, pipeline classes) from ``cortex.*`` — the cortex package lives in
+the external ``Dixter999/cortex-project`` repo (extracted from this monorepo
+in c3730a4) and ships to PyPI as ``dap-cortex``. The only ``cortex.*``
+touchpoint here is ``importlib.resources.files("cortex.dap_bundles")`` in
+``load_cortex_bundle()`` — a static-data lookup against the installed
+package namespace, no behavioural import. Distribution name is
+``dap-cortex``; the import namespace is ``cortex``.
 """
 
 from __future__ import annotations
