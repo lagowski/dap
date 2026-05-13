@@ -85,3 +85,4 @@ Thumbs.db
 # bundled".
 apps/cli/src/dap_cli/_dashboard/*
 !apps/cli/src/dap_cli/_dashboard/.gitkeep
+.mcp.json
