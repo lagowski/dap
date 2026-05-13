@@ -301,6 +301,12 @@ export function useApproveGate() {
       qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
       qc.invalidateQueries({ queryKey: queryKeys.runs });
     },
+    onError: (_err, { runId }) => {
+      // "Run is not paused" means the run already resumed — refresh so the
+      // stale GatePanel disappears and the UI shows the current run state.
+      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
+      qc.invalidateQueries({ queryKey: queryKeys.runs });
+    },
   });
 }
 

@@ -149,6 +149,7 @@ def create_engine_for_postgresql(database_url: str) -> Engine:
         pool_size=5,
         max_overflow=10,
         pool_pre_ping=True,
+        pool_recycle=1800,  # recycle before NAT (k8s NodePort) drops idle TCP
     )
 
     Base.metadata.create_all(engine)
