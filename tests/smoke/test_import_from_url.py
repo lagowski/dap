@@ -104,22 +104,65 @@ def _bundle_body(agent_id: str = "tpl_a") -> dict[str, Any]:
     }
 
 
-def _mock_http_response(
+def _patch_httpx_stream(
     *,
     status_code: int = 200,
     json_body: dict[str, Any] | None = None,
     raw_body: bytes | None = None,
-) -> MagicMock:
-    """Build a ``httpx.Response``-like mock for ``client.get`` returns."""
-    resp = MagicMock(spec=httpx.Response)
-    resp.status_code = status_code
+    content_length_header: str | None = None,
+    stream_raises: Exception | None = None,
+) -> Any:
+    """Build a ``patch()`` context for ``httpx.Client`` matching the
+    endpoint's streaming pattern.
+
+    The endpoint uses:
+
+        with httpx.Client(timeout=...) as client:
+            with client.stream("GET", url, headers=...) as response:
+                response.status_code
+                response.headers["content-length"]  # optional
+                for chunk in response.iter_bytes(chunk_size=...):
+                    ...
+
+    So we need to mock two layers of context managers. ``stream_raises``
+    surfaces an exception out of ``client.stream(...)`` — used for the
+    timeout test.
+    """
     if raw_body is not None:
-        resp.content = raw_body
+        body = raw_body
     elif json_body is not None:
-        resp.content = json.dumps(json_body).encode("utf-8")
+        body = json.dumps(json_body).encode("utf-8")
     else:
-        resp.content = b""
-    return resp
+        body = b""
+
+    response_mock = MagicMock()
+    response_mock.status_code = status_code
+    headers = {}
+    if content_length_header is not None:
+        headers["content-length"] = content_length_header
+    response_mock.headers = headers
+    # Default: yield the whole body as one chunk. Tests that need
+    # finer-grained chunking can mutate iter_bytes after construction.
+    response_mock.iter_bytes.return_value = iter([body])
+
+    stream_cm = MagicMock()
+    stream_cm.__enter__ = MagicMock(return_value=response_mock)
+    stream_cm.__exit__ = MagicMock(return_value=False)
+
+    inner_client = MagicMock()
+    if stream_raises is not None:
+        inner_client.stream = MagicMock(side_effect=stream_raises)
+    else:
+        inner_client.stream = MagicMock(return_value=stream_cm)
+
+    outer_cm = MagicMock()
+    outer_cm.__enter__ = MagicMock(return_value=inner_client)
+    outer_cm.__exit__ = MagicMock(return_value=False)
+
+    return patch(
+        "dap_engine.api.pipelines.httpx.Client",
+        return_value=outer_cm,
+    ), inner_client.stream
 
 
 # --------------------------------------------------------------------- #
@@ -129,14 +172,8 @@ def _mock_http_response(
 
 def test_import_from_url_happy_path(client_with_registry: TestClient) -> None:
     """Trusted URL serves a valid bundle → pipeline created, audit row written."""
-    mock_get = MagicMock(return_value=_mock_http_response(json_body=_bundle_body()))
-    with patch(
-        "dap_engine.api.pipelines.httpx.Client",
-        return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(get=mock_get)),
-            __exit__=MagicMock(return_value=False),
-        ),
-    ):
+    patcher, _ = _patch_httpx_stream(json_body=_bundle_body())
+    with patcher:
         response = client_with_registry.post(
             "/pipelines/import-from-url",
             json={"url": _TRUSTED_URL},
@@ -181,6 +218,26 @@ def test_import_from_url_blocks_loopback_bypass(client_with_registry: TestClient
         assert "ssrf" in r2.text.lower()
 
 
+def test_import_from_url_rejects_userinfo_in_url(
+    client_with_registry: TestClient,
+) -> None:
+    """``https://user:pass@host/...`` is refused before any network call.
+
+    Credentials in the URL would otherwise leak into the audit log
+    + error responses. Operators authenticate via the engine-side
+    ``DAP_TEMPLATE_REGISTRY_AUTH_TOKEN`` env var.
+    """
+    response = client_with_registry.post(
+        "/pipelines/import-from-url",
+        json={"url": f"https://user:secret@{_TRUSTED_HOST}/owner/repo/main/x.json"},
+    )
+    assert response.status_code == 422
+    body = response.text.lower()
+    assert "userinfo" in body
+    # And the leaked secret must NOT appear in the response.
+    assert "secret" not in response.text
+
+
 def test_import_from_url_rejects_non_https_for_remote(
     client_with_registry: TestClient,
 ) -> None:
@@ -216,30 +273,22 @@ def test_import_from_url_disabled_when_allow_list_empty(
 
 
 def test_import_from_url_attaches_bearer_when_configured() -> None:
-    """When the engine has a registry token, GET carries Authorization header."""
+    """When the engine has a registry token, the streamed GET carries
+    the Authorization header."""
     app, _ = _make_app(
         allowed_hosts=[_TRUSTED_HOST],
         auth_token="ghp_test_token_value",
     )
-    mock_get = MagicMock(return_value=_mock_http_response(json_body=_bundle_body()))
-    with (
-        authed_test_client(app) as c,
-        patch(
-            "dap_engine.api.pipelines.httpx.Client",
-            return_value=MagicMock(
-                __enter__=MagicMock(return_value=MagicMock(get=mock_get)),
-                __exit__=MagicMock(return_value=False),
-            ),
-        ),
-    ):
+    patcher, stream_mock = _patch_httpx_stream(json_body=_bundle_body())
+    with authed_test_client(app) as c, patcher:
         response = c.post(
             "/pipelines/import-from-url",
             json={"url": _TRUSTED_URL},
         )
 
     assert response.status_code == 201, response.text
-    # The mock recorded our GET call; check the header it was invoked with.
-    call_kwargs = mock_get.call_args.kwargs
+    # The mock recorded our stream("GET", ...) call; check the header.
+    call_kwargs = stream_mock.call_args.kwargs
     assert call_kwargs["headers"]["Authorization"] == "Bearer ghp_test_token_value"
 
 
@@ -250,14 +299,8 @@ def test_import_from_url_attaches_bearer_when_configured() -> None:
 
 def test_import_from_url_maps_404_to_502(client_with_registry: TestClient) -> None:
     """Origin returns 404 → engine returns 502 with the upstream code."""
-    mock_get = MagicMock(return_value=_mock_http_response(status_code=404))
-    with patch(
-        "dap_engine.api.pipelines.httpx.Client",
-        return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(get=mock_get)),
-            __exit__=MagicMock(return_value=False),
-        ),
-    ):
+    patcher, _ = _patch_httpx_stream(status_code=404)
+    with patcher:
         response = client_with_registry.post(
             "/pipelines/import-from-url",
             json={"url": _TRUSTED_URL},
@@ -268,14 +311,8 @@ def test_import_from_url_maps_404_to_502(client_with_registry: TestClient) -> No
 
 def test_import_from_url_maps_timeout_to_502(client_with_registry: TestClient) -> None:
     """``httpx.TimeoutException`` becomes a 502 with a clear message."""
-    mock_get = MagicMock(side_effect=httpx.TimeoutException("simulated"))
-    with patch(
-        "dap_engine.api.pipelines.httpx.Client",
-        return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(get=mock_get)),
-            __exit__=MagicMock(return_value=False),
-        ),
-    ):
+    patcher, _ = _patch_httpx_stream(stream_raises=httpx.TimeoutException("simulated"))
+    with patcher:
         response = client_with_registry.post(
             "/pipelines/import-from-url",
             json={"url": _TRUSTED_URL},
@@ -288,14 +325,8 @@ def test_import_from_url_rejects_malformed_json(
     client_with_registry: TestClient,
 ) -> None:
     """Non-JSON body → 422 (the inner bundle parser rejects it)."""
-    mock_get = MagicMock(return_value=_mock_http_response(raw_body=b"not even JSON"))
-    with patch(
-        "dap_engine.api.pipelines.httpx.Client",
-        return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(get=mock_get)),
-            __exit__=MagicMock(return_value=False),
-        ),
-    ):
+    patcher, _ = _patch_httpx_stream(raw_body=b"not even JSON")
+    with patcher:
         response = client_with_registry.post(
             "/pipelines/import-from-url",
             json={"url": _TRUSTED_URL},
@@ -307,21 +338,38 @@ def test_import_from_url_rejects_malformed_json(
 def test_import_from_url_rejects_oversized_response(
     client_with_registry: TestClient,
 ) -> None:
-    """Bundle larger than the 10MB cap → 413 (no parsing attempted)."""
-    big_body = b"\x00" * (11 * 1024 * 1024)  # 11 MB
-    mock_get = MagicMock(return_value=_mock_http_response(raw_body=big_body))
-    with patch(
-        "dap_engine.api.pipelines.httpx.Client",
-        return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(get=mock_get)),
-            __exit__=MagicMock(return_value=False),
-        ),
-    ):
+    """Streaming aborts when accumulated chunks exceed the cap."""
+    # 11 MB body, no Content-Length header → the chunk-accumulating
+    # loop catches the overflow.
+    big_body = b"\x00" * (11 * 1024 * 1024)
+    patcher, _ = _patch_httpx_stream(raw_body=big_body)
+    with patcher:
         response = client_with_registry.post(
             "/pipelines/import-from-url",
             json={"url": _TRUSTED_URL},
         )
     assert response.status_code == 413
+    assert "exceeds" in response.text.lower()
+
+
+def test_import_from_url_rejects_content_length_over_cap(
+    client_with_registry: TestClient,
+) -> None:
+    """When Content-Length is advertised over the cap, abort before
+    consuming any body bytes."""
+    # Body itself is tiny, but the header lies — we should refuse
+    # without even attempting to read the body.
+    patcher, _ = _patch_httpx_stream(
+        json_body=_bundle_body(),
+        content_length_header=str(50 * 1024 * 1024),  # 50 MB advertised
+    )
+    with patcher:
+        response = client_with_registry.post(
+            "/pipelines/import-from-url",
+            json={"url": _TRUSTED_URL},
+        )
+    assert response.status_code == 413
+    assert "content-length" in response.text.lower()
 
 
 # --------------------------------------------------------------------- #
@@ -341,18 +389,9 @@ def test_import_from_url_writes_audit_entry() -> None:
     import sqlite3
 
     app, cfg = _make_app(allowed_hosts=[_TRUSTED_HOST])
-    mock_get = MagicMock(return_value=_mock_http_response(json_body=_bundle_body()))
+    patcher, _ = _patch_httpx_stream(json_body=_bundle_body())
 
-    with (
-        authed_test_client(app) as c,
-        patch(
-            "dap_engine.api.pipelines.httpx.Client",
-            return_value=MagicMock(
-                __enter__=MagicMock(return_value=MagicMock(get=mock_get)),
-                __exit__=MagicMock(return_value=False),
-            ),
-        ),
-    ):
+    with authed_test_client(app) as c, patcher:
         response = c.post(
             "/pipelines/import-from-url",
             json={"url": _TRUSTED_URL},

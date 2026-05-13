@@ -324,6 +324,20 @@ def _validate_registry_url(url: str, allowed_hosts: list[str]) -> str:
             detail=f"url scheme must be https (got {parsed.scheme!r})",
         )
 
+    # Userinfo (``https://user:pass@host/...``) is rejected outright:
+    # the URL is persisted to the audit log + may appear in error
+    # responses, so accepting credentials in the URL would leak them.
+    # Operators authenticate via the engine-side
+    # ``DAP_TEMPLATE_REGISTRY_AUTH_TOKEN`` env var instead.
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "url must not contain userinfo (user:pass@). "
+                "Use DAP_TEMPLATE_REGISTRY_AUTH_TOKEN for authentication."
+            ),
+        )
+
     hostname = (parsed.hostname or "").lower()
     if not hostname:
         raise HTTPException(
@@ -331,9 +345,10 @@ def _validate_registry_url(url: str, allowed_hosts: list[str]) -> str:
             detail="url has no hostname",
         )
 
-    # Block link-local + multicast + loopback bypass attempts even if
-    # the operator accidentally allow-lists ``localhost``. The only
-    # legitimate localhost use is dev with an explicit allow-list entry.
+    # Block link-local + cloud metadata + multicast bypass attempts
+    # even if the operator accidentally allow-lists ``0.0.0.0``. The
+    # only legitimate loopback use is dev with an explicit
+    # ``localhost`` / ``127.0.0.1`` entry on the allow-list.
     _LOOPBACK_BYPASS = {"0.0.0.0", "169.254.169.254"}
     if hostname in _LOOPBACK_BYPASS:
         raise HTTPException(
@@ -341,16 +356,18 @@ def _validate_registry_url(url: str, allowed_hosts: list[str]) -> str:
             detail=f"hostname {hostname!r} is blocked (SSRF guard)",
         )
 
-    # ``localhost`` / ``127.0.0.1`` ARE allowed when explicitly on the
-    # list — useful for testing against a local registry mock. They
-    # require http scheme in dev (HTTPS-loopback is rarely set up).
-    if hostname in {"localhost", "127.0.0.1"} and parsed.scheme != "http":
-        # Allow either scheme on loopback; nothing extra needed here.
-        pass
-    elif parsed.scheme != "https":
+    # ``localhost`` / ``127.0.0.1`` accept either http or https when
+    # explicitly on the allow-list — useful for testing against a
+    # local registry mock where HTTPS isn't always set up. Every
+    # other host MUST be https; plain http to a remote registry is
+    # rejected even if the host is allow-listed.
+    if hostname not in {"localhost", "127.0.0.1"} and parsed.scheme != "https":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="url scheme must be https (only http://localhost is allowed for dev)",
+            detail=(
+                "url scheme must be https for remote hosts "
+                "(http is allowed only for localhost/127.0.0.1 in dev)"
+            ),
         )
 
     if hostname not in {h.lower() for h in allowed_hosts}:
@@ -404,33 +421,68 @@ def import_pipeline_from_url(
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
+    # Stream the body in chunks rather than buffering everything into
+    # ``response.content`` first — a malicious / buggy upstream could
+    # otherwise burn unbounded bandwidth + memory before the size
+    # check fires. We also short-circuit on ``Content-Length`` when
+    # it's set and already over the cap, so we don't even start the
+    # transfer.
     try:
-        with httpx.Client(timeout=_BUNDLE_FETCH_TIMEOUT_SECONDS) as client:
-            response = client.get(payload.url, headers=headers, follow_redirects=False)
+        with (
+            httpx.Client(timeout=_BUNDLE_FETCH_TIMEOUT_SECONDS) as client,
+            client.stream("GET", payload.url, headers=headers, follow_redirects=False) as response,
+        ):
+            if response.status_code != 200:  # noqa: PLR2004 — HTTP 200 is the protocol contract, not a magic value
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"bundle URL returned HTTP {response.status_code}",
+                )
+
+            advertised = response.headers.get("content-length")
+            if advertised is not None:
+                try:
+                    advertised_bytes = int(advertised)
+                except ValueError:
+                    advertised_bytes = -1
+                if advertised_bytes > _BUNDLE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=(
+                            f"bundle Content-Length is {advertised_bytes} bytes — "
+                            f"exceeds {_BUNDLE_MAX_BYTES} byte limit"
+                        ),
+                    )
+
+            # Read in 64 KB chunks. Abort the moment we cross the
+            # cap so we never materialise an arbitrarily large
+            # response in memory.
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                total += len(chunk)
+                if total > _BUNDLE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=(
+                            f"bundle exceeds {_BUNDLE_MAX_BYTES} byte limit "
+                            f"(aborted streaming at {total} bytes)"
+                        ),
+                    )
+                chunks.append(chunk)
+            raw_body = b"".join(chunks)
     except httpx.TimeoutException as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"timeout fetching bundle from {hostname!r} after "
-            f"{_BUNDLE_FETCH_TIMEOUT_SECONDS:.0f}s",
+            detail=(
+                f"timeout fetching bundle from {hostname!r} after "
+                f"{_BUNDLE_FETCH_TIMEOUT_SECONDS:.0f}s"
+            ),
         ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"http error fetching bundle: {exc}",
         ) from exc
-
-    if response.status_code != 200:  # noqa: PLR2004 — HTTP 200 is the protocol contract, not a magic value
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"bundle URL returned HTTP {response.status_code}",
-        )
-
-    raw_body = response.content
-    if len(raw_body) > _BUNDLE_MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(f"bundle is {len(raw_body)} bytes — exceeds {_BUNDLE_MAX_BYTES} byte limit"),
-        )
 
     try:
         import_request = PipelineImportRequest.model_validate_json(raw_body)
