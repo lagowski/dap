@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from dap_runtimes import RuntimeRegistry
@@ -274,11 +276,16 @@ async def list_project_issues(
     ]
 
 
+_GITHUB_HOST = "github.com"
+
+
 def _workspace_path(repo_url: str) -> str:
     """Return the local workspace path for a repo_url.
 
     Mirrors the cortex CLI convention:
     ``~/.cortex/projects/{owner}-{repo}/repo``
+
+    Raises ValueError for unparseable URLs.
     """
     match = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$", repo_url)
     if not match:
@@ -286,6 +293,30 @@ def _workspace_path(repo_url: str) -> str:
     owner, repo_name = match.group(1), match.group(2)
     base = os.path.expanduser(f"~/.cortex/projects/{owner}-{repo_name}")
     return str(os.path.join(base, "repo"))
+
+
+def _validate_github_url(repo_url: str) -> str:
+    """Return the canonical https://github.com/{slug}.git URL or raise 422.
+
+    Rejects non-GitHub hosts (SSRF guard) and unparseable paths.
+    """
+    parsed = urlparse(repo_url)
+    # Accept both https://github.com/... and git@github.com:... forms.
+    # git@github.com:owner/repo.git — extract host from SSH URL
+    ssh_host = repo_url.rsplit("@", 1)[-1].split(":", 1)[0] if "@" in repo_url else ""
+    host = parsed.hostname or ssh_host
+    if host != _GITHUB_HOST:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"repo_url must point to {_GITHUB_HOST} (got {host!r})",
+        )
+    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", repo_url)
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Cannot parse owner/repo from repo_url: {repo_url!r}",
+        )
+    return f"https://{_GITHUB_HOST}/{match.group(1)}.git"
 
 
 def _clone_token(project: Project) -> str | None:
@@ -298,19 +329,36 @@ def _clone_token(project: Project) -> str | None:
 
 
 def _workspace_status(workspace: str) -> dict[str, Any]:
-    """Collect git status for an existing workspace clone."""
+    """Collect git status for an existing workspace clone.
 
-    def git(*args: str) -> str:
+    Returns exists=False with an error field when git commands fail,
+    so callers can distinguish a corrupt/partial clone from a missing one.
+    """
+
+    def git(*args: str) -> tuple[int, str]:
         try:
-            return subprocess.check_output(
+            out = subprocess.check_output(
                 ["git", *args], cwd=workspace, stderr=subprocess.DEVNULL, text=True
             ).strip()
+            return 0, out
+        except subprocess.CalledProcessError as exc:
+            return exc.returncode, ""
         except Exception:
-            return ""
+            return -1, ""
 
-    branch = git("rev-parse", "--abbrev-ref", "HEAD")
-    last = git("log", "-1", "--format=%h %s")
-    clean = git("status", "--porcelain") == ""
+    rc_branch, branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    if rc_branch != 0:
+        return {
+            "exists": False,
+            "path": workspace,
+            "branch": None,
+            "clean": None,
+            "last_commit": None,
+            "error": "git rev-parse failed — workspace may be corrupt",
+        }
+    _, last = git("log", "-1", "--format=%h %s")
+    rc_status, porcelain = git("status", "--porcelain")
+    clean = rc_status == 0 and porcelain == ""
     return {
         "exists": True,
         "path": workspace,
@@ -337,8 +385,15 @@ def get_workspace_status(
     # Determine workspace path
     workspace = project.working_directory
     if not workspace and project.repo_url:
-        with contextlib.suppress(ValueError):
+        try:
+            _validate_github_url(project.repo_url)  # raises 422 for invalid hosts
             workspace = _workspace_path(project.repo_url)
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
 
     if not workspace:
         return {"exists": False, "path": None, "branch": None, "clean": None, "last_commit": None}
@@ -379,44 +434,74 @@ async def init_workspace(
             detail="Project has no repo_url configured",
         )
 
-    try:
-        workspace = _workspace_path(project.repo_url)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
-        ) from exc
+    # Validate URL (SSRF guard — only github.com accepted).
+    canonical_url = _validate_github_url(project.repo_url)
+
+    # Use existing working_directory if set, otherwise derive cortex path.
+    if project.working_directory:
+        workspace = project.working_directory
+    else:
+        try:
+            workspace = _workspace_path(project.repo_url)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
 
     # Already initialised — just return current status.
     if os.path.isdir(os.path.join(workspace, ".git")):
         return {**_workspace_status(workspace), "initialized": False}
 
     token = _clone_token(project)
-    if token:
-        m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", project.repo_url)
-        slug = m.group(1) if m else None
-        clone_url = (
-            f"https://x-access-token:{token}@github.com/{slug}.git" if slug else project.repo_url
-        )
-    else:
-        clone_url = project.repo_url
+    parent = os.path.dirname(workspace)
+    os.makedirs(parent, exist_ok=True)
 
-    os.makedirs(os.path.dirname(workspace), exist_ok=True)
+    # Clone into a temp directory then rename on success so a failed clone
+    # never leaves a partial workspace that blocks retries (#371 Copilot review).
+    tmp_dir = tempfile.mkdtemp(dir=parent, prefix=".clone-tmp-")
+    try:
+        # Pass auth via http.extraheader so the token never appears in the
+        # process list or gets persisted into .git/config (#371 Copilot review).
+        git_cmd = ["git"]
+        if token:
+            git_cmd += ["-c", f"http.extraheader=Authorization: Bearer {token}"]
+        git_cmd += ["clone", canonical_url, tmp_dir]
 
-    proc = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
-        "git",
-        "clone",
-        clone_url,
-        workspace,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-    if proc.returncode != 0:
-        err = stderr.decode("utf-8", errors="replace").replace(token or "", "<token>")[:300]
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"git clone failed: {err}",
+        proc = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
+            *git_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace")[:300]
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"git clone failed: {err}",
+            )
+
+        # Checkout the project's configured default branch.
+        branch = project.default_branch or "main"
+        co_proc = await asyncio.create_subprocess_exec(  # type: ignore[attr-defined]
+            "git",
+            "checkout",
+            branch,
+            cwd=tmp_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, co_err = await asyncio.wait_for(co_proc.communicate(), timeout=30)
+        if co_proc.returncode != 0:
+            err = co_err.decode("utf-8", errors="replace")[:200]
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"git checkout {branch!r} failed: {err}",
+            )
+
+        os.rename(tmp_dir, workspace)
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
     # Persist working_directory on the project row.
     repo.update_project(
