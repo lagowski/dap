@@ -1,8 +1,13 @@
 """Cortex pipeline operations — implementation behind `dap project run/approve/reject/state cortex`.
 
-Calls the DAP engine REST API. Does NOT import from `cortex.*` directly —
-the cortex package lives in packages/cortex/ (Fase 1) and is loaded
-only via the bundle JSON that ships inside it.
+Calls the DAP engine REST API. Does NOT import Cortex runtime code (nodes,
+adapters, pipeline classes) from ``cortex.*`` — the cortex package lives in
+the external ``Dixter999/cortex-project`` repo (extracted from this monorepo
+in c3730a4) and ships to PyPI as ``dap-cortex``. The only ``cortex.*``
+touchpoint here is ``importlib.resources.files("cortex.dap_bundles")`` in
+``load_cortex_bundle()`` — a static-data lookup against the installed
+package namespace, no behavioural import. Distribution name is
+``dap-cortex``; the import namespace is ``cortex``.
 """
 
 from __future__ import annotations
@@ -68,10 +73,14 @@ def parse_issue_url(url: str) -> tuple[str, int]:
 
 
 def load_cortex_bundle() -> dict[str, Any]:
-    """Load cortex-full.pipeline-bundle.json from the installed cortex package.
+    """Load cortex-full.pipeline-bundle.json from the installed ``dap-cortex`` package.
 
-    Requires `cortex` package (packages/cortex/) to be installed in the
-    current Python environment. Raises ImportError with a clear message if not.
+    Requires the ``dap-cortex`` PyPI distribution (extracted from this
+    monorepo to ``Dixter999/cortex-project``) to be installed in the
+    current Python environment. Note: distribution name is ``dap-cortex``
+    but the import namespace is ``cortex`` — the bundle is looked up via
+    ``importlib.resources.files("cortex.dap_bundles")``. Raises
+    ImportError with a clear install instruction if not.
     """
     try:
         bundle_ref = importlib.resources.files("cortex.dap_bundles") / CORTEX_BUNDLE_NAME
@@ -79,10 +88,10 @@ def load_cortex_bundle() -> dict[str, Any]:
     except (ModuleNotFoundError, FileNotFoundError) as exc:
         raise ImportError(
             "Could not load the Cortex pipeline bundle.\n\n"
-            "The `cortex` package must be installed in this environment.\n"
-            "Run: uv add --workspace cortex\n\n"
-            "(This depends on packages/cortex/ being present in the DAP monorepo — "
-            "see Etapa 2 / dap#170 for the migration status.)"
+            "The `dap-cortex` package must be installed in this environment.\n"
+            "Run: pip install dap-cortex\n"
+            "Or:  uv add dap-cortex\n\n"
+            "Source: https://github.com/Dixter999/cortex-project"
         ) from exc
     return dict(json.loads(bundle_text))
 

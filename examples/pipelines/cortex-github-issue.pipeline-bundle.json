@@ -1,6 +1,6 @@
 {
   "schema_version": "pipeline-export/1",
-  "_comment": "Cortex 13-agent GitHub Issue Pipeline expressed as a DAP bundle.\n\nARCHITECTURE\n  Phase 1 (enrichment): mockup → specify → cicd → dispatcher → finalize\n  [human gate]\n  Phase 2 (execution):  coder → designer → documenter\n  [human gate]\n  Phase 3 (merge):      code_reviewer → tester → pr_creator → reviewer\n  [human gate]\n  pr_merger\n\nSTATE CONTRACT\n  Cortex-specific fields (issue_url, repo, issue_number, run_id, …)\n  live in PipelineState.extensions so the generic schema is not polluted.\n  Each node reads extensions via the cortex.state_adapter module.\n\nDEPENDENCIES\n  cortex-project package must be installed in the DAP engine venv:\n    pip install -e /path/to/cortex-project  (or uv add via path dep)\n  Environment variables required (same as standalone cortex run):\n    CORTEX_GH_TOKEN_READ, CORTEX_GH_TOKEN_ISSUES, CORTEX_GH_TOKEN_CODE,\n    CORTEX_GH_TOKEN_MERGE, CORTEX_DATABASE_URL",
+  "_comment": "Cortex 13-agent GitHub Issue Pipeline expressed as a DAP bundle.\n\nARCHITECTURE\n  Phase 1 (enrichment): mockup → specify → cicd → dispatcher → finalize\n  [human gate]\n  Phase 2 (execution):  coder → designer → documenter\n  [human gate]\n  Phase 3 (merge):      code_reviewer → tester → pr_creator → reviewer\n  [human gate]\n  pr_merger\n\nSTATE CONTRACT\n  Cortex-specific fields (issue_url, repo, issue_number, run_id, …)\n  live in PipelineState.extensions so the generic schema is not polluted.\n  Each node reads extensions via the cortex.state_adapter module.\n\nDEPENDENCIES\n  dap-cortex package must be installed in the DAP engine venv:\n    pip install dap-cortex  (or: uv add dap-cortex)\n  Source: https://github.com/Dixter999/cortex-project\n  Environment variables required (same as standalone cortex run):\n    CORTEX_GH_TOKEN_READ, CORTEX_GH_TOKEN_ISSUES, CORTEX_GH_TOKEN_CODE,\n    CORTEX_GH_TOKEN_MERGE, CORTEX_DATABASE_URL",
   "pipeline": {
     "name": "Cortex GitHub Issue Pipeline",
     "description": "13-agent pipeline: GitHub issue → Phase 1 enrichment → Phase 2 coding → Phase 3 PR merge. Port of the standalone Cortex pipeline to a DAP bundle.",
@@ -406,9 +406,9 @@
     }
   },
   "install_instructions": {
-    "summary": "Install cortex-project package in DAP engine venv, set env vars, import bundle.",
+    "summary": "Install dap-cortex package in DAP engine venv, set env vars, import bundle.",
     "steps": [
-      "1. Install: cd /path/to/dap && uv add --path /path/to/cortex-project",
+      "1. Install: pip install dap-cortex  (or: uv add dap-cortex)  — source: https://github.com/Dixter999/cortex-project",
       "2. Set env vars in dap-engine .env.local — see LAGOVALUT/dap/!env.md for token list",
       "3. Start dap-engine with DAP_DATABASE_URL pointing at the dap PostgreSQL database",
       "4. Import bundle: POST /pipelines/import with this JSON as body",

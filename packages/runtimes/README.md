@@ -388,7 +388,8 @@ The `python-func` adapter resolves `callable_path` with `importlib`
 at invocation time — the engine starts fine without the package and
 only fails when that specific node runs. Install the package in the
 engine's venv on the host where `dap-engine` runs (e.g.
-`uv pip install -e /path/to/cortex-project`).
+`pip install dap-cortex`, or `uv pip install -e /path/to/local-clone`
+for development).
 
 ### Security model (v0.1)
 
