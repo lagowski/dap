@@ -1,11 +1,10 @@
-import { test, expect } from '@playwright/test';
-import { createPipeline } from '../../../helpers/pipelines';
+import { test, expect } from '../../../test-fixtures';
 
 test('pipelines delete (archive) — gone from list after confirming dialog', async ({
   page,
-  request,
+  seedPipeline,
 }) => {
-  const pipeline = await createPipeline(request);
+  const pipeline = await seedPipeline();
 
   await page.goto('/pipelines');
   const row = page.getByRole('row').filter({ hasText: pipeline.name });

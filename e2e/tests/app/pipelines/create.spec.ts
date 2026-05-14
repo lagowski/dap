@@ -13,11 +13,13 @@ test('pipelines create — template import lands on /pipelines/<id>/edit', async
   await expect(page.getByRole('heading', { name: /Start from template/i })).toBeVisible();
 
   // Each template card renders the template name as a <div> plus a "Use
-  // this template" <Button>. Scope by finding the deepest div containing
-  // both the name text and the import button — that's the card itself.
+  // this template" <Button>. Scope by finding the deepest div that
+  // *contains* an exact-match name element (so a different card whose
+  // description coincidentally contains "Hello world — bash echo" as a
+  // substring can't match) *and* an import button — that's the card.
   const card = page
     .locator('div')
-    .filter({ hasText: 'Hello world — bash echo' })
+    .filter({ has: page.getByText('Hello world — bash echo', { exact: true }) })
     .filter({ has: page.getByRole('button', { name: /Use this template/i }) });
   await card.last().getByRole('button', { name: /Use this template/i }).click();
 

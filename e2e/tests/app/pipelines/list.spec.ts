@@ -1,8 +1,7 @@
-import { test, expect } from '@playwright/test';
-import { createPipeline } from '../../../helpers/pipelines';
+import { test, expect } from '../../../test-fixtures';
 
-test('pipelines list — seeded pipeline appears in the table', async ({ page, request }) => {
-  const pipeline = await createPipeline(request);
+test('pipelines list — seeded pipeline appears in the table', async ({ page, seedPipeline }) => {
+  const pipeline = await seedPipeline();
 
   await page.goto('/pipelines');
   await expect(page.getByRole('heading', { name: 'Pipelines' })).toBeVisible();

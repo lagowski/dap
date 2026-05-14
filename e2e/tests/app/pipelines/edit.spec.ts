@@ -1,8 +1,11 @@
-import { test, expect } from '@playwright/test';
-import { createPipeline, uniquePipelineName } from '../../../helpers/pipelines';
+import { test, expect } from '../../../test-fixtures';
+import { uniquePipelineName } from '../../../helpers/pipelines';
 
-test('pipelines edit — rename, save, new name reflected in list', async ({ page, request }) => {
-  const pipeline = await createPipeline(request);
+test('pipelines edit — rename, save, new name reflected in list', async ({
+  page,
+  seedPipeline,
+}) => {
+  const pipeline = await seedPipeline();
   const newName = uniquePipelineName('e2e-pipeline-renamed');
 
   await page.goto(`/pipelines/${pipeline.id}/edit`);
@@ -12,11 +15,14 @@ test('pipelines edit — rename, save, new name reflected in list', async ({ pag
   await expect(nameInput).toHaveValue(pipeline.name);
   await nameInput.fill(newName);
 
-  // Save label is dynamic — "Save v<next>". Wait for the PUT round-trip so
-  // we don't navigate away mid-save.
+  // Wait specifically for the PUT to *this* pipeline so unrelated PUTs
+  // anywhere under /api/pipelines/... (sub-resources, validate calls, etc.)
+  // can't satisfy the wait early.
   await Promise.all([
     page.waitForResponse(
-      (r) => r.url().includes('/api/pipelines') && r.request().method() === 'PUT',
+      (r) =>
+        r.request().method() === 'PUT' &&
+        r.url().endsWith(`/api/pipelines/${pipeline.id}`),
     ),
     page.getByRole('button', { name: /^Save v\d+$/ }).click(),
   ]);
