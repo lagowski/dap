@@ -298,6 +298,15 @@ export function useApproveGate() {
   return useMutation({
     mutationFn: ({ runId, nodeId }: { runId: string; nodeId: string }) =>
       api.approveGate(runId, nodeId),
+    // The engine may still be committing "paused" to the DB when the user
+    // clicks — retry once after a short delay so the user never has to
+    // click twice.
+    retry: (failureCount, error) =>
+      failureCount < 1 &&
+      error instanceof api.ApiError &&
+      (error.status === 409 ||
+        String(error.detail).toLowerCase().includes("not paused")),
+    retryDelay: 1200,
     onSuccess: (_data, { runId }) => {
       // Immediate invalidate + burst-poll for 3s so the UI snaps to
       // "running" without waiting for the normal 2s interval.
