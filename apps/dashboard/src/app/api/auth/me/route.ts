@@ -28,11 +28,14 @@ export async function GET(): Promise<NextResponse> {
   if (!engineResponse.ok) {
     // Cookie was stale or revoked. Treat as "logged out" — the
     // client clears its session state via the 401 path.
-    let detail: unknown;
+    // Read body once as text, then attempt JSON.parse — calling .json()
+    // and .text() on the same Response throws "Body has already been read".
+    const raw = await engineResponse.text();
+    let detail: unknown = raw;
     try {
-      detail = await engineResponse.json();
+      detail = JSON.parse(raw);
     } catch {
-      detail = await engineResponse.text();
+      // not JSON — keep raw text
     }
     return NextResponse.json(
       typeof detail === "object" && detail !== null ? detail : { detail },

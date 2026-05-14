@@ -28,11 +28,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
 
   if (!engineResponse.ok) {
-    let detail: unknown;
+    // Read body once as text, then attempt JSON.parse — calling .json()
+    // and .text() on the same Response throws "Body has already been read".
+    const raw = await engineResponse.text();
+    let detail: unknown = raw;
     try {
-      detail = await engineResponse.json();
+      detail = JSON.parse(raw);
     } catch {
-      detail = await engineResponse.text();
+      // not JSON — keep raw text
     }
     return NextResponse.json(
       typeof detail === "object" && detail !== null ? detail : { detail },
