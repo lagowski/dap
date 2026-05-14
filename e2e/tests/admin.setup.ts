@@ -27,6 +27,13 @@ setup('register admin user, promote via DB, persist session', async ({ page }) =
   if (!dbPath) {
     throw new Error('E2E_DB_PATH not set — admin setup misconfigured');
   }
+  // Doubled single-quotes is the SQL-standard escape; defends against
+  // any future value of ADMIN_EMAIL that contains a literal apostrophe.
+  // We can't use real bound parameters here because the sqlite3 CLI's
+  // `.param set` only takes effect in interactive mode, not the single-
+  // statement invocation below.
+  const safeEmail = ADMIN_EMAIL.replaceAll("'", "''");
+
   // `-cmd 'PRAGMA busy_timeout=...'` runs before the UPDATE so the CLI
   // waits out the aiosqlite writer instead of failing with
   // "database is locked" the moment the engine holds the WAL write lock.
@@ -37,7 +44,7 @@ setup('register admin user, promote via DB, persist session', async ({ page }) =
         '-cmd',
         'PRAGMA busy_timeout=10000;',
         dbPath,
-        `UPDATE users SET is_superuser = 1 WHERE lower(email) = lower('${ADMIN_EMAIL}');`,
+        `UPDATE users SET is_superuser = 1 WHERE lower(email) = lower('${safeEmail}');`,
       ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );

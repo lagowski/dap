@@ -59,10 +59,15 @@ export default defineConfig({
     // Registers the admin fixture user and shells out to sqlite3 to flip
     // is_superuser=1 on the test DB. Persists a separate cookie file so
     // admin-scoped specs can't accidentally use the regular user's session.
+    // `dependencies: ['setup']` serializes against the regular fixture
+    // signup — both projects POST to /auth/register, and concurrent
+    // writes against the same WAL writer needlessly stress the engine's
+    // locking even though the busy_timeout pragma covers it.
     {
       name: 'admin-setup',
       testDir: './tests',
       testMatch: /admin\.setup\.ts$/,
+      dependencies: ['setup'],
     },
     // Auth-flow specs run unauthenticated — they exercise /signup, /login,
     // /forgot-password etc. and must not start from a logged-in storageState.

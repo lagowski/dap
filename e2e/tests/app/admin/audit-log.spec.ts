@@ -18,7 +18,10 @@ test('admin audit-log — filter by event type surfaces registration rows', asyn
   // event types happen to be paginated into view at run time.
   await page.getByPlaceholder('user.logged_in').fill('user.registered');
 
-  // The event_type cell renders the literal code in a <code> element.
-  // Two registrations earlier in this run guarantee ≥1 row visible.
-  await expect(page.getByText('user.registered').first()).toBeVisible();
+  // Scope to a table row so we don't match the filter input value, a
+  // column header, or any future legend/help text that might document
+  // event types. Two registrations earlier in this run guarantee ≥1 row.
+  await expect(
+    page.getByRole('row').filter({ hasText: 'user.registered' }).first(),
+  ).toBeVisible();
 });
