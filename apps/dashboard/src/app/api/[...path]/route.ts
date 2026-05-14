@@ -68,19 +68,28 @@ const RESPONSE_HOP_HEADERS = new Set([
 ]);
 
 /**
- * Paths the catch-all refuses to proxy. Everything under
- * ``/auth/*`` is the engine's own auth surface (``/auth/jwt/login``,
+ * Paths the catch-all refuses to proxy. Most of ``/auth/*`` is the
+ * engine's own session-token surface (``/auth/jwt/login``,
  * ``/auth/register``, OAuth callbacks, …); proxying those would
  * leak the raw access token to the browser and bypass our
  * cookie-only design. The dedicated ``/api/auth/login`` etc.
  * handlers Next routes to file paths *before* this catch-all, so
  * they still work — this guard blocks only fall-through traffic.
  *
+ * ``/auth/api-tokens`` is the one safe sub-tree under ``/auth``:
+ * - admin GET / DELETE return token metadata or 204 — no secrets
+ * - user-scoped POST returns a freshly minted token, which the user
+ *   explicitly asked for (that's the whole point of the API token
+ *   surface — they need the value once to paste into a CLI / script)
+ * Letting it through this proxy lets ``/admin/api-tokens`` (and any
+ * future "my tokens" page) work without per-route handlers.
+ *
  * ``/users/me`` is intentionally allowed because dashboard pages
  * may legitimately want fresh server-side identity (the
  * ``/api/auth/me`` handler wraps it but doesn't gate it).
  */
 function isBlockedPath(pathname: string): boolean {
+  if (pathname.startsWith("/auth/api-tokens")) return false;
   return pathname.startsWith("/auth/");
 }
 
