@@ -548,6 +548,12 @@ export function useResetPassword() {
   });
 }
 
+export function useUpdateMyPassword() {
+  return useMutation({
+    mutationFn: (password: string) => api.updateMyPassword(password),
+  });
+}
+
 export function useRegister() {
   const qc = useQueryClient();
   return useMutation({

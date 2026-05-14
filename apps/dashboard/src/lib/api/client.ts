@@ -557,6 +557,19 @@ export async function listAdminUsers(params: {
 }
 
 /**
+ * Update the current user's password. PATCH /users/me is the
+ * fastapi-users default; the engine's UserManager.validate_password
+ * runs server-side (min 8 chars, can't contain email, etc.) and
+ * surfaces the failure as a 400 with detail message.
+ */
+export async function updateMyPassword(password: string): Promise<void> {
+  await request<CurrentUser>("/users/me", {
+    method: "PATCH",
+    json: { password },
+  });
+}
+
+/**
  * Patch a user — admin-only when targeting someone other than self.
  * The engine uses the fastapi-users default ``PATCH /users/{id}``,
  * which returns the narrower ``UserRead`` (== ``CurrentUser`` here),

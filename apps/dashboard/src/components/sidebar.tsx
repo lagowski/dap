@@ -8,6 +8,7 @@ import {
   GitBranch,
   Settings,
   ShieldCheck,
+  User,
   Users,
   Workflow,
 } from "lucide-react";
@@ -21,6 +22,7 @@ const NAV = [
   { href: "/runs", label: "Runs", icon: Activity },
   { href: "/pipelines", label: "Pipelines", icon: GitBranch },
   { href: "/agents", label: "Agents", icon: Users },
+  { href: "/account", label: "Account", icon: User },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
