@@ -557,6 +557,25 @@ export async function listAdminUsers(params: {
 }
 
 /**
+ * Update the current user's password. PATCH /users/me is the
+ * fastapi-users default; the engine's UserManager.validate_password
+ * runs server-side (minimum length only today; see
+ * apps/engine/src/dap_engine/auth/users.py) and surfaces the failure
+ * as a 400 with detail message.
+ *
+ * The endpoint does NOT require the current password — that gate is
+ * the caller's responsibility. The /account page verifies the
+ * current password by attempting a login first so a stolen-cookie
+ * attacker can't change the password without knowing the old one.
+ */
+export async function updateMyPassword(password: string): Promise<void> {
+  await request<CurrentUser>("/users/me", {
+    method: "PATCH",
+    json: { password },
+  });
+}
+
+/**
  * Patch a user — admin-only when targeting someone other than self.
  * The engine uses the fastapi-users default ``PATCH /users/{id}``,
  * which returns the narrower ``UserRead`` (== ``CurrentUser`` here),
