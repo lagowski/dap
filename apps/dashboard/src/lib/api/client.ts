@@ -556,6 +556,24 @@ export async function listAdminUsers(params: {
   return request<PaginatedList<AdminUser>>(`/users${qs ? `?${qs}` : ""}`);
 }
 
+export interface HealthResponse {
+  status: string;
+  service: string;
+  version: string;
+  db_dialect: "sqlite" | "postgresql";
+  db_reachable: boolean;
+  timestamp: string;
+}
+
+/**
+ * Engine health probe. Public endpoint — no auth required — so the
+ * login page can call this before the user has a cookie. Used to
+ * surface the DB connection state on the login form.
+ */
+export async function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>("/health", { skipAuthRedirect: true });
+}
+
 /**
  * Update the current user's password. PATCH /users/me is the
  * fastapi-users default; the engine's UserManager.validate_password
