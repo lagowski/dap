@@ -86,3 +86,8 @@ Thumbs.db
 apps/cli/src/dap_cli/_dashboard/*
 !apps/cli/src/dap_cli/_dashboard/.gitkeep
 .mcp.json
+
+# --- Playwright (e2e) ---
+e2e/.auth/
+e2e/test-results/
+e2e/playwright-report/
