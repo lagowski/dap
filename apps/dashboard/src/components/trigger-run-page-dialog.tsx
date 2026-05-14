@@ -116,8 +116,6 @@ export function TriggerRunPageDialog({
   };
 
   const submitError = trigger.error ? formatApiError(trigger.error) : null;
-  const hasPipelines =
-    pipelines.data != null && pipelines.data.items.length > 0;
   const zeroPipelines =
     pipelines.data != null && pipelines.data.items.length === 0;
 
