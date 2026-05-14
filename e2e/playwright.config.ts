@@ -30,6 +30,10 @@ const AUTH_FILE = resolve(__dirname, '.auth/user.json');
 
 export default defineConfig({
   fullyParallel: false,
+  // `fullyParallel: false` is per-file; `workers: 1` extends serialization
+  // across files/projects so all specs share the single webServer + DB
+  // without lock contention or state coupling.
+  workers: 1,
   retries: 0,
   use: {
     baseURL: 'http://127.0.0.1:3000',
