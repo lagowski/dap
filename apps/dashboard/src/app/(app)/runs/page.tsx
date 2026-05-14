@@ -1,10 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { Play } from "lucide-react";
 import { useProject, useRunsList } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
 import { RunStatusBadge } from "@/components/status-badge";
+import {
+  TriggerRunPageDialog,
+  useHasPipelines,
+} from "@/components/trigger-run-page-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import type { Run } from "@/lib/api/types";
