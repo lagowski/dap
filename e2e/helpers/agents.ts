@@ -23,15 +23,17 @@ export interface Agent extends Required<Omit<AgentCreatePayload, 'budget_limit_u
 }
 
 // `bash` runtime accepts an empty config; the engine extracts the command
-// from a <command> tag in the prompt template if runtime_config.command is
-// unset. Cheapest choice for tests — no LLM provider required.
+// from a <command> tag in the prompt template. Cheapest choice for tests —
+// no LLM provider required, and embedding <command> keeps the seeded agent
+// valid if anything ever tries to execute it (the CRUD specs don't, but
+// other consumers of this helper might).
 export function defaultAgentPayload(overrides: Partial<AgentCreatePayload> = {}): AgentCreatePayload {
   return {
     name: uniqueAgentName(),
     role: 'implementer',
     runtime_id: 'bash',
     runtime_config: {},
-    prompt_template: '<agent_prompt>echo ok</agent_prompt>',
+    prompt_template: '<agent_prompt><command>echo ok</command></agent_prompt>',
     input_schema: [],
     output_schema: [],
     constraints: [],

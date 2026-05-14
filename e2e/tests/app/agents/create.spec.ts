@@ -17,7 +17,7 @@ test('agents create — fill form, submit, agent appears in list', async ({ page
   await page.selectOption('select[name="runtime_id"]', 'bash');
   await page
     .locator('textarea[name="prompt_template"]')
-    .fill('<agent_prompt>echo ok</agent_prompt>');
+    .fill('<agent_prompt><command>echo ok</command></agent_prompt>');
 
   await page.getByRole('button', { name: /^Create agent$/ }).click();
 
