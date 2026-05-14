@@ -46,14 +46,42 @@ need pnpm
 
 # ----- env -------------------------------------------------------------------
 
+# Disable bash history-expansion BEFORE sourcing .env.local. Interactive
+# bash defaults to ``histexpand`` on, which means a value like
+# ``PSN*c4!LvQ9I8cMjOVk05Boy`` gets mangled into something with
+# whatever the most recent matching history entry was — silently
+# breaking DAP_DATABASE_URL and friends. ``set -H`` does nothing under
+# non-interactive shells, but ``scripts/dev`` is meant to be run from
+# a terminal where history is on. (#391)
+set +H
+
 if [[ -f .env.local ]]; then
   set -a
   # shellcheck disable=SC1091
   source .env.local
   set +a
   echo "[dap] loaded .env.local"
+elif [[ -n "${DAP_DATABASE_URL:-}" ]]; then
+  # Operator exported DAP_DATABASE_URL in the parent shell (e.g. via
+  # ``direnv``, kubernetes secret mount, etc.) — no first-run wizard
+  # needed, they clearly know what they're doing.
+  echo "[dap] no .env.local — using DAP_DATABASE_URL from parent environment"
 else
-  echo "[dap] no .env.local — provider keys will be empty (api-call adapter will 401)"
+  cat <<'WIZARD'
+[dap] No .env.local found — starting with local SQLite.
+[dap]
+[dap] To connect to a shared PostgreSQL instance, copy the template:
+[dap]
+[dap]   cp .env.local.example .env.local
+[dap]   # then edit the file and uncomment DAP_DATABASE_URL
+[dap]
+[dap] Values containing ! * $ must be SINGLE-quoted in .env.local.
+[dap] (bash history-expansion + variable substitution would otherwise
+[dap]  silently mangle them — the engine then 401s with no clue why.)
+[dap]
+[dap] Starting with SQLite in 3s… (Ctrl+C to abort)
+WIZARD
+  sleep 3
 fi
 
 # ----- optional install ------------------------------------------------------

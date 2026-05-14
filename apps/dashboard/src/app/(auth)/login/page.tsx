@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
+import { DbStatusPill } from "@/components/db-status-pill";
 import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import {
@@ -153,6 +154,12 @@ function LoginPageInner() {
             <Link href="/signup" className="hover:underline">
               Create account
             </Link>
+          </div>
+          {/* Database status pill — lets a new operator tell "wrong
+              credentials" apart from "engine can't reach its DB"
+              before they spend time debugging the form (#391). */}
+          <div className="flex w-full justify-center pt-2">
+            <DbStatusPill />
           </div>
         </CardFooter>
       </form>

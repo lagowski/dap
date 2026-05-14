@@ -508,6 +508,19 @@ export function useCurrentUser() {
   });
 }
 
+export function useHealth() {
+  return useQuery({
+    queryKey: ["health"] as const,
+    queryFn: () => api.getHealth(),
+    // /health is cheap (single SELECT 1) but no point hammering it —
+    // the login page only needs the value once on mount, and any
+    // page mounted later wants a fresh probe rather than a 5-minute
+    // stale snapshot of "Database unreachable".
+    staleTime: 30 * 1000,
+    retry: false,
+  });
+}
+
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({

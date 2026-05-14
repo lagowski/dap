@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from dap_runtimes import create_default_registry
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +42,7 @@ from dap_engine.persistence.db import (
     detect_dialect,
     make_session_factory,
     pg_conn_string,
+    redact_database_url,
 )
 
 logger = logging.getLogger("dap.engine")
@@ -112,6 +115,38 @@ DEFAULT_CORS_ORIGINS: list[str] = [
     "http://localhost:7332",
     "http://127.0.0.1:7332",
 ]
+
+
+def _verify_postgres_reachable(db_url: str) -> None:
+    """Probe the configured Postgres with a short-timeout SELECT 1.
+
+    Runs BEFORE ``create_engine_for_postgresql`` because that factory
+    also calls ``Base.metadata.create_all()`` (and on a fresh DB, runs
+    migrations) — both of which open a real connection. Letting that
+    fail first would dump a raw SQLAlchemy traceback to the operator,
+    bypassing the redacted CRITICAL log + sys.exit(1) path this
+    function is meant to provide.
+
+    The probe uses ``psycopg`` directly (not SQLAlchemy) for the same
+    reason and so we can set a sane ``connect_timeout``; the default
+    is ~unbounded which means a network-unreachable host hangs the
+    startup for tens of seconds before failing. (#391)
+    """
+    try:
+        with psycopg.connect(pg_conn_string(db_url), connect_timeout=5) as conn:
+            conn.execute("SELECT 1")
+    except Exception as e:
+        safe_url = redact_database_url(db_url)
+        logger.critical(
+            "DAP_DATABASE_URL is set (%s) but the database is unreachable: %s",
+            safe_url,
+            e,
+        )
+        logger.critical(
+            "Refusing to silently fall back to SQLite. Fix the URL or check "
+            "network access (VPN, firewall, DB up?), then restart.",
+        )
+        sys.exit(1)
 
 
 def parse_cors_origins(raw: str | None) -> list[str] | None:
@@ -260,6 +295,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         checkpointer_ctx: Any
         if dialect == "postgresql":
             assert db_url is not None
+            # Probe before create_engine_for_postgresql — that factory
+            # opens a connection via create_all() and migrations, so an
+            # unreachable URL would otherwise fail there with a raw
+            # SQLAlchemy traceback (bypassing the redacted CRITICAL log
+            # + clean sys.exit(1) below). (#391)
+            _verify_postgres_reachable(db_url)
             engine = create_engine_for_postgresql(db_url)
             # Pooled AsyncPostgresSaver — concurrent checkpoint ops parallelize
             # across up to cfg.pg_pool_max_size psycopg connections instead of

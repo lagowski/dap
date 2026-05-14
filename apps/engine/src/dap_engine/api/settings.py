@@ -26,13 +26,11 @@ from dap_runtimes import RuntimeRegistry
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
 from dap_types import HealthStatus, RuntimeAdapter
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
 
 from dap_engine.api.deps import get_registry
 from dap_engine.auth.users import current_active_user
 from dap_engine.execution.runner import DEFAULT_RECURSION_LIMIT
-from dap_engine.persistence.db import detect_dialect
+from dap_engine.persistence.db import detect_dialect, redact_database_url
 from dap_engine.persistence.models import UserORM
 
 logger = logging.getLogger("dap.engine.api.settings")
@@ -263,26 +261,4 @@ def _describe_database(config: Any) -> tuple[str, str]:
         # SQLite-via-URL is rare but supported; show the path the
         # way an operator would type it.
         return "sqlite", url
-    return "postgresql", _redact_database_url(url)
-
-
-def _redact_database_url(url: str) -> str:
-    """Mask the password in a database URL.
-
-    Uses SQLAlchemy's ``make_url`` + ``render_as_string(hide_password=True)``
-    so URL-encoded passwords, IPv6 hosts, query params, and other
-    quirks of real-world database URLs round-trip safely (Copilot
-    review on PR #332). A previous string-splitting version would
-    leak credentials on URLs whose password contained ``@`` or other
-    edge characters.
-
-    Falls back to the input string if SQLAlchemy can't parse the URL
-    — better to show a raw value than to silently strip something
-    important. The endpoint's secret-redaction test asserts the
-    happy path, and the engine refuses to start with an unparseable
-    URL anyway.
-    """
-    try:
-        return make_url(url).render_as_string(hide_password=True)
-    except ArgumentError:
-        return url
+    return "postgresql", redact_database_url(url)
