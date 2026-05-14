@@ -1,7 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../../test-fixtures';
 import { uniqueProjectName } from '../../../helpers/projects';
 
-test('projects create — fill form, submit, redirect to detail page', async ({ page }) => {
+test('projects create — fill form, submit, redirect to detail page', async ({
+  page,
+  trackResource,
+}) => {
   const name = uniqueProjectName();
 
   await page.goto('/projects/new');
@@ -17,5 +20,11 @@ test('projects create — fill form, submit, redirect to detail page', async ({ 
 
   // Form redirects to /projects/<id> on success.
   await page.waitForURL(/\/projects\/[^/]+$/, { timeout: 10_000 });
+
+  // Register the newly-created project for fixture teardown so the UI flow
+  // doesn't leave state behind for the rest of the run.
+  const projectId = page.url().match(/\/projects\/([^/]+)$/)?.[1];
+  if (projectId) trackResource('project', projectId);
+
   await expect(page.getByRole('heading', { name })).toBeVisible();
 });
