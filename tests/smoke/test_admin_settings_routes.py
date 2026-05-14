@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dap_engine.api.settings import _redact_database_url
 from dap_engine.app import EngineConfig, create_app
+from dap_engine.persistence.db import redact_database_url
 from dap_engine.persistence.models import UserORM
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -206,7 +206,7 @@ def test_redact_database_url_masks_password() -> None:
     so URL-encoded passwords + IPv6 hosts + query params round-trip
     safely (Copilot review on PR #332).
     """
-    redacted = _redact_database_url(
+    redacted = redact_database_url(
         "postgresql+psycopg://app_user:hunter2@db.internal:5432/dap",
     )
     assert "hunter2" not in redacted
@@ -214,7 +214,7 @@ def test_redact_database_url_masks_password() -> None:
     assert "db.internal:5432/dap" in redacted
 
     # URL-encoded password with ``@`` inside it must NOT leak.
-    encoded = _redact_database_url(
+    encoded = redact_database_url(
         "postgresql+psycopg://app_user:p%40ss%40word@db.internal:5432/dap",
     )
     assert "p%40ss%40word" not in encoded
@@ -222,4 +222,4 @@ def test_redact_database_url_masks_password() -> None:
 
     # No credentials → still parseable, no spurious changes.
     plain = "postgresql://db.internal:5432/dap"
-    assert "db.internal:5432" in _redact_database_url(plain)
+    assert "db.internal:5432" in redact_database_url(plain)

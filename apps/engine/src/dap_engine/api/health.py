@@ -32,7 +32,14 @@ def _is_db_reachable(engine: Engine | None) -> bool:
 
 
 @router.get("/health")
-async def health(request: Request) -> dict[str, Any]:
+def health(request: Request) -> dict[str, Any]:
+    """Public health probe.
+
+    Synchronous on purpose: SQLAlchemy's ``engine.connect()`` is a
+    blocking call, so declaring this as ``def`` (not ``async def``)
+    lets FastAPI run it in its threadpool. A slow DB probe under load
+    can't tie up the event loop. (#391 review)
+    """
     dialect: str = getattr(request.app.state, "db_dialect", "sqlite")
     engine: Engine | None = getattr(request.app.state, "db_engine", None)
     return {

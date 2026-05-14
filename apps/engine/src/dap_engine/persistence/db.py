@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Literal
 
 from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.persistence.migrations import apply_migrations
@@ -76,6 +78,26 @@ def pg_conn_string(database_url: str) -> str:
     return url.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
         "postgresql+psycopg://", "postgresql://", 1
     )
+
+
+def redact_database_url(url: str) -> str:
+    """Mask the password in a database URL for log/UI display.
+
+    Uses SQLAlchemy's ``make_url`` + ``render_as_string(hide_password=True)``
+    so URL-encoded passwords, IPv6 hosts, query params, and other quirks of
+    real-world database URLs round-trip safely. A naive string-splitting
+    redaction would leak credentials on URLs whose password contains ``@``
+    or other edge characters (Copilot review on PR #332 / #419).
+
+    Falls back to the input string if SQLAlchemy can't parse the URL — we
+    prefer surfacing a raw value over silently stripping something
+    important. Callers that log this should also fail loudly enough that
+    a malformed URL becomes obvious quickly.
+    """
+    try:
+        return make_url(url).render_as_string(hide_password=True)
+    except ArgumentError:
+        return url
 
 
 # ---------------------------------------------------------------------------

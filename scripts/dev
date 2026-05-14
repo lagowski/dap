@@ -61,6 +61,11 @@ if [[ -f .env.local ]]; then
   source .env.local
   set +a
   echo "[dap] loaded .env.local"
+elif [[ -n "${DAP_DATABASE_URL:-}" ]]; then
+  # Operator exported DAP_DATABASE_URL in the parent shell (e.g. via
+  # ``direnv``, kubernetes secret mount, etc.) — no first-run wizard
+  # needed, they clearly know what they're doing.
+  echo "[dap] no .env.local — using DAP_DATABASE_URL from parent environment"
 else
   cat <<'WIZARD'
 [dap] No .env.local found — starting with local SQLite.
