@@ -1,6 +1,7 @@
 import { test as base } from '@playwright/test';
 import { createPipeline, type Pipeline } from './helpers/pipelines';
 import { createProject, type Project, type ProjectOverrides } from './helpers/projects';
+import { triggerRun, waitForRunCompletion, type Run } from './helpers/runs';
 
 type PipelineOverrides = { name?: string; description?: string };
 type TrackedKind = 'project' | 'pipeline' | 'agent';
@@ -19,6 +20,7 @@ type TrackedKind = 'project' | 'pipeline' | 'agent';
 export const test = base.extend<{
   seedPipeline: (overrides?: PipelineOverrides) => Promise<Pipeline>;
   seedProject: (overrides?: ProjectOverrides) => Promise<Project>;
+  seedRun: () => Promise<Run>;
   trackResource: (kind: TrackedKind, id: string) => void;
 }>({
   seedPipeline: async ({ request }, use) => {
@@ -54,6 +56,32 @@ export const test = base.extend<{
 
     for (const id of tracked) {
       await request.delete(`/api/projects/${id}`).catch(() => {});
+    }
+  },
+
+  seedRun: async ({ request }, use) => {
+    const tracked: Array<{ pipelineId: string; agentId: string }> = [];
+
+    await use(async () => {
+      // Trigger a real run against a fresh single-node bash-echo pipeline.
+      // The bash adapter extracts `echo ok` from the prompt's <command> tag
+      // and completes in ~200ms. We then poll until the run reaches a
+      // terminal state so subsequent assertions don't race the executor.
+      const pipeline = await createPipeline(request);
+      tracked.push({
+        pipelineId: pipeline.id,
+        agentId: pipeline.nodes[0].agent_id,
+      });
+      const triggered = await triggerRun(request, pipeline.id);
+      return waitForRunCompletion(request, triggered.id);
+    });
+
+    // Runs aren't independently deletable; archiving the pipeline cascades.
+    for (const { pipelineId } of tracked) {
+      await request.delete(`/api/pipelines/${pipelineId}`).catch(() => {});
+    }
+    for (const { agentId } of tracked) {
+      await request.delete(`/api/agents/${agentId}`).catch(() => {});
     }
   },
 
