@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useProject, useRunsList } from "@/hooks/api";
+import { Play } from "lucide-react";
+import { useProject, useRunsList, usePipelinesList } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
 import { RunStatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { TriggerRunPageDialog } from "@/components/trigger-run-page-dialog";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import type { Run } from "@/lib/api/types";
 
@@ -22,6 +25,9 @@ export default function RunsPage() {
     activeProjectId !== null ? { projectId: activeProjectId } : undefined,
     { enabled: isHydrated },
   );
+  const pipelines = usePipelinesList();
+  const hasPipelines =
+    pipelines.data != null && pipelines.data.items.length > 0;
 
   return (
     <div className="p-6 space-y-4">
@@ -34,9 +40,21 @@ export default function RunsPage() {
             </Badge>
           ) : null}
         </div>
-        <p className="text-sm text-muted-foreground">
-          {isFetching ? "Refreshing…" : data ? `${data.total} total` : null}
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-muted-foreground">
+            {isFetching ? "Refreshing…" : data ? `${data.total} total` : null}
+          </p>
+          {hasPipelines && (
+            <TriggerRunPageDialog>
+              {(open) => (
+                <Button size="sm" onClick={open}>
+                  <Play className="mr-1 h-3.5 w-3.5" />
+                  Trigger run
+                </Button>
+              )}
+            </TriggerRunPageDialog>
+          )}
+        </div>
       </div>
 
       {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -50,12 +68,16 @@ export default function RunsPage() {
 
       {data && data.items.length === 0 && (
         <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">
-            No runs yet. Trigger one via{" "}
-            <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
-              POST /runs
-            </code>
-            .
+          <CardContent className="pt-6 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">No runs yet.</p>
+            <TriggerRunPageDialog>
+              {(open) => (
+                <Button onClick={open}>
+                  <Play className="mr-1 h-3.5 w-3.5" />
+                  Trigger run
+                </Button>
+              )}
+            </TriggerRunPageDialog>
           </CardContent>
         </Card>
       )}
