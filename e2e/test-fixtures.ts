@@ -76,7 +76,14 @@ export const test = base.extend<{
       return waitForRunCompletion(request, triggered.id);
     });
 
-    // Runs aren't independently deletable; archiving the pipeline cascades.
+    // Archive the underlying pipeline + agent. Note: runs are NOT
+    // cascade-deleted — RunORM.pipeline_id is a non-cascading FK, so
+    // archived pipelines retain their run history, and there's no public
+    // DELETE /runs/<id> endpoint to delete the row directly. Seeded run
+    // rows therefore persist through the rest of the session. For the
+    // per-run /tmp DB this is fine (the DB is discarded between runs),
+    // and runs/list.spec relies on alphabetical ordering so the
+    // empty-state assertion lands before any run is seeded.
     for (const { pipelineId } of tracked) {
       await request.delete(`/api/pipelines/${pipelineId}`).catch(() => {});
     }
