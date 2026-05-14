@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from psycopg import AsyncConnection
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
+from sqlalchemy import text as sa_text
+from sqlalchemy.engine import Engine
 
 from dap_engine.api.agents import router as agents_router
 from dap_engine.api.health import router as health_router
@@ -112,6 +115,45 @@ DEFAULT_CORS_ORIGINS: list[str] = [
     "http://localhost:7332",
     "http://127.0.0.1:7332",
 ]
+
+
+def _redact_postgres_password(url: str) -> str:
+    """Return a Postgres URL safe for logging (password masked)."""
+    if "@" not in url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    cred, host = rest.split("@", 1)
+    if ":" in cred:
+        user, _ = cred.split(":", 1)
+        return f"{scheme}://{user}:***@{host}"
+    return url
+
+
+def _verify_postgres_reachable(engine: Engine, db_url: str) -> None:
+    """Probe the Postgres engine with SELECT 1; sys.exit(1) on failure.
+
+    Without this gate, ``create_engine_for_postgresql`` lazy-opens the
+    pool on first query — meaning the engine starts up "successfully",
+    the dashboard loads, and the user only learns the URL is wrong when
+    the first authenticated request 500s with a SQLAlchemy traceback in
+    the logs. Failing loudly at startup makes the misconfiguration
+    obvious. (#391)
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(sa_text("SELECT 1"))
+    except Exception as e:
+        safe_url = _redact_postgres_password(db_url)
+        logger.critical(
+            "DAP_DATABASE_URL is set (%s) but the database is unreachable: %s",
+            safe_url,
+            e,
+        )
+        logger.critical(
+            "Refusing to silently fall back to SQLite. Fix the URL or check "
+            "network access (VPN, firewall, DB up?), then restart.",
+        )
+        sys.exit(1)
 
 
 def parse_cors_origins(raw: str | None) -> list[str] | None:
@@ -261,6 +303,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         if dialect == "postgresql":
             assert db_url is not None
             engine = create_engine_for_postgresql(db_url)
+            # Fail loud if the operator set DAP_DATABASE_URL but the engine
+            # can't actually reach the DB. Without this gate the connection
+            # pool lazy-opens and the first request 500s with a confusing
+            # SQLAlchemy traceback — much worse than refusing to start (#391).
+            _verify_postgres_reachable(engine, db_url)
             # Pooled AsyncPostgresSaver — concurrent checkpoint ops parallelize
             # across up to cfg.pg_pool_max_size psycopg connections instead of
             # serializing through a single TCP socket. (#187)
