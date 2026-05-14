@@ -12,10 +12,12 @@ test('account view — profile card shows fixture email + change-password form r
   // sidebar.
   await expect(page.getByRole('main').getByText(FIXTURE_EMAIL)).toBeVisible();
 
-  // Change-password card renders both inputs and the submit button.
-  // Anchor on textbox role + accessible name: the password inputs
-  // surface as textboxes in Playwright's tree even with type="password".
-  await expect(page.getByRole('textbox', { name: 'New password', exact: true })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'Confirm new password' })).toBeVisible();
+  // Change-password card renders all three inputs and the submit button.
+  // getByLabel is the right idiom for HTML password inputs (which don't
+  // have an implicit `textbox` role per the ARIA spec); `exact: true`
+  // disambiguates "New password" from "Confirm new password".
+  await expect(page.getByLabel('Current password')).toBeVisible();
+  await expect(page.getByLabel('New password', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Confirm new password')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Update password' })).toBeVisible();
 });

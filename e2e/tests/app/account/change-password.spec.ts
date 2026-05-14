@@ -1,53 +1,55 @@
 import { test, expect } from '@playwright/test';
 
-test('account change-password — old credentials fail login, new ones succeed', async ({
-  browser,
+// Run in a fresh, unauthenticated context so this spec doesn't mutate
+// the [app] project's shared fixture user. `test.use({ storageState })`
+// here overrides only this file — page + request fixtures still pick
+// up `baseURL` and the rest of the project's `use` block.
+test.use({ storageState: { cookies: [], origins: [] } });
+
+test('account change-password — current-password gate + login round-trip', async ({
+  page,
+  request,
 }) => {
-  // Spin up a fresh browser context so this spec doesn't mutate the
-  // fixture user's password — the [app] project shares storageState
-  // across files, so changing the fixture user's password would break
-  // any spec that later tries to log in as them via the API. The
-  // throwaway user dies with the per-run /tmp DB.
-  const context = await browser.newContext();
-  const page = await context.newPage();
   const email = `e2e-pwchange-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
   const oldPassword = 'OldPassword123!';
   const newPassword = 'NewPassword456!';
 
-  try {
-    // Register: /api/auth/register auto-logs-in and lands a cookie
-    // in this context.
-    await page.goto('/signup');
-    // /signup page wires Label/Input via shadcn's Form/FormField properly,
-    // so getByLabel works here (unlike the /account form's bare Label+Input
-    // pair which doesn't expose the label-input association the same way).
-    await page.getByLabel('Email').fill(email);
-    await page.getByLabel('Password', { exact: true }).fill(oldPassword);
-    await page.getByLabel('Confirm password').fill(oldPassword);
-    await page.getByRole('button', { name: 'Create account' }).click();
-    await page.waitForURL((url) => !url.pathname.endsWith('/signup'), { timeout: 10_000 });
+  // Register: /api/auth/register auto-logs-in and lands a cookie.
+  await page.goto('/signup');
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password', { exact: true }).fill(oldPassword);
+  await page.getByLabel('Confirm password').fill(oldPassword);
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.waitForURL((url) => !url.pathname.endsWith('/signup'), { timeout: 10_000 });
 
-    // Change password through the new /account page. Password inputs
-    // surface as textboxes in Playwright's a11y tree even with type=password.
-    await page.goto('/account');
-    await page.getByRole('textbox', { name: 'New password', exact: true }).fill(newPassword);
-    await page.getByRole('textbox', { name: 'Confirm new password' }).fill(newPassword);
-    await page.getByRole('button', { name: 'Update password' }).click();
-    await expect(page.getByText('Password updated.')).toBeVisible();
+  await page.goto('/account');
 
-    // Login round-trip: old credentials must fail, new ones must succeed.
-    // /api/auth/login proxies to /auth/jwt/login; engine returns 400 on
-    // bad credentials and 200 + Set-Cookie on success.
-    const badLogin = await page.request.post('/api/auth/login', {
-      data: { email, password: oldPassword },
-    });
-    expect(badLogin.status()).toBeGreaterThanOrEqual(400);
+  // Wrong current password is rejected client-side without touching
+  // PATCH /users/me — the form drives a login-verify step first.
+  await page.getByLabel('Current password').fill('not-the-current-password');
+  await page.getByLabel('New password', { exact: true }).fill(newPassword);
+  await page.getByLabel('Confirm new password').fill(newPassword);
+  await page.getByRole('button', { name: 'Update password' }).click();
+  await expect(page.getByText('Current password is incorrect')).toBeVisible();
 
-    const goodLogin = await page.request.post('/api/auth/login', {
-      data: { email, password: newPassword },
-    });
-    expect(goodLogin.ok()).toBe(true);
-  } finally {
-    await context.close();
-  }
+  // Now do it for real.
+  await page.getByLabel('Current password').fill(oldPassword);
+  await page.getByLabel('New password', { exact: true }).fill(newPassword);
+  await page.getByLabel('Confirm new password').fill(newPassword);
+  await page.getByRole('button', { name: 'Update password' }).click();
+  await expect(page.getByText('Password updated.')).toBeVisible();
+
+  // Login round-trip: old credentials must fail with the engine's
+  // bad-credentials response (400 from fastapi-users; 500 here would
+  // mean the engine regressed and we want that to fail the test).
+  const badLogin = await request.post('/api/auth/login', {
+    data: { email, password: oldPassword },
+  });
+  expect(badLogin.status()).toBe(400);
+
+  // New credentials must succeed.
+  const goodLogin = await request.post('/api/auth/login', {
+    data: { email, password: newPassword },
+  });
+  expect(goodLogin.ok()).toBe(true);
 });

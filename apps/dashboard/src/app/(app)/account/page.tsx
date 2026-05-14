@@ -17,18 +17,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCurrentUser, useUpdateMyPassword } from "@/hooks/api";
-import { formatApiError } from "@/lib/api/client";
+import { formatApiError, login as loginApi } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
-// 8 minimum mirrors the engine's UserManager.validate_password policy —
-// letting a shorter value through would just be rejected server-side
-// with a less-friendly error.
+// 8 minimum mirrors the engine's UserManager.validate_password policy.
 const schema = z
   .object({
-    password: z.string().min(8, "Password must be at least 8 characters"),
+    currentPassword: z.string().min(1, "Current password is required"),
+    newPassword: z.string().min(8, "New password must be at least 8 characters"),
     confirm: z.string(),
   })
-  .refine((data) => data.password === data.confirm, {
+  .refine((data) => data.newPassword === data.confirm, {
     path: ["confirm"],
     message: "Passwords don't match",
   });
@@ -39,21 +38,44 @@ export default function AccountPage() {
   const currentUser = useCurrentUser();
   const updatePassword = useUpdateMyPassword();
   const [success, setSuccess] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { password: "", confirm: "" },
+    defaultValues: { currentPassword: "", newPassword: "", confirm: "" },
   });
 
   const onSubmit = form.handleSubmit(async (values) => {
     setSuccess(false);
+    setSubmitError(null);
+
+    const email = currentUser.data?.email;
+    if (!email) {
+      setSubmitError("Couldn't read current session — try refreshing the page.");
+      return;
+    }
+
+    // Verify the current password by re-logging in before calling the
+    // generic PATCH /users/me. fastapi-users' default lets any active
+    // session change the password without re-auth, so without this
+    // step a stolen JWT would be enough to take over the account.
+    // Login refreshes the cookie but doesn't invalidate caches (we
+    // call the API helper directly, not the mutation hook).
     try {
-      await updatePassword.mutateAsync(values.password);
+      await loginApi({ email, password: values.currentPassword });
+    } catch {
+      form.setError("currentPassword", {
+        message: "Current password is incorrect",
+      });
+      return;
+    }
+
+    try {
+      await updatePassword.mutateAsync(values.newPassword);
       setSuccess(true);
       form.reset();
-    } catch {
-      // formatApiError on the mutation error surfaces the engine's
-      // detail message below; nothing else to do here.
+    } catch (err) {
+      setSubmitError(formatApiError(err));
     }
   });
 
@@ -77,6 +99,10 @@ export default function AccountPage() {
         <CardContent className="space-y-2 text-sm">
           {currentUser.isPending ? (
             <p className="text-muted-foreground">Loading…</p>
+          ) : currentUser.isError ? (
+            <p className="text-destructive">
+              Couldn&apos;t reach engine: {formatApiError(currentUser.error)}
+            </p>
           ) : currentUser.data ? (
             <div className="flex items-center gap-2">
               <UserCircle className="h-4 w-4 text-muted-foreground" aria-hidden />
@@ -103,24 +129,43 @@ export default function AccountPage() {
         <CardHeader>
           <CardTitle>Change password</CardTitle>
           <CardDescription>
-            Minimum 8 characters. The engine validates server-side.
+            Minimum 8 characters. The current password is required so a stolen
+            session cookie alone can&apos;t change your credentials.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4" noValidate>
             <div className="space-y-2">
-              <Label htmlFor="password">New password</Label>
+              <Label htmlFor="currentPassword">Current password</Label>
               <Input
-                id="password"
+                id="currentPassword"
+                type="password"
+                autoComplete="current-password"
+                disabled={updatePassword.isPending}
+                {...form.register("currentPassword")}
+                aria-invalid={
+                  form.formState.errors.currentPassword ? true : undefined
+                }
+              />
+              {form.formState.errors.currentPassword && (
+                <p className="text-sm text-destructive">
+                  {form.formState.errors.currentPassword.message}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="newPassword">New password</Label>
+              <Input
+                id="newPassword"
                 type="password"
                 autoComplete="new-password"
                 disabled={updatePassword.isPending}
-                {...form.register("password")}
-                aria-invalid={form.formState.errors.password ? true : undefined}
+                {...form.register("newPassword")}
+                aria-invalid={form.formState.errors.newPassword ? true : undefined}
               />
-              {form.formState.errors.password && (
+              {form.formState.errors.newPassword && (
                 <p className="text-sm text-destructive">
-                  {form.formState.errors.password.message}
+                  {form.formState.errors.newPassword.message}
                 </p>
               )}
             </div>
@@ -140,12 +185,12 @@ export default function AccountPage() {
                 </p>
               )}
             </div>
-            {updatePassword.isError && (
+            {submitError && (
               <p
                 role="alert"
                 className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
               >
-                {formatApiError(updatePassword.error)}
+                {submitError}
               </p>
             )}
             {success && (
