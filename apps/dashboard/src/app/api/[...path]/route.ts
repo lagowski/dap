@@ -89,7 +89,13 @@ const RESPONSE_HOP_HEADERS = new Set([
  * ``/api/auth/me`` handler wraps it but doesn't gate it).
  */
 function isBlockedPath(pathname: string): boolean {
-  if (pathname.startsWith("/auth/api-tokens")) return false;
+  // Match exactly /auth/api-tokens or anything underneath it. Plain
+  // `startsWith("/auth/api-tokens")` would also unblock a future
+  // `/auth/api-tokensv2` or similar sibling that does NOT belong to
+  // this sub-tree.
+  if (pathname === "/auth/api-tokens" || pathname.startsWith("/auth/api-tokens/")) {
+    return false;
+  }
   return pathname.startsWith("/auth/");
 }
 
