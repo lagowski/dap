@@ -20,7 +20,12 @@ export function uniquePipelineName(prefix = 'e2e-pipeline'): string {
 
 export async function createPipeline(
   request: APIRequestContext,
-  overrides: { name?: string; description?: string; sleepSeconds?: number } = {},
+  overrides: {
+    name?: string;
+    description?: string;
+    sleepSeconds?: number;
+    gateNodes?: string[];
+  } = {},
 ): Promise<Pipeline> {
   // Pipelines need at least one node that references an existing agent —
   // seed an agent first, then a single-node pipeline pointing at it. This
@@ -39,7 +44,7 @@ export async function createPipeline(
   // Validator requires every node to have a path to the END sentinel
   // ("__end__"), so a single-node pipeline still needs one explicit
   // terminator edge or the POST returns 422 "Node 'n1' has no path to END".
-  const payload = {
+  const payload: Record<string, unknown> = {
     name: overrides.name ?? uniquePipelineName(),
     description: overrides.description ?? '',
     schema_version: 'langgraph/1.0',
@@ -48,6 +53,13 @@ export async function createPipeline(
     nodes: [{ id: 'n1', agent_id: agent.id }],
     edges: [{ id: 'e1', source: 'n1', target: '__end__' }],
   };
+  if (overrides.gateNodes && overrides.gateNodes.length > 0) {
+    // PipelineDefaults.approval_required_nodes drives the langgraph
+    // runner's `interrupt_before` — the run pauses BEFORE executing
+    // any listed node, hitting final_status="paused" for the
+    // human-in-loop approval flow tested by gate specs.
+    payload.defaults = { approval_required_nodes: overrides.gateNodes };
+  }
   const response = await request.post('/api/pipelines', { data: payload });
   if (!response.ok()) {
     throw new Error(
