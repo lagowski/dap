@@ -7,7 +7,7 @@ import {
 } from '../../../helpers/runs';
 import { createPipeline } from '../../../helpers/pipelines';
 
-// Run lifecycle covers four flows that had zero coverage before:
+// Run lifecycle covers three flows that had zero e2e coverage before:
 //   1. Triggering a run via the /runs page's TriggerRunPageDialog
 //   2. Aborting a still-running run via the detail page's Abort button
 //   3. Resuming a paused run via the detail page's Resume button
@@ -37,6 +37,14 @@ test('runs trigger — TriggerRunPageDialog launches a run + redirects to detail
 
   // useTriggerRun mutation resolves → router.push to /runs/<new id>.
   await page.waitForURL(/\/runs\/[^/]+$/, { timeout: 15_000 });
+
+  // Confirm the detail page actually rendered after the navigation —
+  // a regression that redirects to the URL but fails to render the run
+  // shell would otherwise pass. The h1 displays the full run id; we
+  // extract it from the URL and assert it shows up as the heading.
+  const newRunId = page.url().match(/\/runs\/([^/]+)$/)?.[1];
+  expect(newRunId).toBeTruthy();
+  await expect(page.getByRole('heading', { name: newRunId! })).toBeVisible();
 });
 
 test('runs abort — clicking Abort on a running run drives final_status to aborted', async ({
@@ -70,6 +78,11 @@ test('runs abort — clicking Abort on a running run drives final_status to abor
     20_000,
   );
   expect(final.final_status).toBe('aborted');
+
+  // Reload so the UI's useRun query refetches and renders the terminal
+  // state — proves the dashboard surfaces the abort, not just the API.
+  await page.reload();
+  await expect(page.getByText('aborted', { exact: true })).toBeVisible();
 });
 
 test('runs resume — clicking Resume on a paused run flips it back to running/finishing', async ({
@@ -98,6 +111,12 @@ test('runs resume — clicking Resume on a paused run flips it back to running/f
     20_000,
   );
   expect(['running', 'success']).toContain(final.final_status);
+
+  // UI side: after refetch the Resume button (only rendered for
+  // status === "paused") must be gone, proving the dashboard moved
+  // out of the paused branch — not just that the API state changed.
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Resume' })).toHaveCount(0);
 
   // Cleanup: if it's still running, abort so we don't wait the full
   // sleep N seconds on teardown.
