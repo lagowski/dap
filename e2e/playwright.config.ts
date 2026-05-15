@@ -71,9 +71,14 @@ export default defineConfig({
     },
     // Auth-flow specs run unauthenticated — they exercise /signup, /login,
     // /forgot-password etc. and must not start from a logged-in storageState.
+    // `dependencies: ['setup']` ensures FIXTURE_EMAIL is registered before
+    // login-success.spec runs; without it, `npx playwright test
+    // --project=auth` standalone would have an empty users table and the
+    // login happy-path would 400 on bad credentials.
     {
       name: 'auth',
       testDir: './tests/auth',
+      dependencies: ['setup'],
     },
     // Everything authenticated as the regular fixture user. The admin
     // subtree is handled by the `admin` project below, so it's excluded
