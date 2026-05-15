@@ -209,6 +209,7 @@ scripts/
   setup        First-run installer (pre-flight, .env, deps, hooks)
   dev          Day-to-day launcher (engine + dashboard + log multiplexing)
 tests/smoke/   Cross-package end-to-end tests (FastAPI TestClient + real adapters)
+e2e/           Playwright browser e2e (see e2e/COVERAGE.md for scope rationale)
 ```
 
 ## Common commands
