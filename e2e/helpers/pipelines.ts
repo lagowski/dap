@@ -20,12 +20,21 @@ export function uniquePipelineName(prefix = 'e2e-pipeline'): string {
 
 export async function createPipeline(
   request: APIRequestContext,
-  overrides: { name?: string; description?: string } = {},
+  overrides: { name?: string; description?: string; sleepSeconds?: number } = {},
 ): Promise<Pipeline> {
   // Pipelines need at least one node that references an existing agent —
   // seed an agent first, then a single-node pipeline pointing at it. This
   // keeps the test independent of which agents the user happens to have.
-  const agent = await createAgent(request);
+  // For lifecycle tests that need a "still running" window, pass
+  // `sleepSeconds` to swap in a `sleep N` bash command instead of the
+  // default `echo ok` — the run then stays in `running` state long
+  // enough for the UI to surface Pause / Abort buttons.
+  const agent =
+    overrides.sleepSeconds != null
+      ? await createAgent(request, {
+          prompt_template: `<agent_prompt><command>sleep ${overrides.sleepSeconds}</command></agent_prompt>`,
+        })
+      : await createAgent(request);
 
   // Validator requires every node to have a path to the END sentinel
   // ("__end__"), so a single-node pipeline still needs one explicit

@@ -37,14 +37,61 @@ export async function waitForRunCompletion(
   runId: string,
   timeoutMs = 15_000,
 ): Promise<Run> {
+  return waitForRunStatus(
+    request,
+    runId,
+    (status) => status !== 'running',
+    timeoutMs,
+  );
+}
+
+/**
+ * Poll /api/runs/<id> until `predicate(final_status)` returns true.
+ * Used by lifecycle specs that need specific transitions (e.g. wait
+ * for "paused" or "aborted") rather than "anything but running".
+ */
+export async function waitForRunStatus(
+  request: APIRequestContext,
+  runId: string,
+  predicate: (status: Run['final_status']) => boolean,
+  timeoutMs = 15_000,
+): Promise<Run> {
   const start = Date.now();
+  let lastStatus: string | null = null;
   while (Date.now() - start < timeoutMs) {
     const response = await request.get(`/api/runs/${runId}`);
     if (response.ok()) {
       const run = (await response.json()) as Run;
-      if (run.final_status !== 'running') return run;
+      lastStatus = run.final_status;
+      if (predicate(run.final_status)) return run;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Run ${runId} did not complete within ${timeoutMs}ms`);
+  throw new Error(
+    `Run ${runId} did not match predicate within ${timeoutMs}ms (last status=${lastStatus})`,
+  );
+}
+
+export async function pauseRun(request: APIRequestContext, runId: string): Promise<Run> {
+  const response = await request.post(`/api/runs/${runId}/pause`);
+  if (!response.ok()) {
+    throw new Error(`pauseRun failed (${response.status()}): ${await response.text()}`);
+  }
+  return (await response.json()) as Run;
+}
+
+export async function resumeRun(request: APIRequestContext, runId: string): Promise<Run> {
+  const response = await request.post(`/api/runs/${runId}/resume`);
+  if (!response.ok()) {
+    throw new Error(`resumeRun failed (${response.status()}): ${await response.text()}`);
+  }
+  return (await response.json()) as Run;
+}
+
+export async function abortRun(request: APIRequestContext, runId: string): Promise<Run> {
+  const response = await request.post(`/api/runs/${runId}/abort`);
+  if (!response.ok()) {
+    throw new Error(`abortRun failed (${response.status()}): ${await response.text()}`);
+  }
+  return (await response.json()) as Run;
 }
