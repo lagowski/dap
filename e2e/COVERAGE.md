@@ -63,7 +63,7 @@ each is a feature that drifts independently.
 
 - **Better tested via:** existing pytest smoke
   (`tests/smoke/test_agent_dry_run.py`) which exercises the engine
-  without the browser-overhead overhead.
+  without the browser overhead.
 
 ### Forgot-password / reset-password flow
 
