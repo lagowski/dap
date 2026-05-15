@@ -2,9 +2,11 @@ import { test as base } from '@playwright/test';
 import { createPipeline, type Pipeline } from './helpers/pipelines';
 import { createProject, type Project, type ProjectOverrides } from './helpers/projects';
 import { triggerRun, waitForRunCompletion, type Run } from './helpers/runs';
+import { createTestUser, type TestUser } from './helpers/users';
 
 type PipelineOverrides = { name?: string; description?: string };
 type TrackedKind = 'project' | 'pipeline' | 'agent';
+type TestUserOverrides = { email?: string; password?: string };
 
 // Factory + tracking fixtures: seed a resource on demand (or register a
 // UI-created resource's id) and archive it in teardown. The per-run /tmp
@@ -21,6 +23,7 @@ export const test = base.extend<{
   seedPipeline: (overrides?: PipelineOverrides) => Promise<Pipeline>;
   seedProject: (overrides?: ProjectOverrides) => Promise<Project>;
   seedRun: () => Promise<Run>;
+  seedAdminTargetUser: (overrides?: TestUserOverrides) => Promise<TestUser>;
   trackResource: (kind: TrackedKind, id: string) => void;
 }>({
   seedPipeline: async ({ request }, use) => {
@@ -89,6 +92,25 @@ export const test = base.extend<{
     }
     for (const { agentId } of tracked) {
       await request.delete(`/api/agents/${agentId}`).catch(() => {});
+    }
+  },
+
+  // Seeds a throwaway user via the engine's POST /auth/register endpoint
+  // (called directly on :7333 so the dashboard's auto-login wrapper
+  // doesn't replace the admin's cookie on this request context). Used
+  // by admin-destructive-action specs that need a target user to
+  // promote / suspend / soft-delete. Teardown soft-deletes through the
+  // dashboard proxy (admin-only); failures are swallowed because a
+  // test that already soft-deleted the user gets 404 on re-delete.
+  seedAdminTargetUser: async ({ request }, use) => {
+    const tracked: string[] = [];
+    await use(async (overrides) => {
+      const user = await createTestUser(request, overrides);
+      tracked.push(user.id);
+      return user;
+    });
+    for (const id of tracked) {
+      await request.delete(`/api/users/${id}`).catch(() => {});
     }
   },
 
