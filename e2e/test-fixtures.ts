@@ -1,10 +1,38 @@
-import { test as base } from '@playwright/test';
+import { test as base, type APIRequestContext } from '@playwright/test';
 import { createPipeline, type Pipeline } from './helpers/pipelines';
 import { createProject, type Project, type ProjectOverrides } from './helpers/projects';
 import { triggerRun, waitForRunCompletion, type Run } from './helpers/runs';
+import { createTestUser, type TestUser } from './helpers/users';
 
 type PipelineOverrides = { name?: string; description?: string };
 type TrackedKind = 'project' | 'pipeline' | 'agent';
+type TestUserOverrides = { email?: string; password?: string };
+
+// Teardown helper: swallow the expected "already gone" status (typically
+// 404 after a test soft-deleted the resource itself) so an idempotent
+// archive doesn't turn a passing test into a failed teardown. But
+// surface OTHER failures (4xx auth, 5xx server) via console.warn so
+// flaky cleanup becomes visible in CI logs instead of vanishing.
+async function teardownDelete(
+  request: APIRequestContext,
+  path: string,
+  expectedAbsent = 404,
+): Promise<void> {
+  try {
+    const response = await request.delete(path);
+    if (response.ok() || response.status() === expectedAbsent) return;
+    const body = await response.text().catch(() => '<no body>');
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[fixture teardown] DELETE ${path} returned ${response.status()}: ${body}`,
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[fixture teardown] DELETE ${path} threw: ${(err as Error).message ?? err}`,
+    );
+  }
+}
 
 // Factory + tracking fixtures: seed a resource on demand (or register a
 // UI-created resource's id) and archive it in teardown. The per-run /tmp
@@ -21,6 +49,7 @@ export const test = base.extend<{
   seedPipeline: (overrides?: PipelineOverrides) => Promise<Pipeline>;
   seedProject: (overrides?: ProjectOverrides) => Promise<Project>;
   seedRun: () => Promise<Run>;
+  seedAdminTargetUser: (overrides?: TestUserOverrides) => Promise<TestUser>;
   trackResource: (kind: TrackedKind, id: string) => void;
 }>({
   seedPipeline: async ({ request }, use) => {
@@ -89,6 +118,28 @@ export const test = base.extend<{
     }
     for (const { agentId } of tracked) {
       await request.delete(`/api/agents/${agentId}`).catch(() => {});
+    }
+  },
+
+  // Seeds a throwaway user via the engine's POST /auth/register endpoint
+  // (called directly on :7333 so the dashboard's auto-login wrapper
+  // doesn't replace the admin's cookie on this request context). Used
+  // by admin-destructive-action specs that need a target user to
+  // promote / suspend / soft-delete. Teardown soft-deletes through the
+  // dashboard proxy (admin-only); failures are swallowed because a
+  // test that already soft-deleted the user gets 404 on re-delete.
+  seedAdminTargetUser: async ({ request }, use) => {
+    const tracked: string[] = [];
+    await use(async (overrides) => {
+      const user = await createTestUser(request, overrides);
+      tracked.push(user.id);
+      return user;
+    });
+    for (const id of tracked) {
+      // teardownDelete surfaces unexpected failures (auth dropped, engine
+      // 5xx) via console.warn but stays quiet on the expected 404 that
+      // happens when a test already soft-deleted the user itself.
+      await teardownDelete(request, `/api/users/${id}`);
     }
   },
 
