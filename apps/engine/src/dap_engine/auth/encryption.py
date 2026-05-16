@@ -7,10 +7,17 @@ Key bootstrap (``DAP_INSTANCE_ENV_VARS_KEY``):
     A 32-byte url-safe base64 Fernet key. Unlike the JWT secret — where
     a per-process random is fine because tokens are short-lived — this
     key MUST persist across restarts: encrypted DB rows written by an
-    earlier process must decrypt against the same key today. We refuse
-    to start when an admin route is needed but the key is unset (the
-    lifespan crashes loudly rather than silently producing rows we
-    can't read back).
+    earlier process must decrypt against the same key today.
+
+    The engine starts fine without the key — read paths (``GET
+    /settings/admin/env-vars`` and the runtime merge) tolerate a
+    missing key (the listing uses the unencrypted preview column;
+    the runtime merge silently skips the overlay). Only the admin
+    POST path requires it, returning ``503`` with a setup hint when
+    unset so an operator doesn't accidentally write ciphertext they
+    couldn't decrypt on the next restart. DELETE doesn't need the
+    key — removing a row whose ciphertext we couldn't decrypt is a
+    legitimate cleanup path after a botched key rotation.
 
     Generate one with: ``python -c 'from cryptography.fernet import
     Fernet; print(Fernet.generate_key().decode())'``.

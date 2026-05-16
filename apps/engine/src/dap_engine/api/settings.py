@@ -402,7 +402,7 @@ def list_instance_env_vars(
     response_model=InstanceEnvVarListing,
 )
 def upsert_instance_env_vars(
-    body: dict[str, Any],
+    body: dict[str, str],
     session: Session = Depends(get_session),
     user: UserORM = Depends(current_active_user),
     config: Any = Depends(get_engine_config),
@@ -415,6 +415,10 @@ def upsert_instance_env_vars(
     the DB. An audit event is recorded per key (``created`` or
     ``updated``); the value never appears in ``event_data`` — only
     the key name.
+
+    Typed as ``dict[str, str]`` so FastAPI's body validation rejects
+    non-string values with a 422 before the handler runs — keeps the
+    OpenAPI schema honest about what we accept.
     """
     _require_admin(user)
     if not body:
@@ -427,13 +431,11 @@ def upsert_instance_env_vars(
     # Validate everything first so a partial batch never lands — either
     # the whole POST applies or nothing does (the session rollback
     # in get_session handles the latter on any raise below).
+    # ``isinstance(value, str)`` is guaranteed by the typed body above;
+    # only emptiness still needs an application-layer check (Pydantic
+    # accepts ``""`` as a valid string).
     for key, value in body.items():
         _validate_key(key)
-        if not isinstance(value, str):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Value for {key!r} must be a string; got {type(value).__name__}.",
-            )
         if not value:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -443,11 +445,23 @@ def upsert_instance_env_vars(
                 ),
             )
 
+    # Single SELECT keyed by ``key IN (body.keys())`` — avoids the N+1
+    # the per-key lookup version did on bulk upserts. Two admins POSTing
+    # the same key concurrently can still race past this check and both
+    # try to INSERT; the UNIQUE constraint on ``key`` makes one of them
+    # roll back at commit. That's an acceptable corner case for a
+    # single-operator install (the loser sees 5xx and retries).
+    existing_rows = (
+        session.execute(
+            select(InstanceEnvVarORM).where(InstanceEnvVarORM.key.in_(body.keys()))
+        )
+        .scalars()
+        .all()
+    )
+    existing_by_key = {row.key: row for row in existing_rows}
+
     now = datetime.now(UTC)
     for key, value in body.items():
-        existing = session.execute(
-            select(InstanceEnvVarORM).where(InstanceEnvVarORM.key == key)
-        ).scalar_one_or_none()
         try:
             ciphertext = encrypt_value(value, key=encryption_key)
         except EncryptionError as exc:
@@ -459,6 +473,7 @@ def upsert_instance_env_vars(
             ) from exc
 
         preview = _build_preview(value)
+        existing = existing_by_key.get(key)
         if existing is None:
             session.add(
                 InstanceEnvVarORM(

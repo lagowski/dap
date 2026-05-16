@@ -106,11 +106,13 @@ class PipelineRunner:
         # Fernet key for decrypting ``InstanceEnvVarORM.ciphertext`` at
         # run start (#388). ``None`` is a no-op — the merge layer
         # receives an empty overlay, and any instance vars sitting in
-        # the DB are silently ignored. The admin write path enforces
-        # the key on POST/DELETE so the only way to end up here with
-        # rows-but-no-key is an operator rotating ``DAP_INSTANCE_ENV_VARS_KEY``
-        # to ``None`` on restart; flagging that loudly is the
-        # orchestrator's job, not ours.
+        # the DB are silently ignored. The admin POST path enforces
+        # the key (rows can't be written without one); DELETE does not
+        # — removing a row whose ciphertext we couldn't decrypt is a
+        # legitimate cleanup path after a key rotation. The only way
+        # to end up here with rows-but-no-key is an operator rotating
+        # ``DAP_INSTANCE_ENV_VARS_KEY`` to ``None`` on restart;
+        # flagging that loudly is the orchestrator's job, not ours.
         self.instance_env_vars_key = instance_env_vars_key
 
     async def run(

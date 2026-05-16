@@ -28,6 +28,7 @@ from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.models import AuditLogORM, UserORM
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 PASSWORD = "test-password-123"
 
@@ -158,6 +159,61 @@ def test_post_creates_var_then_get_returns_it_masked(client: TestClient) -> None
     assert body["env_vars"] == [
         {"key": "GH_TOKEN_CODE", "preview": "ghp_••••", "value_set": True},
     ]
+
+
+def test_post_bulk_upsert_uses_single_select(client: TestClient) -> None:
+    """Bulk POST must SELECT existing rows in one query, not N+1 (Copilot
+    review on PR #435). Patch ``Session.execute`` to count SELECTs against
+    ``instance_env_vars`` during a 5-key bulk POST and assert the lookup
+    cost is constant in the batch size."""
+    from unittest.mock import patch
+
+    headers = _admin_client(client)
+    # Seed one existing row so the upsert exercises BOTH the create and
+    # update branches in a single batch (the N+1 fix has to apply to
+    # both).
+    client.post(
+        "/settings/admin/env-vars",
+        json={"GH_TOKEN_EXISTING": "ghp_seed_xxxxxxx"},
+        headers=headers,
+    )
+
+    original_execute = Session.execute
+    select_count = {"n": 0}
+
+    def counting_execute(self: Session, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        # Compile to SQL text once per call to inspect the table name —
+        # cheap (no DB round-trip).
+        try:
+            compiled = str(
+                statement.compile(compile_kwargs={"literal_binds": False})
+            ).lower()
+        except Exception:  # noqa: BLE001
+            compiled = ""
+        if compiled.startswith("select") and "instance_env_vars" in compiled:
+            select_count["n"] += 1
+        return original_execute(self, statement, *args, **kwargs)
+
+    with patch.object(Session, "execute", counting_execute):
+        resp = client.post(
+            "/settings/admin/env-vars",
+            json={
+                "GH_TOKEN_A": "ghp_a_xxxxxxx",
+                "GH_TOKEN_B": "ghp_b_xxxxxxx",
+                "GH_TOKEN_C": "ghp_c_xxxxxxx",
+                "GH_TOKEN_EXISTING": "ghp_updated_xxxxxxx",
+                "GH_TOKEN_D": "ghp_d_xxxxxxx",
+            },
+            headers=headers,
+        )
+    assert resp.status_code == 200, resp.text
+    # Upsert path issues exactly two ``instance_env_vars`` SELECTs:
+    # one bulk lookup of existing rows + one final listing read.
+    # Anything > 2 means an N+1 has crept back in.
+    assert select_count["n"] == 2, (
+        f"expected 2 SELECTs against instance_env_vars (bulk lookup + final list), "
+        f"got {select_count['n']} — N+1 regression"
+    )
 
 
 def test_post_multiple_keys_in_single_request(client: TestClient) -> None:
