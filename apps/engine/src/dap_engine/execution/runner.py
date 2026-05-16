@@ -163,11 +163,36 @@ class PipelineRunner:
         # and the graph stopped early, aget_state().next contains the gated node.
         # This is a normal stop — raise RunnerInterrupt so the caller marks the
         # run as paused rather than finalized (#164).
+        #
+        # Exception (#389): when the run's state carries
+        # ``extensions.auto_approve = True``, drive the graph past each gate
+        # by re-invoking with ``None`` until no approval node is pending. The
+        # gate node code still executes — we only suppress the interrupt-
+        # before pause. Looping handles pipelines with multiple gates
+        # (the cortex bundle's 3-gate flow is the canonical case).
         if approval_nodes and self.checkpointer is not None:
             checkpoint_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
             snap = await graph.aget_state(checkpoint_config)
             pending = list(snap.next) if snap.next else []
-            if pending and any(n in approval_nodes for n in pending):
+            while pending and any(n in approval_nodes for n in pending):
+                if _is_auto_approve(snap.values):
+                    logger.warning(
+                        "run %s: auto_approve=True — skipping approval gate(s) %s",
+                        run_id,
+                        pending,
+                    )
+                    try:
+                        result = await graph.ainvoke(None, config=config)
+                    except Exception as exc:
+                        logger.exception(
+                            "pipeline execution failed for run %s during auto-approve resume",
+                            run_id,
+                        )
+                        msg = f"Execution failed: {type(exc).__name__}: {exc}"
+                        raise RunnerError(msg) from exc
+                    snap = await graph.aget_state(checkpoint_config)
+                    pending = list(snap.next) if snap.next else []
+                    continue
                 logger.info("run %s interrupted before approval node(s): %s", run_id, pending)
                 raise RunnerInterrupt(
                     next_nodes=pending,
@@ -405,6 +430,22 @@ def _resolve_target(target: str) -> Any:
     if target in (END, "__end__"):
         return END
     return target
+
+
+def _is_auto_approve(state_values: Any) -> bool:
+    """Return True when the snapshot's state carries ``extensions.auto_approve=True``.
+
+    Defensive against malformed checkpoints — only the literal boolean
+    ``True`` enables the bypass. Other truthy values (strings, numbers,
+    dicts) deliberately do *not* trigger auto-approve so a stray
+    extension key can't silently disable the gates (#389).
+    """
+    if not isinstance(state_values, dict):
+        return False
+    extensions = state_values.get("extensions")
+    if not isinstance(extensions, dict):
+        return False
+    return extensions.get("auto_approve") is True
 
 
 def _add_conditional_edges(

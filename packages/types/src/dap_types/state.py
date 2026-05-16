@@ -53,6 +53,12 @@ class PipelineState(BaseModel):
         description=(
             "Per-pipeline extra state. Keys are pipeline-defined. "
             "Values must be JSON-serializable. "
+            "Reserved keys (engine-defined): "
+            "``auto_approve`` (bool, #389) — when True, the runner "
+            "skips every ``interrupt_before`` approval gate so the run "
+            "executes end-to-end without pausing. Operator-only flag, "
+            "intentionally named to mirror Claude Code's "
+            "``--dangerously-skip-permissions``."
         ),
     )
 
