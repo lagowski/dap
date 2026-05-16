@@ -1,0 +1,134 @@
+name: Gemini Review
+
+# Calls Google Gemini on every open PR to develop/main, posts a real
+# PR review, and records the verdict on a `gemini-review` check_run so
+# branch protection has something to gate on.
+#
+# Replaces the previous Copilot-based gate (see commit history /
+# .github/workflows/copilot-review-required.yml). Picked because:
+#   - GitHub Copilot Code Review quota was exhausted.
+#   - Gemini 2.5 Flash on AI Studio's free tier covers ~250 PR reviews
+#     per day at zero cost.
+#   - Posting an *actual* review (not just a check_run) gives the
+#     dashboard inline comments instead of a black-box pass/fail.
+#
+# Setup required (one-time, see .github/scripts/gemini_review.py
+# docstring for the full list):
+#   1. Add `GEMINI_API_KEY` to repo secrets
+#      (Settings → Secrets and variables → Actions → New repository secret).
+#      Grab a key from https://aistudio.google.com/apikey.
+#   2. Update branch protection on `develop` (and `main`): swap the
+#      required check `copilot-review` → `gemini-review`. The old
+#      copilot-review-required.yml workflow has been removed in the
+#      same PR that introduced this one.
+#
+# Notes:
+#   - We trigger only on `pull_request` events (no cron). Each push to
+#     a PR re-runs the workflow with the latest SHA — branch protection
+#     re-evaluates the check automatically.
+#   - We do NOT review PRs opened by bots (dependabot, renovate, etc.)
+#     — auto-pass them, same convention the prior workflow used.
+#   - Forks: PRs from forks get a read-only GITHUB_TOKEN, so posting
+#     reviews/checks fails with 403. The workflow handles that
+#     gracefully (the review step exits non-zero, the workflow's job
+#     conclusion fails, branch protection blocks the merge — which is
+#     the desired outcome for unmaintained-fork PRs anyway).
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to (re)review"
+        required: true
+
+concurrency:
+  # Supersede in-flight runs when a new push lands on the same PR — no
+  # point reviewing an older SHA.
+  group: gemini-review-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    steps:
+      - name: Determine PR number
+        id: pr
+        run: |
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check PR author (skip bots)
+        id: skip-bot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          author=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
+          # Bot authors get an auto-pass — Gemini doesn't add value on
+          # dependabot bumps and we'd burn quota for nothing.
+          if [[ "$author" == *"[bot]"* ]] || [[ "$author" == "dependabot" ]] || [[ "$author" == "renovate"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Bot author '$author' — auto-passing gate without invoking Gemini."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Auto-pass bot-authored PRs
+        if: steps.skip-bot.outputs.skip == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          head_sha=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq '.headRefOid')
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -f name='gemini-review' \
+            -f head_sha="$head_sha" \
+            -f status='completed' \
+            -f conclusion='success' \
+            -f 'output[title]=Bot author — review skipped' \
+            -f 'output[summary]=Gemini does not review bot-authored PRs (dependabot, renovate, etc.). Standard CI checks still gate the merge.'
+
+      - name: Checkout (for gh CLI auth + repo metadata)
+        if: steps.skip-bot.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        if: steps.skip-bot.outputs.skip != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Gemini SDK + Pydantic
+        if: steps.skip-bot.outputs.skip != 'true'
+        run: |
+          # Pinned versions so a model-name or SDK-shape change doesn't
+          # silently break the gate. Bump deliberately when refreshing.
+          pip install --no-cache-dir \
+            'google-genai>=1.33.0,<2.0' \
+            'pydantic>=2.9.0,<3.0'
+
+      - name: Run Gemini review
+        if: steps.skip-bot.outputs.skip != 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          # Override to gemini-2.5-pro for higher quality (counts against
+          # a separate, smaller free-tier quota).
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+        run: python .github/scripts/gemini_review.py
