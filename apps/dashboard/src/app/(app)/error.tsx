@@ -56,7 +56,11 @@ export default function AppError({
           </p>
         ) : null}
         <div className="flex gap-2">
-          <Button onClick={reset}>Try again</Button>
+          {/* Wrap ``reset`` in an arrow function so React's MouseEvent
+              isn't passed through to a ``() => void`` callback —
+              defensive in case Next's contract ever inspects args
+              (Gemini strict review, #441 round 2). */}
+          <Button onClick={() => reset()}>Try again</Button>
           <Button variant="outline" onClick={() => window.location.reload()}>
             Reload page
           </Button>

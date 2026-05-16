@@ -3,16 +3,22 @@
 /**
  * Last-resort error boundary — fires only when an error escapes the
  * root layout itself. Next.js mounts this in place of the whole
- * ``<html>`` tree, so the JSX *must* include ``<html>`` + ``<body>``
- * (the normal root layout doesn't run). Same constraint applies to
- * the styling — no provider tree (QueryProvider, theme, etc.) so we
- * lean on a minimal inline-Tailwind layout the user can still read
- * without globals.css loaded.
+ * ``<html>`` tree, so the JSX *must* include ``<html>`` + ``<head>`` +
+ * ``<body>`` (the normal root layout doesn't run). Same constraint
+ * applies to the styling — no provider tree (QueryProvider, theme,
+ * etc.) so we lean on a minimal inline layout the user can still
+ * read without globals.css loaded.
  *
  * In practice this is virtually never reached — the per-segment
  * ``(app)/error.tsx`` and ``(auth)/error.tsx`` catch ~all real errors.
  * This file exists so a layout-level crash doesn't drop the user on a
  * Next.js default error page.
+ *
+ * Implementation note: only one recovery button. Per Next.js docs the
+ * ``reset`` prop on ``global-error`` performs a full document reload
+ * (no router context is available at the root), so a separate "Reload
+ * page" button would be functionally identical and confusing. We
+ * expose just the reload action.
  *
  * Audit finding D2 — see
  * ``.claude/plans/chce-zebys-zrobil-pelny-snuggly-unicorn.md``.
@@ -22,9 +28,10 @@ import { useEffect } from "react";
 
 export default function GlobalError({
   error,
-  reset,
 }: {
   error: Error & { digest?: string };
+  // ``reset`` intentionally not destructured — see file header. Next
+  // still passes it; we just don't expose it as a separate action.
   reset: () => void;
 }) {
   useEffect(() => {
@@ -33,8 +40,17 @@ export default function GlobalError({
 
   return (
     <html lang="en">
+      <head>
+        <title>Dashboard error — DAP</title>
+      </head>
       <body
+        // Inline ``backgroundColor`` + ``color`` to force a light
+        // theme even if a browser extension flips the page background
+        // dark when no stylesheet loads (Gemini strict review, #441
+        // round 2).
         style={{
+          backgroundColor: "#fff",
+          color: "#000",
           fontFamily: "system-ui, -apple-system, sans-serif",
           padding: "2rem",
           maxWidth: "640px",
@@ -61,32 +77,19 @@ export default function GlobalError({
             Error ref: <span>{error.digest}</span>
           </p>
         ) : null}
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button
-            onClick={reset}
-            style={{
-              padding: "0.5rem 1rem",
-              border: "1px solid #ccc",
-              borderRadius: "0.375rem",
-              background: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            Try again
-          </button>
-          <button
-            onClick={() => window.location.reload()}
-            style={{
-              padding: "0.5rem 1rem",
-              border: "1px solid #ccc",
-              borderRadius: "0.375rem",
-              background: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            Reload page
-          </button>
-        </div>
+        <button
+          onClick={() => window.location.reload()}
+          style={{
+            padding: "0.5rem 1rem",
+            border: "1px solid #ccc",
+            borderRadius: "0.375rem",
+            background: "#fff",
+            color: "#000",
+            cursor: "pointer",
+          }}
+        >
+          Reload page
+        </button>
       </body>
     </html>
   );
