@@ -72,15 +72,27 @@ def _ctx() -> ProjectContext:
 
 
 def test_council_runs_each_agent_once() -> None:
-    """Two agents → two provider calls, one per agent."""
+    """Each registered agent gets one provider call (when not skipped)."""
+    from code_review_council.agents import CorrectnessAgent
+
     provider = FakeProvider(
         {
             "Security": AgentReport(summary="security clean", findings=[]),
             "Correctness": AgentReport(summary="correctness clean", findings=[]),
         }
     )
-    council = Council(provider=provider, context=_ctx())
-    verdict = council.review(diff="diff --git a/x b/x\n+ ok", pr_title="t")
+    # Explicit roster — the default council now has 5 specialists,
+    # tests pin a smaller subset to keep the canned responses scoped.
+    council = Council(
+        provider=provider,
+        context=_ctx(),
+        agents=[SecurityAgent(provider, _ctx()), CorrectnessAgent(provider, _ctx())],
+    )
+    verdict = council.review(
+        diff="diff --git a/x b/x\n+ ok",
+        pr_title="t",
+        parallel=False,  # deterministic order for the assertion
+    )
     assert provider.call_log == ["Security", "Correctness"]
     assert verdict.verdict == "comment"
     assert verdict.findings == []
@@ -88,6 +100,8 @@ def test_council_runs_each_agent_once() -> None:
 
 def test_council_passes_findings_through_arbiter() -> None:
     """Findings from both agents merge into the verdict, sorted by severity."""
+    from code_review_council.agents import CorrectnessAgent
+
     provider = FakeProvider(
         {
             "Security": AgentReport(
@@ -118,7 +132,12 @@ def test_council_passes_findings_through_arbiter() -> None:
             ),
         }
     )
-    verdict = Council(provider=provider, context=_ctx()).review(diff="...", pr_title="t")
+    council = Council(
+        provider=provider,
+        context=_ctx(),
+        agents=[SecurityAgent(provider, _ctx()), CorrectnessAgent(provider, _ctx())],
+    )
+    verdict = council.review(diff="...", pr_title="t", parallel=False)
     assert verdict.verdict == "request_changes"  # HIGH/HIGH = blocking
     assert len(verdict.findings) == 2
     assert verdict.findings[0].severity == "HIGH"
@@ -291,3 +310,216 @@ def test_security_agent_prompt_lists_scope_and_out_of_scope() -> None:
     assert "CSP nonces" in prompt
     # Anti-flattery clause is mandatory
     assert "don't open the summary with 'looks good'" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# skipIf hook + V2 specialists
+# ---------------------------------------------------------------------------
+
+
+def test_frontend_agent_skips_pure_backend_diff() -> None:
+    from code_review_council.agents import FrontendAgent
+
+    pure_python_diff = (
+        "diff --git a/apps/engine/foo.py b/apps/engine/foo.py\n"
+        "+++ b/apps/engine/foo.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    assert FrontendAgent.should_run(pure_python_diff) is False
+
+
+def test_frontend_agent_runs_when_diff_touches_tsx() -> None:
+    from code_review_council.agents import FrontendAgent
+
+    mixed_diff = (
+        "diff --git a/apps/dashboard/src/page.tsx b/apps/dashboard/src/page.tsx\n"
+        "+++ b/apps/dashboard/src/page.tsx\n"
+        "@@ -1 +1 @@\n"
+        "-x\n"
+        "+y\n"
+    )
+    assert FrontendAgent.should_run(mixed_diff) is True
+
+
+def test_database_agent_runs_on_engine_persistence_diff() -> None:
+    from code_review_council.agents import DatabaseAgent
+
+    diff = (
+        "diff --git a/apps/engine/src/dap_engine/persistence/runs.py "
+        "b/apps/engine/src/dap_engine/persistence/runs.py\n"
+        "+++ b/apps/engine/src/dap_engine/persistence/runs.py\n"
+        "@@ -1 +1 @@\n"
+        "+x\n"
+    )
+    assert DatabaseAgent.should_run(diff) is True
+
+
+def test_database_agent_skips_pure_frontend_diff() -> None:
+    from code_review_council.agents import DatabaseAgent
+
+    diff = (
+        "diff --git a/apps/dashboard/page.tsx b/apps/dashboard/page.tsx\n"
+        "+++ b/apps/dashboard/page.tsx\n"
+        "@@ -1 +1 @@\n"
+        "+x\n"
+    )
+    assert DatabaseAgent.should_run(diff) is False
+
+
+def test_council_skips_agents_per_should_run() -> None:
+    """A pure-backend diff doesn't invoke FrontendAgent's provider."""
+    from code_review_council.agents import FrontendAgent
+
+    provider = FakeProvider(
+        {
+            "Security": AgentReport(summary="ok", findings=[]),
+            "Frontend": AgentReport(summary="should not be called", findings=[]),
+        }
+    )
+    council = Council(
+        provider=provider,
+        context=_ctx(),
+        agents=[SecurityAgent(provider, _ctx()), FrontendAgent(provider, _ctx())],
+    )
+    verdict = council.review(
+        diff=(
+            "diff --git a/apps/engine/foo.py b/apps/engine/foo.py\n"
+            "+++ b/apps/engine/foo.py\n"
+            "@@ -1 +1 @@\n"
+            "+x\n"
+        ),
+        parallel=False,
+    )
+    assert provider.call_log == ["Security"]
+    assert "Frontend" not in provider.call_log
+    assert verdict.verdict == "comment"
+
+
+def test_council_returns_empty_verdict_when_every_agent_skips() -> None:
+    from code_review_council.agents import DatabaseAgent, FrontendAgent
+
+    provider = FakeProvider({})
+    council = Council(
+        provider=provider,
+        context=_ctx(),
+        agents=[DatabaseAgent(provider, _ctx()), FrontendAgent(provider, _ctx())],
+    )
+    docs_diff = "diff --git a/README.md b/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n"
+    verdict = council.review(diff=docs_diff)
+    assert provider.call_log == []
+    assert verdict.findings == []
+    assert verdict.review_complete is False
+
+
+def test_council_parallel_path_returns_same_verdict_as_sequential() -> None:
+    """Parallel and sequential should produce identical verdicts on fixed input."""
+    from code_review_council.agents import CorrectnessAgent
+
+    canned = {
+        "Security": AgentReport(
+            summary="sec",
+            findings=[
+                Finding(
+                    severity="MEDIUM",
+                    confidence="HIGH",
+                    file="x.py",
+                    line=1,
+                    issue="s",
+                    suggestion="s",
+                ),
+            ],
+        ),
+        "Correctness": AgentReport(
+            summary="corr",
+            findings=[
+                Finding(
+                    severity="LOW",
+                    confidence="HIGH",
+                    file="x.py",
+                    line=2,
+                    issue="c",
+                    suggestion="c",
+                ),
+            ],
+        ),
+    }
+
+    def fresh_council() -> Council:
+        provider = FakeProvider(canned)
+        return Council(
+            provider=provider,
+            context=_ctx(),
+            agents=[SecurityAgent(provider, _ctx()), CorrectnessAgent(provider, _ctx())],
+        )
+
+    diff = "diff --git a/x.py b/x.py\n+++ b/x.py\n@@\n+x\n"
+    seq = fresh_council().review(diff=diff, parallel=False)
+    par = fresh_council().review(diff=diff, parallel=True)
+    assert seq.verdict == par.verdict
+    assert sorted(f.file + str(f.line) for f in seq.findings) == sorted(
+        f.file + str(f.line) for f in par.findings
+    )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end load-bearing check: HIGH/LOW must NEVER block, even when an
+# agent returns it. This is the single guarantee the whole Confidence
+# field exists to enforce — if this regresses, every "HIGH" tag becomes
+# a false alarm vector.
+# ---------------------------------------------------------------------------
+
+
+def test_high_severity_low_confidence_never_blocks_end_to_end() -> None:
+    """A HIGH-severity / LOW-confidence finding from an agent must NOT block.
+
+    Construction: a single mock agent that ALWAYS returns one
+    HIGH/LOW finding, sent through a real Council. If the arbiter's
+    LOW-confidence drop is ever bypassed (refactor regression, prompt
+    change, anything), this test catches it: the verdict would flip
+    from ``comment`` to ``request_changes`` and the assertion fails.
+
+    This is the test the user explicitly asked for — "sprytny agent-
+    mock który zawsze zwraca HIGH severity / LOW confidence". It
+    exercises the full Council pipeline, not just the arbiter in
+    isolation.
+    """
+    from code_review_council.agents import CorrectnessAgent
+
+    provider = FakeProvider(
+        {
+            # The "Correctness" agent returns one HIGH-severity finding
+            # at LOW confidence — i.e. a hypothetical concern dressed
+            # up as a blocker. Arbiter MUST drop it.
+            "Correctness": AgentReport(
+                summary="suspicious pattern",
+                findings=[
+                    Finding(
+                        severity="HIGH",
+                        confidence="LOW",  # the load-bearing combo
+                        file="apps/api.py",
+                        line=1,
+                        issue="what if user does X — could be a bug",
+                        suggestion="add a guard, maybe?",
+                    ),
+                ],
+            ),
+        }
+    )
+    council = Council(
+        provider=provider,
+        context=_ctx(),
+        agents=[CorrectnessAgent(provider, _ctx())],
+    )
+    verdict = council.review(diff="x", parallel=False)
+
+    # The HIGH/LOW finding must be filtered out.
+    assert verdict.findings == [], (
+        f"LOW-confidence HIGH finding leaked through arbiter: {verdict.findings}"
+    )
+    # Verdict must NOT escalate to request_changes — that would defeat
+    # the whole Confidence-gate design.
+    assert verdict.verdict == "comment", (
+        f"LOW-confidence HIGH triggered block verdict: {verdict.verdict}"
+    )
