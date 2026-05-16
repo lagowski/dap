@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
-from dap_engine.auth.audit import record_audit_event
+from dap_engine.auth.audit import AuditEventType, record_audit_event
 from dap_engine.auth.encryption import EncryptionError, encrypt_value
 from dap_engine.auth.users import current_active_user
 from dap_engine.execution.runner import DEFAULT_RECURSION_LIMIT
@@ -475,6 +475,11 @@ def upsert_instance_env_vars(
 
         preview = _build_preview(value)
         existing = existing_by_key.get(key)
+        # Annotated so mypy narrows to the ``AuditEventType`` Literal
+        # accepted by ``record_audit_event`` below — without it the
+        # assignments would widen to ``str`` and the call would fail
+        # type-checking.
+        event_type: AuditEventType
         if existing is None:
             session.add(
                 InstanceEnvVarORM(
