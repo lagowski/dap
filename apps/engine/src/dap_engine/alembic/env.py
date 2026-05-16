@@ -87,6 +87,33 @@ def run_migrations_online() -> None:
         _run(connectable)
 
 
+def _dialect_name(connection: object) -> str:
+    """Best-effort dialect-name lookup that handles both SQLAlchemy
+    shapes (``Engine`` and ``Connection``) plus any future wrapped /
+    proxied variant.
+
+    Both ``Engine.dialect`` and ``Connection.dialect`` exist in
+    canonical SQLAlchemy, but a proxied connection from a custom
+    pool (rare but legal — e.g. a context-tracing wrapper) might
+    surface the dialect under ``.engine.dialect`` instead. Try
+    that as a fallback before giving up.
+
+    Returns ``""`` (which is never equal to ``"sqlite"`` or
+    ``"postgresql"``) when no dialect can be resolved. The caller
+    treats unknown dialects the same as ``"postgresql"`` —
+    ``render_as_batch`` only matters for SQLite, so a false-negative
+    is the safe default: ALTER ops would skip batch mode, which is
+    a no-op on PostgreSQL.
+    """
+    dialect = getattr(connection, "dialect", None)
+    if dialect is None:
+        # Proxied connection: try ``connection.engine.dialect``.
+        engine = getattr(connection, "engine", None)
+        dialect = getattr(engine, "dialect", None) if engine is not None else None
+    name = getattr(dialect, "name", None) if dialect is not None else None
+    return str(name) if name else ""
+
+
 def _run(connection: object) -> None:
     """Configure alembic with the live connection + run migrations.
 
@@ -94,17 +121,20 @@ def _run(connection: object) -> None:
     runtime-with-shared-connection) don't duplicate the configure
     call. ``connection`` is typed loose because alembic accepts
     either ``Engine`` or ``Connection`` here.
+
+    ``render_as_batch`` is enabled for SQLite only — SQLite doesn't
+    support full ``ALTER TABLE`` natively, and Alembic's batch mode
+    emulates it via copy-to-temp-table. Costs nothing on PostgreSQL
+    so we'd rather have it on per-dialect than risk a future ALTER
+    revision blowing up on SQLite. Dialect resolved via
+    :func:`_dialect_name` which falls back gracefully for proxied
+    connections.
     """
+    is_sqlite = _dialect_name(connection) == "sqlite"
     context.configure(
         connection=connection,  # type: ignore[arg-type]
         target_metadata=target_metadata,
-        # ``render_as_batch`` makes autogenerate emit SQLite-friendly
-        # ALTER TABLE op blocks (SQLite doesn't support full ALTER
-        # natively; batch mode does copy-to-temp-table behind the
-        # scenes). Costs nothing on PostgreSQL.
-        render_as_batch=connection.dialect.name == "sqlite"  # type: ignore[attr-defined]
-        if connection is not None
-        else False,
+        render_as_batch=is_sqlite,
     )
     with context.begin_transaction():
         context.run_migrations()
