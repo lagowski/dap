@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -26,16 +26,16 @@ NEW_PASSWORD = "new-test-password-456"
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-reset-smoke-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="smoke-reset-secret-do-not-use-in-prod",
-        # Opt-in to token logging for the test — the round-trip needs
-        # to extract the token from caplog. Default is off in prod.
-        auth_log_reset_tokens=True,
-    )
-    app = create_app(config)
+def client(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> Iterator[TestClient]:
+    """Custom client — needs ``auth_log_reset_tokens=True`` so the
+    forgot-password hook surfaces the reset token via caplog (the only
+    way to retrieve it without an email-delivery integration). All
+    other test files use the shared conftest fixture; this one
+    overrides locally because the flag is off by default in prod.
+    """
+    app = create_app(engine_config_factory(auth_log_reset_tokens=True))
     with TestClient(app) as c:
         yield c
 

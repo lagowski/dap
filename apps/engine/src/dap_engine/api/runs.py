@@ -13,7 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Imported under TYPE_CHECKING to avoid the cycle with ``dap_engine.app``
+    # (app.py imports this module at startup; ``from __future__ import
+    # annotations`` keeps the signature lazy so mypy still gets the type
+    # but the import doesn't run at module load).
+    from dap_engine.app import EngineConfig
 
 from dap_runtimes import RuntimeRegistry
 from dap_types import NodeExecutionLog, PipelineDefaults, PipelineState, Run, StateSnapshot
@@ -56,7 +63,7 @@ async def trigger_run(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Trigger asynchronous pipeline execution.
@@ -268,7 +275,7 @@ async def resume_run_endpoint(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Resume a paused run from its last LangGraph checkpoint.
@@ -352,7 +359,7 @@ async def approve_gate_endpoint(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Approve a human gate and continue pipeline execution (#164).
@@ -470,7 +477,7 @@ async def retry_node(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Re-execute a single node and continue forward.
@@ -503,7 +510,7 @@ async def skip_node(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Bypass a node and continue with its downstream successors.

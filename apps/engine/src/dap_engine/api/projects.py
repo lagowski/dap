@@ -9,7 +9,13 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Imported under TYPE_CHECKING to avoid the cycle with ``dap_engine.app``
+    # (app.py imports this module). ``from __future__ import annotations``
+    # keeps the dep signature lazy.
+    from dap_engine.app import EngineConfig
 from urllib.parse import urlparse
 
 import httpx
@@ -588,7 +594,7 @@ async def trigger_project_run(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Trigger the project's bound pipeline for a given workflow kind (#66).
