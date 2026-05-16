@@ -16,14 +16,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
 from dap_engine.auth.db import get_async_session
-from dap_engine.auth.users import current_active_user
+from dap_engine.auth.users import require_admin_user
 from dap_engine.persistence.models import UserORM
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -68,9 +68,9 @@ class AdminUserList(BaseModel):
     "",
     response_model=AdminUserList,
     summary="List all users (admin-only)",
+    dependencies=[Depends(require_admin_user)],
 )
 async def list_users(
-    user: UserORM = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
     *,
     include_deleted: bool = Query(
@@ -86,18 +86,11 @@ async def list_users(
 ) -> AdminUserList:
     """Paginated user list.
 
-    Admin-only. Non-admins get ``404`` to match the anti-enumeration
-    rule the sub-A4b2 resource routes use — a normal user hitting
-    ``/users`` must not learn that the endpoint exists. Anonymous
-    callers get ``401`` from the upstream ``current_active_user``
-    dependency before reaching this body.
+    Admin-only via the route-level ``require_admin_user`` dep — non-
+    admins get ``404`` (anti-enumeration, matching the sub-A4b2
+    resource routes); anonymous → ``401`` from the underlying
+    ``current_active_user`` dep.
     """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
-
     where = [] if include_deleted else [UserORM.deleted_at.is_(None)]
     total = (
         await session.scalar(
