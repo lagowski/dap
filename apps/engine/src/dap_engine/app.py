@@ -164,100 +164,271 @@ def parse_cors_origins(raw: str | None) -> list[str] | None:
     return cleaned or None
 
 
+# ---------------------------------------------------------------------------
+# Engine config — nested groups + flat-kwarg compatibility (audit E8)
+# ---------------------------------------------------------------------------
+#
+# The old 28-field flat ``@dataclass`` mixed db / server / auth / oauth /
+# template-registry / crypto concerns in one record (audit complaint:
+# "will keep growing, hard to read"). The five sub-dataclasses below
+# group fields by subsystem so the definition reads like a config
+# table-of-contents rather than a wall of options.
+#
+# Back-compat: ``EngineConfig.__init__`` accepts BOTH old-style flat
+# kwargs (e.g. ``EngineConfig(db_path="...", auth_jwt_secret="...")``,
+# what every test fixture uses today) AND new-style nested-instance
+# kwargs (``EngineConfig(db=DatabaseConfig(path="..."))``). The
+# ``__getattr__`` fallback below maps the legacy flat attribute
+# names to their nested locations, so production code reading
+# ``cfg.auth_jwt_secret`` keeps working during the gradual migration
+# to ``cfg.auth.jwt_secret``.
+
+
 @dataclass
-class EngineConfig:
+class DatabaseConfig:
+    """Database / storage knobs.
+
+    ``database_url`` takes precedence over ``db_path`` when both are
+    set. Prefix determines dialect (``sqlite+aiosqlite://…`` for
+    SQLite, ``postgresql+asyncpg://…`` for PostgreSQL).
+    """
+
     db_path: str = "./.dap/state.db"
-    # When set, takes precedence over db_path.  Prefix determines dialect:
-    #   sqlite://…        → SQLite (same as db_path)
-    #   postgresql+asyncpg://…  → PostgreSQL
     database_url: str | None = None
-    host: str = "127.0.0.1"
-    port: int = 7333
-    # Hard cap for ``POST /agents/dry-run`` (#103). Each invocation pays
-    # real LLM tokens, so we refuse calls whose agent ``budget_limit_usd``
-    # (the top-level field on Agent / AgentDryRunDraft, not anything inside
-    # ``runtime_config``) exceeds this. Belt-and-suspenders against a runaway
-    # form value or a forgotten zero default in the UI.
-    dry_run_budget_usd: float = 0.50
     # PostgreSQL checkpointer pool sizing (#187, #238).
-    # AsyncPostgresSaver serialises checkpoint ops behind a Lock, so only 1
-    # connection is in flight at a time — max_size governs burst concurrency
-    # across simultaneous runs, not within one.  min_size=4 matches the
-    # psycopg_pool default and keeps enough warm connections for the gate
-    # checkpoint write that arrives after a long idle Phase 1.
+    # AsyncPostgresSaver serialises checkpoint ops behind a Lock, so
+    # only 1 connection is in flight at a time — max_size governs
+    # burst concurrency across simultaneous runs, not within one.
+    # min_size=4 matches the psycopg_pool default and keeps enough
+    # warm connections for the gate checkpoint write that arrives
+    # after a long idle Phase 1.
     pg_pool_min_size: int = 4
     pg_pool_max_size: int = 10
+
+
+@dataclass
+class ServerConfig:
+    """HTTP server + per-request limits."""
+
+    host: str = "127.0.0.1"
+    port: int = 7333
     # CORS origins permitted on the engine's REST API (#259). ``None``
-    # means "fall back to ``DEFAULT_CORS_ORIGINS``" — the local-dev list.
-    # Production deployments override via env var ``DAP_CORS_ORIGINS``
-    # (parsed in ``__main__``) or by passing ``cors_origins=[...]`` here.
+    # means "fall back to ``DEFAULT_CORS_ORIGINS``" — the local-dev
+    # list. Production deployments override via env var
+    # ``DAP_CORS_ORIGINS`` or by passing ``cors_origins=[...]`` here.
     cors_origins: list[str] | None = None
-    # Auth (v0.3, see #299).
-    # ``auth_jwt_secret``: required for any auth-protected route.  Tests
-    # set a deterministic value; production reads ``DAP_AUTH_JWT_SECRET``
-    # in ``__main__`` and refuses to start with a default. We accept None
-    # here only to keep the dataclass default-constructible; the lifespan
-    # generates a per-process random secret in that case (sufficient for
-    # local dev where every restart invalidates outstanding tokens).
-    auth_jwt_secret: str | None = None
-    auth_access_ttl_seconds: int = 60 * 15
+    # Hard cap for ``POST /agents/dry-run`` (#103). Each invocation
+    # pays real LLM tokens, so we refuse calls whose agent
+    # ``budget_limit_usd`` exceeds this. Belt-and-suspenders against
+    # a runaway form value or a forgotten zero default in the UI.
+    dry_run_budget_usd: float = 0.50
+
+
+@dataclass
+class AuthConfig:
+    """JWT / password authentication settings.
+
+    ``jwt_secret`` is required for any auth-protected route. Tests
+    set a deterministic value; production reads ``DAP_AUTH_JWT_SECRET``
+    in ``__main__`` and refuses to start with a default. We accept
+    ``None`` here only to keep the dataclass default-constructible;
+    the lifespan generates a per-process random secret in that case
+    (sufficient for local dev where every restart invalidates
+    outstanding tokens).
+    """
+
+    jwt_secret: str | None = None
+    access_ttl_seconds: int = 60 * 15
     # Password-reset token logging (sub-B3 review).
     #
-    # When ``True``, the ``UserManager.on_after_forgot_password`` hook
-    # logs the raw reset token at WARNING level. Useful for self-hosted
-    # dev / one-operator instances that have no email delivery yet —
-    # the operator copies the token out of stdout and hands it to the
-    # user. **Off by default** because reset tokens are credentials;
-    # production log aggregation would otherwise routinely contain
-    # account-takeover material. Set via ``DAP_AUTH_LOG_RESET_TOKENS``.
-    auth_log_reset_tokens: bool = False
-    # OAuth (v0.3, sub-A2). Each provider is opt-in: when both
-    # client_id and client_secret are set the corresponding /auth/<provider>
-    # router is mounted; otherwise nothing is exposed for that provider.
-    # Self-host installs can run with email+password only and add OAuth
-    # later by setting these env vars and restarting.
-    oauth_github_client_id: str | None = None
-    oauth_github_client_secret: str | None = None
-    oauth_google_client_id: str | None = None
-    oauth_google_client_secret: str | None = None
-    # Post-login redirect for OAuth callbacks (sub-B5).
-    #
-    # When set, fastapi-users' OAuth callback redirects the browser to
-    # this URL with the access token as a ``?token=<jwt>`` query
-    # parameter, instead of returning JSON. The dashboard's
+    # When ``True``, the ``UserManager.on_after_forgot_password``
+    # hook logs the raw reset token at WARNING level. Useful for
+    # self-hosted dev / one-operator instances that have no email
+    # delivery yet. **Off by default** because reset tokens are
+    # credentials; production log aggregation would otherwise
+    # routinely contain account-takeover material. Set via
+    # ``DAP_AUTH_LOG_RESET_TOKENS``.
+    log_reset_tokens: bool = False
+
+
+@dataclass
+class OAuthConfig:
+    """GitHub + Google OAuth credentials + post-login redirect.
+
+    Each provider is opt-in: when both client_id and client_secret
+    are set the corresponding ``/auth/<provider>`` router is mounted;
+    otherwise nothing is exposed for that provider. Self-host
+    installs can run with email+password only and add OAuth later
+    by setting these env vars and restarting.
+    """
+
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    # Post-login redirect for OAuth callbacks (sub-B5). When set,
+    # fastapi-users' OAuth callback redirects the browser to this URL
+    # with the access token as a ``?token=<jwt>`` query parameter,
+    # instead of returning JSON. The dashboard's
     # ``/api/auth/oauth/callback`` handler reads the token, sets the
-    # httpOnly cookie, and lands the user on the home page — turning
-    # the OAuth dance into the same cookie-only auth surface password
-    # login uses.
+    # httpOnly cookie, and lands the user on the home page.
     #
     # In dev this points at the dashboard's local URL
     # (``http://localhost:3000/api/auth/oauth/callback``); production
-    # operators set ``DAP_AUTH_OAUTH_REDIRECT_URL`` to the
-    # equivalent dashboard URL. When ``None`` (no dashboard wired)
-    # the callback falls back to returning JSON — useful for
-    # CLI-only deployments.
-    auth_oauth_redirect_url: str | None = None
-    # Template registry (issue #385). When ``template_registry_allowed_hosts``
-    # is empty (default), ``POST /pipelines/import-from-url`` returns 422
-    # — the feature is opt-in. Operators populate the list with literal
-    # hostnames (no wildcards) of trusted bundle sources; the endpoint
-    # rejects URLs whose hostname isn't an exact match.
-    #
-    # ``template_registry_auth_token``: optional Bearer token sent on
-    # every fetch. Common case: a fine-grained GitHub PAT scoped to one
-    # private bundle repo. Per-host tokens land in a follow-up ticket.
-    template_registry_allowed_hosts: list[str] = field(default_factory=list)
-    template_registry_auth_token: str | None = None
-    # Fernet key for at-rest encryption of instance env-var values (#388).
-    # Set via ``DAP_INSTANCE_ENV_VARS_KEY``. When ``None``, the
-    # ``/settings/admin/env-vars`` POST endpoint returns 503 so an
-    # operator notices the misconfiguration immediately instead of
-    # writing rows that can't be decrypted on the next restart.
-    # DELETE and GET work without the key: removing an undecryptable
-    # row is a legitimate cleanup path after a botched rotation, and
-    # the masked preview shown on GET is stored unencrypted alongside
-    # the ciphertext.
+    # operators set ``DAP_AUTH_OAUTH_REDIRECT_URL`` to the equivalent
+    # dashboard URL. When ``None`` (no dashboard wired) the callback
+    # falls back to returning JSON — useful for CLI-only deployments.
+    redirect_url: str | None = None
+
+
+@dataclass
+class TemplateRegistryConfig:
+    """Trusted-source allowlist for ``/pipelines/import-from-url`` (#385).
+
+    When ``allowed_hosts`` is empty (default), the endpoint returns
+    422 — the feature is opt-in. Operators populate the list with
+    literal hostnames (no wildcards) of trusted bundle sources; the
+    endpoint rejects URLs whose hostname isn't an exact match.
+
+    ``auth_token``: optional Bearer token sent on every fetch. Common
+    case: a fine-grained GitHub PAT scoped to one private bundle
+    repo. Per-host tokens land in a follow-up ticket.
+    """
+
+    allowed_hosts: list[str] = field(default_factory=list)
+    auth_token: str | None = None
+
+
+@dataclass
+class CryptoConfig:
+    """At-rest encryption keys.
+
+    ``instance_env_vars_key`` — Fernet key for instance env-var values
+    (#388). Set via ``DAP_INSTANCE_ENV_VARS_KEY``. When ``None``, the
+    ``/settings/admin/env-vars`` POST endpoint returns 503 so an
+    operator notices the misconfiguration immediately instead of
+    writing rows that can't be decrypted on the next restart. DELETE
+    and GET work without the key: removing an undecryptable row is a
+    legitimate cleanup path after a botched rotation, and the masked
+    preview shown on GET is stored unencrypted alongside the
+    ciphertext.
+    """
+
     instance_env_vars_key: str | None = None
+
+
+# Maps every legacy flat field name → ``(group, nested_name)``. Used
+# by ``EngineConfig.__init__`` to route flat kwargs into the right
+# nested group, and by ``__getattr__`` to translate legacy attribute
+# reads. When you add a new field to a nested group, add a row here
+# only if you also want legacy flat-style access — new fields with no
+# pre-existing flat name don't need an entry.
+_FLAT_TO_NESTED: dict[str, tuple[str, str]] = {
+    # DatabaseConfig
+    "db_path": ("db", "db_path"),
+    "database_url": ("db", "database_url"),
+    "pg_pool_min_size": ("db", "pg_pool_min_size"),
+    "pg_pool_max_size": ("db", "pg_pool_max_size"),
+    # ServerConfig
+    "host": ("server", "host"),
+    "port": ("server", "port"),
+    "cors_origins": ("server", "cors_origins"),
+    "dry_run_budget_usd": ("server", "dry_run_budget_usd"),
+    # AuthConfig
+    "auth_jwt_secret": ("auth", "jwt_secret"),
+    "auth_access_ttl_seconds": ("auth", "access_ttl_seconds"),
+    "auth_log_reset_tokens": ("auth", "log_reset_tokens"),
+    # OAuthConfig
+    "oauth_github_client_id": ("oauth", "github_client_id"),
+    "oauth_github_client_secret": ("oauth", "github_client_secret"),
+    "oauth_google_client_id": ("oauth", "google_client_id"),
+    "oauth_google_client_secret": ("oauth", "google_client_secret"),
+    "auth_oauth_redirect_url": ("oauth", "redirect_url"),
+    # TemplateRegistryConfig
+    "template_registry_allowed_hosts": ("template_registry", "allowed_hosts"),
+    "template_registry_auth_token": ("template_registry", "auth_token"),
+    # CryptoConfig
+    "instance_env_vars_key": ("crypto", "instance_env_vars_key"),
+}
+
+_NESTED_GROUP_NAMES = frozenset({"db", "server", "auth", "oauth", "template_registry", "crypto"})
+
+
+@dataclass(init=False)
+class EngineConfig:
+    """Top-level engine config — aggregates the per-subsystem groups.
+
+    Construct with **either** flat kwargs (legacy style — every test
+    fixture in the repo uses this) **or** nested-instance kwargs
+    (preferred for new code, e.g. ``EngineConfig(auth=AuthConfig(
+    jwt_secret="..."))``). Mix-and-match is also fine: a missing
+    group default-factories to its empty form.
+
+    Reading: prefer nested form in new code (``cfg.auth.jwt_secret``).
+    Legacy flat reads (``cfg.auth_jwt_secret``) are translated via
+    ``__getattr__`` to the nested storage so existing production code
+    keeps working during the migration; ruff's ``PLW1641`` will start
+    flagging legacy reads once a future ``@deprecated`` decorator
+    lands.
+    """
+
+    db: DatabaseConfig
+    server: ServerConfig
+    auth: AuthConfig
+    oauth: OAuthConfig
+    template_registry: TemplateRegistryConfig
+    crypto: CryptoConfig
+
+    def __init__(self, **kwargs: Any) -> None:
+        # Group instances passed directly take precedence; missing
+        # groups default to empty instances. Flat kwargs route into
+        # whichever group they belong to via ``_FLAT_TO_NESTED``.
+        nested: dict[str, Any] = {
+            "db": kwargs.pop("db", None) or DatabaseConfig(),
+            "server": kwargs.pop("server", None) or ServerConfig(),
+            "auth": kwargs.pop("auth", None) or AuthConfig(),
+            "oauth": kwargs.pop("oauth", None) or OAuthConfig(),
+            "template_registry": kwargs.pop("template_registry", None) or TemplateRegistryConfig(),
+            "crypto": kwargs.pop("crypto", None) or CryptoConfig(),
+        }
+        # Now sort remaining flat kwargs into their groups.
+        for flat_name in list(kwargs.keys()):
+            mapping = _FLAT_TO_NESTED.get(flat_name)
+            if mapping is None:
+                raise TypeError(
+                    f"EngineConfig got an unexpected keyword argument {flat_name!r}",
+                )
+            group, nested_name = mapping
+            setattr(nested[group], nested_name, kwargs.pop(flat_name))
+        # ``kwargs`` is empty by construction — every entry was popped
+        # into either the nested-instance dict or routed via flat
+        # mapping. If anything remained ``_FLAT_TO_NESTED`` would have
+        # raised above.
+        self.db = nested["db"]
+        self.server = nested["server"]
+        self.auth = nested["auth"]
+        self.oauth = nested["oauth"]
+        self.template_registry = nested["template_registry"]
+        self.crypto = nested["crypto"]
+
+    def __getattr__(self, name: str) -> Any:
+        """Translate legacy flat-attribute reads to their nested home.
+
+        Only called when normal attribute lookup fails (i.e. when the
+        caller used a legacy name that isn't a real ``EngineConfig``
+        attribute). Production code can migrate to
+        ``cfg.section.field`` at its own pace without breaking older
+        callsites. New attribute names that aren't in
+        ``_FLAT_TO_NESTED`` still raise ``AttributeError`` so typos
+        fail loud.
+        """
+        mapping = _FLAT_TO_NESTED.get(name)
+        if mapping is None:
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}",
+            )
+        group, nested_name = mapping
+        return getattr(getattr(self, group), nested_name)
 
 
 def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:
