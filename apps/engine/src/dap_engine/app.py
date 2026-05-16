@@ -518,11 +518,16 @@ class EngineConfig:
         """
         if name in _FLAT_TO_NESTED:
             group, nested_name = _FLAT_TO_NESTED[name]
-            # ``getattr`` to retrieve the nested instance; ``setattr``
-            # to write through. Both go through ``object.__getattribute__``
-            # / the nested group's own ``__setattr__``, which is the
-            # standard dataclass-generated one.
-            setattr(getattr(self, group), nested_name, value)
+            # ``object.__getattribute__`` (not the bare ``getattr``)
+            # to retrieve the nested instance — bypasses our own
+            # ``__getattr__`` fallback so a future entry in
+            # ``_FLAT_TO_NESTED`` that accidentally collides with a
+            # group name (``auth``, ``oauth``, etc.) can't loop into
+            # ``__getattr__`` and recurse here. The collision is
+            # impossible today (the keys are all flat aliases) but
+            # the explicit bypass is defense-in-depth.
+            nested_instance = object.__getattribute__(self, group)
+            setattr(nested_instance, nested_name, value)
         else:
             object.__setattr__(self, name, value)
 

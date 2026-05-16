@@ -18,9 +18,12 @@ from __future__ import annotations
 import pytest
 from dap_engine.app import (
     AuthConfig,
+    CryptoConfig,
     DatabaseConfig,
     EngineConfig,
     OAuthConfig,
+    ServerConfig,
+    TemplateRegistryConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -223,6 +226,71 @@ def test_init_does_not_mutate_passed_in_nested_instances() -> None:
     assert original_auth.access_ttl_seconds == 60 * 15, (
         "EngineConfig.__init__ mutated the caller's AuthConfig instance — "
         "breaks dataclasses.replace() contract"
+    )
+
+
+def test_init_copy_protection_covers_all_six_groups() -> None:
+    """Every nested group, not just ``auth``, is copy-protected.
+
+    Council finding HIGH (#457 round 2): the reviewer claimed the
+    ``copy.copy`` guard only applied to ``db``. False positive —
+    the actual code loops over all 5 non-db groups too. But the
+    earlier test only exercised ``auth``. Pin every group so a
+    future refactor can't accidentally drop the protection for a
+    subset.
+    """
+    # Construct an EngineConfig that mixes EXISTING nested instances
+    # with flat-style overrides. This mirrors what
+    # ``dataclasses.replace(cfg, flat_kwarg=value)`` does internally:
+    # it pulls every field off the source cfg (so every group
+    # comes in as an existing instance) and applies the kwargs on top.
+    # We do it directly here because ``dataclasses.replace`` only
+    # knows the auto-generated init signature (group-only) and the
+    # TypedDict ``Unpack[EngineConfigKwargs]`` annotation isn't
+    # visible to it for mypy.
+    db_orig = DatabaseConfig(db_path="/orig/db")
+    server_orig = ServerConfig(port=1234)
+    auth_orig = AuthConfig(jwt_secret="orig-jwt")
+    oauth_orig = OAuthConfig(github_client_id="orig-gh")
+    tr_orig = TemplateRegistryConfig(allowed_hosts=["orig.example.com"])
+    crypto_orig = CryptoConfig(instance_env_vars_key="orig-fernet")
+
+    cfg2 = EngineConfig(
+        db=db_orig,
+        server=server_orig,
+        auth=auth_orig,
+        oauth=oauth_orig,
+        template_registry=tr_orig,
+        crypto=crypto_orig,
+        # One flat-kwarg mutation per group:
+        db_path="/new/db",
+        port=9999,
+        auth_jwt_secret="new-jwt",
+        oauth_github_client_id="new-gh",
+        template_registry_allowed_hosts=["new.example.com"],
+        instance_env_vars_key="new-fernet",
+    )
+
+    # cfg2 has all the new values.
+    assert cfg2.db.db_path == "/new/db"
+    assert cfg2.server.port == 9999
+    assert cfg2.auth.jwt_secret == "new-jwt"
+    assert cfg2.oauth.github_client_id == "new-gh"
+    assert cfg2.template_registry.allowed_hosts == ["new.example.com"]
+    assert cfg2.crypto.instance_env_vars_key == "new-fernet"
+
+    # Every ORIGINAL nested instance is untouched. If copy.copy was
+    # missing for any group, one of these would have leaked the new
+    # value into the caller's instance.
+    assert db_orig.db_path == "/orig/db", "db group not copy-protected"
+    assert server_orig.port == 1234, "server group not copy-protected"
+    assert auth_orig.jwt_secret == "orig-jwt", "auth group not copy-protected"
+    assert oauth_orig.github_client_id == "orig-gh", "oauth group not copy-protected"
+    assert tr_orig.allowed_hosts == ["orig.example.com"], (
+        "template_registry group not copy-protected"
+    )
+    assert crypto_orig.instance_env_vars_key == "orig-fernet", (
+        "crypto group not copy-protected"
     )
 
 
