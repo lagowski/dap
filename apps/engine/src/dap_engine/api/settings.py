@@ -335,15 +335,18 @@ def _require_admin(user: UserORM) -> None:
 
 
 def _require_encryption_key(config: Any) -> str:
-    """Refuse write paths (POST/DELETE) when no Fernet key is configured.
+    """Refuse POST writes when no Fernet key is configured.
+
+    Only the POST upsert path calls this helper — DELETE deliberately
+    does not require the key (removing a row whose ciphertext we
+    couldn't decrypt is a legitimate cleanup path after a botched
+    rotation), and GET reads use the unencrypted ``preview`` column
+    so the listing works without the key either.
 
     Writing rows we couldn't decrypt on restart would be worse than
     rejecting the write — the admin can rotate / set
     ``DAP_INSTANCE_ENV_VARS_KEY`` and try again. ``503`` (rather than
     500) signals "operator config issue", which is what this is.
-    Read paths (GET) deliberately tolerate a missing key because the
-    preview is stored unencrypted and is the only field the listing
-    needs.
     """
     key = config.instance_env_vars_key
     if not key:
