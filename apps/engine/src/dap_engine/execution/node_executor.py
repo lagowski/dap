@@ -56,6 +56,7 @@ class NodeContext:
         timeout_override_ms: int | None = None,
         project_working_directory: str | None = None,
         project_env_vars: dict[str, str] | None = None,
+        instance_env_vars: dict[str, str] | None = None,
     ) -> None:
         self.run_id = run_id
         self.node_id = node_id
@@ -70,6 +71,10 @@ class NodeContext:
         # ``None`` / ``{}`` for ad-hoc runs without a project.
         self.project_working_directory = project_working_directory
         self.project_env_vars = project_env_vars or {}
+        # Instance env-var overlay (#388) — shared operator-set defaults
+        # that flow into every run on top of the engine env. Captured
+        # here once per graph build, immutable for the run's lifetime.
+        self.instance_env_vars = instance_env_vars or {}
 
     @property
     def merged_runtime_config(self) -> dict[str, Any]:
@@ -144,6 +149,7 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
                 **ctx.merged_runtime_config,
                 "__pipeline_state": state.model_dump(mode="json"),
             },
+            instance_env_vars=ctx.instance_env_vars,
             project_env_vars=ctx.project_env_vars,
         )
 

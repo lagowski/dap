@@ -292,11 +292,16 @@ class _BaseCliAdapter(BaseAdapter):
 
         argv = self._build_argv(binary, config, extra_args)
 
-        # Three-layer env (#65): engine env → project env_vars → per-agent
-        # runtime_config.env (highest). The CLI reads its provider-specific
-        # auth env var (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY)
-        # itself; we just propagate the documented overlays.
-        env, env_error = merge_subprocess_env(task.project_env_vars, config)
+        # Four-layer env (#65 + #388): engine env → instance env_vars
+        # → project env_vars → per-agent runtime_config.env (highest).
+        # The CLI reads its provider-specific auth env var
+        # (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY) itself;
+        # we just propagate the documented overlays.
+        env, env_error = merge_subprocess_env(
+            task.project_env_vars,
+            config,
+            instance_env_vars=task.instance_env_vars,
+        )
         if env_error is not None:
             return self._failed(
                 env_error,

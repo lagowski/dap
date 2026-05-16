@@ -24,12 +24,20 @@ class RuntimeTask(BaseModel):
     budget_usd: float | None = None
     runtime_config: dict[str, Any] = Field(default_factory=dict)
     context: RuntimeContext = Field(default_factory=RuntimeContext)
+    # Instance-scoped env overlay (#388). Shared key/value store
+    # configured by the operator via ``/settings/admin/env-vars``.
+    # Decrypted at run start and threaded through every task. Layered
+    # between engine env (base) and project env vars, so project
+    # overrides still win on conflict, but every project picks up
+    # operator-set defaults (e.g. GitHub tokens) automatically without
+    # per-project configuration.
+    instance_env_vars: dict[str, str] = Field(default_factory=dict)
     # Project-scoped env overlay (#65). Subprocess-spawning adapters
-    # layer these onto the inherited engine env, *before* per-agent
-    # ``runtime_config.env`` is applied — so agent overrides still win,
-    # project env still beats engine env, engine env is the base.
-    # Empty dict for ad-hoc runs and api-call style adapters that
-    # don't spawn subprocesses.
+    # layer these onto the inherited engine env, *after* the instance
+    # overlay and *before* per-agent ``runtime_config.env`` is applied
+    # — so agent overrides still win, project env beats instance env,
+    # instance env beats engine env. Empty dict for ad-hoc runs and
+    # api-call style adapters that don't spawn subprocesses.
     project_env_vars: dict[str, str] = Field(default_factory=dict)
 
 
