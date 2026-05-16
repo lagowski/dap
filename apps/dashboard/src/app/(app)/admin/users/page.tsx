@@ -27,6 +27,7 @@ import {
 } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import type { AdminUser } from "@/lib/api/types";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { cn } from "@/lib/utils";
 
 function formatTimestamp(value: string | null): string {
@@ -46,6 +47,7 @@ export default function AdminUsersPage() {
   const currentUser = useCurrentUser();
   const updateUser = useUpdateAdminUser();
   const deleteUser = useDeleteAdminUser();
+  const confirmDestructive = useConfirmDestructive();
 
   // Track which user a mutation is currently in flight for so we can
   // disable that row's actions individually rather than the whole
@@ -146,12 +148,13 @@ export default function AdminUsersPage() {
                           payload: { is_active: !user.is_active },
                         })
                       }
-                      onDelete={() => {
-                        if (
-                          window.confirm(
-                            `Soft-delete ${user.email}? They will lose access immediately; ownership history is preserved.`,
-                          )
-                        ) {
+                      onDelete={async () => {
+                        const ok = await confirmDestructive({
+                          title: "Soft-delete user",
+                          description: `Soft-delete ${user.email}? They will lose access immediately; ownership history is preserved.`,
+                          confirmLabel: "Soft-delete",
+                        });
+                        if (ok) {
                           deleteUser.mutate(user.id);
                         }
                       }}

@@ -24,6 +24,7 @@ import {
 } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import type { AdminApiToken } from "@/lib/api/types";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -59,6 +60,7 @@ export default function AdminApiTokensPage() {
     limit: PAGE_SIZE,
   });
   const revoke = useAdminRevokeApiToken();
+  const confirmDestructive = useConfirmDestructive();
 
   const pendingRevokeId =
     revoke.isPending && typeof revoke.variables === "string"
@@ -153,12 +155,13 @@ export default function AdminApiTokensPage() {
                       token={token}
                       isSelf={token.owner_id === currentUser.data?.id}
                       isRevoking={pendingRevokeId === token.id}
-                      onRevoke={() => {
-                        if (
-                          window.confirm(
-                            `Revoke "${token.name}" (owned by ${token.owner_email})? The token will stop authenticating immediately.`,
-                          )
-                        ) {
+                      onRevoke={async () => {
+                        const ok = await confirmDestructive({
+                          title: "Revoke API token",
+                          description: `Revoke "${token.name}" (owned by ${token.owner_email})? The token will stop authenticating immediately.`,
+                          confirmLabel: "Revoke",
+                        });
+                        if (ok) {
                           revoke.mutate(token.id);
                         }
                       }}

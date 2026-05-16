@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TriggerRunDialog } from "@/components/trigger-run-dialog";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import type { PipelineExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
@@ -29,18 +30,20 @@ export default function PipelinesPage() {
   const archive = useArchivePipeline();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const confirmDestructive = useConfirmDestructive();
 
   const handleImportClick = () => {
     setImportError(null);
     fileInputRef.current?.click();
   };
 
-  const handleArchive = (id: string, name: string) => {
-    if (
-      !window.confirm(
-        `Archive pipeline "${name}"? Run history is preserved; the pipeline disappears from the list. Agents it used stay intact.`,
-      )
-    ) {
+  const handleArchive = async (id: string, name: string) => {
+    const ok = await confirmDestructive({
+      title: "Archive pipeline",
+      description: `Archive pipeline "${name}"? Run history is preserved; the pipeline disappears from the list. Agents it used stay intact.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(id);
