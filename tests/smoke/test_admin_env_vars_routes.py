@@ -185,9 +185,7 @@ def test_post_bulk_upsert_uses_single_select(client: TestClient) -> None:
         # Compile to SQL text once per call to inspect the table name —
         # cheap (no DB round-trip).
         try:
-            compiled = str(
-                statement.compile(compile_kwargs={"literal_binds": False})
-            ).lower()
+            compiled = str(statement.compile(compile_kwargs={"literal_binds": False})).lower()
         except Exception:
             compiled = ""
         if compiled.startswith("select") and "instance_env_vars" in compiled:

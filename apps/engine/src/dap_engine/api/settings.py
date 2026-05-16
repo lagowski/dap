@@ -455,9 +455,7 @@ def upsert_instance_env_vars(
     # roll back at commit. That's an acceptable corner case for a
     # single-operator install (the loser sees 5xx and retries).
     existing_rows = (
-        session.execute(
-            select(InstanceEnvVarORM).where(InstanceEnvVarORM.key.in_(body.keys()))
-        )
+        session.execute(select(InstanceEnvVarORM).where(InstanceEnvVarORM.key.in_(body.keys())))
         .scalars()
         .all()
     )
