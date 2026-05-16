@@ -77,10 +77,20 @@ class BaseAgent:
             "MEDIUM = likely. LOW = hypothetical — those will be filtered "
             "out unless severity is NIT, so don't pad with hypotheticals.\n"
             "5. Empty findings IS the correct answer when nothing in your "
-            "scope is wrong. Quality > quantity.\n"
-            "6. Don't open the summary with 'looks good' or any flattery. "
+            "scope is wrong. Quality > quantity. False positives cost "
+            "reviewer time; missed nits do not.\n"
+            "6. If a coding pattern in this diff matches an existing "
+            "convention elsewhere in the project, do NOT flag it as a "
+            "problem in a new PR.\n"
+            "7. Missing docstring or missing type hint → severity NIT, "
+            "never MEDIUM, unless its absence creates a real, "
+            "demonstrable bug in this diff.\n"
+            "8. A one-line config change, a comment-only change, or a "
+            "doc-only change does NOT require a new test. Don't flag "
+            "missing tests in those cases.\n"
+            "9. Don't open the summary with 'looks good' or any flattery. "
             "Lead with the most important observation in your scope.\n"
-            "7. When your scope holds no remaining actionable items, set "
+            "10. When your scope holds no remaining actionable items, set "
             "``review_complete: true``.\n\n"
             "Output the structured AgentReport JSON schema you've been given."
         )
@@ -99,6 +109,22 @@ class BaseAgent:
             f"PR description:\n{body_clipped}\n\n"
             f"Diff:\n```diff\n{diff}\n```"
         )
+
+    @classmethod
+    def should_run(cls, diff: str) -> bool:
+        """Return False to skip this agent for the given diff.
+
+        Default: always run. Subclasses can short-circuit when the
+        diff plainly doesn't touch their domain — e.g. a Frontend
+        agent skipping pure-Python diffs. Skipping saves an LLM call
+        and shortens the council's wall-clock time.
+
+        The check is intentionally cheap (substring / regex on the
+        raw diff text). Subclasses that need more sophisticated
+        detection should override ``review`` directly and return an
+        empty report instead.
+        """
+        return True
 
     def review(self, *, pr_title: str, pr_body: str, diff: str) -> AgentReport:
         """Run the agent and return its report.
