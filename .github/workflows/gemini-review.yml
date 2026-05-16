@@ -113,22 +113,23 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install Gemini SDK + Pydantic
+      - name: Install code-review-council
         if: steps.skip-bot.outputs.skip != 'true'
         run: |
-          # Pinned versions so a model-name or SDK-shape change doesn't
-          # silently break the gate. Bump deliberately when refreshing.
-          pip install --no-cache-dir \
-            'google-genai>=1.33.0,<2.0' \
-            'pydantic>=2.9.0,<3.0'
+          # Install the in-tree council package — pulls google-genai
+          # and pydantic transitively via its pyproject deps. ``pip
+          # install -e`` so the script picks up the latest source on
+          # the PR's branch (the workflow file lives on develop but
+          # the script runs against the PR's checkout).
+          pip install --no-cache-dir -e ./packages/code-review-council
 
-      - name: Run Gemini review
+      - name: Run code review council
         if: steps.skip-bot.outputs.skip != 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
-          # Override to gemini-2.5-pro for higher quality (counts against
-          # a separate, smaller free-tier quota).
+          # Override to gemini-2.5-pro / gemini-3-pro-preview for higher
+          # quality (counts against separate, smaller free-tier quotas).
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
         run: python .github/scripts/gemini_review.py
