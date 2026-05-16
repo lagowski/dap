@@ -70,17 +70,22 @@ export default function AuthError({
 
   /**
    * Secondary action: drop the user on /login regardless of which
-   * auth route crashed. ``router.push`` is a no-op when the current
-   * pathname is already ``/login``, but pairing it with
-   * ``router.refresh()`` forces a server re-render so the dead-button
-   * trap from round 2 doesn't return. ``router.push`` also respects
-   * Next's ``basePath`` config (a hardcoded ``location.href``
-   * wouldn't — Gemini strict review, #441 round 3).
+   * auth route crashed. Three calls in lockstep:
+   *   - ``router.push("/login")`` — respects Next's ``basePath``;
+   *     a hardcoded ``location.href`` would 404 under e.g. ``/dap/``.
+   *   - ``router.refresh()`` — covers the App Router's silent no-op
+   *     when ``push`` targets the current pathname (round 2).
+   *   - ``reset()`` — the auth-segment error boundary is *shared*
+   *     across login/signup/reset/OAuth-callback routes, so Next
+   *     does NOT remount it on intra-segment navigation. Without
+   *     ``reset()`` the user's URL updates but the error screen
+   *     stays painted (Gemini strict review, #441 round 4).
    */
   const handleBackToLogin = () => {
     startTransition(() => {
       router.push("/login");
       router.refresh();
+      reset();
     });
   };
 

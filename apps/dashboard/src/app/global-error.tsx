@@ -48,64 +48,76 @@ export default function GlobalError({
   return (
     <html lang="en" style={{ colorScheme: "light dark" }}>
       <head>
-        {/* Viewport meta is normally inherited from the root layout,
-            but ``global-error`` *replaces* the entire ``<html>``
-            tree — root layout doesn't run. Without this tag mobile
-            browsers render the fallback at simulated desktop width
-            and scale down, making the text unreadably tiny
-            (Gemini strict review, #441 round 3). */}
+        {/* ``global-error`` *replaces* the entire ``<html>`` tree, so
+            none of the inherited tags from the root layout apply. Re-
+            declare the essentials by hand:
+            - ``charset`` so the browser doesn't fall back to guessing
+              the encoding (Gemini strict review, #441 round 4).
+            - ``viewport`` so mobile renders at device width instead of
+              simulated desktop (round 3). */}
+        <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashboard error — DAP</title>
       </head>
+      {/* Layout constraints live on an inner wrapper instead of
+          ``<body>``: applying ``maxWidth`` to body would expose the
+          html element's default background outside the centred column
+          on wider viewports (Gemini strict review, #441 round 4). */}
       <body
-        // ``Canvas`` / ``CanvasText`` are CSS system colors that
-        // auto-respect the OS theme (Gemini strict review, #441
-        // round 3). Falls back to white/black on browsers without
-        // system-color support, which is still readable.
         style={{
           backgroundColor: "Canvas",
           color: "CanvasText",
           fontFamily: "system-ui, -apple-system, sans-serif",
-          padding: "2rem",
-          maxWidth: "640px",
-          margin: "4rem auto",
+          margin: 0,
           lineHeight: 1.5,
         }}
       >
-        <h1 style={{ fontSize: "1.25rem", margin: "0 0 1rem" }}>
-          Dashboard failed to load
-        </h1>
-        <p style={{ opacity: 0.7, margin: "0 0 1rem" }}>
-          The application could not render its root layout. This usually
-          means the engine is unreachable or the build is broken.
-        </p>
-        {error.digest ? (
-          <p
-            style={{
-              fontFamily: "ui-monospace, monospace",
-              fontSize: "0.85rem",
-              opacity: 0.6,
-              margin: "0 0 1rem",
-            }}
-          >
-            Error ref: <span>{error.digest}</span>
-          </p>
-        ) : null}
-        <button
-          // Use Next's ``reset`` to honour the framework contract —
-          // see file header (Gemini strict review, #441 round 3).
-          onClick={() => reset()}
+        <main
           style={{
-            padding: "0.5rem 1rem",
-            border: "1px solid CanvasText",
-            borderRadius: "0.375rem",
-            background: "Canvas",
-            color: "CanvasText",
-            cursor: "pointer",
+            maxWidth: "640px",
+            margin: "4rem auto",
+            padding: "2rem",
           }}
         >
-          Reload page
-        </button>
+          <h1 style={{ fontSize: "1.25rem", margin: "0 0 1rem" }}>
+            Dashboard failed to load
+          </h1>
+          <p style={{ opacity: 0.7, margin: "0 0 1rem" }}>
+            The application could not render its root layout. This usually
+            means the engine is unreachable or the build is broken.
+          </p>
+          {error.digest ? (
+            <p
+              style={{
+                fontFamily: "ui-monospace, monospace",
+                fontSize: "0.85rem",
+                opacity: 0.6,
+                margin: "0 0 1rem",
+              }}
+            >
+              Error ref:{" "}
+              {/* ``userSelect: all`` so a single click selects the
+                  digest for copy-paste — matches the other two
+                  boundaries' ``select-all`` Tailwind class. */}
+              <span style={{ userSelect: "all" }}>{error.digest}</span>
+            </p>
+          ) : null}
+          <button
+            // Use Next's ``reset`` to honour the framework contract —
+            // see file header (Gemini strict review, #441 round 3).
+            onClick={() => reset()}
+            style={{
+              padding: "0.5rem 1rem",
+              border: "1px solid CanvasText",
+              borderRadius: "0.375rem",
+              background: "Canvas",
+              color: "CanvasText",
+              cursor: "pointer",
+            }}
+          >
+            Reload page
+          </button>
+        </main>
       </body>
     </html>
   );
