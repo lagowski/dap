@@ -6,9 +6,15 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "TBD" }
 dependencies = [
-    # Google Gen AI SDK — current/non-deprecated. ``google-generativeai``
-    # is the older package and Google has marked it deprecated.
+    # Google Gen AI SDK — for GeminiProvider. Current/non-deprecated;
+    # ``google-generativeai`` (the older package) is end-of-life.
     "google-genai>=1.33.0,<2.0",
+    # OpenAI-compatible HTTP client for OpenRouterProvider. ``httpx``
+    # rather than the ``openai`` SDK because we only need raw chat-
+    # completions + JSON-object response_format, and a one-file httpx
+    # call keeps the surface area auditable. ``openai`` SDK adds 30+
+    # transitive deps for capabilities we don't use.
+    "httpx>=0.27.0,<1.0",
     "pydantic>=2.9.0,<3.0",
 ]
 

@@ -1,22 +1,33 @@
 name: Gemini Review
 
-# Calls Google Gemini on every open PR to develop/main, posts a real
-# PR review, and records the verdict on a `gemini-review` check_run so
-# branch protection has something to gate on.
+# Calls the multi-agent Code Review Council on every open PR to
+# develop/main, posts a real PR review, and records the verdict on a
+# `gemini-review` check_run so branch protection has something to gate
+# on. The check name stays `gemini-review` for branch-protection
+# compatibility, even though the council can route to either
+# OpenRouter or Gemini under the hood.
+#
+# Provider routing (handled by .github/scripts/gemini_review.py):
+#   - `OPENROUTER_API_KEY` set → OpenRouter (multi-model gateway —
+#     deepseek/Claude/GPT/etc., switchable via `OPENROUTER_MODEL` var).
+#   - Otherwise → Gemini (free-tier fallback).
 #
 # Replaces the previous Copilot-based gate (see commit history /
 # .github/workflows/copilot-review-required.yml). Picked because:
 #   - GitHub Copilot Code Review quota was exhausted.
-#   - Gemini 2.5 Flash on AI Studio's free tier covers ~250 PR reviews
-#     per day at zero cost.
+#   - OpenRouter unlocks models that catch bug classes Gemini misses
+#     (per Speecher's own gate experience) and lets us rotate models
+#     without redeploying the workflow.
 #   - Posting an *actual* review (not just a check_run) gives the
 #     dashboard inline comments instead of a black-box pass/fail.
 #
 # Setup required (one-time, see .github/scripts/gemini_review.py
 # docstring for the full list):
-#   1. Add `GEMINI_API_KEY` to repo secrets
-#      (Settings → Secrets and variables → Actions → New repository secret).
-#      Grab a key from https://aistudio.google.com/apikey.
+#   1. Add `OPENROUTER_API_KEY` to repo secrets (preferred) and/or
+#      `GEMINI_API_KEY` (fallback).
+#      Settings → Secrets and variables → Actions → New repository secret.
+#      OpenRouter keys: https://openrouter.ai/keys
+#      Gemini keys: https://aistudio.google.com/apikey
 #   2. Update branch protection on `develop` (and `main`): swap the
 #      required check `copilot-review` → `gemini-review`. The old
 #      copilot-review-required.yml workflow has been removed in the
@@ -116,20 +127,28 @@ jobs:
       - name: Install code-review-council
         if: steps.skip-bot.outputs.skip != 'true'
         run: |
-          # Install the in-tree council package — pulls google-genai
-          # and pydantic transitively via its pyproject deps. ``pip
-          # install -e`` so the script picks up the latest source on
-          # the PR's branch (the workflow file lives on develop but
-          # the script runs against the PR's checkout).
+          # Install the in-tree council package — pulls google-genai,
+          # httpx (OpenRouter route), and pydantic transitively via
+          # the package's pyproject deps. ``pip install -e`` so the
+          # script picks up the latest source on the PR's branch (the
+          # workflow file lives on develop but the script runs against
+          # the PR's checkout).
           pip install --no-cache-dir -e ./packages/code-review-council
 
       - name: Run code review council
         if: steps.skip-bot.outputs.skip != 'true'
         env:
+          # Provider keys: OpenRouter preferred, Gemini fallback. The
+          # script picks based on which is non-empty (see
+          # ``_select_provider`` in gemini_review.py). Both are passed
+          # so the same workflow works whether the org standardized on
+          # OpenRouter or stayed on Gemini's free tier.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
-          # Override to gemini-2.5-pro / gemini-3-pro-preview for higher
-          # quality (counts against separate, smaller free-tier quotas).
+          # Model overrides — flip via repo / org / env vars without
+          # touching the script. Empty string ⇒ provider default.
+          OPENROUTER_MODEL: ${{ vars.OPENROUTER_MODEL || '' }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
         run: python .github/scripts/gemini_review.py

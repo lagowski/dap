@@ -355,12 +355,14 @@ version = "0.1.0"
 source = { editable = "packages/code-review-council" }
 dependencies = [
     { name = "google-genai" },
+    { name = "httpx" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "google-genai", specifier = ">=1.33.0,<2.0" },
+    { name = "httpx", specifier = ">=0.27.0,<1.0" },
     { name = "pydantic", specifier = ">=2.9.0,<3.0" },
 ]
 
