@@ -17,27 +17,9 @@ this is the canonical "old DB upgraded to v0.3" path.
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.migrations import apply_migrations
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-smoke-ownership-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="ownership-smoke-secret",
-    )
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
 
 
 def test_user_id_columns_exist_on_resource_tables(client: TestClient) -> None:

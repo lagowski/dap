@@ -13,30 +13,13 @@ Verifies ``GET /audit/events``:
 from __future__ import annotations
 
 import asyncio
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.models import UserORM
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 PASSWORD = "test-password-123"
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-audit-routes-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="audit-routes-smoke-secret",
-    )
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
 
 
 def _register(c: TestClient, email: str) -> str:
