@@ -112,7 +112,11 @@ def test_defaults_match_v0_3_0() -> None:
 def test_unknown_kwarg_raises_typeerror() -> None:
     """Typos in keyword arguments fail loud rather than silently dropped."""
     with pytest.raises(TypeError, match="unexpected keyword argument 'bogus'"):
-        EngineConfig(bogus="something")
+        # Intentionally type-incorrect: the whole point of this test is
+        # to confirm that bogus kwargs blow up at runtime too — mypy
+        # already catches them at compile time thanks to the
+        # ``Unpack[EngineConfigKwargs]`` annotation on __init__.
+        EngineConfig(bogus="something")  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -193,3 +197,102 @@ def test_nested_groups_are_independent_instances() -> None:
     assert cfg2.template_registry.allowed_hosts == [], (
         "default-factory list leaked across EngineConfig instances"
     )
+
+
+# ---------------------------------------------------------------------------
+# Hardening — round-2 council findings on this same PR (#457)
+# ---------------------------------------------------------------------------
+
+
+def test_init_does_not_mutate_passed_in_nested_instances() -> None:
+    """Passing a nested instance + a flat kwarg must not mutate the instance.
+
+    Council finding HIGH (#457 round 1): ``EngineConfig.__init__`` was
+    setattr'ing the caller's nested instance when flat kwargs landed
+    on the same group. ``dataclasses.replace(cfg, auth_jwt_secret=
+    "new")`` would mutate the original ``cfg.auth`` because replace()
+    passes the existing ``cfg.auth`` object back into ``__init__``.
+    Fix: ``copy.copy`` the nested instance before mutating.
+    """
+    original_auth = AuthConfig(jwt_secret="original")
+    cfg = EngineConfig(auth=original_auth, auth_access_ttl_seconds=42)
+
+    # The nested instance inside cfg has the updated TTL...
+    assert cfg.auth.access_ttl_seconds == 42
+    # ... but the CALLER's instance is unchanged.
+    assert original_auth.access_ttl_seconds == 60 * 15, (
+        "EngineConfig.__init__ mutated the caller's AuthConfig instance — "
+        "breaks dataclasses.replace() contract"
+    )
+
+
+def test_dataclasses_replace_does_not_leak_state() -> None:
+    """``dataclasses.replace`` returns a fresh, independent instance.
+
+    The contract: ``replace(original, ...)`` returns NEW state; the
+    original is untouched. Without the ``copy.copy`` in ``__init__``,
+    flat-style replace would mutate the original's nested objects.
+    """
+    import dataclasses
+
+    cfg1 = EngineConfig(auth_jwt_secret="first", db_path="/tmp/orig.db")
+    cfg2 = dataclasses.replace(cfg1, auth=AuthConfig(jwt_secret="second"))
+
+    # cfg2 has the new value.
+    assert cfg2.auth.jwt_secret == "second"
+    # cfg1 is untouched — that's the whole point of replace().
+    assert cfg1.auth.jwt_secret == "first", (
+        "dataclasses.replace leaked state into the original EngineConfig"
+    )
+    # And the unrelated field carries through to cfg2.
+    assert cfg2.db.db_path == "/tmp/orig.db"
+
+
+def test_sensitive_fields_not_in_repr() -> None:
+    """Secrets must not appear in ``__repr__`` (leak vector via logs).
+
+    Council finding MEDIUM (#457 round 1): all five secret-bearing
+    fields (jwt_secret, github_client_secret, google_client_secret,
+    template_registry.auth_token, instance_env_vars_key) need
+    ``repr=False`` so a Sentry traceback or operator's ``print(cfg)``
+    doesn't leak the value.
+    """
+    cfg = EngineConfig(
+        auth_jwt_secret="JWT-SECRET-VALUE",
+        oauth_github_client_secret="GH-SECRET-VALUE",
+        oauth_google_client_secret="G-SECRET-VALUE",
+        template_registry_auth_token="REGISTRY-TOKEN-VALUE",
+        instance_env_vars_key="FERNET-KEY-VALUE",
+    )
+
+    rendered = repr(cfg)
+    assert "JWT-SECRET-VALUE" not in rendered
+    assert "GH-SECRET-VALUE" not in rendered
+    assert "G-SECRET-VALUE" not in rendered
+    assert "REGISTRY-TOKEN-VALUE" not in rendered
+    assert "FERNET-KEY-VALUE" not in rendered
+
+    # Non-secret fields should still appear (verify repr isn't all-off)
+    assert "127.0.0.1" in rendered or "host=" in rendered  # ServerConfig.host default
+
+
+def test_setattr_routes_legacy_flat_writes_to_nested() -> None:
+    """``cfg.auth_jwt_secret = "new"`` updates the nested storage.
+
+    Council finding MEDIUM (#457 round 1): without ``__setattr__``,
+    a legacy flat write would create a divergent instance attribute
+    and the nested ``cfg.auth.jwt_secret`` would silently retain the
+    old value. Migrated code reading nested vs. unmigrated code
+    reading flat would see different values. Routing the write keeps
+    both surfaces in sync.
+    """
+    cfg = EngineConfig(auth_jwt_secret="old")
+    assert cfg.auth.jwt_secret == "old"
+    assert cfg.auth_jwt_secret == "old"  # via __getattr__
+
+    # Write via legacy flat name.
+    cfg.auth_jwt_secret = "new"
+
+    # Both surfaces show the new value — they're the same storage.
+    assert cfg.auth.jwt_secret == "new", "legacy flat write didn't reach nested storage"
+    assert cfg.auth_jwt_secret == "new"

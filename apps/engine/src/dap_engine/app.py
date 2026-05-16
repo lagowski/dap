@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NotRequired, TypedDict, Unpack
 
 import psycopg
 from dap_runtimes import create_default_registry
@@ -237,7 +238,11 @@ class AuthConfig:
     outstanding tokens).
     """
 
-    jwt_secret: str | None = None
+    # ``repr=False`` — never expose the JWT secret in tracebacks /
+    # debug prints / Sentry payloads. ``__repr__`` of ``AuthConfig``
+    # will show ``AuthConfig(access_ttl_seconds=900, log_reset_tokens
+    # =False)`` instead of leaking the actual secret.
+    jwt_secret: str | None = field(default=None, repr=False)
     access_ttl_seconds: int = 60 * 15
     # Password-reset token logging (sub-B3 review).
     #
@@ -262,10 +267,13 @@ class OAuthConfig:
     by setting these env vars and restarting.
     """
 
+    # client_id values are visible in OAuth's authorize URL anyway —
+    # not secrets, so safe in __repr__. ``client_secret`` values ARE
+    # secrets; ``repr=False`` keeps them out of tracebacks.
     github_client_id: str | None = None
-    github_client_secret: str | None = None
+    github_client_secret: str | None = field(default=None, repr=False)
     google_client_id: str | None = None
-    google_client_secret: str | None = None
+    google_client_secret: str | None = field(default=None, repr=False)
     # Post-login redirect for OAuth callbacks (sub-B5). When set,
     # fastapi-users' OAuth callback redirects the browser to this URL
     # with the access token as a ``?token=<jwt>`` query parameter,
@@ -296,7 +304,8 @@ class TemplateRegistryConfig:
     """
 
     allowed_hosts: list[str] = field(default_factory=list)
-    auth_token: str | None = None
+    # Bearer token — same secret-handling policy as JWT / OAuth secrets.
+    auth_token: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -314,7 +323,8 @@ class CryptoConfig:
     ciphertext.
     """
 
-    instance_env_vars_key: str | None = None
+    # Fernet key — secret, kept out of __repr__.
+    instance_env_vars_key: str | None = field(default=None, repr=False)
 
 
 # Maps every legacy flat field name → ``(group, nested_name)``. Used
@@ -354,6 +364,52 @@ _FLAT_TO_NESTED: dict[str, tuple[str, str]] = {
 _NESTED_GROUP_NAMES = frozenset({"db", "server", "auth", "oauth", "template_registry", "crypto"})
 
 
+class EngineConfigKwargs(TypedDict, total=False):
+    """Typed kwargs surface for ``EngineConfig.__init__``.
+
+    Lets mypy catch typos and type errors that ``**kwargs: Any`` would
+    silently allow. Every entry is ``NotRequired`` because each is
+    optional with a sensible default in the corresponding nested
+    dataclass.
+
+    Both kwarg styles share this dict — ``db`` accepts a full
+    ``DatabaseConfig`` instance, the flat-style fields below it accept
+    their scalar types. ``EngineConfig.__init__`` enforces that the
+    nested-instance kwargs (``db``, ``auth``, etc.) are not combined
+    with their flat-style counterparts via the
+    ``_assert_no_double_specification`` check, so mypy doesn't need
+    to model that mutual-exclusion.
+    """
+
+    # Nested-instance kwargs (preferred for new code)
+    db: NotRequired[DatabaseConfig]
+    server: NotRequired[ServerConfig]
+    auth: NotRequired[AuthConfig]
+    oauth: NotRequired[OAuthConfig]
+    template_registry: NotRequired[TemplateRegistryConfig]
+    crypto: NotRequired[CryptoConfig]
+    # Flat-style kwargs (legacy — every test fixture uses these)
+    db_path: NotRequired[str]
+    database_url: NotRequired[str | None]
+    pg_pool_min_size: NotRequired[int]
+    pg_pool_max_size: NotRequired[int]
+    host: NotRequired[str]
+    port: NotRequired[int]
+    cors_origins: NotRequired[list[str] | None]
+    dry_run_budget_usd: NotRequired[float]
+    auth_jwt_secret: NotRequired[str | None]
+    auth_access_ttl_seconds: NotRequired[int]
+    auth_log_reset_tokens: NotRequired[bool]
+    oauth_github_client_id: NotRequired[str | None]
+    oauth_github_client_secret: NotRequired[str | None]
+    oauth_google_client_id: NotRequired[str | None]
+    oauth_google_client_secret: NotRequired[str | None]
+    auth_oauth_redirect_url: NotRequired[str | None]
+    template_registry_allowed_hosts: NotRequired[list[str]]
+    template_registry_auth_token: NotRequired[str | None]
+    instance_env_vars_key: NotRequired[str | None]
+
+
 @dataclass(init=False)
 class EngineConfig:
     """Top-level engine config — aggregates the per-subsystem groups.
@@ -379,18 +435,33 @@ class EngineConfig:
     template_registry: TemplateRegistryConfig
     crypto: CryptoConfig
 
-    def __init__(self, **kwargs: Any) -> None:
-        # Group instances passed directly take precedence; missing
-        # groups default to empty instances. Flat kwargs route into
-        # whichever group they belong to via ``_FLAT_TO_NESTED``.
+    def __init__(self, **kwargs: Unpack[EngineConfigKwargs]) -> None:
+        # ``copy.copy`` defends against the ``dataclasses.replace``
+        # contract: ``replace(cfg, foo="x")`` passes the existing
+        # nested instances back to ``__init__`` along with the new
+        # flat kwarg. Without the copy, the flat-kwarg setattr would
+        # mutate the original cfg's nested object — leaking new state
+        # into the "old" config and breaking caller assumptions about
+        # ``replace`` returning a fresh instance.
+        #
+        # ``is None`` (not ``or``) so a falsy-but-valid nested
+        # instance (e.g., a user-built ``DatabaseConfig()`` with all
+        # defaults — bool() of any dataclass is True today but the
+        # idiom shouldn't depend on that) survives the fallback.
+        db = kwargs.pop("db", None)
         nested: dict[str, Any] = {
-            "db": kwargs.pop("db", None) or DatabaseConfig(),
-            "server": kwargs.pop("server", None) or ServerConfig(),
-            "auth": kwargs.pop("auth", None) or AuthConfig(),
-            "oauth": kwargs.pop("oauth", None) or OAuthConfig(),
-            "template_registry": kwargs.pop("template_registry", None) or TemplateRegistryConfig(),
-            "crypto": kwargs.pop("crypto", None) or CryptoConfig(),
+            "db": copy.copy(db) if db is not None else DatabaseConfig(),
         }
+        for group_name, default_cls in (
+            ("server", ServerConfig),
+            ("auth", AuthConfig),
+            ("oauth", OAuthConfig),
+            ("template_registry", TemplateRegistryConfig),
+            ("crypto", CryptoConfig),
+        ):
+            value = kwargs.pop(group_name, None)  # type: ignore[misc]
+            nested[group_name] = copy.copy(value) if value is not None else default_cls()
+
         # Now sort remaining flat kwargs into their groups.
         for flat_name in list(kwargs.keys()):
             mapping = _FLAT_TO_NESTED.get(flat_name)
@@ -399,17 +470,16 @@ class EngineConfig:
                     f"EngineConfig got an unexpected keyword argument {flat_name!r}",
                 )
             group, nested_name = mapping
-            setattr(nested[group], nested_name, kwargs.pop(flat_name))
-        # ``kwargs`` is empty by construction — every entry was popped
-        # into either the nested-instance dict or routed via flat
-        # mapping. If anything remained ``_FLAT_TO_NESTED`` would have
-        # raised above.
-        self.db = nested["db"]
-        self.server = nested["server"]
-        self.auth = nested["auth"]
-        self.oauth = nested["oauth"]
-        self.template_registry = nested["template_registry"]
-        self.crypto = nested["crypto"]
+            # Mutate the COPY, not the caller's original.
+            setattr(nested[group], nested_name, kwargs.pop(flat_name))  # type: ignore[misc]
+
+        # Bypass our own ``__setattr__`` (which would loop) by going
+        # through ``object.__setattr__``. Each group field name is in
+        # ``_NESTED_GROUP_NAMES`` so the setattr-router would route it
+        # back here harmlessly, but skipping the indirection is
+        # clearer.
+        for group_name, value in nested.items():
+            object.__setattr__(self, group_name, value)
 
     def __getattr__(self, name: str) -> Any:
         """Translate legacy flat-attribute reads to their nested home.
@@ -429,6 +499,32 @@ class EngineConfig:
             )
         group, nested_name = mapping
         return getattr(getattr(self, group), nested_name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Route legacy flat-attribute writes to their nested home.
+
+        Without this, ``cfg.auth_jwt_secret = "new"`` would create an
+        instance attribute on ``EngineConfig`` itself that diverges
+        from the nested storage — migrated code reading
+        ``cfg.auth.jwt_secret`` would see the old value, unmigrated
+        code reading ``cfg.auth_jwt_secret`` would see the new one.
+        Routing the write keeps the two surfaces in sync.
+
+        Nested-group field names (``db``, ``server``, etc.) go through
+        ``object.__setattr__`` directly so the initial ``__init__``
+        wiring doesn't recurse. Unknown names also use the direct
+        path — Python's dataclass machinery (and tests that monkey-
+        patch attributes) need that escape hatch.
+        """
+        if name in _FLAT_TO_NESTED:
+            group, nested_name = _FLAT_TO_NESTED[name]
+            # ``getattr`` to retrieve the nested instance; ``setattr``
+            # to write through. Both go through ``object.__getattribute__``
+            # / the nested group's own ``__setattr__``, which is the
+            # standard dataclass-generated one.
+            setattr(getattr(self, group), nested_name, value)
+        else:
+            object.__setattr__(self, name, value)
 
 
 def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:
