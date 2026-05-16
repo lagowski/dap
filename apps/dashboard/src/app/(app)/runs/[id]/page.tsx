@@ -18,6 +18,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { RunStatusBadge } from "@/components/status-badge";
 import { PipelineGraph } from "@/components/pipeline-graph";
 import { NodeDetailPanel } from "@/components/node-detail-panel";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import type { Agent, Pipeline, Run } from "@/lib/api/types";
 
@@ -138,6 +139,7 @@ function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) 
   const pause = usePauseRun();
   const resume = useResumeRun();
   const abort = useAbortRun();
+  const confirmDestructive = useConfirmDestructive();
 
   const status = run.final_status;
   if (status !== "running" && status !== "paused") {
@@ -151,8 +153,13 @@ function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) 
   const gateNode = run.paused_at_node ?? null;
   const isAtGate = status === "paused" && gateNode != null && approvalNodes.has(gateNode);
 
-  const handleAbort = () => {
-    if (window.confirm("Abort this run? This cannot be undone.")) {
+  const handleAbort = async () => {
+    const ok = await confirmDestructive({
+      title: "Abort run",
+      description: "Abort this run? This cannot be undone.",
+      confirmLabel: "Abort",
+    });
+    if (ok) {
       abort.mutate(run.id);
     }
   };
@@ -233,6 +240,7 @@ function RunningBanner({
 function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
   const approve = useApproveGate();
   const abort = useAbortRun();
+  const confirmDestructive = useConfirmDestructive();
 
   const gateNode = run.paused_at_node!;
   // Show Approve whenever paused_at_node is set — the backend already
@@ -244,8 +252,13 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
 
   const busy = approve.isPending || abort.isPending;
 
-  const handleAbort = () => {
-    if (window.confirm("Abort this run? This cannot be undone.")) {
+  const handleAbort = async () => {
+    const ok = await confirmDestructive({
+      title: "Abort run",
+      description: "Abort this run? This cannot be undone.",
+      confirmLabel: "Abort",
+    });
+    if (ok) {
       abort.mutate(run.id);
     }
   };

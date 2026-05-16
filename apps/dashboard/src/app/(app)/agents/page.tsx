@@ -9,6 +9,7 @@ import { ApiError, formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
@@ -47,13 +48,15 @@ export default function AgentsPage() {
   const importAgent = useImportAgent();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const confirmDestructive = useConfirmDestructive();
 
-  const handleArchive = (id: string, name: string) => {
-    if (
-      !window.confirm(
-        `Archive agent "${name}"? It will disappear from pickers and the list. Run history keeps the agent reference intact.`,
-      )
-    ) {
+  const handleArchive = async (id: string, name: string) => {
+    const ok = await confirmDestructive({
+      title: "Archive agent",
+      description: `Archive agent "${name}"? It will disappear from pickers and the list. Run history keeps the agent reference intact.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(id);

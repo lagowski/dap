@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RunStatusBadge } from "@/components/status-badge";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { WorkflowCards } from "@/components/projects/workflow-cards";
 
 const ID_PREFIX = 8;
@@ -24,6 +25,7 @@ export default function ProjectDetailPage({
   const router = useRouter();
   const { data: project, isPending, isError, error } = useProject(id);
   const archive = useArchiveProject();
+  const confirmDestructive = useConfirmDestructive();
 
   if (isPending) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
@@ -40,12 +42,13 @@ export default function ProjectDetailPage({
     );
   }
 
-  const handleArchive = () => {
-    if (
-      !window.confirm(
-        `Archive project "${project.name}"? Triggers will 409, but existing runs keep their project_id.`,
-      )
-    ) {
+  const handleArchive = async () => {
+    const ok = await confirmDestructive({
+      title: "Archive project",
+      description: `Archive project "${project.name}"? Triggers will 409, but existing runs keep their project_id.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(project.id, {
