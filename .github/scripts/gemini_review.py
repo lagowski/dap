@@ -238,13 +238,25 @@ def list_pr_reviews(repo: str, pr_number: int) -> list[dict[str, object]]:
     scroll our marker off page 1 and miss the skip cache. The
     ``--paginate`` flag concatenates pages into one JSON array which
     is exactly what :func:`find_cached_review` consumes.
+
+    Validates the parsed shape — if GitHub ever returns an error
+    object (``{"message": "..."}``) instead of an array, we'd
+    otherwise pass it to ``find_cached_review`` which iterates and
+    would fail with a confusing ``TypeError``. Better to surface the
+    real shape early.
     """
     raw = gh_capture(
         "api",
         "--paginate",
         f"repos/{repo}/pulls/{pr_number}/reviews",
     )
-    return json.loads(raw)  # type: ignore[no-any-return]
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        raise RuntimeError(
+            f"Expected ``gh api`` to return a JSON array of reviews, got "
+            f"{type(parsed).__name__}: {str(parsed)[:200]}",
+        )
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +487,16 @@ def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 — each return is a disti
     # Cache check — if a prior council run already produced a verdict
     # for this exact head SHA, refresh the check_run and bail. Saves
     # an LLM call per workflow re-trigger on the same commit.
+    #
+    # No race-condition handling here. The workflow YAML's
+    # ``concurrency: group: gemini-review-<pr>, cancel-in-progress:
+    # true`` guarantees that a new run on the same PR cancels the
+    # in-flight one before this check runs — so two simultaneous
+    # council invocations against the same head SHA can't happen.
+    # If that guard is ever removed from the workflow, the worst
+    # case is a duplicate council run (extra LLM tokens, two
+    # near-identical review bodies), not a correctness bug — the
+    # marker cache hit on the next trigger still works.
     try:
         prior_reviews = list_pr_reviews(repo, pr_number)
     except subprocess.CalledProcessError as exc:

@@ -73,10 +73,14 @@ def sanitize_user_content(text: str | None) -> str:
     in the agent system instruction (see
     :meth:`code_review_council.agents.base.BaseAgent.build_system_instruction`).
 
-    ``None`` / empty input returns ``""`` so callers can pipe straight
-    into f-string formatting without a None-check.
+    ``None`` / empty / non-string input returns ``""`` so callers can
+    pipe straight into f-string formatting without a None-check. The
+    explicit ``isinstance`` guard is defense-in-depth: the type hint
+    says ``str | None`` but a malformed upstream payload (e.g. a dict
+    where a string was expected) would otherwise hit ``re.sub`` and
+    raise a confusing ``TypeError`` deep in the call stack.
     """
-    if not text:
+    if not isinstance(text, str) or not text:
         return ""
     out = _CODEFENCE_RE.sub("'''", text)
     # Strip-not-substitute: a benign replacement still leaves prompt
@@ -136,10 +140,11 @@ def strip_marker_tags(text: str | None) -> str:
     legitimate marker (appended by the workflow script at body
     render time) is the only marker that survives in posted bodies.
 
-    ``None`` / empty input returns ``""`` so callers can pipe through
-    without a None-check.
+    ``None`` / empty / non-string input returns ``""`` so callers can
+    pipe through without a None-check. Same defense-in-depth rationale
+    as :func:`sanitize_user_content`.
     """
-    if not text:
+    if not isinstance(text, str) or not text:
         return ""
     out = _VERDICT_TAG_RE.sub("", text)
     out = _MARKER_TAG_RE.sub("", out)

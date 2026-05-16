@@ -98,6 +98,26 @@ def test_safe_body_respects_custom_fallback() -> None:
     assert safe_body(None, fallback="N/A") == "N/A"
 
 
+def test_sanitize_user_content_rejects_non_string_input() -> None:
+    """A malformed upstream payload (dict/list/int) returns "" cleanly.
+
+    Without the isinstance guard, ``re.sub(_CODEFENCE_RE, ..., text)``
+    would raise ``TypeError`` deep in the call stack — confusing for
+    debugging and a possible crash vector if a future caller pipes
+    in something that's typed as ``Any``.
+    """
+    # mypy would catch these at static-check time; the runtime guard
+    # is defense-in-depth for code paths the type checker can't see.
+    assert sanitize_user_content({"key": "val"}) == ""  # type: ignore[arg-type]
+    assert sanitize_user_content([1, 2, 3]) == ""  # type: ignore[arg-type]
+    assert sanitize_user_content(42) == ""  # type: ignore[arg-type]
+
+
+def test_safe_body_handles_non_string_input_via_sanitizer() -> None:
+    """``safe_body`` inherits the type guard via ``sanitize_user_content``."""
+    assert safe_body({"unexpected": "payload"}) == "(no description)"  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # strip_marker_tags — agent-output sanitization (cache-poisoning defense)
 # ---------------------------------------------------------------------------

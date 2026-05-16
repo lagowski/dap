@@ -119,15 +119,33 @@ class OpenRouterProvider:
 
         with httpx.Client(timeout=self._timeout_s) as client:
             response = client.post(OPENROUTER_API_URL, json=payload, headers=headers)
-            response.raise_for_status()
+            # Catch HTTP errors here so we can scrub the response body
+            # before re-raising. Some OpenAI-compatible gateways echo
+            # the request's Authorization header (or its prefix) into
+            # error responses; an uncaught ``HTTPStatusError`` would
+            # propagate the full body to the workflow's exception
+            # handler, which writes it to a check_run summary visible
+            # to anyone with PR-read access. Redact instead.
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(
+                    f"OpenRouter HTTP {response.status_code} (body redacted)",
+                ) from exc
             body = response.json()
 
         # OpenRouter follows the OpenAI shape: ``choices[0].message.content``.
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
+            # Don't include the raw body in the error message — same
+            # concern as ``HTTPStatusError`` above. Show the top-level
+            # keys so a debugger can still see whether OpenRouter sent
+            # something OpenAI-shaped at all without dumping potentially
+            # sensitive content.
+            top_keys = sorted(body.keys()) if isinstance(body, dict) else type(body).__name__
             raise RuntimeError(
-                f"OpenRouter response missing choices/message: {body!r}",
+                f"OpenRouter response missing choices/message (top-level keys: {top_keys})",
             ) from exc
 
         if not content or not content.strip():
