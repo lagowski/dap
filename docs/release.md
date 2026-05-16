@@ -26,10 +26,11 @@ checklist**.
 ### PyPI trusted publishers
 
 Each PyPI project (`dap-cli`, `dap-engine`, `dap-schemas`,
-`dap-runtimes`, `dap-prompt-dsl`, `dap-cortex`) needs a
-trusted-publisher rule pointing at this repo's `release.yml`
-workflow. For an existing project (which is the case for all six
-after v0.3.0):
+`dap-runtimes`, `dap-prompt-dsl`) needs a trusted-publisher rule
+pointing at this repo's `release.yml` workflow. (`dap-cortex` was
+extracted to its own repo after v0.3.0 — releases now flow from
+there, not from here.) For an existing project (which is the case
+for all five after v0.3.0):
 
 1. Sign in to PyPI as the project owner.
 2. Open the project's PyPI page → **Manage** → **Publishing**.
@@ -82,7 +83,8 @@ commands below use the placeholder so you can copy them verbatim.
    ./scripts/bump-version.sh <version>
    ```
    Rewrites every `pyproject.toml` version field, every first-party
-   `__version__` constant (CLI + cortex), and refreshes `uv.lock`
+   `__version__` constant (currently only ``apps/cli``), and
+   refreshes `uv.lock`
    so the lock matches the bumped pyprojects. Idempotent —
    re-running with the same value is a no-op. Validates the input
    shape (loose semver: `x.y.z` or `x.y.z-rcN`).

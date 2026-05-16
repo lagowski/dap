@@ -58,8 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Package READMEs rewritten in English** (`packages/types/`,
-  `packages/prompt-dsl/`, `packages/runtimes/`, `packages/cortex/`,
-  `apps/cli/`, `apps/engine/`). These READMEs feed PyPI's "long
+  `packages/prompt-dsl/`, `packages/runtimes/`, `apps/cli/`,
+  `apps/engine/`). These READMEs feed PyPI's "long
   description" field on each project page; the originals carried
   Polish content that looked unfinished to international
   visitors. Each is now a self-contained professional summary

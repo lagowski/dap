@@ -78,7 +78,7 @@ jobs:
 
       - name: pip-audit
         # Audits the synced venv (uv.lock-frozen). Workspace packages
-        # (dap-*, cortex) are skipped as expected — they are local, not
+        # (dap-*) are skipped as expected — they are local, not
         # on PyPI. CVE detection covers all transitive dependencies.
         run: uv run pip-audit
 
