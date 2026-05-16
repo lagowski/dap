@@ -151,12 +151,6 @@ class PipelineRunner:
         invoke_input: PipelineState | None = None if resume else initial_state
 
         approval_nodes = set(pipeline.defaults.approval_required_nodes)
-        # Pin the auto-approve decision *now*, before the graph runs (#389).
-        # Read from the Run row's persisted ``initial_state``, not from the
-        # LangGraph snapshot — see ``_read_auto_approve_from_run`` for why
-        # a snapshot read would be unsafe (nodes can mutate extensions
-        # mid-run via state_delta).
-        auto_approve = _read_auto_approve_from_run(self.session, run_id)
 
         try:
             result = await graph.ainvoke(invoke_input, config=config)
@@ -170,42 +164,126 @@ class PipelineRunner:
         # This is a normal stop — raise RunnerInterrupt so the caller marks the
         # run as paused rather than finalized (#164).
         #
-        # Exception (#389): when the run's state carries
-        # ``extensions.auto_approve = True``, drive the graph past each gate
-        # by re-invoking with ``None`` until no approval node is pending. The
-        # gate node code still executes — we only suppress the interrupt-
-        # before pause. Looping handles pipelines with multiple gates
-        # (the cortex bundle's 3-gate flow is the canonical case).
+        # Exception (#389): when the Run row carries
+        # ``initial_state.extensions.auto_approve = True``, drive the graph
+        # past each gate by re-invoking with ``None`` until no approval
+        # node is pending. The gate node code still executes — we only
+        # suppress the interrupt-before pause. The auto-approve resume
+        # loop has defensive caps (see ``_drive_auto_approve_loop``) so
+        # a misconfigured graph can't spin the background task forever.
         if approval_nodes and self.checkpointer is not None:
-            checkpoint_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
-            snap = await graph.aget_state(checkpoint_config)
-            pending = list(snap.next) if snap.next else []
-            while pending and any(n in approval_nodes for n in pending):
-                if auto_approve:
-                    logger.warning(
-                        "run %s: auto_approve=True — skipping approval gate(s) %s",
-                        run_id,
-                        pending,
-                    )
-                    try:
-                        result = await graph.ainvoke(None, config=config)
-                    except Exception as exc:
-                        logger.exception(
-                            "pipeline execution failed for run %s during auto-approve resume",
-                            run_id,
-                        )
-                        msg = f"Execution failed: {type(exc).__name__}: {exc}"
-                        raise RunnerError(msg) from exc
-                    snap = await graph.aget_state(checkpoint_config)
-                    pending = list(snap.next) if snap.next else []
-                    continue
+            # Pin the auto-approve decision *once* — read from the Run row's
+            # persisted ``initial_state``, not the LangGraph snapshot, so
+            # a mid-run state_delta can't flip the flag (see
+            # ``_read_auto_approve_from_run``). Lazy: only evaluated when
+            # the pipeline can actually pause, keeping the no-gate hot
+            # path free of an extra DB read.
+            auto_approve = _read_auto_approve_from_run(self.session, run_id)
+            result = await self._drive_auto_approve_loop(
+                graph=graph,
+                run_id=run_id,
+                invoke_config=config,
+                approval_nodes=approval_nodes,
+                auto_approve=auto_approve,
+                last_result=result,
+            )
+
+        return PipelineState.model_validate(result)
+
+    async def _drive_auto_approve_loop(
+        self,
+        *,
+        graph: Any,
+        run_id: str,
+        invoke_config: dict[str, Any],
+        approval_nodes: set[str],
+        auto_approve: bool,
+        last_result: Any,
+    ) -> Any:
+        """Resolve a graph that may have paused at an approval gate (#389).
+
+        Three exit paths:
+
+        - **Naturally exits** when no pending node is in ``approval_nodes``
+          — returns the most recent ``ainvoke`` result unchanged.
+        - **Raises ``RunnerInterrupt``** (normal pause path) when at
+          least one approval node is pending and ``auto_approve`` is
+          False. The orchestrator catches this and marks the run paused.
+        - **Raises ``RunnerError``** (defensive caps) when auto-approve
+          is enabled but the graph fails to advance: either the same
+          set of pending nodes appears two iterations in a row (genuine
+          no-progress) or the loop exceeds ``max(2 * |approval_nodes|, 8)``
+          iterations (a cyclic / over-gated graph). Both signal a
+          misconfiguration the operator must fix; failing fast is
+          safer than burning CPU on an infinite resume.
+
+        Extracted from ``run()`` so the cap logic is unit-testable
+        without spinning up a full LangGraph + DB stack (Copilot
+        review on PR #436).
+        """
+        checkpoint_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
+        snap = await graph.aget_state(checkpoint_config)
+        pending = list(snap.next) if snap.next else []
+
+        # Each ``ainvoke(None, ...)`` resets LangGraph's recursion_limit
+        # budget, so an upper bound on resume iterations is the only
+        # thing standing between a misconfigured graph and an infinite
+        # background loop. ``len(approval_nodes) * 2`` allows healthy
+        # pipelines two passes per gate before bailing; the floor of 8
+        # covers single-gate pipelines that might legitimately churn a
+        # few times during a complex resume.
+        max_resume_iterations = max(len(approval_nodes) * 2, 8)
+        iterations = 0
+        previous_pending: list[str] | None = None
+        result = last_result
+
+        while pending and any(n in approval_nodes for n in pending):
+            if not auto_approve:
                 logger.info("run %s interrupted before approval node(s): %s", run_id, pending)
                 raise RunnerInterrupt(
                     next_nodes=pending,
                     gate_state=snap.values if isinstance(snap.values, dict) else None,
                 )
 
-        return PipelineState.model_validate(result)
+            if previous_pending is not None and pending == previous_pending:
+                msg = (
+                    f"auto-approve resume made no progress past nodes {pending} "
+                    f"for run {run_id} — likely cyclic or misconfigured "
+                    "approval_required_nodes."
+                )
+                logger.error(msg)
+                raise RunnerError(msg)
+
+            if iterations >= max_resume_iterations:
+                msg = (
+                    f"auto-approve exceeded {max_resume_iterations} resume "
+                    f"iterations for run {run_id} (still pending: {pending}) "
+                    "— refusing to spin further; check pipeline "
+                    "approval_required_nodes for cycles."
+                )
+                logger.error(msg)
+                raise RunnerError(msg)
+
+            logger.warning(
+                "run %s: auto_approve=True — skipping approval gate(s) %s",
+                run_id,
+                pending,
+            )
+            previous_pending = pending
+            iterations += 1
+            try:
+                result = await graph.ainvoke(None, config=invoke_config)
+            except Exception as exc:
+                logger.exception(
+                    "pipeline execution failed for run %s during auto-approve resume",
+                    run_id,
+                )
+                msg = f"Execution failed: {type(exc).__name__}: {exc}"
+                raise RunnerError(msg) from exc
+            snap = await graph.aget_state(checkpoint_config)
+            pending = list(snap.next) if snap.next else []
+
+        return result
 
     async def rewind_and_run(
         self,

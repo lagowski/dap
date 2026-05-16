@@ -504,3 +504,180 @@ def test_auto_approve_stored_in_initial_state_extensions(
     assert extensions.get("auto_approve") is True, (
         f"initial_state.extensions must persist auto_approve, got {extensions!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Defensive caps on the auto-approve resume loop (Copilot review on PR #436)
+# ---------------------------------------------------------------------------
+#
+# Each ``ainvoke(None, ...)`` resets LangGraph's recursion_limit budget, so a
+# cyclic / misconfigured graph could otherwise spin the background task
+# forever. We test the caps directly on ``_drive_auto_approve_loop`` with a
+# mocked graph — constructing a real LangGraph that genuinely cycles past
+# ``interrupt_before`` is impractical (the framework doesn't make it easy
+# to misconfigure that way), but the loop logic is straightforward to
+# exercise in isolation.
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_loop_raises_on_no_progress() -> None:
+    """When the same set of nodes is pending two iterations in a row, the
+    resume loop must fail loudly instead of spinning forever."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from dap_engine.execution.runner import PipelineRunner, RunnerError
+
+    stuck_snap = MagicMock()
+    stuck_snap.next = ("n2",)
+    stuck_snap.values = {"extensions": {}}
+
+    graph = MagicMock()
+    graph.aget_state = AsyncMock(return_value=stuck_snap)
+    graph.ainvoke = AsyncMock(return_value={"final_status": "running"})
+
+    runner = PipelineRunner(
+        session=MagicMock(),
+        registry=MagicMock(),
+        checkpointer=MagicMock(),
+    )
+
+    with pytest.raises(RunnerError, match="no progress past nodes"):
+        await runner._drive_auto_approve_loop(
+            graph=graph,
+            run_id="r-stuck",
+            invoke_config={},
+            approval_nodes={"n2"},
+            auto_approve=True,
+            last_result={},
+        )
+    # Called exactly twice: first iteration runs, second sees the same
+    # pending list and bails BEFORE invoking — so the count of ainvoke
+    # calls is bounded. (Without the no-progress check this would be
+    # capped by max_resume_iterations and ainvoke would run that many
+    # times before we bail.)
+    assert graph.ainvoke.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_loop_raises_on_iteration_cap() -> None:
+    """Even if every iteration produces a *different* pending set (so the
+    no-progress check doesn't fire), the loop must bail at the hard cap
+    rather than running forever."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from dap_engine.execution.runner import PipelineRunner, RunnerError
+
+    # Rotate pending through a cycle so previous_pending never matches —
+    # forces the iteration cap to be the active backstop.
+    rotation = [("n2",), ("n3",), ("n4",), ("n2",), ("n3",), ("n4",)] * 5
+    call_index = {"i": 0}
+
+    def aget_state_side_effect(_config: object) -> object:
+        snap = MagicMock()
+        snap.next = rotation[call_index["i"] % len(rotation)]
+        snap.values = {"extensions": {}}
+        call_index["i"] += 1
+        return snap
+
+    graph = MagicMock()
+    graph.aget_state = AsyncMock(side_effect=aget_state_side_effect)
+    graph.ainvoke = AsyncMock(return_value={"final_status": "running"})
+
+    runner = PipelineRunner(
+        session=MagicMock(),
+        registry=MagicMock(),
+        checkpointer=MagicMock(),
+    )
+
+    approval_nodes = {"n2", "n3", "n4"}
+    # max_resume_iterations = max(3*2, 8) = 8 for this approval set.
+    expected_cap = max(len(approval_nodes) * 2, 8)
+
+    with pytest.raises(RunnerError, match=f"exceeded {expected_cap} resume iterations"):
+        await runner._drive_auto_approve_loop(
+            graph=graph,
+            run_id="r-cycle",
+            invoke_config={},
+            approval_nodes=approval_nodes,
+            auto_approve=True,
+            last_result={},
+        )
+    # ainvoke is called exactly ``expected_cap`` times — the cap-check
+    # fires on the iteration that would have been #(cap+1).
+    assert graph.ainvoke.await_count == expected_cap
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_loop_returns_when_graph_advances() -> None:
+    """Sanity check: when the graph genuinely progresses past gates, the
+    loop terminates with the last ``ainvoke`` result."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from dap_engine.execution.runner import PipelineRunner
+
+    # First aget_state: pending = ("n2",) — gate.
+    # Second aget_state (after one ainvoke): pending = () — done.
+    snap_gated = MagicMock()
+    snap_gated.next = ("n2",)
+    snap_gated.values = {"extensions": {}}
+    snap_done = MagicMock()
+    snap_done.next = ()
+    snap_done.values = {"extensions": {}}
+
+    graph = MagicMock()
+    graph.aget_state = AsyncMock(side_effect=[snap_gated, snap_done])
+    graph.ainvoke = AsyncMock(return_value={"final_status": "success"})
+
+    runner = PipelineRunner(
+        session=MagicMock(),
+        registry=MagicMock(),
+        checkpointer=MagicMock(),
+    )
+
+    result = await runner._drive_auto_approve_loop(
+        graph=graph,
+        run_id="r-ok",
+        invoke_config={},
+        approval_nodes={"n2"},
+        auto_approve=True,
+        last_result={"final_status": "running"},
+    )
+    assert result == {"final_status": "success"}
+    assert graph.ainvoke.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_loop_raises_runner_interrupt_when_flag_off() -> None:
+    """Loop must fall through to the normal RunnerInterrupt path when
+    auto_approve is False — confirms the cap logic doesn't interfere
+    with the pause-at-gate behavior."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from dap_engine.execution.runner import PipelineRunner, RunnerInterrupt
+
+    gated_snap = MagicMock()
+    gated_snap.next = ("n2",)
+    gated_snap.values = {"extensions": {}}
+
+    graph = MagicMock()
+    graph.aget_state = AsyncMock(return_value=gated_snap)
+    graph.ainvoke = AsyncMock(return_value={})
+
+    runner = PipelineRunner(
+        session=MagicMock(),
+        registry=MagicMock(),
+        checkpointer=MagicMock(),
+    )
+
+    with pytest.raises(RunnerInterrupt) as exc_info:
+        await runner._drive_auto_approve_loop(
+            graph=graph,
+            run_id="r-pause",
+            invoke_config={},
+            approval_nodes={"n2"},
+            auto_approve=False,
+            last_result={},
+        )
+    assert exc_info.value.next_nodes == ["n2"]
+    # ainvoke never runs — we pause before any resume.
+    assert graph.ainvoke.await_count == 0
