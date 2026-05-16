@@ -26,7 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dap_engine.auth.api_tokens import generate_token
 from dap_engine.auth.audit import record_audit_event_async
 from dap_engine.auth.db import get_async_session
-from dap_engine.auth.users import current_active_user_jwt_only
+from dap_engine.auth.users import (
+    current_active_user_jwt_only,
+    require_admin_user_jwt_only,
+)
 from dap_engine.persistence.models import ApiTokenORM, UserORM
 
 router = APIRouter(prefix="/auth/api-tokens", tags=["auth"])
@@ -208,9 +211,9 @@ class AdminApiTokenList(BaseModel):
     "/admin",
     response_model=AdminApiTokenList,
     summary="List every user's API tokens (admin-only)",
+    dependencies=[Depends(require_admin_user_jwt_only)],
 )
 async def list_all_api_tokens(
-    user: UserORM = Depends(current_active_user_jwt_only),
     session: AsyncSession = Depends(get_async_session),
     *,
     include_revoked: bool = Query(
@@ -228,17 +231,11 @@ async def list_all_api_tokens(
 ) -> AdminApiTokenList:
     """Paginated list of every user's tokens.
 
-    Admin-only — JWT-protected (same as the user-scoped routes here
-    so an API token can't enumerate other API tokens). Non-admin gets
-    ``404`` (anti-enumeration, mirrors the rest of the admin surface).
-    Anonymous gets ``401`` from the JWT-only dependency.
+    Admin-only via :func:`require_admin_user_jwt_only` — JWT-protected
+    (same as the user-scoped routes here so an API token can't
+    enumerate other API tokens). Non-admin gets ``404`` (anti-
+    enumeration); anonymous gets ``401``.
     """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
-
     where: list[ColumnElement[bool]] = []
     if not include_revoked:
         # "Currently valid" = not revoked AND not expired. Without the
@@ -303,7 +300,7 @@ async def list_all_api_tokens(
 )
 async def admin_revoke_api_token(
     token_id: uuid.UUID,
-    user: UserORM = Depends(current_active_user_jwt_only),
+    user: UserORM = Depends(require_admin_user_jwt_only),
     session: AsyncSession = Depends(get_async_session),
 ) -> None:
     """Soft-revoke any token, regardless of owner.
@@ -313,14 +310,9 @@ async def admin_revoke_api_token(
     log clearly distinguishes self-revocations from admin
     interventions.
 
-    Non-admin → ``404`` (anti-enumeration). Anonymous → ``401``.
+    Admin-only via :func:`require_admin_user_jwt_only` — non-admin
+    gets ``404`` (anti-enumeration); anonymous gets ``401``.
     """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
-
     stmt = select(ApiTokenORM).where(ApiTokenORM.id == token_id)
     row = (await session.execute(stmt)).scalars().one_or_none()
     if row is None:
