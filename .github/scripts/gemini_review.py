@@ -52,41 +52,100 @@ MAX_DIFF_CHARS = 60_000
 MAX_BODY_CHARS = 4_000
 
 
+class Finding(BaseModel):
+    """A single review observation. The schema is intentionally rigid —
+    the strict prompt instructs the model to populate every field; vague
+    findings without a file/line citation are explicitly disallowed."""
+
+    severity: str = Field(
+        description=(
+            "One of 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NIT'. "
+            "CRITICAL = data loss, security hole, broken contract. "
+            "HIGH = real bug or design flaw that should block merge. "
+            "MEDIUM = correctness concern or missing edge case. "
+            "LOW = code-quality / maintainability issue. "
+            "NIT = style or naming opinion."
+        ),
+    )
+    file: str = Field(
+        description=(
+            "Path to the file the finding applies to, relative to repo "
+            "root. Mandatory — a finding without a file path is useless "
+            "for the author."
+        ),
+    )
+    line: int | None = Field(
+        default=None,
+        description=(
+            "Line number in the new (post-diff) version of the file. "
+            "Omit only when the issue is genuinely cross-file (e.g. "
+            "'no test coverage in tests/ for this new module')."
+        ),
+    )
+    issue: str = Field(
+        description=(
+            "Concrete description of the problem. State what's wrong, "
+            "not what was changed. One-to-three sentences."
+        ),
+    )
+    suggestion: str = Field(
+        description=(
+            "Concrete remediation: what to do to fix the issue. Code "
+            "snippet welcome but not required. One-to-three sentences."
+        ),
+    )
+
+
 class ReviewVerdict(BaseModel):
-    """Structured output schema for Gemini's review."""
+    """Structured output schema for Gemini's review.
+
+    Note: ``approve`` is intentionally *not* a permitted verdict. Strict-
+    reviewer mode means the reviewer's job is to find issues, not to
+    pat the author on the back; the worst the reviewer can do for a
+    clean diff is post a ``comment`` review with a ``no_critical_issues``
+    flag set true. Branch protection still gets satisfied because the
+    ``gemini-review`` check_run reports ``success`` whenever no
+    CRITICAL/HIGH finding is present.
+    """
 
     verdict: str = Field(
         description=(
-            "One of 'approve', 'request_changes', 'comment'. "
-            "Use 'approve' for diffs that look ready to merge. "
-            "Use 'request_changes' only for findings the author must "
-            "address before merge (bugs, security issues, broken tests). "
-            "Use 'comment' for non-blocking observations or when the "
-            "diff is too small/unclear to give a strong verdict."
+            "One of 'request_changes', 'comment'. "
+            "Use 'request_changes' iff there is at least one CRITICAL "
+            "or HIGH finding in the findings array. "
+            "Use 'comment' otherwise — even when there are MEDIUM / "
+            "LOW / NIT findings. Never 'approve'; strict-reviewer mode "
+            "doesn't reward clean diffs with an approval."
         ),
     )
     summary: str = Field(
         description=(
-            "1-3 paragraph high-level take on the change. What does it "
-            "accomplish, is the approach sound, any architectural "
-            "concerns? Plain prose, no bullet lists."
+            "Two-to-four sentence high-level take on the change: what "
+            "it accomplishes and the most pressing concerns. Don't "
+            "say 'looks good' or 'well done'. If genuinely nothing is "
+            "worth flagging, write 'no critical issues found after "
+            "exhaustive analysis' verbatim."
         ),
     )
-    concerns: list[str] = Field(
+    findings: list[Finding] = Field(
         default_factory=list,
         description=(
-            "Specific issues the author should know about — bugs, edge "
-            "cases missed, design smells. Each entry is one sentence. "
-            "Empty list if no concerns. Don't pad with nitpicks."
+            "List of issues sorted CRITICAL → NIT. The reviewer must "
+            "report at minimum three findings *per touched file* unless "
+            "the touched file is genuinely tiny (under ~10 lines of "
+            "real change). If after exhaustive analysis no CRITICAL/HIGH "
+            "issue exists, list NITs and explicitly set "
+            "``no_critical_issues`` true; the array must still contain "
+            "concrete observations, never be empty."
         ),
     )
-    praise: list[str] = Field(
-        default_factory=list,
+    no_critical_issues: bool = Field(
+        default=False,
         description=(
-            "Things the change did well — clean refactors, good test "
-            "coverage, careful documentation. Each entry is one "
-            "sentence. Empty list if nothing notable. Don't manufacture "
-            "praise; an empty list is fine."
+            "Set true only after exhaustive analysis confirmed there "
+            "are no CRITICAL or HIGH findings. False when at least "
+            "one CRITICAL/HIGH was flagged. Used by the workflow to "
+            "decide the gemini-review check_run conclusion."
         ),
     )
 
@@ -140,26 +199,60 @@ def call_gemini(
     client = genai.Client(api_key=api_key)
 
     system_instruction = (
-        "You are a senior code reviewer for the DAP repository — a "
-        "self-hosted pipeline orchestration engine (Python / FastAPI + "
-        "LangGraph + Next.js dashboard, monorepo with apps/engine, "
-        "apps/dashboard, packages/{types,runtimes,prompt-dsl,schemas}).\n\n"
-        "House conventions you should hold the change to:\n"
-        "- Python: type hints required everywhere; avoid ``Any`` in route "
-        "signatures (prefer the concrete dataclass / pydantic model).\n"
-        "- API: admin-only endpoints return 404 (not 403) for non-admins "
-        "as an anti-enumeration measure. Use the ``require_admin_user`` dep.\n"
-        "- Audit events go through ``record_audit_event`` typed with the "
-        "``AuditEventType`` Literal.\n"
-        "- Tests live in ``tests/smoke/``. The ``client`` and ``authed_client`` "
-        "fixtures come from ``tests/smoke/conftest.py``; new tests should "
-        "reuse them rather than rolling a local fixture.\n"
-        "- mypy strict + ruff format/check must pass.\n\n"
-        "Style of your review: terse, factual, no flattery. Use 'request_changes' "
-        "only when the diff has a genuine bug or contract violation the author "
-        "must fix; otherwise prefer 'approve' or 'comment'. Don't manufacture "
-        "concerns to look thorough — an empty 'concerns' list is the right "
-        "answer for a clean refactor."
+        # ── Persona ──────────────────────────────────────────────
+        "You are a STRICT senior code reviewer with 20 years of "
+        "experience reviewing Python (FastAPI / SQLAlchemy / LangGraph) "
+        "and TypeScript (Next.js / React) codebases. Your job is to "
+        "FIND PROBLEMS, not to approve code. Reviewers are valuable "
+        "in proportion to the issues they catch — be that reviewer.\n\n"
+        # ── Repo context ─────────────────────────────────────────
+        "Repository: DAP — a self-hosted pipeline orchestration engine. "
+        "Monorepo with apps/engine (FastAPI), apps/dashboard (Next.js), "
+        "packages/{types,runtimes,prompt-dsl,schemas}, tests/smoke "
+        "(pytest), e2e (Playwright). House conventions that matter:\n"
+        "- Python: type hints required everywhere. ``Any`` in route "
+        "signatures is a smell — prefer the concrete pydantic model "
+        "or dataclass. mypy strict and ruff format/check must pass.\n"
+        "- API: admin endpoints return 404 (not 403) for non-admins "
+        "as anti-enumeration. Use ``require_admin_user`` dep, not a "
+        "hand-rolled ``if not user.is_superuser`` check.\n"
+        "- Audit events go through ``record_audit_event`` typed with "
+        "the ``AuditEventType`` Literal — string literals are a smell.\n"
+        "- Tests live in ``tests/smoke/``. ``client`` / ``authed_client`` "
+        "fixtures come from ``tests/smoke/conftest.py``; new tests "
+        "should not re-roll the fixture locally.\n\n"
+        # ── Review rules ─────────────────────────────────────────
+        "Mandatory analysis steps for EVERY file touched by the diff:\n"
+        "1. Identify at least 3 plausible issues. Bugs, edge cases, "
+        "security, performance, missing tests, race conditions, "
+        "concurrency. If the file is genuinely under ~10 lines of "
+        "real change you may produce fewer; otherwise three is the "
+        "minimum.\n"
+        "2. Question every assumption the code makes. What if the "
+        "input is None? Empty? Whitespace-only? Unicode-pathological? "
+        "Already locked? Already deleted? Race-conditioned?\n"
+        "3. Flag explicitly when these are MISSING: error handling, "
+        "input validation, tests for the new behaviour, edge-case "
+        "tests, null/empty-collection checks, type narrowing, "
+        "transactional boundaries, audit trail.\n"
+        "4. Every finding cites file:line. No line ⇒ explicitly say "
+        "'no specific line — cross-file concern' in the issue text.\n"
+        "5. Severity is honest. CRITICAL = data loss / security hole / "
+        "broken contract. HIGH = real bug or design flaw that blocks "
+        "merge. MEDIUM = correctness concern. LOW = quality issue. "
+        "NIT = style / naming. If unsure, downgrade.\n\n"
+        # ── Anti-flattery / output style ─────────────────────────
+        "ABSOLUTELY DO NOT say 'looks good', 'well done', 'great job', "
+        "'nicely refactored', or any flattery. Your value is in finding "
+        "problems. If after exhaustive analysis you genuinely find no "
+        "CRITICAL or HIGH issues, list the NITs and set the JSON field "
+        "``no_critical_issues`` to true — and the summary MUST be the "
+        "verbatim phrase 'no critical issues found after exhaustive "
+        "analysis'. Approval is not a permitted verdict in strict mode.\n\n"
+        "Output: the structured JSON schema you've been given. The "
+        "``findings`` array is NEVER empty — even a clean refactor "
+        "yields at minimum a NIT or a 'missing test' observation. "
+        "Sort findings CRITICAL → HIGH → MEDIUM → LOW → NIT."
     )
 
     user_content = f"PR title: {pr_title}\n\nPR description:\n{pr_body[:MAX_BODY_CHARS]}\n\n"
@@ -171,41 +264,115 @@ def call_gemini(
         )
     user_content += f"Diff:\n```diff\n{diff}\n```"
 
+    # Build the config. For Gemini 3.x models, opt into HIGH thinking
+    # level so the strict-reviewer prompt actually triggers deep analysis
+    # instead of skimming the diff. Older models silently ignore
+    # ``thinking_config``; the SDK rejects it with a 400 for them, so
+    # we gate the flag on the model name.
+    config_kwargs: dict[str, Any] = dict(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=ReviewVerdict.model_json_schema(),
+        temperature=0.2,
+    )
+    if model.startswith("gemini-3"):
+        config_kwargs["thinking_config"] = types.ThinkingConfig(
+            thinking_level=types.ThinkingLevel.HIGH,
+        )
+
     response = client.models.generate_content(
         model=model,
         contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_json_schema=ReviewVerdict.model_json_schema(),
-            temperature=0.2,
-        ),
+        config=types.GenerateContentConfig(**config_kwargs),
     )
     if not response.text:
         raise RuntimeError("Gemini returned an empty response body")
     return ReviewVerdict.model_validate_json(response.text)
 
 
+_SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "NIT": 4}
+_SEVERITY_EMOJI = {
+    "CRITICAL": "🔴",
+    "HIGH": "🟠",
+    "MEDIUM": "🟡",
+    "LOW": "🔵",
+    "NIT": "⚪",
+}
+
+
+def _sort_findings(findings: list[Finding]) -> list[Finding]:
+    """Stable sort CRITICAL → HIGH → MEDIUM → LOW → NIT.
+
+    Unknown severities (model hallucinated a label) sink to the bottom
+    so they're visible but don't crowd the real issues.
+    """
+    return sorted(findings, key=lambda f: _SEVERITY_ORDER.get(f.severity.upper(), 99))
+
+
+def _format_finding(finding: Finding) -> str:
+    sev = finding.severity.upper()
+    emoji = _SEVERITY_EMOJI.get(sev, "•")
+    location = finding.file + (f":{finding.line}" if finding.line else "")
+    return (
+        f"#### {emoji} {sev} — `{location}`\n"
+        f"**Issue:** {finding.issue.strip()}\n\n"
+        f"**Suggestion:** {finding.suggestion.strip()}"
+    )
+
+
 def render_review_body(verdict: ReviewVerdict, *, truncated: bool, model: str) -> str:
-    parts: list[str] = []
-    parts.append("## Gemini code review\n")
+    """Render the strict-reviewer findings as PR-comment markdown.
+
+    Layout: header, one-line scoreboard of severity counts, the summary,
+    then each finding as its own H4 section so reviewers can jump
+    between them via the GitHub TOC. Truncation banner appears before
+    the findings so the reader knows the analysis is partial.
+    """
+    findings = _sort_findings(verdict.findings)
+
+    counts: dict[str, int] = {}
+    for f in findings:
+        sev = f.severity.upper()
+        counts[sev] = counts.get(sev, 0) + 1
+
+    scoreboard_parts = [
+        f"{_SEVERITY_EMOJI.get(sev, '•')} {sev}: {counts.get(sev, 0)}"
+        for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NIT")
+        if counts.get(sev, 0) > 0
+    ]
+    scoreboard = " · ".join(scoreboard_parts) or "no findings reported"
+
+    parts: list[str] = ["## Gemini code review (strict mode)"]
+    parts.append(f"**Findings:** {scoreboard}")
+    parts.append("")
     parts.append(verdict.summary.strip())
-
-    if verdict.concerns:
-        parts.append("\n### Concerns")
-        parts.extend(f"- {item.strip()}" for item in verdict.concerns)
-
-    if verdict.praise:
-        parts.append("\n### Done well")
-        parts.extend(f"- {item.strip()}" for item in verdict.praise)
 
     if truncated:
         parts.append(
             "\n> ⚠️ Diff was truncated for the model; verdict reflects the "
-            "first portion of the change only."
+            "first portion of the change only — findings may not cover "
+            "the tail of the diff."
         )
 
-    parts.append(f"\n---\n🤖 Reviewed by `{model}` via `.github/workflows/gemini-review.yml`.")
+    if findings:
+        parts.append("\n### Findings")
+        for f in findings:
+            parts.append("")
+            parts.append(_format_finding(f))
+    else:
+        # Schema says findings is never empty; if the model returned an
+        # empty list anyway, flag the breach so the operator can spot
+        # prompt drift.
+        parts.append(
+            "\n> ⚠️ Model returned no findings despite the strict prompt — "
+            "this likely means the prompt drifted or the model fell out "
+            "of structured-output mode. Investigate the workflow log."
+        )
+
+    parts.append(
+        f"\n---\n🤖 Reviewed by `{model}` "
+        "(strict reviewer mode) via `.github/workflows/gemini-review.yml`."
+    )
     return "\n".join(parts)
 
 
@@ -219,8 +386,11 @@ def post_review(pr_number: int, verdict: str, body: str) -> None:
     verdict in the body text — branch protection still sees the
     ``gemini-review`` check, which carries the real verdict.
     """
+    # Strict mode: ``approve`` is not a permitted verdict in the schema,
+    # so we only ever post request-changes or comment here. ``approve``
+    # left in the map only as a defensive fallback for prompt drift.
     flag_map = {
-        "approve": "--approve",
+        "approve": "--comment",  # strict mode rewrites approve → comment
         "request_changes": "--request-changes",
         "comment": "--comment",
     }
@@ -342,12 +512,29 @@ def main() -> int:  # noqa: PLR0911 — each return is a distinct guard / outcom
     body = render_review_body(verdict, truncated=truncated, model=model)
     post_review(pr_number, verdict.verdict, body)
 
-    conclusion = "failure" if verdict.verdict == "request_changes" else "success"
+    # The gate fails iff there's at least one CRITICAL or HIGH finding.
+    # We trust the model's ``no_critical_issues`` flag but also re-check
+    # the findings array — if the model set the flag but a HIGH/CRITICAL
+    # finding leaked through, the findings array wins (belt-and-braces).
+    severities = {f.severity.upper() for f in verdict.findings}
+    blocking = bool(severities & {"CRITICAL", "HIGH"})
+    conclusion = "failure" if blocking else "success"
+
+    # Title summarises the top finding's severity so branch protection's
+    # check listing communicates triage priority at a glance.
+    if blocking:
+        top_sev = "CRITICAL" if "CRITICAL" in severities else "HIGH"
+        title = f"Gemini strict: {top_sev} finding(s) require changes"
+    elif verdict.findings:
+        title = f"Gemini strict: {len(verdict.findings)} non-blocking finding(s)"
+    else:
+        title = "Gemini strict: no findings reported"
+
     post_check(
         repo=repo,
         head_sha=head_sha,
         conclusion=conclusion,
-        title=f"Gemini: {verdict.verdict}",
+        title=title,
         summary=verdict.summary[:2000],
     )
     return 0
