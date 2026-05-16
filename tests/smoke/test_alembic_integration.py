@@ -14,19 +14,24 @@ Pins the coexistence contract between the legacy
 
 from __future__ import annotations
 
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 from dap_engine.persistence.db import create_engine_for_sqlite
 from sqlalchemy import inspect, text
 
+# All tests below use pytest's ``tmp_path`` fixture (per-test
+# tempdir that pytest auto-removes after the test). The earlier
+# ``tempfile.mkdtemp`` pattern leaked test DB directories every
+# run — flagged by the council on PR #459. Switching to
+# ``tmp_path`` is the idiomatic pytest fix.
+
 # ---------------------------------------------------------------------------
 # Fresh-DB path
 # ---------------------------------------------------------------------------
 
 
-def test_fresh_sqlite_db_gets_both_legacy_and_alembic_tables() -> None:
+def test_fresh_sqlite_db_gets_both_legacy_and_alembic_tables(tmp_path: Path) -> None:
     """A fresh SQLite DB after engine construction has the full pair.
 
     Legacy ``schema_migrations`` records all 18 frozen migrations
@@ -34,8 +39,7 @@ def test_fresh_sqlite_db_gets_both_legacy_and_alembic_tables() -> None:
     names still get inserted). Alembic ``alembic_version`` carries
     the baseline revision.
     """
-    tmp = tempfile.mkdtemp(prefix="dap-e6-fresh-")
-    engine = create_engine_for_sqlite(str(Path(tmp) / "state.db"))
+    engine = create_engine_for_sqlite(str(tmp_path / "state.db"))
 
     with engine.connect() as conn:
         tables = set(inspect(conn).get_table_names())
@@ -62,7 +66,9 @@ def test_fresh_sqlite_db_gets_both_legacy_and_alembic_tables() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pre_alembic_dev_db_gets_baseline_stamped_without_rerunning_legacy() -> None:
+def test_pre_alembic_dev_db_gets_baseline_stamped_without_rerunning_legacy(
+    tmp_path: Path,
+) -> None:
     """A DB that pre-dates Alembic (has ``schema_migrations`` rows but
     no ``alembic_version``) should be brought forward cleanly.
 
@@ -73,8 +79,7 @@ def test_pre_alembic_dev_db_gets_baseline_stamped_without_rerunning_legacy() -> 
     create that table and stamp baseline without re-running the
     legacy migrations or failing.
     """
-    tmp = tempfile.mkdtemp(prefix="dap-e6-pre-alembic-")
-    db_path = str(Path(tmp) / "state.db")
+    db_path = str(tmp_path / "state.db")
 
     # First construction: get to a known v0.3.x state (all legacy
     # migrations applied, alembic_version present at baseline).
@@ -120,12 +125,11 @@ def test_pre_alembic_dev_db_gets_baseline_stamped_without_rerunning_legacy() -> 
 # ---------------------------------------------------------------------------
 
 
-def test_repeated_engine_construction_is_idempotent() -> None:
+def test_repeated_engine_construction_is_idempotent(tmp_path: Path) -> None:
     """Three back-to-back constructions against the same DB are no-ops
     after the first. Models the engine being restarted in dev.
     """
-    tmp = tempfile.mkdtemp(prefix="dap-e6-idempotent-")
-    db_path = str(Path(tmp) / "state.db")
+    db_path = str(tmp_path / "state.db")
 
     for _ in range(3):
         engine = create_engine_for_sqlite(db_path)
@@ -150,15 +154,14 @@ def test_repeated_engine_construction_is_idempotent() -> None:
         raw.dispose()
 
 
-def test_alembic_version_table_has_single_row() -> None:
+def test_alembic_version_table_has_single_row(tmp_path: Path) -> None:
     """``alembic_version`` is supposed to track exactly one revision.
 
     A bug where Alembic accidentally inserts duplicate rows (e.g.,
     via concurrent racing engine starts) would show up here.
     Defensive check that pins the invariant.
     """
-    tmp = tempfile.mkdtemp(prefix="dap-e6-single-row-")
-    engine = create_engine_for_sqlite(str(Path(tmp) / "state.db"))
+    engine = create_engine_for_sqlite(str(tmp_path / "state.db"))
 
     with engine.connect() as conn:
         rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
@@ -235,13 +238,12 @@ def test_baseline_revision_has_no_predecessors() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_migrations_record_iso_timestamps() -> None:
+def test_legacy_migrations_record_iso_timestamps(tmp_path: Path) -> None:
     """Each row in ``schema_migrations`` has a parseable ISO-8601
     ``applied_at`` value. Catches a regression where someone changes
     the runner to write a non-timestamp string into the column.
     """
-    tmp = tempfile.mkdtemp(prefix="dap-e6-ts-")
-    engine = create_engine_for_sqlite(str(Path(tmp) / "state.db"))
+    engine = create_engine_for_sqlite(str(tmp_path / "state.db"))
 
     with engine.connect() as conn:
         rows = conn.execute(
@@ -266,7 +268,7 @@ def test_legacy_migrations_record_iso_timestamps() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_alembic_failure_propagates_to_engine_startup() -> None:
+def test_alembic_failure_propagates_to_engine_startup(tmp_path: Path) -> None:
     """A migration that raises must abort engine startup loudly.
 
     Council follow-up finding (post-#458): the happy-path tests
@@ -282,8 +284,7 @@ def test_alembic_failure_propagates_to_engine_startup() -> None:
     """
     from unittest.mock import patch
 
-    tmp = tempfile.mkdtemp(prefix="dap-e6-error-")
-    db_path = str(Path(tmp) / "state.db")
+    db_path = str(tmp_path / "state.db")
 
     class BogusRevisionError(RuntimeError):
         """Marker exception the test mock raises."""
