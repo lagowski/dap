@@ -116,7 +116,20 @@ def _wait_for_status(
 
 
 def test_post_runs_returns_immediately(slow_client: tuple[TestClient, RuntimeRegistry]) -> None:
-    """Even with a 2s adapter, POST /runs should return in <500ms (async)."""
+    """Even with a 2s adapter, POST /runs returns well before the adapter finishes.
+
+    The guarantee is that the endpoint is **async** — the response
+    lands before the registered adapter's ``sleep_seconds=2.0`` is
+    over. The threshold is set generously vs. the adapter duration:
+    a synchronous code path would block ~2s and trip the assert,
+    while a healthy async path completes in milliseconds.
+
+    Earlier the threshold was 500ms; that flaked on busy CI runners
+    (one run came in at 0.517s, failing despite still proving async
+    behaviour). 1.0s keeps the semantic guarantee (2× faster than
+    adapter sleep — synchronous would still be detected) with
+    double the CI headroom.
+    """
     client, _ = slow_client
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
@@ -131,7 +144,7 @@ def test_post_runs_returns_immediately(slow_client: tuple[TestClient, RuntimeReg
     assert response.status_code == 201
     body = response.json()
     assert body["final_status"] == "running"
-    assert elapsed < 0.5, f"POST /runs took {elapsed:.3f}s — should be async!"
+    assert elapsed < 1.0, f"POST /runs took {elapsed:.3f}s — should be async!"
 
     # Wait for completion to clean up (avoid leaking the task)
     _wait_for_status(client, body["id"], {"success", "failed", "aborted"})
