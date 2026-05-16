@@ -18,7 +18,8 @@
  * ``.claude/plans/chce-zebys-zrobil-pelny-snuggly-unicorn.md``.
  */
 
-import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { startTransition, useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -31,12 +32,32 @@ export default function AppError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const router = useRouter();
+
   useEffect(() => {
     // Console-log only — sending to a remote sink (Sentry, etc.) lives
     // in a follow-up. The digest is enough to correlate with the
     // server-side log if the error originated in a Server Action.
     console.error("App segment error:", error);
   }, [error]);
+
+  /**
+   * Recover from an error caused by a Server Component data fetch.
+   *
+   * Calling ``reset()`` alone only re-renders the Client Component
+   * subtree — if the underlying error came from a failed server fetch
+   * (a list-runs call returning 500, say) the cached error would be
+   * re-thrown immediately, making the button appear dead. Pairing
+   * with ``router.refresh()`` invalidates the route cache and re-runs
+   * the server-side render before ``reset()`` re-mounts the boundary
+   * (Gemini strict review, #441 round 3).
+   */
+  const handleRetry = () => {
+    startTransition(() => {
+      router.refresh();
+      reset();
+    });
+  };
 
   return (
     <div
@@ -56,11 +77,7 @@ export default function AppError({
           </p>
         ) : null}
         <div className="flex gap-2">
-          {/* Wrap ``reset`` in an arrow function so React's MouseEvent
-              isn't passed through to a ``() => void`` callback —
-              defensive in case Next's contract ever inspects args
-              (Gemini strict review, #441 round 2). */}
-          <Button onClick={() => reset()}>Try again</Button>
+          <Button onClick={handleRetry}>Try again</Button>
           <Button variant="outline" onClick={() => window.location.reload()}>
             Reload page
           </Button>

@@ -48,6 +48,13 @@ export default function GlobalError({
   return (
     <html lang="en" style={{ colorScheme: "light dark" }}>
       <head>
+        {/* Viewport meta is normally inherited from the root layout,
+            but ``global-error`` *replaces* the entire ``<html>``
+            tree — root layout doesn't run. Without this tag mobile
+            browsers render the fallback at simulated desktop width
+            and scale down, making the text unreadably tiny
+            (Gemini strict review, #441 round 3). */}
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashboard error — DAP</title>
       </head>
       <body
