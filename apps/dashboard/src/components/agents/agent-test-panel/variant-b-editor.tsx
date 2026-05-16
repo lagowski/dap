@@ -12,7 +12,7 @@
  * everything else is driven by the parent via ``value`` / ``onChange``.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDryRunDraft } from "@/lib/api/types";
@@ -89,26 +89,53 @@ export function VariantBEditor({
     null,
   );
 
-  // Re-sync the textarea when the parent rebuilds Variant B (e.g. after
-  // compare toggle re-init). We don't want every keystroke to trigger
-  // this — guard on a structural mismatch using ``stableStringify`` so
-  // a re-ordered-but-identical config doesn't clobber the user's text.
+  // Re-sync the textarea when the parent rebuilds Variant B's
+  // runtime_config (e.g. after compare toggle re-init). Two
+  // properties we want here:
+  //
+  //   1. Run on parent-side runtime_config changes, NOT on every
+  //      keystroke into the textarea (a keystroke updates
+  //      ``runtimeConfigText`` but the parent's runtime_config is
+  //      what we sync FROM, not TO).
+  //   2. Don't fire the lint waiver gun. Earlier shape suppressed
+  //      ``react-hooks/exhaustive-deps`` because the effect read
+  //      ``runtimeConfigText`` without listing it; council follow-
+  //      up (#460) flagged the suppression as a stale-closure
+  //      risk.
+  //
+  // Mechanism: depend on ``value`` (which eslint happily accepts),
+  // and guard the body with a stable-signature comparison against
+  // the previous runtime_config. The parent passes a new ``value``
+  // object on every edit, but the structural signature is what
+  // determines whether we actually need to re-sync. ``stableStringify``
+  // ignores key order so a re-ordered-but-identical config doesn't
+  // clobber the user's text. The current textarea contents are read
+  // from a ref so the effect doesn't have to list it as a dep
+  // either.
+  const runtimeConfigTextRef = useRef(runtimeConfigText);
+  runtimeConfigTextRef.current = runtimeConfigText;
+  const prevRuntimeConfigSig = useRef<string | null>(null);
   useEffect(() => {
-    if (!value) return;
+    if (!value) {
+      prevRuntimeConfigSig.current = null;
+      return;
+    }
+    const currentSig = stableStringify(value.runtime_config);
+    if (currentSig === prevRuntimeConfigSig.current) return;
+    prevRuntimeConfigSig.current = currentSig;
+
     const expected = JSON.stringify(value.runtime_config, null, 2);
-    if (expected === runtimeConfigText) return;
+    const current = runtimeConfigTextRef.current;
+    if (expected === current) return;
     try {
-      const parsed: unknown = JSON.parse(runtimeConfigText);
-      if (
-        stableStringify(parsed) !== stableStringify(value.runtime_config)
-      ) {
+      const parsed: unknown = JSON.parse(current);
+      if (stableStringify(parsed) !== currentSig) {
         setRuntimeConfigText(expected);
       }
     } catch {
       setRuntimeConfigText(expected);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value?.runtime_config]);
+  }, [value]);
 
   // Mirror the JSON parse status up to the parent so "Run both" can
   // gate on it. ``onJsonValidityChange`` runs on every flip rather
