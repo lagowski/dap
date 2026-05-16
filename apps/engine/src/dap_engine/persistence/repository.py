@@ -32,6 +32,12 @@ from dap_engine.persistence.agents import (
     pipelines_using_agent,
     update_agent,
 )
+from dap_engine.persistence.env_vars import (
+    delete_env_var_by_key,
+    find_env_vars_by_keys,
+    get_env_var_by_key,
+    list_env_vars,
+)
 from dap_engine.persistence.pipelines import (
     archive_pipeline,
     create_pipeline,
@@ -72,11 +78,14 @@ __all__ = [
     "create_pipeline",
     "create_project",
     "create_run",
+    "delete_env_var_by_key",
     "finalize_run",
+    "find_env_vars_by_keys",
     "get_agent",
     "get_agent_template",
     "get_agent_version",
     "get_agents_by_ids",
+    "get_env_var_by_key",
     "get_pipeline",
     "get_pipeline_version",
     "get_project",
@@ -85,6 +94,7 @@ __all__ = [
     "get_run_state",
     "list_agent_versions",
     "list_agents",
+    "list_env_vars",
     "list_pipeline_versions",
     "list_pipelines",
     "list_projects",

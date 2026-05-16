@@ -35,7 +35,6 @@ from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
 from dap_types import HealthStatus, RuntimeAdapter
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
@@ -43,6 +42,8 @@ from dap_engine.auth.audit import AuditEventType, record_audit_event
 from dap_engine.auth.encryption import EncryptionError, encrypt_value
 from dap_engine.auth.users import require_admin_user
 from dap_engine.execution.runner import DEFAULT_RECURSION_LIMIT
+from dap_engine.persistence import repository as repo
+from dap_engine.persistence._common import NotFoundError
 from dap_engine.persistence.db import detect_dialect, redact_database_url
 from dap_engine.persistence.models import InstanceEnvVarORM, UserORM
 
@@ -383,9 +384,7 @@ def list_instance_env_vars(
     The full value only ever leaves the engine into the subprocess
     env at run time.
     """
-    rows = (
-        session.execute(select(InstanceEnvVarORM).order_by(InstanceEnvVarORM.key)).scalars().all()
-    )
+    rows = repo.list_env_vars(session)
     return InstanceEnvVarListing(
         env_vars=[
             InstanceEnvVarPreview(key=row.key, preview=row.preview, value_set=True) for row in rows
@@ -447,12 +446,7 @@ def upsert_instance_env_vars(
     # try to INSERT; the UNIQUE constraint on ``key`` makes one of them
     # roll back at commit. That's an acceptable corner case for a
     # single-operator install (the loser sees 5xx and retries).
-    existing_rows = (
-        session.execute(select(InstanceEnvVarORM).where(InstanceEnvVarORM.key.in_(body.keys())))
-        .scalars()
-        .all()
-    )
-    existing_by_key = {row.key: row for row in existing_rows}
+    existing_by_key = repo.find_env_vars_by_keys(session, body.keys())
 
     now = datetime.now(UTC)
     for key, value in body.items():
@@ -503,9 +497,7 @@ def upsert_instance_env_vars(
     # Flush so the listing below reflects the inserts/updates within
     # the same transaction.
     session.flush()
-    rows = (
-        session.execute(select(InstanceEnvVarORM).order_by(InstanceEnvVarORM.key)).scalars().all()
-    )
+    rows = repo.list_env_vars(session)
     return InstanceEnvVarListing(
         env_vars=[
             InstanceEnvVarPreview(key=row.key, preview=row.preview, value_set=True) for row in rows
@@ -528,15 +520,15 @@ def delete_instance_env_var(
     enumeration), anonymous gets 401. Unknown key returns 404
     (no enumeration concern — admin already knows what they're
     deleting)."""
-    row = session.execute(
-        select(InstanceEnvVarORM).where(InstanceEnvVarORM.key == key)
-    ).scalar_one_or_none()
-    if row is None:
+    try:
+        repo.delete_env_var_by_key(session, key)
+    except NotFoundError as exc:
+        # Preserve the existing 404 wording so the dashboard's error
+        # toast and any cached snapshots keep matching.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Instance env var {key!r} not found.",
-        )
-    session.delete(row)
+        ) from exc
     record_audit_event(
         session,
         user_id=user.id,
