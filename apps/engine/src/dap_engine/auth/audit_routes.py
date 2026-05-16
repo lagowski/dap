@@ -18,14 +18,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dap_engine.auth.db import get_async_session
-from dap_engine.auth.users import current_active_user
-from dap_engine.persistence.models import AuditLogORM, UserORM
+from dap_engine.auth.users import require_admin_user
+from dap_engine.persistence.models import AuditLogORM
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -61,9 +61,9 @@ class AuditEventList(BaseModel):
     "/events",
     response_model=AuditEventList,
     summary="List audit events (admin-only, paginated)",
+    dependencies=[Depends(require_admin_user)],
 )
 async def list_audit_events(
-    user: UserORM = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
     *,
     event_type: str | None = Query(
@@ -79,19 +79,13 @@ async def list_audit_events(
 ) -> AuditEventList:
     """Paginated audit log read.
 
-    Admin-only. Non-admins get ``404`` to match the anti-enumeration
-    rule the rest of the admin surface follows. Anonymous → ``401``
-    from ``current_active_user``.
+    Admin-only via the route-level ``require_admin_user`` dependency —
+    non-admins get ``404`` (anti-enumeration); anonymous → ``401``
+    from the underlying ``current_active_user`` dep.
 
     Results are sorted ``created_at DESC`` so the freshest events
     land at the top of the table.
     """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
-
     where: list[ColumnElement[bool]] = []
     if event_type is not None:
         where.append(AuditLogORM.event_type == event_type)
