@@ -151,6 +151,12 @@ class PipelineRunner:
         invoke_input: PipelineState | None = None if resume else initial_state
 
         approval_nodes = set(pipeline.defaults.approval_required_nodes)
+        # Pin the auto-approve decision *now*, before the graph runs (#389).
+        # Read from the Run row's persisted ``initial_state``, not from the
+        # LangGraph snapshot — see ``_read_auto_approve_from_run`` for why
+        # a snapshot read would be unsafe (nodes can mutate extensions
+        # mid-run via state_delta).
+        auto_approve = _read_auto_approve_from_run(self.session, run_id)
 
         try:
             result = await graph.ainvoke(invoke_input, config=config)
@@ -175,7 +181,7 @@ class PipelineRunner:
             snap = await graph.aget_state(checkpoint_config)
             pending = list(snap.next) if snap.next else []
             while pending and any(n in approval_nodes for n in pending):
-                if _is_auto_approve(snap.values):
+                if auto_approve:
                     logger.warning(
                         "run %s: auto_approve=True — skipping approval gate(s) %s",
                         run_id,
@@ -432,17 +438,36 @@ def _resolve_target(target: str) -> Any:
     return target
 
 
-def _is_auto_approve(state_values: Any) -> bool:
-    """Return True when the snapshot's state carries ``extensions.auto_approve=True``.
+def _read_auto_approve_from_run(session: Session, run_id: str) -> bool:
+    """Return True iff the Run row's persisted ``initial_state.extensions
+    .auto_approve`` is the literal boolean ``True`` (#389).
 
-    Defensive against malformed checkpoints — only the literal boolean
-    ``True`` enables the bypass. Other truthy values (strings, numbers,
-    dicts) deliberately do *not* trigger auto-approve so a stray
-    extension key can't silently disable the gates (#389).
+    Why the Run row, not the LangGraph snapshot:
+        ``snap.values.extensions`` is part of the mutable pipeline state.
+        Node executors merge arbitrary keys into ``extensions`` via
+        ``state_delta`` (see ``_route_extensions`` in
+        ``node_executor.py``), so a node — buggy, malicious, or simply
+        templated by an attacker-controlled prompt — could flip
+        ``auto_approve = True`` mid-run and silently bypass every
+        downstream gate. The ``run.triggered`` audit log wouldn't
+        capture it either, since that's already been written.
+
+        The Run row's ``initial_state`` is persisted at trigger time and
+        never touched again. Reading from there pins auto-approve as a
+        trigger-time, operator-controlled decision for the whole run
+        (and across resume).
+
+    Defensive against malformed rows — only the literal boolean ``True``
+    enables the bypass; other truthy values (strings, numbers, nested
+    dicts) deliberately do *not* trigger it.
     """
-    if not isinstance(state_values, dict):
+    run = session.get(RunORM, run_id)
+    if run is None:
         return False
-    extensions = state_values.get("extensions")
+    initial_state = run.initial_state
+    if not isinstance(initial_state, dict):
+        return False
+    extensions = initial_state.get("extensions")
     if not isinstance(extensions, dict):
         return False
     return extensions.get("auto_approve") is True
