@@ -7,31 +7,15 @@ checks are deferred to follow-up sub-PRs.
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
 
 # Strong-enough fake secret for the test suite. fastapi-users' default
 # password validator requires >= 8 chars and rejects pure-numeric.
 TEST_PASSWORD = "test-password-123"
 
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-smoke-auth-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        # Deterministic JWT secret keeps token signatures comparable
-        # across re-runs — useful when debugging a flaky failure.
-        auth_jwt_secret="smoke-test-secret-do-not-use-in-prod",
-    )
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
+# The ``client`` fixture comes from ``tests/smoke/conftest.py`` —
+# plain TestClient with default JWT secret (no custom config needed
+# for this happy-path flow).
 
 
 def test_register_login_me_roundtrip(client: TestClient) -> None:

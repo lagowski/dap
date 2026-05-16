@@ -1,28 +1,16 @@
-"""Smoke tests for the engine's /health endpoint."""
+"""Smoke tests for the engine's /health endpoint.
+
+The ``client`` fixture comes from ``tests/smoke/conftest.py`` — a plain
+``TestClient`` against a fresh engine with default test config. No
+custom ``EngineConfig`` overrides needed here.
+"""
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from dap_engine.api.health import _is_db_reachable
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-health-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="health-smoke-secret",
-    )
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
 
 
 def test_health_returns_db_dialect_and_reachable_for_healthy_sqlite(

@@ -3,22 +3,10 @@
 from __future__ import annotations
 
 import os
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
 
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-settings-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
+# The ``client`` fixture lives in ``tests/smoke/conftest.py``.
 
 
 def test_settings_returns_three_sections(client: TestClient) -> None:
