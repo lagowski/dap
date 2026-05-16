@@ -50,17 +50,16 @@ export default function GlobalError({
       <head>
         {/* ``global-error`` *replaces* the entire ``<html>`` tree, so
             none of the inherited tags from the root layout apply. Re-
-            declare the essentials by hand:
-            - ``charset`` so the browser doesn't fall back to guessing
-              the encoding (Gemini strict review, #441 round 4).
-            - ``viewport`` so mobile renders at device width instead of
-              simulated desktop (round 3). */}
+            declare the essentials by hand: ``charset`` so the browser
+            doesn't fall back to guessing the encoding, and ``viewport``
+            so mobile renders at device width instead of simulated
+            desktop. */}
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashboard error — DAP</title>
         {/* Inline :hover and :focus styles for the recovery button —
             globals.css isn't loaded here so a Tailwind class would
-            silently fail (Gemini strict review, #441 round 5). */}
+            silently fail. */}
         <style>{`
           .global-error-button:hover { filter: brightness(0.95); }
           .global-error-button:focus-visible {
@@ -72,7 +71,7 @@ export default function GlobalError({
       {/* Layout constraints live on an inner wrapper instead of
           ``<body>``: applying ``maxWidth`` to body would expose the
           html element's default background outside the centred column
-          on wider viewports (Gemini strict review, #441 round 4). */}
+          on wider viewports. */}
       <body
         style={{
           backgroundColor: "Canvas",
@@ -115,12 +114,11 @@ export default function GlobalError({
           <button
             // ``type="button"`` is a defensive default — the button
             // isn't currently inside a <form>, but explicit beats
-            // implicit ``submit`` if the layout ever changes (Gemini
-            // strict review, #441 round 5).
+            // implicit ``submit`` if the layout ever changes.
             type="button"
             className="global-error-button"
-            // Use Next's ``reset`` to honour the framework contract —
-            // see file header (Gemini strict review, #441 round 3).
+            // Use Next's ``reset`` to honour the framework contract;
+            // see file header for the rationale.
             onClick={() => reset()}
             style={{
               padding: "0.5rem 1rem",

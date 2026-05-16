@@ -49,8 +49,7 @@ export default function AppError({
    * (a list-runs call returning 500, say) the cached error would be
    * re-thrown immediately, making the button appear dead. Pairing
    * with ``router.refresh()`` invalidates the route cache and re-runs
-   * the server-side render before ``reset()`` re-mounts the boundary
-   * (Gemini strict review, #441 round 3).
+   * the server-side render before ``reset()`` re-mounts the boundary.
    */
   const handleRetry = () => {
     startTransition(() => {
