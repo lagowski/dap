@@ -25,7 +25,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
-from fastapi import Depends, Request, Response
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi_users import (
     BaseUserManager,
     FastAPIUsers,
@@ -398,3 +398,49 @@ current_active_user_jwt_only = fastapi_users.current_user(
     active=True,
     get_enabled_backends=_jwt_only_backends,
 )
+
+
+def _enforce_admin(user: UserORM) -> UserORM:
+    """Common ``is_superuser`` gate — 404 (not 403) for anti-enumeration."""
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found",
+        )
+    return user
+
+
+def require_admin_user(
+    user: UserORM = Depends(current_active_user),
+) -> UserORM:
+    """FastAPI dependency that gates an endpoint to admins.
+
+    Anti-enumeration policy: non-admins get ``404 Not Found`` rather
+    than ``403 Forbidden`` so a caller can't tell admin-only endpoints
+    apart from genuinely-missing ones. Anonymous callers fall through
+    to ``current_active_user`` and get ``401`` from fastapi-users.
+
+    Centralizes a check that was previously hand-rolled in 4 places
+    (audit_routes, admin_users, settings admin endpoints). Audit
+    finding E2 — see
+    ``.claude/plans/chce-zebys-zrobil-pelny-snuggly-unicorn.md``.
+
+    For endpoints that must refuse API tokens (e.g. API-token CRUD
+    itself), use :func:`require_admin_user_jwt_only` instead.
+    """
+    return _enforce_admin(user)
+
+
+def require_admin_user_jwt_only(
+    user: UserORM = Depends(current_active_user_jwt_only),
+) -> UserORM:
+    """JWT-only admin gate — refuses API tokens.
+
+    Same anti-enumeration policy as :func:`require_admin_user` (non-
+    admin → 404), but builds on :data:`current_active_user_jwt_only`
+    so a leaked CLI API token can't be used to manage *other* API
+    tokens (or perform any admin action gated by this dep). Mirrors
+    the JWT-only trust boundary the API-token CRUD already uses for
+    its own routes — see ``_jwt_only_backends`` above.
+    """
+    return _enforce_admin(user)

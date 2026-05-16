@@ -8,19 +8,13 @@ auth subsystem). Both append a row to ``audit_log`` without committing
 either lands together with the action it describes or rolls back with
 it.
 
-Event-type vocabulary (stable string keys):
-- ``user.registered``
-- ``user.logged_in``
-- ``user.password_reset_requested`` / ``user.password_reset``
-- ``user.deleted``                       — soft delete via UserManager
-- ``api_token.created``
-- ``api_token.revoked``
-- ``agent.created`` / ``agent.updated`` / ``agent.archived``
-- ``pipeline.created`` / ``pipeline.updated`` / ``pipeline.archived``
-- ``project.created`` / ``project.updated`` / ``project.archived``
-- ``run.created``                         — start trigger only; lifecycle
-                                            transitions are noisy and stay
-                                            in node_execution_logs
+The ``event_type`` parameter is typed as :data:`AuditEventType` (a
+:data:`typing.Literal`) — see :mod:`dap_engine.auth.audit_event_types`
+for the canonical list. mypy will reject any typo or undeclared key
+at call sites, killing the class of bugs where a stray
+``"user.loggedin"`` writes audit rows that never match a filter.
+Adding a new event-type requires a one-line edit to
+``audit_event_types.py``.
 """
 
 from __future__ import annotations
@@ -31,9 +25,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from dap_engine.auth.audit_event_types import AuditEventType
 from dap_engine.persistence.models import AuditLogORM
 
 __all__ = [
+    "AuditEventType",
     "record_audit_event",
     "record_audit_event_async",
 ]
@@ -43,7 +39,7 @@ def record_audit_event(
     session: Session,
     *,
     user_id: uuid.UUID | None,
-    event_type: str,
+    event_type: AuditEventType,
     event_data: dict[str, Any] | None = None,
 ) -> None:
     """Append an audit row using the sync session.
@@ -68,7 +64,7 @@ async def record_audit_event_async(
     session: AsyncSession,
     *,
     user_id: uuid.UUID | None,
-    event_type: str,
+    event_type: AuditEventType,
     event_data: dict[str, Any] | None = None,
 ) -> None:
     """Async counterpart for fastapi-users hooks (and any other async caller).

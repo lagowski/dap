@@ -33,9 +33,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
-from dap_engine.auth.audit import record_audit_event
+from dap_engine.auth.audit import AuditEventType, record_audit_event
 from dap_engine.auth.encryption import EncryptionError, encrypt_value
-from dap_engine.auth.users import current_active_user
+from dap_engine.auth.users import require_admin_user
 from dap_engine.execution.runner import DEFAULT_RECURSION_LIMIT
 from dap_engine.persistence.db import detect_dialect, redact_database_url
 from dap_engine.persistence.models import InstanceEnvVarORM, UserORM
@@ -155,10 +155,12 @@ def _collect_engine_info(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/settings/admin")
+@router.get(
+    "/settings/admin",
+    dependencies=[Depends(require_admin_user)],
+)
 async def get_admin_settings(
     request: Request,
-    user: UserORM = Depends(current_active_user),
 ) -> dict[str, Any]:
     """Read-only snapshot of instance-wide config for the admin panel.
 
@@ -168,9 +170,9 @@ async def get_admin_settings(
     reset-token logging flag, storage backend. No mutations; instance
     config is env-var driven and requires a restart to change.
 
-    Anti-enumeration: non-admins get ``404`` (mirrors the rest of the
-    admin surface — sub-A4b2 series). Anonymous gets ``401`` from
-    ``current_active_user``.
+    Admin-only via :func:`require_admin_user`. Anti-enumeration:
+    non-admins get ``404`` (mirrors the rest of the admin surface).
+    Anonymous gets ``401`` from the underlying ``current_active_user``.
 
     **Never exposes secrets.** OAuth client_secrets and the JWT
     secret are presence-only — the response says ``True`` /
@@ -178,12 +180,6 @@ async def get_admin_settings(
     Mirrors the rule the ``/audit/events`` route applies to its
     own ``event_data`` payloads.
     """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
-
     config = request.app.state.config
 
     db_backend, db_location = _describe_database(config)
@@ -324,16 +320,6 @@ def _build_preview(plaintext: str) -> str:
     return f"{head}••••"
 
 
-def _require_admin(user: UserORM) -> None:
-    """Anti-enumeration admin gate — non-admins get 404 (same shape as
-    the read-only ``/settings/admin`` route at the top of this module)."""
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
-
-
 def _require_encryption_key(config: Any) -> str:
     """Refuse POST writes when no Fernet key is configured.
 
@@ -377,19 +363,20 @@ class InstanceEnvVarListing(BaseModel):
 @router.get(
     "/settings/admin/env-vars",
     response_model=InstanceEnvVarListing,
+    dependencies=[Depends(require_admin_user)],
 )
 def list_instance_env_vars(
     session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
 ) -> InstanceEnvVarListing:
     """List instance env vars with masked previews — never the raw value.
 
-    Mirrors the read shape the dashboard uses for other secret stores:
-    one row per key with ``value_set=True`` and a short non-secret
-    ``preview`` (first four chars + four bullets). The full value
-    only ever leaves the engine into the subprocess env at run time.
+    Admin-only via the route-level ``require_admin_user`` dep (see
+    decorator). Mirrors the read shape the dashboard uses for other
+    secret stores: one row per key with ``value_set=True`` and a
+    short non-secret ``preview`` (first four chars + four bullets).
+    The full value only ever leaves the engine into the subprocess
+    env at run time.
     """
-    _require_admin(user)
     rows = (
         session.execute(select(InstanceEnvVarORM).order_by(InstanceEnvVarORM.key)).scalars().all()
     )
@@ -407,23 +394,23 @@ def list_instance_env_vars(
 def upsert_instance_env_vars(
     body: dict[str, str],
     session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
+    user: UserORM = Depends(require_admin_user),
     config: Any = Depends(get_engine_config),
 ) -> InstanceEnvVarListing:
     """Upsert one or more instance env vars.
 
-    Request body is a flat ``{key: value}`` dict — matches the shape
-    the issue (#388) calls out. Each key is validated; each value is
-    encrypted with the configured Fernet key before it ever touches
-    the DB. An audit event is recorded per key (``created`` or
-    ``updated``); the value never appears in ``event_data`` — only
-    the key name.
+    Admin-only via :func:`require_admin_user` — non-admin gets 404,
+    anonymous gets 401. Request body is a flat ``{key: value}`` dict
+    — matches the shape the issue (#388) calls out. Each key is
+    validated; each value is encrypted with the configured Fernet
+    key before it ever touches the DB. An audit event is recorded
+    per key (``created`` or ``updated``); the value never appears in
+    ``event_data`` — only the key name.
 
     Typed as ``dict[str, str]`` so FastAPI's body validation rejects
     non-string values with a 422 before the handler runs — keeps the
     OpenAPI schema honest about what we accept.
     """
-    _require_admin(user)
     if not body:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -475,6 +462,11 @@ def upsert_instance_env_vars(
 
         preview = _build_preview(value)
         existing = existing_by_key.get(key)
+        # Annotated so mypy narrows to the ``AuditEventType`` Literal
+        # accepted by ``record_audit_event`` below — without it the
+        # assignments would widen to ``str`` and the call would fail
+        # type-checking.
+        event_type: AuditEventType
         if existing is None:
             session.add(
                 InstanceEnvVarORM(
@@ -523,11 +515,13 @@ def upsert_instance_env_vars(
 def delete_instance_env_var(
     key: str,
     session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
+    user: UserORM = Depends(require_admin_user),
 ) -> Response:
-    """Remove one instance env var. Unknown key returns 404 (no
-    enumeration concern — admin already knows what they're deleting)."""
-    _require_admin(user)
+    """Remove one instance env var. Admin-only via
+    :func:`require_admin_user` — non-admin gets 404 (anti-
+    enumeration), anonymous gets 401. Unknown key returns 404
+    (no enumeration concern — admin already knows what they're
+    deleting)."""
     row = session.execute(
         select(InstanceEnvVarORM).where(InstanceEnvVarORM.key == key)
     ).scalar_one_or_none()
