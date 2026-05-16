@@ -118,4 +118,14 @@ python_files = ["test_*.py", "*_test.py"]
 # --strict-markers: catches typos in @pytest.mark.foo (only registered markers allowed)
 # --import-mode=importlib: recommended for new projects (avoids sys.path hacks)
 addopts = "-q --strict-markers --import-mode=importlib"
+# Audit X2 + X6 — declare the unit/integration markers we apply to the
+# smoke suite via the auto-marker hook in ``tests/smoke/conftest.py``.
+# ``--strict-markers`` rejects any unregistered marker; without this
+# block ``pytest -m unit`` would fail with "no tests collected" even
+# though the conftest tagged them. Keep the list small and meaningful;
+# new markers want a one-line reason that justifies the new axis.
+markers = [
+    "unit: Fast tests with no DB, no HTTP, no subprocess. Run as the quick CI gate (< few seconds total).",
+    "integration: Tests that boot the engine app, hit the DB, or shell out. Run as the slow CI gate (sub-minute total).",
+]
 
