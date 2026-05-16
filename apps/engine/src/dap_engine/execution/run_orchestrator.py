@@ -144,6 +144,7 @@ async def execute_run_background(
     run_registry: RunRegistry,
     checkpointer: BaseCheckpointSaver[Any],
     resume: bool,
+    instance_env_vars_key: str | None = None,
 ) -> None:
     """Run the pipeline in a fresh DB session and finalize the Run row."""
     try:
@@ -169,6 +170,7 @@ async def execute_run_background(
                 session=bg_session,
                 registry=registry,
                 checkpointer=checkpointer,
+                instance_env_vars_key=instance_env_vars_key,
             )
             try:
                 final_state = await runner.run(
@@ -242,6 +244,7 @@ async def execute_rewind_background(
     registry: RuntimeRegistry,
     run_registry: RunRegistry,
     checkpointer: BaseCheckpointSaver[Any],
+    instance_env_vars_key: str | None = None,
 ) -> None:
     """Run a retry/skip rewind in a fresh DB session and finalize the Run row."""
     try:
@@ -267,6 +270,7 @@ async def execute_rewind_background(
                 session=bg_session,
                 registry=registry,
                 checkpointer=checkpointer,
+                instance_env_vars_key=instance_env_vars_key,
             )
             try:
                 final_state = await runner.rewind_and_run(

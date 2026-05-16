@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.api.deps import (
     get_checkpointer,
+    get_engine_config,
     get_registry,
     get_run_registry,
     get_session,
@@ -587,6 +588,7 @@ async def trigger_project_run(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    config: Any = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Trigger the project's bound pipeline for a given workflow kind (#66).
@@ -648,5 +650,6 @@ async def trigger_project_run(
         run_registry=run_registry,
         session_factory=session_factory,
         checkpointer=checkpointer,
+        config=config,
         user=user,
     )

@@ -25,6 +25,11 @@ dependencies = [
     # the OAuth sub-PR. Explicit pin so `--frozen` installs catch
     # breaking minor bumps in pre-commit hooks.
     "fastapi-users[sqlalchemy,oauth]>=15.0.5",
+    # At-rest encryption for instance env-var values (#388). Already
+    # pulled transitively by fastapi-users, but declared explicitly so
+    # the dependency is visible to anyone auditing what we encrypt
+    # with and which version of Fernet we rely on.
+    "cryptography>=42.0",
 ]
 
 [project.scripts]

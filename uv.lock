@@ -455,6 +455,7 @@ source = { editable = "apps/engine" }
 dependencies = [
     { name = "alembic" },
     { name = "anyio" },
+    { name = "cryptography" },
     { name = "dap-prompt-dsl" },
     { name = "dap-runtimes" },
     { name = "dap-schemas" },
@@ -473,6 +474,7 @@ dependencies = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.3" },
     { name = "anyio", specifier = ">=4.6.0" },
+    { name = "cryptography", specifier = ">=42.0" },
     { name = "dap-prompt-dsl", editable = "packages/prompt-dsl" },
     { name = "dap-runtimes", editable = "packages/runtimes" },
     { name = "dap-schemas", editable = "packages/types" },

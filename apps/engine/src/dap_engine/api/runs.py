@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.api.deps import (
     get_checkpointer,
+    get_engine_config,
     get_registry,
     get_run_registry,
     get_session,
@@ -55,6 +56,7 @@ async def trigger_run(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    config: Any = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Trigger asynchronous pipeline execution.
@@ -175,6 +177,7 @@ async def trigger_run(
             run_registry=run_registry,
             checkpointer=checkpointer,
             resume=False,
+            instance_env_vars_key=config.instance_env_vars_key,
         )
     )
     run_registry.register(run_id, task)
@@ -265,6 +268,7 @@ async def resume_run_endpoint(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    config: Any = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Resume a paused run from its last LangGraph checkpoint.
@@ -331,6 +335,7 @@ async def resume_run_endpoint(
             run_registry=run_registry,
             checkpointer=checkpointer,
             resume=True,
+            instance_env_vars_key=config.instance_env_vars_key,
         )
     )
     run_registry.register(run_id, task)
@@ -347,6 +352,7 @@ async def approve_gate_endpoint(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    config: Any = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Approve a human gate and continue pipeline execution (#164).
@@ -448,6 +454,7 @@ async def approve_gate_endpoint(
             run_registry=run_registry,
             checkpointer=checkpointer,
             resume=True,
+            instance_env_vars_key=config.instance_env_vars_key,
         )
     )
     run_registry.register(run_id, task)
@@ -463,6 +470,7 @@ async def retry_node(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    config: Any = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Re-execute a single node and continue forward.
@@ -481,6 +489,7 @@ async def retry_node(
         run_registry=run_registry,
         session_factory=session_factory,
         checkpointer=checkpointer,
+        instance_env_vars_key=config.instance_env_vars_key,
         user=user,
     )
 
@@ -494,6 +503,7 @@ async def skip_node(
     run_registry: RunRegistry = Depends(get_run_registry),
     session_factory: sessionmaker[Session] = Depends(get_session_factory),
     checkpointer: BaseCheckpointSaver[Any] = Depends(get_checkpointer),
+    config: Any = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> Run:
     """Bypass a node and continue with its downstream successors.
@@ -513,6 +523,7 @@ async def skip_node(
         run_registry=run_registry,
         session_factory=session_factory,
         checkpointer=checkpointer,
+        instance_env_vars_key=config.instance_env_vars_key,
         user=user,
     )
 
@@ -527,6 +538,7 @@ async def _do_node_intervention(
     run_registry: RunRegistry,
     session_factory: sessionmaker[Session],
     checkpointer: BaseCheckpointSaver[Any],
+    instance_env_vars_key: str | None,
     user: UserORM,
 ) -> Run:
     """Shared validation + dispatch path for retry-node and skip-node."""
@@ -595,6 +607,7 @@ async def _do_node_intervention(
             registry=registry,
             run_registry=run_registry,
             checkpointer=checkpointer,
+            instance_env_vars_key=instance_env_vars_key,
         )
     )
     run_registry.register(run_id, task)

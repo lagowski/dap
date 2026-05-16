@@ -248,6 +248,14 @@ class EngineConfig:
     # private bundle repo. Per-host tokens land in a follow-up ticket.
     template_registry_allowed_hosts: list[str] = field(default_factory=list)
     template_registry_auth_token: str | None = None
+    # Fernet key for at-rest encryption of instance env-var values (#388).
+    # Set via ``DAP_INSTANCE_ENV_VARS_KEY``. When ``None``, the
+    # ``/settings/admin/env-vars`` write paths return 503 so an
+    # operator notices the misconfiguration immediately instead of
+    # writing rows that can't be decrypted on the next restart.
+    # Read paths (GET) still work when ``None`` because the masked
+    # preview is stored alongside the ciphertext.
+    instance_env_vars_key: str | None = None
 
 
 def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:

@@ -628,6 +628,40 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
     )
 
 
+def _018_create_instance_env_vars_table(conn: Connection) -> None:
+    """#388 — instance-level env vars (shared across projects, merged at runtime).
+
+    Fresh DBs already have this from ``Base.metadata.create_all``; this
+    migration only fires on pre-#388 dev DBs. The column types mirror
+    the ORM declarations (``InstanceEnvVarORM``) so SQLite and Postgres
+    agree. The unique index on ``key`` lets upserts target the row in
+    one query (``SELECT ... WHERE key = ?``) instead of scanning.
+    """
+    inspector = inspect(conn)
+    if inspector.has_table("instance_env_vars"):
+        return
+
+    is_pg = conn.dialect.name == "postgresql"
+    id_type = "UUID" if is_pg else "VARCHAR(36)"
+    ts_type = "TIMESTAMP WITH TIME ZONE" if is_pg else "TIMESTAMP"
+
+    conn.execute(
+        text(
+            f"""
+            CREATE TABLE instance_env_vars (
+                id {id_type} PRIMARY KEY,
+                key VARCHAR(255) NOT NULL,
+                ciphertext TEXT NOT NULL,
+                preview VARCHAR(8) NOT NULL,
+                created_at {ts_type} NOT NULL,
+                updated_at {ts_type} NOT NULL,
+                CONSTRAINT uq_instance_env_vars_key UNIQUE (key)
+            )
+            """
+        )
+    )
+
+
 def _017_runs_add_gate_payload(conn: Connection) -> None:
     """#364 — store gate context (task_assignments, spec) on the Run row.
 
@@ -687,6 +721,10 @@ MIGRATIONS: list[Migration] = [
     ),
     Migration(name="016_runs_add_paused_at_node", apply=_016_runs_add_paused_at_node),
     Migration(name="017_runs_add_gate_payload", apply=_017_runs_add_gate_payload),
+    Migration(
+        name="018_create_instance_env_vars_table",
+        apply=_018_create_instance_env_vars_table,
+    ),
 ]
 
 
