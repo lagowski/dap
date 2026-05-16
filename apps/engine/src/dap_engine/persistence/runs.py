@@ -278,17 +278,24 @@ def create_run(
     )
     session.add(run)
     session.flush()
+    audit_data: dict[str, Any] = {
+        "run_id": run.id,
+        "pipeline_id": pipeline_id,
+        "pipeline_version": pipeline_version,
+        "project_id": project_id,
+        "trigger_source": trigger_source,
+    }
+    # Record ``dangerously-auto-approve`` (#389) only when the operator
+    # opted in — its *presence* in the audit row is the signal that gates
+    # were intentionally bypassed. Stamping ``False`` on every row would
+    # dilute that signal for log investigations.
+    if initial_state.extensions.get("auto_approve") is True:
+        audit_data["auto_approve"] = True
     record_audit_event(
         session,
         user_id=user_id,
         event_type="run.triggered",
-        event_data={
-            "run_id": run.id,
-            "pipeline_id": pipeline_id,
-            "pipeline_version": pipeline_version,
-            "project_id": project_id,
-            "trigger_source": trigger_source,
-        },
+        event_data=audit_data,
     )
     return run
 
