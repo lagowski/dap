@@ -6,6 +6,14 @@ posts the verdict back as a real PR review (``gh pr review``), and records
 the same outcome on a synthetic ``gemini-review`` check_run so branch
 protection has something to gate on.
 
+The reviewer prompt lives in ``.github/prompts/code-review.md`` (tracked;
+CI uses this) with an optional operator-local override at
+``.claude/prompts/code-review.md`` (gitignored; wins when present so
+developers can iterate without committing). The anti-hallucination
+knobs — ``confidence`` field on every finding, LOW-confidence drop,
+explicit out-of-scope list, ``review_complete`` stop flag — are
+documented in the prompt itself rather than baked into this script.
+
 Environment:
     GEMINI_API_KEY      Required. Google AI Studio key. Free tier handles
                          ~250 PR reviews/day on gemini-2.5-flash.
@@ -13,25 +21,21 @@ Environment:
                          ``pull-requests: write`` + ``checks: write``.
     GITHUB_REPOSITORY   Auto-injected by GitHub Actions (``owner/repo``).
     PR_NUMBER           Required. Plumbed from the workflow event.
-    GEMINI_MODEL        Optional. Defaults to ``gemini-2.5-flash``.
+    GEMINI_MODEL        Optional. Defaults to ``gemini-2.5-flash``;
+                         override via repo variable to e.g.
+                         ``gemini-3-pro-preview`` for deeper analysis.
 
 Design notes:
-    - We use the **Google Gen AI Python SDK** (``google-genai``), not the
-      deprecated ``google-generativeai``. The SDK exposes structured
-      output via ``response_mime_type='application/json'`` +
-      ``response_json_schema=<pydantic model class or dict>``.
-    - The diff is truncated at 60k characters. ``gemini-2.5-flash`` has a
-      1M-token context window but the AI Studio free tier rate-limits on
-      tokens-per-minute, so we cap input. Truncation is flagged in the
-      posted review so the operator knows the verdict is partial.
-    - The review verdict maps onto ``gh pr review --approve|--request-changes
-      |--comment``. Branch protection sees the resulting ``gemini-review``
-      check as ``success`` on ``approve``/``comment`` and ``failure`` on
-      ``request-changes``.
-    - Idempotency: posting two reviews on the same SHA is fine
-      (GitHub allows it); each appears as a fresh review timeline entry.
-      The check_run is posted as a new entry each run; the *latest* one
-      wins for branch protection. No de-dupe needed.
+    - SDK is ``google-genai`` (the current package), not the deprecated
+      ``google-generativeai``. Structured output via Pydantic-based
+      JSON schema.
+    - Diff truncated at 60k chars to stay inside AI Studio's tokens-per-
+      minute limits; truncation flagged in the posted review.
+    - Findings with ``confidence: LOW`` are dropped before posting unless
+      their severity is NIT — the main anti-hallucination filter.
+    - The gate fails iff a kept finding is CRITICAL, or HIGH-severity
+      with non-LOW confidence. ``review_complete: true`` from the model
+      signals convergence (no further actionable findings expected).
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from google import genai
@@ -48,14 +53,31 @@ from pydantic import BaseModel, Field
 
 CHECK_NAME = "gemini-review"
 DEFAULT_MODEL = "gemini-2.5-flash"
+# Canonical prompt location — tracked in the repo so CI always has it.
+# This is the file that ships with the workflow; edits here flow to
+# every PR review on next push. ``.github/`` (not ``.claude/``) is the
+# right home because ``.claude/`` is gitignored as operator-only tooling.
+PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "code-review.md"
+# Optional operator override — if present locally under ``.claude/``,
+# wins over the in-repo prompt. Gitignored, so this is per-developer
+# scratch space for iterating on review tone without touching the
+# tracked file. CI never sees it (the dir isn't checked out).
+LOCAL_OVERRIDE_PROMPT = (
+    Path(__file__).resolve().parents[2] / ".claude" / "prompts" / "code-review.md"
+)
 MAX_DIFF_CHARS = 60_000
 MAX_BODY_CHARS = 4_000
 
 
 class Finding(BaseModel):
-    """A single review observation. The schema is intentionally rigid —
-    the strict prompt instructs the model to populate every field; vague
-    findings without a file/line citation are explicitly disallowed."""
+    """A single review observation.
+
+    The schema is rigid by design — every field is required so vague
+    findings don't slip through. The ``confidence`` field is the
+    main anti-hallucination lever: LOW-confidence findings get dropped
+    (or downgraded to NIT) by the post-processor before they ever
+    reach the PR review.
+    """
 
     severity: str = Field(
         description=(
@@ -65,6 +87,18 @@ class Finding(BaseModel):
             "MEDIUM = correctness concern or missing edge case. "
             "LOW = code-quality / maintainability issue. "
             "NIT = style or naming opinion."
+        ),
+    )
+    confidence: str = Field(
+        description=(
+            "One of 'HIGH', 'MEDIUM', 'LOW'. "
+            "HIGH = verified in this code (the issue is concretely "
+            "present at the cited file:line). "
+            "MEDIUM = likely an issue, supported by the surrounding "
+            "code but requires a small leap. "
+            "LOW = hypothetical — 'what if a user did X' or 'in "
+            "scenario Y'. LOW-confidence findings are auto-dropped "
+            "by the post-processor unless severity is also NIT."
         ),
     )
     file: str = Field(
@@ -94,58 +128,61 @@ class Finding(BaseModel):
             "snippet welcome but not required. One-to-three sentences."
         ),
     )
+    evidence: str = Field(
+        default="",
+        description=(
+            "Verbatim quote of the problematic code from the diff. "
+            "Helps the author verify the model isn't hallucinating a "
+            "line that doesn't exist. Use '—' for cross-file findings "
+            "where no single line applies."
+        ),
+    )
 
 
 class ReviewVerdict(BaseModel):
     """Structured output schema for Gemini's review.
 
-    Note: ``approve`` is intentionally *not* a permitted verdict. Strict-
-    reviewer mode means the reviewer's job is to find issues, not to
-    pat the author on the back; the worst the reviewer can do for a
-    clean diff is post a ``comment`` review with a ``no_critical_issues``
-    flag set true. Branch protection still gets satisfied because the
-    ``gemini-review`` check_run reports ``success`` whenever no
-    CRITICAL/HIGH finding is present.
+    ``approve`` is intentionally not a permitted verdict — strict mode
+    never rubber-stamps a diff. The worst the reviewer can do for a
+    clean change is post a ``comment`` review with ``review_complete``
+    set true and an empty ``findings`` array; the check_run gate still
+    passes because no CRITICAL/HIGH finding is present.
     """
 
     verdict: str = Field(
         description=(
             "One of 'request_changes', 'comment'. "
             "Use 'request_changes' iff there is at least one CRITICAL "
-            "or HIGH finding in the findings array. "
-            "Use 'comment' otherwise — even when there are MEDIUM / "
-            "LOW / NIT findings. Never 'approve'; strict-reviewer mode "
-            "doesn't reward clean diffs with an approval."
+            "or HIGH-confidence HIGH-severity finding in the findings "
+            "array. Use 'comment' otherwise — even when there are "
+            "MEDIUM / LOW / NIT findings. Never 'approve'."
         ),
     )
     summary: str = Field(
         description=(
-            "Two-to-four sentence high-level take on the change: what "
-            "it accomplishes and the most pressing concerns. Don't "
-            "say 'looks good' or 'well done'. If genuinely nothing is "
-            "worth flagging, write 'no critical issues found after "
-            "exhaustive analysis' verbatim."
+            "Plain-prose take on the change. Open with the most "
+            "important observation — not 'looks good' or 'well done'. "
+            "If genuinely nothing is worth flagging, lead with "
+            "'no critical issues found after analysis' and set "
+            "``review_complete`` true."
         ),
     )
     findings: list[Finding] = Field(
         default_factory=list,
         description=(
-            "List of issues sorted CRITICAL → NIT. The reviewer must "
-            "report at minimum three findings *per touched file* unless "
-            "the touched file is genuinely tiny (under ~10 lines of "
-            "real change). If after exhaustive analysis no CRITICAL/HIGH "
-            "issue exists, list NITs and explicitly set "
-            "``no_critical_issues`` true; the array must still contain "
-            "concrete observations, never be empty."
+            "List of issues. **Empty list is permitted** when no real "
+            "issue exists — quality over quantity. Don't pad with "
+            "hypotheticals to look thorough. Sort CRITICAL → NIT."
         ),
     )
-    no_critical_issues: bool = Field(
+    review_complete: bool = Field(
         default=False,
         description=(
-            "Set true only after exhaustive analysis confirmed there "
-            "are no CRITICAL or HIGH findings. False when at least "
-            "one CRITICAL/HIGH was flagged. Used by the workflow to "
-            "decide the gemini-review check_run conclusion."
+            "Set true when the reviewer hit the stop condition: "
+            "remaining findings would be hypothetical, defensive nits, "
+            "or recurring observations from earlier rounds. Used by "
+            "the check_run renderer to communicate convergence in the "
+            "title (e.g. 'review complete' vs 'N findings open')."
         ),
     )
 
@@ -187,6 +224,36 @@ def get_diff(pr_number: int) -> str:
     return gh_capture("pr", "diff", str(pr_number))
 
 
+_FALLBACK_SYSTEM_INSTRUCTION = (
+    "You are a senior code reviewer for the DAP repo. Find HIGH-SIGNAL "
+    "issues, not volume. Quality > quantity. Empty findings is fine "
+    "if no real issue exists. Avoid hypotheticals, defensive nits on "
+    "framework defaults, and out-of-scope concerns (i18n, CSP, RTL — "
+    "DAP doesn't use them). Severity NIT is the floor for "
+    "LOW-confidence findings. Open the summary with the most important "
+    "observation, not flattery."
+)
+
+
+def _load_system_instruction() -> str:
+    """Load the prompt — operator override first, then canonical, then fallback.
+
+    Order matters: a developer iterating on tone via the gitignored
+    ``.claude/prompts/code-review.md`` should see their changes
+    without committing. CI never has that file, so it always uses
+    the tracked ``.github/prompts/code-review.md``.
+    """
+    for candidate in (LOCAL_OVERRIDE_PROMPT, PROMPT_PATH):
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+    print(
+        f"::warning::Prompt file not found at {LOCAL_OVERRIDE_PROMPT} "
+        f"or {PROMPT_PATH}; falling back to inline minimal prompt.",
+        file=sys.stderr,
+    )
+    return _FALLBACK_SYSTEM_INSTRUCTION
+
+
 def call_gemini(
     *,
     api_key: str,
@@ -197,63 +264,7 @@ def call_gemini(
     truncated: bool,
 ) -> ReviewVerdict:
     client = genai.Client(api_key=api_key)
-
-    system_instruction = (
-        # ── Persona ──────────────────────────────────────────────
-        "You are a STRICT senior code reviewer with 20 years of "
-        "experience reviewing Python (FastAPI / SQLAlchemy / LangGraph) "
-        "and TypeScript (Next.js / React) codebases. Your job is to "
-        "FIND PROBLEMS, not to approve code. Reviewers are valuable "
-        "in proportion to the issues they catch — be that reviewer.\n\n"
-        # ── Repo context ─────────────────────────────────────────
-        "Repository: DAP — a self-hosted pipeline orchestration engine. "
-        "Monorepo with apps/engine (FastAPI), apps/dashboard (Next.js), "
-        "packages/{types,runtimes,prompt-dsl,schemas}, tests/smoke "
-        "(pytest), e2e (Playwright). House conventions that matter:\n"
-        "- Python: type hints required everywhere. ``Any`` in route "
-        "signatures is a smell — prefer the concrete pydantic model "
-        "or dataclass. mypy strict and ruff format/check must pass.\n"
-        "- API: admin endpoints return 404 (not 403) for non-admins "
-        "as anti-enumeration. Use ``require_admin_user`` dep, not a "
-        "hand-rolled ``if not user.is_superuser`` check.\n"
-        "- Audit events go through ``record_audit_event`` typed with "
-        "the ``AuditEventType`` Literal — string literals are a smell.\n"
-        "- Tests live in ``tests/smoke/``. ``client`` / ``authed_client`` "
-        "fixtures come from ``tests/smoke/conftest.py``; new tests "
-        "should not re-roll the fixture locally.\n\n"
-        # ── Review rules ─────────────────────────────────────────
-        "Mandatory analysis steps for EVERY file touched by the diff:\n"
-        "1. Identify at least 3 plausible issues. Bugs, edge cases, "
-        "security, performance, missing tests, race conditions, "
-        "concurrency. If the file is genuinely under ~10 lines of "
-        "real change you may produce fewer; otherwise three is the "
-        "minimum.\n"
-        "2. Question every assumption the code makes. What if the "
-        "input is None? Empty? Whitespace-only? Unicode-pathological? "
-        "Already locked? Already deleted? Race-conditioned?\n"
-        "3. Flag explicitly when these are MISSING: error handling, "
-        "input validation, tests for the new behaviour, edge-case "
-        "tests, null/empty-collection checks, type narrowing, "
-        "transactional boundaries, audit trail.\n"
-        "4. Every finding cites file:line. No line ⇒ explicitly say "
-        "'no specific line — cross-file concern' in the issue text.\n"
-        "5. Severity is honest. CRITICAL = data loss / security hole / "
-        "broken contract. HIGH = real bug or design flaw that blocks "
-        "merge. MEDIUM = correctness concern. LOW = quality issue. "
-        "NIT = style / naming. If unsure, downgrade.\n\n"
-        # ── Anti-flattery / output style ─────────────────────────
-        "ABSOLUTELY DO NOT say 'looks good', 'well done', 'great job', "
-        "'nicely refactored', or any flattery. Your value is in finding "
-        "problems. If after exhaustive analysis you genuinely find no "
-        "CRITICAL or HIGH issues, list the NITs and set the JSON field "
-        "``no_critical_issues`` to true — and the summary MUST be the "
-        "verbatim phrase 'no critical issues found after exhaustive "
-        "analysis'. Approval is not a permitted verdict in strict mode.\n\n"
-        "Output: the structured JSON schema you've been given. The "
-        "``findings`` array is NEVER empty — even a clean refactor "
-        "yields at minimum a NIT or a 'missing test' observation. "
-        "Sort findings CRITICAL → HIGH → MEDIUM → LOW → NIT."
-    )
+    system_instruction = _load_system_instruction()
 
     user_content = f"PR title: {pr_title}\n\nPR description:\n{pr_body[:MAX_BODY_CHARS]}\n\n"
     if truncated:
@@ -298,6 +309,11 @@ _SEVERITY_EMOJI = {
     "LOW": "🔵",
     "NIT": "⚪",
 }
+_CONFIDENCE_BADGE = {
+    "HIGH": "verified",
+    "MEDIUM": "likely",
+    "LOW": "hypothetical",
+}
 
 
 def _sort_findings(findings: list[Finding]) -> list[Finding]:
@@ -309,30 +325,65 @@ def _sort_findings(findings: list[Finding]) -> list[Finding]:
     return sorted(findings, key=lambda f: _SEVERITY_ORDER.get(f.severity.upper(), 99))
 
 
+def _filter_low_confidence(findings: list[Finding]) -> tuple[list[Finding], int]:
+    """Drop LOW-confidence findings unless they're already at NIT severity.
+
+    The prompt instructs the model to do this itself, but a belt-and-
+    braces filter here means we never ship a hypothetical-but-MEDIUM
+    finding even if the model slips. Returns the kept list plus the
+    count of dropped items so the renderer can mention it in the body.
+    """
+    kept: list[Finding] = []
+    dropped = 0
+    for f in findings:
+        conf = (f.confidence or "").upper()
+        sev = (f.severity or "").upper()
+        if conf == "LOW" and sev != "NIT":
+            dropped += 1
+            continue
+        kept.append(f)
+    return kept, dropped
+
+
 def _format_finding(finding: Finding) -> str:
-    sev = finding.severity.upper()
+    sev = (finding.severity or "").upper()
     emoji = _SEVERITY_EMOJI.get(sev, "•")
+    conf = (finding.confidence or "").upper()
+    conf_badge = _CONFIDENCE_BADGE.get(conf, conf.lower() or "?")
     location = finding.file + (f":{finding.line}" if finding.line else "")
-    return (
-        f"#### {emoji} {sev} — `{location}`\n"
+    body = (
+        f"#### {emoji} {sev} · _{conf_badge}_ — `{location}`\n"
         f"**Issue:** {finding.issue.strip()}\n\n"
         f"**Suggestion:** {finding.suggestion.strip()}"
     )
+    evidence = (finding.evidence or "").strip()
+    if evidence and evidence != "—":
+        body += f"\n\n**Evidence:**\n```\n{evidence}\n```"
+    return body
 
 
-def render_review_body(verdict: ReviewVerdict, *, truncated: bool, model: str) -> str:
-    """Render the strict-reviewer findings as PR-comment markdown.
+def render_review_body(
+    verdict: ReviewVerdict,
+    *,
+    truncated: bool,
+    model: str,
+) -> tuple[str, list[Finding]]:
+    """Render the review as PR-comment markdown + return filtered findings.
 
-    Layout: header, one-line scoreboard of severity counts, the summary,
-    then each finding as its own H4 section so reviewers can jump
-    between them via the GitHub TOC. Truncation banner appears before
-    the findings so the reader knows the analysis is partial.
+    Returns ``(body, kept_findings)`` so ``main()`` can use the same
+    filtered list for the check_run conclusion (LOW-confidence dropouts
+    don't count toward request_changes).
+
+    Layout: header, scoreboard, summary, then each finding as its own
+    H4 section. Truncation and review-complete banners go above the
+    findings so the reader sees them first.
     """
-    findings = _sort_findings(verdict.findings)
+    sorted_findings = _sort_findings(verdict.findings)
+    kept, dropped = _filter_low_confidence(sorted_findings)
 
     counts: dict[str, int] = {}
-    for f in findings:
-        sev = f.severity.upper()
+    for f in kept:
+        sev = (f.severity or "").upper()
         counts[sev] = counts.get(sev, 0) + 1
 
     scoreboard_parts = [
@@ -340,12 +391,24 @@ def render_review_body(verdict: ReviewVerdict, *, truncated: bool, model: str) -
         for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NIT")
         if counts.get(sev, 0) > 0
     ]
-    scoreboard = " · ".join(scoreboard_parts) or "no findings reported"
+    scoreboard = " · ".join(scoreboard_parts) or "no actionable findings"
 
-    parts: list[str] = ["## Gemini code review (strict mode)"]
+    parts: list[str] = ["## Gemini code review"]
     parts.append(f"**Findings:** {scoreboard}")
+    if dropped:
+        parts.append(
+            f"_(filtered out {dropped} LOW-confidence findings — see "
+            "`.github/prompts/code-review.md` for the anti-hallucination "
+            "rules)_"
+        )
     parts.append("")
     parts.append(verdict.summary.strip())
+
+    if verdict.review_complete:
+        parts.append(
+            "\n> ✅ Reviewer signalled convergence — further analysis "
+            "would yield hypothetical findings only."
+        )
 
     if truncated:
         parts.append(
@@ -354,26 +417,18 @@ def render_review_body(verdict: ReviewVerdict, *, truncated: bool, model: str) -
             "the tail of the diff."
         )
 
-    if findings:
+    if kept:
         parts.append("\n### Findings")
-        for f in findings:
+        for f in kept:
             parts.append("")
             parts.append(_format_finding(f))
-    else:
-        # Schema says findings is never empty; if the model returned an
-        # empty list anyway, flag the breach so the operator can spot
-        # prompt drift.
-        parts.append(
-            "\n> ⚠️ Model returned no findings despite the strict prompt — "
-            "this likely means the prompt drifted or the model fell out "
-            "of structured-output mode. Investigate the workflow log."
-        )
 
     parts.append(
-        f"\n---\n🤖 Reviewed by `{model}` "
-        "(strict reviewer mode) via `.github/workflows/gemini-review.yml`."
+        f"\n---\n🤖 Reviewed by `{model}` via "
+        "`.github/workflows/gemini-review.yml` "
+        "(prompt: `.github/prompts/code-review.md`)."
     )
-    return "\n".join(parts)
+    return "\n".join(parts), kept
 
 
 def post_review(pr_number: int, verdict: str, body: str) -> None:
@@ -509,26 +564,30 @@ def main() -> int:  # noqa: PLR0911 — each return is a distinct guard / outcom
         post_error_check(repo, head_sha, f"{type(exc).__name__}: {exc}")
         return 1
 
-    body = render_review_body(verdict, truncated=truncated, model=model)
+    body, kept = render_review_body(verdict, truncated=truncated, model=model)
     post_review(pr_number, verdict.verdict, body)
 
-    # The gate fails iff there's at least one CRITICAL or HIGH finding.
-    # We trust the model's ``no_critical_issues`` flag but also re-check
-    # the findings array — if the model set the flag but a HIGH/CRITICAL
-    # finding leaked through, the findings array wins (belt-and-braces).
-    severities = {f.severity.upper() for f in verdict.findings}
-    blocking = bool(severities & {"CRITICAL", "HIGH"})
+    # Gate fails iff a kept finding (post LOW-confidence filter) is
+    # either CRITICAL, or HIGH-severity with HIGH/MEDIUM confidence.
+    # HIGH-severity LOW-confidence wouldn't have survived the filter,
+    # but the explicit check here documents the intent.
+    blocking = any(
+        (f.severity or "").upper() == "CRITICAL"
+        or ((f.severity or "").upper() == "HIGH" and (f.confidence or "").upper() != "LOW")
+        for f in kept
+    )
     conclusion = "failure" if blocking else "success"
 
-    # Title summarises the top finding's severity so branch protection's
-    # check listing communicates triage priority at a glance.
+    severities = {(f.severity or "").upper() for f in kept}
     if blocking:
         top_sev = "CRITICAL" if "CRITICAL" in severities else "HIGH"
-        title = f"Gemini strict: {top_sev} finding(s) require changes"
-    elif verdict.findings:
-        title = f"Gemini strict: {len(verdict.findings)} non-blocking finding(s)"
+        title = f"Gemini: {top_sev} finding(s) require changes"
+    elif kept:
+        title = f"Gemini: {len(kept)} non-blocking finding(s)"
+    elif verdict.review_complete:
+        title = "Gemini: review complete — no actionable findings"
     else:
-        title = "Gemini strict: no findings reported"
+        title = "Gemini: no findings reported"
 
     post_check(
         repo=repo,
