@@ -110,7 +110,7 @@ async def test_api_token_revoke_writes_audit_row(client: TestClient) -> None:
 async def test_soft_delete_user_writes_audit_row(client: TestClient) -> None:
     """UserManager.delete (soft delete from sub-A1) should now also audit."""
     from dap_engine.auth.users import UserManager
-    from dap_engine.persistence.models import UserORM
+    from dap_engine.persistence.models import OAuthAccountORM, UserORM
     from fastapi_users.db import SQLAlchemyUserDatabase
     from sqlalchemy import select as sa_select
 
@@ -127,7 +127,7 @@ async def test_soft_delete_user_writes_audit_row(client: TestClient) -> None:
             .unique()
             .one()
         )
-        manager = UserManager(SQLAlchemyUserDatabase(session, UserORM))
+        manager = UserManager(SQLAlchemyUserDatabase(session, UserORM, OAuthAccountORM))
         await manager.delete(user)
         # `manager.delete` already commits via ``user_db.update`` AND via
         # the audit-event helper (eager commit per its docstring). The
@@ -141,3 +141,175 @@ async def test_soft_delete_user_writes_audit_row(client: TestClient) -> None:
     assert rows[0].event_data is not None
     assert rows[0].event_data["email"] == "eve@example.com"
     assert rows[0].event_data["soft"] is True
+
+
+# ---------------------------------------------------------------------------
+# E5 — password-change + OAuth-link audit events
+# ---------------------------------------------------------------------------
+
+
+async def test_password_change_writes_audit_row(client: TestClient) -> None:
+    """Self-service password rotation via PATCH /users/me audits as
+    ``user.password_changed`` (distinct from ``user.password_reset``)."""
+    client.post(
+        "/auth/register",
+        json={"email": "frank@example.com", "password": TEST_PASSWORD},
+    )
+    jwt = client.post(
+        "/auth/jwt/login",
+        data={"username": "frank@example.com", "password": TEST_PASSWORD},
+    ).json()["access_token"]
+
+    new_password = "rotated-password-456"
+    patch = client.patch(
+        "/users/me",
+        json={"password": new_password},
+        headers={"Authorization": f"Bearer {jwt}"},
+    )
+    assert patch.status_code == 200, patch.text
+
+    rows = await _audit_rows(client, "user.password_changed")
+    assert len(rows) == 1
+    assert rows[0].event_data is not None
+    assert rows[0].event_data["email"] == "frank@example.com"
+    # The audit row MUST NEVER carry the password value itself —
+    # belt-and-braces check that the only stored field is ``email``.
+    assert "password" not in rows[0].event_data
+    assert "hashed_password" not in rows[0].event_data
+
+    # And as a confidence check: the new password actually works.
+    re_login = client.post(
+        "/auth/jwt/login",
+        data={"username": "frank@example.com", "password": new_password},
+    )
+    assert re_login.status_code == 200, re_login.text
+
+
+async def test_profile_update_without_password_does_not_audit(
+    client: TestClient,
+) -> None:
+    """A PATCH /users/me without ``password`` field is profile noise.
+
+    ``on_after_update`` keys on the presence of ``password`` in the
+    update_dict — non-password updates (email, etc.) must NOT write
+    a ``user.password_changed`` row.
+    """
+    client.post(
+        "/auth/register",
+        json={"email": "grace@example.com", "password": TEST_PASSWORD},
+    )
+    jwt = client.post(
+        "/auth/jwt/login",
+        data={"username": "grace@example.com", "password": TEST_PASSWORD},
+    ).json()["access_token"]
+
+    # Update something innocuous — fastapi-users default schema lets
+    # us pass an empty update_dict (no-op patch) which still goes
+    # through ``update()`` and fires ``on_after_update``.
+    patch = client.patch(
+        "/users/me",
+        json={},
+        headers={"Authorization": f"Bearer {jwt}"},
+    )
+    assert patch.status_code == 200, patch.text
+
+    rows = await _audit_rows(client, "user.password_changed")
+    assert rows == [], (
+        f"Profile update without password field wrote audit rows: {[r.event_data for r in rows]}"
+    )
+
+
+async def test_oauth_link_to_existing_user_writes_audit_row(
+    client: TestClient,
+) -> None:
+    """Linking a NEW OAuth provider to an EXISTING user audits as
+    ``oauth.linked``. We invoke ``oauth_callback`` directly here
+    rather than running a real OAuth dance — the audit semantics are
+    a property of the UserManager hook, not of the HTTP route, and
+    the upstream fastapi-users test suite already covers the route
+    plumbing end-to-end.
+    """
+    import uuid
+
+    from dap_engine.auth.users import UserManager
+    from dap_engine.persistence.models import OAuthAccountORM, UserORM
+    from fastapi_users.db import SQLAlchemyUserDatabase
+
+    # Register a password-account user first — this is the user
+    # whom we'll later "link" a Google account to.
+    register = client.post(
+        "/auth/register",
+        json={"email": "henry@example.com", "password": TEST_PASSWORD},
+    )
+    assert register.status_code == 201, register.text
+
+    factory = client.app.state.async_session_factory  # type: ignore[attr-defined]
+    async with factory() as session:
+        manager = UserManager(SQLAlchemyUserDatabase(session, UserORM, OAuthAccountORM))
+        await manager.oauth_callback(
+            oauth_name="google",
+            access_token="fake-access-token-not-used-by-test",
+            account_id=f"google-account-{uuid.uuid4()}",
+            account_email="henry@example.com",
+            associate_by_email=True,
+        )
+
+    rows = await _audit_rows(client, "oauth.linked")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.event_data is not None
+    assert row.event_data["provider"] == "google"
+    assert row.event_data["account_email"] == "henry@example.com"
+    # The audit row MUST NEVER carry the access_token / refresh_token.
+    assert "access_token" not in row.event_data
+    assert "refresh_token" not in row.event_data
+
+
+async def test_oauth_callback_refresh_does_not_audit(
+    client: TestClient,
+) -> None:
+    """Token refresh on an already-linked OAuth account is NOT
+    audited — it's just credential rotation, no new attack surface."""
+    import uuid
+
+    from dap_engine.auth.users import UserManager
+    from dap_engine.persistence.models import OAuthAccountORM, UserORM
+    from fastapi_users.db import SQLAlchemyUserDatabase
+
+    client.post(
+        "/auth/register",
+        json={"email": "ivy@example.com", "password": TEST_PASSWORD},
+    )
+
+    account_id = f"google-account-{uuid.uuid4()}"
+    factory = client.app.state.async_session_factory  # type: ignore[attr-defined]
+
+    # First call — links the Google account to the existing user.
+    # Audits as ``oauth.linked`` (1 row written).
+    async with factory() as session:
+        manager = UserManager(SQLAlchemyUserDatabase(session, UserORM, OAuthAccountORM))
+        await manager.oauth_callback(
+            oauth_name="google",
+            access_token="first-token",
+            account_id=account_id,
+            account_email="ivy@example.com",
+            associate_by_email=True,
+        )
+
+    # Second call — same (provider, account_id) pair. This is a
+    # token refresh (case 1). Must NOT write another audit row.
+    async with factory() as session:
+        manager = UserManager(SQLAlchemyUserDatabase(session, UserORM, OAuthAccountORM))
+        await manager.oauth_callback(
+            oauth_name="google",
+            access_token="second-rotated-token",
+            account_id=account_id,
+            account_email="ivy@example.com",
+            associate_by_email=True,
+        )
+
+    rows = await _audit_rows(client, "oauth.linked")
+    assert len(rows) == 1, (
+        f"Expected exactly 1 oauth.linked row from first call only, got: "
+        f"{[r.event_data for r in rows]}"
+    )

@@ -38,7 +38,34 @@ AuditEventType = Literal[
     # only the event + actor.
     "user.forgot_password",
     "user.password_reset",
+    # Self-service password rotation: PATCH /users/me with a new
+    # ``password`` field. Distinct from ``user.password_reset`` (the
+    # forgot-password email flow) because a change requires the
+    # current session token — different threat model, different
+    # audit semantics. Fired by the ``on_after_update`` hook in
+    # UserManager whenever ``update_dict`` contains the ``password``
+    # key. Never carries the value, only the event + actor.
+    "user.password_changed",
     "user.deleted",
+    # ------------------------------------------------------------------
+    # OAuth — link side. Triggered by our ``oauth_callback`` override
+    # when a NEW OAuth provider account is associated with a user
+    # that ALREADY existed (i.e. the ``associate_by_email`` branch
+    # in fastapi-users). Meaningful security event because it grants
+    # a new authentication surface to an existing account.
+    #
+    # NOT triggered by:
+    # - Token refreshes on an already-linked provider (just rotating
+    #   credentials, no new attack surface — adds noise without
+    #   value).
+    # - New-user-via-OAuth (fires ``user.registered`` upstream; we
+    #   don't want to double-audit that single event).
+    #
+    # ``oauth.unlinked`` is intentionally absent — DAP has no
+    # unlink endpoint today. Add it (and an entry here) when that
+    # surface ships.
+    # ------------------------------------------------------------------
+    "oauth.linked",
     # ------------------------------------------------------------------
     # API tokens (CRUD via /auth/api-tokens; admin via /auth/api-tokens/admin)
     # ------------------------------------------------------------------
