@@ -163,23 +163,28 @@ definitions.
 ## Env layering
 
 Subprocess-spawning adapters (`bash`, `claude-code`, `codex`,
-`gemini-cli`) compose the subprocess environment in three layers.
+`gemini-cli`) compose the subprocess environment in four layers.
 Higher layers override lower ones:
 
 1. **Engine process env** (lowest) — the environment the
    `dap-engine` process inherits. Keep secrets here
    (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`).
-2. **Project `env_vars`** (overlay) — `Project.env_vars` on the
-   project bound to the run. Higher than engine env, lower than
+2. **Instance `env_vars`** (overlay) — operator-set shared defaults
+   configured via `POST /settings/admin/env-vars` (admin only).
+   Stored encrypted at rest, decrypted at run start, and merged into
+   every run. Use for keys that should flow to all projects without
+   per-project configuration (e.g. shared GitHub PATs).
+3. **Project `env_vars`** (overlay) — `Project.env_vars` on the
+   project bound to the run. Higher than instance env, lower than
    per-agent. Convenient for non-secret values like
    `WORKSPACE_NAME`, feature flags, per-project paths.
-3. **Per-agent `runtime_config.env`** (highest) — declared inline
+4. **Per-agent `runtime_config.env`** (highest) — declared inline
    in the agent definition. The final per-call override.
 
-Ad-hoc runs (without a `project_id`) see only layers 1 + 3; layer 2
-is an empty dict. The `api-call` adapter doesn't spawn subprocesses,
-so env layering doesn't apply (the SDK reads its API key directly
-from `os.environ`).
+Ad-hoc runs (without a `project_id`) see only layers 1, 2, and 4;
+layer 3 is an empty dict. The `api-call` adapter doesn't spawn
+subprocesses, so env layering doesn't apply (the SDK reads its API
+key directly from `os.environ`).
 
 ---
 

@@ -17,11 +17,13 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from dap_engine.auth.encryption import EncryptionError, decrypt_value
 from dap_engine.execution.conditions import evaluate_condition
 from dap_engine.execution.node_executor import NodeContext, make_node_fn
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
+    InstanceEnvVarORM,
     PipelineORM,
     PipelineVersionORM,
     ProjectORM,
@@ -95,11 +97,23 @@ class PipelineRunner:
         registry: RuntimeRegistry,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
         recursion_limit: int = DEFAULT_RECURSION_LIMIT,
+        instance_env_vars_key: str | None = None,
     ) -> None:
         self.session = session
         self.registry = registry
         self.checkpointer = checkpointer
         self.recursion_limit = recursion_limit
+        # Fernet key for decrypting ``InstanceEnvVarORM.ciphertext`` at
+        # run start (#388). ``None`` is a no-op — the merge layer
+        # receives an empty overlay, and any instance vars sitting in
+        # the DB are silently ignored. The admin POST path enforces
+        # the key (rows can't be written without one); DELETE does not
+        # — removing a row whose ciphertext we couldn't decrypt is a
+        # legitimate cleanup path after a key rotation. The only way
+        # to end up here with rows-but-no-key is an operator rotating
+        # ``DAP_INSTANCE_ENV_VARS_KEY`` to ``None`` on restart;
+        # flagging that loudly is the orchestrator's job, not ours.
+        self.instance_env_vars_key = instance_env_vars_key
 
     async def run(
         self,
@@ -136,12 +150,14 @@ class PipelineRunner:
         # has been archived between trigger and execution (e.g. resumed
         # paused run after the user archived the project).
         project_context = self._load_project_context(run_id)
+        instance_env_vars = self._load_instance_env_vars()
 
         graph = self._build_graph(
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
             project_context=project_context,
+            instance_env_vars=instance_env_vars,
         )
 
         config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
@@ -315,11 +331,13 @@ class PipelineRunner:
         pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
         agent_lookup = self._load_agents(pipeline)
         project_context = self._load_project_context(run_id)
+        instance_env_vars = self._load_instance_env_vars()
         graph = self._build_graph(
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
             project_context=project_context,
+            instance_env_vars=instance_env_vars,
         )
 
         base_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
@@ -371,8 +389,13 @@ class PipelineRunner:
         pipeline: Pipeline,
         agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
         project_context: _ProjectContext | None = None,
+        instance_env_vars: dict[str, str] | None = None,
     ) -> Any:
         builder = StateGraph(PipelineState)
+        # Snapshot per-graph-build so every node sees the same overlay
+        # (instance vars loaded once per ``run()`` — see
+        # ``_load_instance_env_vars``).
+        instance_overlay: dict[str, str] = dict(instance_env_vars or {})
 
         for node in pipeline.nodes:
             agent, version = agent_lookup[node.agent_id]
@@ -389,6 +412,7 @@ class PipelineRunner:
                     project_context.working_directory if project_context else None
                 ),
                 project_env_vars=(dict(project_context.env_vars) if project_context else None),
+                instance_env_vars=dict(instance_overlay),
             )
             builder.add_node(node.id, make_node_fn(ctx))  # type: ignore[call-overload]
 
@@ -422,6 +446,39 @@ class PipelineRunner:
             checkpointer=self.checkpointer,
             interrupt_before=interrupt_nodes or [],
         )
+
+    def _load_instance_env_vars(self) -> dict[str, str]:
+        """Load + decrypt the instance env-var overlay (#388).
+
+        Called once per ``run()`` / ``rewind_and_run()`` so paused runs
+        that resume after the operator added a new instance var pick
+        it up automatically (per the issue's "merge at runtime, not
+        copy" mandate).
+
+        Returns an empty dict when:
+        - No Fernet key is configured (legacy / minimal deployments).
+        - The table has no rows (fresh install, no operator config yet).
+
+        Raises ``RunnerError`` when a row was written with a different
+        Fernet key — failing the run loudly is safer than dropping a
+        secret silently and letting subprocesses miss credentials
+        they expect. The operator's recovery path is "rotate
+        ``DAP_INSTANCE_ENV_VARS_KEY`` back, or re-create the affected
+        keys via ``/settings/admin/env-vars``".
+        """
+        if not self.instance_env_vars_key:
+            return {}
+        rows = self.session.execute(select(InstanceEnvVarORM)).scalars().all()
+        if not rows:
+            return {}
+        decrypted: dict[str, str] = {}
+        for row in rows:
+            try:
+                decrypted[row.key] = decrypt_value(row.ciphertext, key=self.instance_env_vars_key)
+            except EncryptionError as exc:
+                msg = f"Failed to decrypt instance env var {row.key!r}: {exc}"
+                raise RunnerError(msg) from exc
+        return decrypted
 
     def _load_project_context(self, run_id: str) -> _ProjectContext | None:
         """Resolve the run's project, if any, into a ``_ProjectContext``.

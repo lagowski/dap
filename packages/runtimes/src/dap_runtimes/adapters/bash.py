@@ -94,7 +94,11 @@ class BashAdapter(BaseAdapter):
                 shell=None,
             )
 
-        env, env_error = merge_subprocess_env(task.project_env_vars, config)
+        env, env_error = merge_subprocess_env(
+            task.project_env_vars,
+            config,
+            instance_env_vars=task.instance_env_vars,
+        )
         if env_error is not None:
             return _failed(env_error, duration_ms=0, command=command, shell=shell)
 

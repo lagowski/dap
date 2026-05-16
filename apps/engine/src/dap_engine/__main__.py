@@ -74,6 +74,14 @@ def main() -> None:
         template_registry_auth_token=(
             os.environ.get("DAP_TEMPLATE_REGISTRY_AUTH_TOKEN", "").strip() or None
         ),
+        # Fernet key for the instance env-var store (#388). Must persist
+        # across restarts — encrypted rows written today must decrypt
+        # tomorrow. Generate with:
+        #   python -c 'from cryptography.fernet import Fernet; \
+        #              print(Fernet.generate_key().decode())'
+        # When unset the admin write paths refuse (503), so the operator
+        # can't accidentally store rows that won't decrypt on restart.
+        instance_env_vars_key=(os.environ.get("DAP_INSTANCE_ENV_VARS_KEY", "").strip() or None),
     )
 
     app = create_app(config)
