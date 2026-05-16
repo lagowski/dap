@@ -259,3 +259,49 @@ def test_legacy_migrations_record_iso_timestamps() -> None:
         assert parsed.tzinfo.utcoffset(parsed) == UTC.utcoffset(parsed), (
             f"migration {name!r} not in UTC: {applied_at!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Error path — a broken revision must propagate cleanly to engine startup
+# ---------------------------------------------------------------------------
+
+
+def test_alembic_failure_propagates_to_engine_startup() -> None:
+    """A migration that raises must abort engine startup loudly.
+
+    Council follow-up finding (post-#458): the happy-path tests
+    above don't exercise what happens when a future Alembic
+    revision blows up. Verifies the policy stated in
+    ``_apply_alembic_migrations``'s docstring: errors propagate to
+    the caller so the engine refuses to start against a
+    half-migrated DB.
+
+    We monkeypatch ``alembic.command.upgrade`` to raise — same
+    surface real revision-script failures expose — then assert
+    ``create_engine_for_sqlite`` re-raises rather than swallowing.
+    """
+    from unittest.mock import patch
+
+    tmp = tempfile.mkdtemp(prefix="dap-e6-error-")
+    db_path = str(Path(tmp) / "state.db")
+
+    class BogusRevisionError(RuntimeError):
+        """Marker exception the test mock raises."""
+
+    # Patch ``alembic.command.upgrade`` itself — ``command`` is
+    # imported lazily inside ``_apply_alembic_migrations`` (local
+    # import to keep alembic out of the hot import graph), so the
+    # patch target is the source module, not the importing one.
+    with patch(
+        "alembic.command.upgrade",
+        side_effect=BogusRevisionError("broken revision boom"),
+    ):
+        try:
+            create_engine_for_sqlite(db_path)
+        except BogusRevisionError as exc:
+            assert "broken revision boom" in str(exc)
+        else:
+            raise AssertionError(
+                "create_engine_for_sqlite swallowed the Alembic exception — "
+                "engine startup should fail loudly on migration errors",
+            )
