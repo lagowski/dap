@@ -523,3 +523,106 @@ def test_high_severity_low_confidence_never_blocks_end_to_end() -> None:
     assert verdict.verdict == "comment", (
         f"LOW-confidence HIGH triggered block verdict: {verdict.verdict}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Partial-council resilience: one agent throwing must NOT discard the others
+# ---------------------------------------------------------------------------
+
+
+def test_council_isolates_failing_agent_in_parallel_mode() -> None:
+    """When one agent's provider call raises, the others' results still land.
+
+    Realistic case: OpenRouter rate-limits one specialist mid-run.
+    Pre-fix, ``asyncio.gather`` would propagate the exception and
+    discard the 4 other agents' work. Post-fix
+    (``return_exceptions=True`` + ``_failure_report``), the failed
+    agent surfaces as a single LOW finding ("this lane was not
+    reviewed") and the others' real findings come through.
+    """
+    from code_review_council.agents import CorrectnessAgent
+
+    class FlakyProvider:
+        """Security succeeds; Correctness raises a synthetic timeout."""
+
+        name = "flaky"
+
+        def run_structured(
+            self,
+            *,
+            system_instruction: str,
+            user_content: str,
+            response_schema: type[BaseModel],
+        ) -> BaseModel:
+            if "**Security** reviewer" in system_instruction:
+                return response_schema.model_validate(
+                    AgentReport(summary="security clean", findings=[]).model_dump(),
+                )
+            raise TimeoutError("Provider rate-limited Correctness agent")
+
+    provider = FlakyProvider()
+    council = Council(
+        provider=provider,  # type: ignore[arg-type]
+        context=_ctx(),
+        agents=[
+            SecurityAgent(provider, _ctx()),  # type: ignore[arg-type]
+            CorrectnessAgent(provider, _ctx()),  # type: ignore[arg-type]
+        ],
+    )
+    verdict = council.review(diff="x", parallel=True)
+
+    # Security's success path went through — verdict is non-blocking.
+    assert verdict.verdict == "comment"
+    breadcrumbs = [f for f in verdict.findings if f.file == "(council infrastructure)"]
+    assert len(breadcrumbs) == 1, (
+        f"Expected exactly 1 failure breadcrumb, got {len(breadcrumbs)}: {breadcrumbs}"
+    )
+    breadcrumb = breadcrumbs[0]
+    assert breadcrumb.agent == "Correctness"
+    assert breadcrumb.severity == "LOW"  # never blocks
+    assert "TimeoutError" in breadcrumb.issue
+    # The provider's error message MUST NOT appear — it could contain
+    # API keys / response bodies depending on the provider.
+    assert "rate-limited" not in breadcrumb.issue, (
+        f"Failure breadcrumb leaked provider error message: {breadcrumb.issue}"
+    )
+
+
+def test_council_isolates_failing_agent_in_sequential_mode() -> None:
+    """Sequential mode applies the same isolation as parallel.
+
+    Keeps the two execution paths behaviour-equivalent.
+    """
+    from code_review_council.agents import CorrectnessAgent
+
+    class FlakyProvider:
+        name = "flaky"
+
+        def run_structured(
+            self,
+            *,
+            system_instruction: str,
+            user_content: str,
+            response_schema: type[BaseModel],
+        ) -> BaseModel:
+            if "**Security** reviewer" in system_instruction:
+                return response_schema.model_validate(
+                    AgentReport(summary="ok", findings=[]).model_dump(),
+                )
+            raise RuntimeError("Synthetic provider failure")
+
+    provider = FlakyProvider()
+    council = Council(
+        provider=provider,  # type: ignore[arg-type]
+        context=_ctx(),
+        agents=[
+            SecurityAgent(provider, _ctx()),  # type: ignore[arg-type]
+            CorrectnessAgent(provider, _ctx()),  # type: ignore[arg-type]
+        ],
+    )
+    verdict = council.review(diff="x", parallel=False)
+
+    breadcrumbs = [f for f in verdict.findings if f.file == "(council infrastructure)"]
+    assert len(breadcrumbs) == 1
+    assert breadcrumbs[0].agent == "Correctness"
+    assert "Synthetic" not in breadcrumbs[0].issue  # no provider-message leak

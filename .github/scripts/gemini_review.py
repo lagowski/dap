@@ -504,15 +504,33 @@ def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 — each return is a disti
     # for this exact head SHA, refresh the check_run and bail. Saves
     # an LLM call per workflow re-trigger on the same commit.
     #
-    # No race-condition handling here. The workflow YAML's
-    # ``concurrency: group: gemini-review-<pr>, cancel-in-progress:
-    # true`` guarantees that a new run on the same PR cancels the
-    # in-flight one before this check runs — so two simultaneous
-    # council invocations against the same head SHA can't happen.
-    # If that guard is ever removed from the workflow, the worst
-    # case is a duplicate council run (extra LLM tokens, two
-    # near-identical review bodies), not a correctness bug — the
-    # marker cache hit on the next trigger still works.
+    # **Race-condition rejection (already considered, deliberately not
+    # implemented).** Reviewers have repeatedly suggested adding a
+    # post-council "re-check before posting" to defend against two
+    # concurrent runs both missing the cache. That defence is BOTH
+    # already provided and a non-fix:
+    #
+    #   1. Already provided — the workflow YAML's ``concurrency:
+    #      group: gemini-review-<pr>, cancel-in-progress: true``
+    #      guarantees that a second push to the same PR cancels the
+    #      in-flight workflow run BEFORE this check runs. Two
+    #      simultaneous council invocations against the same head
+    #      SHA literally cannot start.
+    #   2. A post-council re-check would NOT close the race — it
+    #      would only NARROW the window. The genuine race (two runs
+    #      both pass cache miss, both call the LLM, both reach
+    #      "post review") still costs the LLM tokens in step 2; a
+    #      re-check at step 3 saves a duplicate review-body POST
+    #      but the council already ran twice. The cost of "duplicate
+    #      review" is the LLM call, not the review-body POST.
+    #
+    # If the workflow concurrency guard is ever removed, the worst
+    # case is a duplicate council run (extra LLM tokens, two near-
+    # identical review bodies on the PR), not a correctness bug —
+    # the marker cache hit on the NEXT trigger still works. The
+    # marker tag itself IS the idempotency primitive for future
+    # workflow runs; concurrent in-flight runs are the workflow-
+    # scheduler's domain, not the application's.
     try:
         prior_reviews = list_pr_reviews(repo, pr_number)
     except subprocess.CalledProcessError as exc:
