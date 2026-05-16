@@ -7,19 +7,22 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 
 const ID_PREFIX = 8;
 
 export default function ProjectsPage() {
   const { data, isPending, isError, error } = useProjectsList();
   const archive = useArchiveProject();
+  const confirmDestructive = useConfirmDestructive();
 
-  const handleArchive = (id: string, name: string) => {
-    if (
-      !window.confirm(
-        `Archive project "${name}"? Existing runs keep their project_id, but the project won't appear in pickers and triggers will 409.`,
-      )
-    ) {
+  const handleArchive = async (id: string, name: string) => {
+    const ok = await confirmDestructive({
+      title: "Archive project",
+      description: `Archive project "${name}"? Existing runs keep their project_id, but the project won't appear in pickers and triggers will 409.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(id);

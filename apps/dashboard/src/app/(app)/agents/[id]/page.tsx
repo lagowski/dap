@@ -10,6 +10,7 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import type { Agent } from "@/lib/api/types";
 
 export default function AgentDetailPage({
@@ -22,6 +23,7 @@ export default function AgentDetailPage({
   const { data: agent, isPending, isError, error } = useAgent(id);
   const versions = useAgentVersions(id);
   const archive = useArchiveAgent();
+  const confirmDestructive = useConfirmDestructive();
 
   if (isPending) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
@@ -38,12 +40,13 @@ export default function AgentDetailPage({
     );
   }
 
-  const handleArchive = () => {
-    if (
-      !window.confirm(
-        `Archive agent "${agent.name}"? Existing pipelines that reference it will keep working, but it won't appear in pickers.`,
-      )
-    ) {
+  const handleArchive = async () => {
+    const ok = await confirmDestructive({
+      title: "Archive agent",
+      description: `Archive agent "${agent.name}"? Existing pipelines that reference it will keep working, but it won't appear in pickers.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(id, {
