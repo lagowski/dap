@@ -132,7 +132,18 @@ class OpenRouterProvider:
                 raise RuntimeError(
                     f"OpenRouter HTTP {response.status_code} (body redacted)",
                 ) from exc
-            body = response.json()
+            # ``response.json()`` raises ``httpx.DecodingError`` (a
+            # subclass of ``json.JSONDecodeError``) when a 200-OK body
+            # isn't valid JSON. Same leak class as HTTPStatusError —
+            # the default exception ``__str__`` may include the body
+            # snippet that failed to parse. Redact identically.
+            try:
+                body = response.json()
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"OpenRouter HTTP {response.status_code} returned "
+                    f"non-JSON body (content redacted)",
+                ) from exc
 
         # OpenRouter follows the OpenAI shape: ``choices[0].message.content``.
         try:

@@ -176,9 +176,13 @@ def _select_provider() -> tuple[BaseProvider, str]:
             else OpenRouterProvider(api_key=or_key)
         )
         # OpenRouterProvider exposes its resolved model on the
-        # instance — we surface it in the footer for traceability.
-        resolved = getattr(provider, "model", None) or "openrouter:default"
-        return provider, f"openrouter:{resolved}"
+        # ``.name`` property (the underlying field is ``_model``, but
+        # ``name`` is the public surface — see the BaseProvider
+        # protocol). Use it directly rather than a ``getattr`` probe,
+        # which silently fell back to a stale default string and
+        # produced the misleading "openrouter:openrouter:default"
+        # footer flagged by the council.
+        return provider, f"openrouter:{provider.name}"
 
     gem_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if gem_key:
@@ -250,7 +254,19 @@ def list_pr_reviews(repo: str, pr_number: int) -> list[dict[str, object]]:
         "--paginate",
         f"repos/{repo}/pulls/{pr_number}/reviews",
     )
-    parsed = json.loads(raw)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # ``gh api`` returning non-JSON text (rare — usually means the
+        # CLI hit an HTML error page or an unauth shell). Treat as a
+        # cache miss so the council can still run; surface the cause
+        # via stderr so a debugging operator sees it.
+        print(
+            f"::warning::list_pr_reviews got non-JSON output from gh api; "
+            f"treating as cache miss. {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return []
     if not isinstance(parsed, list):
         raise RuntimeError(
             f"Expected ``gh api`` to return a JSON array of reviews, got "
