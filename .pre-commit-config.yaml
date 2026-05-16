@@ -28,7 +28,7 @@ repos:
   - repo: local
     hooks:
       # mypy is a local hook (not the upstream mirror) because --strict
-      # needs the workspace deps (dap-types, dap-runtimes, etc.) on the
+      # needs the workspace deps (dap_types, dap_runtimes, etc.) on the
       # PYTHONPATH. The upstream mirror runs mypy in an isolated env
       # without our packages → false positives.
       - id: mypy
