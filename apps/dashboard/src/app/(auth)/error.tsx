@@ -35,7 +35,7 @@
  * ``.claude/plans/chce-zebys-zrobil-pelny-snuggly-unicorn.md``.
  */
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { startTransition, useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,8 @@ export default function AuthError({
   reset: () => void;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const onLogin = pathname === "/login";
 
   useEffect(() => {
     console.error("Auth segment error:", error);
@@ -70,21 +72,25 @@ export default function AuthError({
 
   /**
    * Secondary action: drop the user on /login regardless of which
-   * auth route crashed. Three calls in lockstep:
-   *   - ``router.push("/login")`` — respects Next's ``basePath``;
-   *     a hardcoded ``location.href`` would 404 under e.g. ``/dap/``.
-   *   - ``router.refresh()`` — covers the App Router's silent no-op
-   *     when ``push`` targets the current pathname (round 2).
-   *   - ``reset()`` — the auth-segment error boundary is *shared*
-   *     across login/signup/reset/OAuth-callback routes, so Next
-   *     does NOT remount it on intra-segment navigation. Without
-   *     ``reset()`` the user's URL updates but the error screen
-   *     stays painted (Gemini strict review, #441 round 4).
+   * auth route crashed. The router action is chosen by where we are:
+   *   - already on /login → ``router.refresh()`` (a push to the
+   *     current pathname is a no-op, and dispatching push + refresh
+   *     into the same transition wastes work in the router reducer
+   *     — Gemini strict review, #441 round 5).
+   *   - any other auth route → ``router.push("/login")`` (respects
+   *     Next ``basePath``; a hardcoded ``location.href`` wouldn't).
+   * Either branch ends with ``reset()`` because the auth-segment
+   * boundary is *shared* across login/signup/reset/OAuth-callback —
+   * Next won't remount it on intra-segment navigation, so without
+   * ``reset()`` the URL updates but the error stays painted (round 4).
    */
   const handleBackToLogin = () => {
     startTransition(() => {
-      router.push("/login");
-      router.refresh();
+      if (onLogin) {
+        router.refresh();
+      } else {
+        router.push("/login");
+      }
       reset();
     });
   };
@@ -107,9 +113,15 @@ export default function AuthError({
         ) : null}
         <div className="flex gap-2">
           <Button onClick={handleRetry}>Try again</Button>
-          <Button variant="outline" onClick={handleBackToLogin}>
-            Back to sign-in
-          </Button>
+          {/* Hide "Back to sign-in" when the user is already on
+              /login — "Try again" already covers that path. Showing
+              two buttons that do the same thing is confusing UX
+              (Gemini strict review, #441 round 5). */}
+          {onLogin ? null : (
+            <Button variant="outline" onClick={handleBackToLogin}>
+              Back to sign-in
+            </Button>
+          )}
         </div>
       </div>
     </div>

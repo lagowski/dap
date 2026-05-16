@@ -58,6 +58,16 @@ export default function GlobalError({
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashboard error — DAP</title>
+        {/* Inline :hover and :focus styles for the recovery button —
+            globals.css isn't loaded here so a Tailwind class would
+            silently fail (Gemini strict review, #441 round 5). */}
+        <style>{`
+          .global-error-button:hover { filter: brightness(0.95); }
+          .global-error-button:focus-visible {
+            outline: 2px solid CanvasText;
+            outline-offset: 2px;
+          }
+        `}</style>
       </head>
       {/* Layout constraints live on an inner wrapper instead of
           ``<body>``: applying ``maxWidth`` to body would expose the
@@ -103,6 +113,12 @@ export default function GlobalError({
             </p>
           ) : null}
           <button
+            // ``type="button"`` is a defensive default — the button
+            // isn't currently inside a <form>, but explicit beats
+            // implicit ``submit`` if the layout ever changes (Gemini
+            // strict review, #441 round 5).
+            type="button"
+            className="global-error-button"
             // Use Next's ``reset`` to honour the framework contract —
             // see file header (Gemini strict review, #441 round 3).
             onClick={() => reset()}
