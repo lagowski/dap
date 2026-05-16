@@ -16,9 +16,17 @@
  *
  * Implementation note: only one recovery button. Per Next.js docs the
  * ``reset`` prop on ``global-error`` performs a full document reload
- * (no router context is available at the root), so a separate "Reload
- * page" button would be functionally identical and confusing. We
- * expose just the reload action.
+ * (no router context is available at the root) — so we wire the
+ * button to ``reset()`` rather than ``window.location.reload()``.
+ * Functionally identical today, but using ``reset`` honours the
+ * framework contract and would inherit any future Next-level
+ * recovery behaviour (e.g. cache invalidation before the reload).
+ *
+ * Theming: ``Canvas`` / ``CanvasText`` are CSS system colors that
+ * auto-respect the OS light/dark preference without needing
+ * ``globals.css``. ``colorScheme: "light dark"`` opts the document
+ * into respecting both schemes so the browser doesn't force a white
+ * background under prefers-color-scheme: dark.
  *
  * Audit finding D2 — see
  * ``.claude/plans/chce-zebys-zrobil-pelny-snuggly-unicorn.md``.
@@ -28,10 +36,9 @@ import { useEffect } from "react";
 
 export default function GlobalError({
   error,
+  reset,
 }: {
   error: Error & { digest?: string };
-  // ``reset`` intentionally not destructured — see file header. Next
-  // still passes it; we just don't expose it as a separate action.
   reset: () => void;
 }) {
   useEffect(() => {
@@ -39,18 +46,18 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <html lang="en">
+    <html lang="en" style={{ colorScheme: "light dark" }}>
       <head>
         <title>Dashboard error — DAP</title>
       </head>
       <body
-        // Inline ``backgroundColor`` + ``color`` to force a light
-        // theme even if a browser extension flips the page background
-        // dark when no stylesheet loads (Gemini strict review, #441
-        // round 2).
+        // ``Canvas`` / ``CanvasText`` are CSS system colors that
+        // auto-respect the OS theme (Gemini strict review, #441
+        // round 3). Falls back to white/black on browsers without
+        // system-color support, which is still readable.
         style={{
-          backgroundColor: "#fff",
-          color: "#000",
+          backgroundColor: "Canvas",
+          color: "CanvasText",
           fontFamily: "system-ui, -apple-system, sans-serif",
           padding: "2rem",
           maxWidth: "640px",
@@ -61,7 +68,7 @@ export default function GlobalError({
         <h1 style={{ fontSize: "1.25rem", margin: "0 0 1rem" }}>
           Dashboard failed to load
         </h1>
-        <p style={{ color: "#555", margin: "0 0 1rem" }}>
+        <p style={{ opacity: 0.7, margin: "0 0 1rem" }}>
           The application could not render its root layout. This usually
           means the engine is unreachable or the build is broken.
         </p>
@@ -70,7 +77,7 @@ export default function GlobalError({
             style={{
               fontFamily: "ui-monospace, monospace",
               fontSize: "0.85rem",
-              color: "#777",
+              opacity: 0.6,
               margin: "0 0 1rem",
             }}
           >
@@ -78,13 +85,15 @@ export default function GlobalError({
           </p>
         ) : null}
         <button
-          onClick={() => window.location.reload()}
+          // Use Next's ``reset`` to honour the framework contract —
+          // see file header (Gemini strict review, #441 round 3).
+          onClick={() => reset()}
           style={{
             padding: "0.5rem 1rem",
-            border: "1px solid #ccc",
+            border: "1px solid CanvasText",
             borderRadius: "0.375rem",
-            background: "#fff",
-            color: "#000",
+            background: "Canvas",
+            color: "CanvasText",
             cursor: "pointer",
           }}
         >

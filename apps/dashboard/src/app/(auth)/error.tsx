@@ -9,18 +9,24 @@
  * - These pages have no sidebar / project context to keep mounted —
  *   the styling is centred-card, full-screen, and matches the auth
  *   layout instead of the in-app shell.
- * - The secondary recovery action navigates back to ``/login``
- *   instead of doing a hard reload. Reload on an OAuth-callback page
- *   would resubmit the single-use ``?code=`` param and trigger a
- *   secondary "code already used" error (Gemini strict review,
- *   #441 round 2); navigating to ``/login`` lets the user restart
- *   the auth flow cleanly regardless of which auth route crashed.
+ * - The secondary recovery action navigates back to ``/login`` via
+ *   ``window.location.href`` rather than ``router.push`` or a plain
+ *   reload. Two constraints intersect here:
+ *
+ *   1. A plain ``window.location.reload()`` would resubmit any
+ *      single-use query params (e.g. an OAuth ``?code=...``) and
+ *      trigger a secondary "code already used" failure.
+ *   2. ``router.push("/login")`` is a no-op in the App Router when
+ *      the current pathname is already ``/login`` — so a crash *on*
+ *      the login page itself would leave the button dead.
+ *
+ *   ``location.href = "/login"`` forces a full remount of the login
+ *   route from any auth-segment page, dodging both pitfalls.
  *
  * Audit finding D2 — see
  * ``.claude/plans/chce-zebys-zrobil-pelny-snuggly-unicorn.md``.
  */
 
-import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -32,8 +38,6 @@ export default function AuthError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  const router = useRouter();
-
   useEffect(() => {
     console.error("Auth segment error:", error);
   }, [error]);
@@ -59,7 +63,18 @@ export default function AuthError({
               isn't passed through to a ``() => void`` callback —
               defensive in case Next's contract ever inspects args. */}
           <Button onClick={() => reset()}>Try again</Button>
-          <Button variant="outline" onClick={() => router.push("/login")}>
+          {/* Force a full-page navigation rather than ``router.push`` —
+              ``push`` to the current pathname is a no-op in Next.js
+              App Router, so when this boundary fires *on* /login the
+              button would be unrecoverably dead. ``location.href``
+              forces a remount regardless (Gemini strict review,
+              #441 round 3). */}
+          <Button
+            variant="outline"
+            onClick={() => {
+              window.location.href = "/login";
+            }}
+          >
             Back to sign-in
           </Button>
         </div>
