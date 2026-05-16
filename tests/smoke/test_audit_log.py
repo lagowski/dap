@@ -10,29 +10,11 @@ real write path (no mocked-out SessionLocal).
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.models import AuditLogORM
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 TEST_PASSWORD = "test-password-123"
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-smoke-audit-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="audit-smoke-secret",
-    )
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
 
 
 async def _audit_rows(client: TestClient, event_type: str | None = None) -> list[AuditLogORM]:

@@ -8,28 +8,21 @@ plus the 404 export path.
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
-
-from tests.smoke._auth import authed_test_client
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory(prefix="dap-pipeline-export-") as tmp:
-        config = EngineConfig(
-            db_path=str(Path(tmp) / "state.db"),
-            auth_jwt_secret="smoke-secret",
-        )
-        app = create_app(config)
-        with authed_test_client(app) as c:
-            yield c
+def client(authed_client: TestClient) -> TestClient:
+    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
+
+    Kept as a local alias because most test bodies in this file already
+    take a ``client: TestClient`` parameter; renaming them all would
+    bloat the X1 diff without changing behaviour.
+    """
+    return authed_client
 
 
 def _create_minimal_agent(client: TestClient, name: str = "Agent") -> str:

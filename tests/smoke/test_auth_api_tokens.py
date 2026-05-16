@@ -13,28 +13,11 @@ Covers:
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
 
 TEST_PASSWORD = "test-password-123"
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-smoke-api-tokens-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="api-tokens-smoke-secret",
-    )
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
 
 
 def _register_and_login(client: TestClient, email: str) -> str:

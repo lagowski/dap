@@ -17,9 +17,7 @@ and ``DELETE /settings/admin/env-vars/{key}``:
 from __future__ import annotations
 
 import asyncio
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -34,15 +32,15 @@ PASSWORD = "test-password-123"
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-admin-env-vars-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="admin-env-vars-smoke-secret",
-        # Fernet key for at-rest encryption of instance env-var values.
-        # A freshly generated key per test fixture means the encrypted
-        # blob in the DB is unreadable across test runs — perfect
-        # isolation, no leakage.
+def client(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> Iterator[TestClient]:
+    """Custom client — needs a fresh Fernet key (so encrypted env-var
+    rows from one test run can't be decoded by another) plus an
+    explicit CORS origin (the dashboard endpoint expects one). All
+    other knobs come from the shared conftest factory defaults.
+    """
+    config = engine_config_factory(
         instance_env_vars_key=Fernet.generate_key().decode(),
         cors_origins=["http://localhost:3000"],
     )

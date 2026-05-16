@@ -22,30 +22,25 @@ to own their own agent — otherwise the DAG validator returns 422
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
-from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.models import AuditLogORM, UserORM
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from tests.smoke._auth import authed_test_client, register_and_login
+from tests.smoke._auth import register_and_login
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-ownership-pipelines-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="ownership-pipelines-secret",
-    )
-    app = create_app(config)
-    with authed_test_client(app) as c:
-        yield c
+def client(authed_client: TestClient) -> TestClient:
+    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
+
+    Kept as a local alias because most test bodies in this file already
+    take a ``client: TestClient`` parameter; renaming them all would
+    bloat the X1 diff without changing behaviour.
+    """
+    return authed_client
 
 
 def _bearer(token: str) -> dict[str, str]:

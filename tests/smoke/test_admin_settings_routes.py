@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -26,15 +26,18 @@ PASSWORD = "test-password-123"
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-admin-settings-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="admin-settings-smoke-secret",
+def client(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> Iterator[TestClient]:
+    """Custom client — needs OAuth client_id/secret + redirect URL +
+    explicit CORS so the ``/settings/admin`` snapshot has values to
+    redact and presence-flag. Google is intentionally left unset so
+    one fixture exercises both the configured + unconfigured paths.
+    All other knobs come from the shared conftest factory defaults.
+    """
+    config = engine_config_factory(
         oauth_github_client_id="gh-id",
         oauth_github_client_secret="gh-secret",
-        # Google left unset so we can verify the "not configured" path
-        # at the same time.
         auth_oauth_redirect_url="http://localhost:3000/api/auth/oauth/callback",
         cors_origins=["http://localhost:3000"],
     )
