@@ -22,7 +22,13 @@ import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Imported under TYPE_CHECKING to avoid the cycle with ``dap_engine.app``
+    # (app.py imports this module). ``from __future__ import annotations``
+    # keeps the dep signature lazy.
+    from dap_engine.app import EngineConfig
 
 from dap_runtimes import RuntimeRegistry
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
@@ -408,7 +414,7 @@ def upsert_instance_env_vars(
     body: dict[str, str],
     session: Session = Depends(get_session),
     user: UserORM = Depends(current_active_user),
-    config: Any = Depends(get_engine_config),
+    config: EngineConfig = Depends(get_engine_config),
 ) -> InstanceEnvVarListing:
     """Upsert one or more instance env vars.
 
