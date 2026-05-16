@@ -289,9 +289,7 @@ def test_init_copy_protection_covers_all_six_groups() -> None:
     assert tr_orig.allowed_hosts == ["orig.example.com"], (
         "template_registry group not copy-protected"
     )
-    assert crypto_orig.instance_env_vars_key == "orig-fernet", (
-        "crypto group not copy-protected"
-    )
+    assert crypto_orig.instance_env_vars_key == "orig-fernet", "crypto group not copy-protected"
 
 
 def test_dataclasses_replace_does_not_leak_state() -> None:
