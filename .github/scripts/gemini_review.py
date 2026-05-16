@@ -61,7 +61,7 @@ from code_review_council.marker import (
 )
 from code_review_council.providers import GeminiProvider, OpenRouterProvider
 from code_review_council.providers.base import BaseProvider
-from code_review_council.sanitize import safe_body, safe_title
+from code_review_council.sanitize import safe_body, safe_title, strip_marker_tags
 
 CHECK_NAME = "gemini-review"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
@@ -73,6 +73,18 @@ MAX_DIFF_CHARS = 60_000
 _VERDICT_TO_REVIEW_FLAG = {
     "request_changes": "--request-changes",
     "comment": "--comment",
+}
+
+# Cached-marker verdict → check_run conclusion. ``malformed`` means the
+# prior posted review had our marker tag but couldn't be parsed cleanly
+# — we treat that as a soft warning (``neutral``), not a green light.
+# Hard-coded mapping so a missing key (future verdict value added to
+# the marker vocabulary but forgotten here) defaults to ``neutral`` as
+# the safe fallback rather than silently approving.
+_CACHED_VERDICT_TO_CONCLUSION = {
+    "approve": "success",
+    "reject": "failure",
+    "malformed": "neutral",
 }
 
 
@@ -255,18 +267,33 @@ _CONFIDENCE_BADGE = {
 
 
 def _format_finding(finding: Finding) -> str:
+    """Render a single finding as PR-comment markdown.
+
+    All agent-supplied text fields (``issue`` / ``suggestion`` /
+    ``evidence`` / ``file``) get :func:`strip_marker_tags` applied
+    before embedding — defends against the cache-poisoning vector
+    where an agent might quote a PR-author-planted ``<!-- ai-review:
+    <sha> -->`` from the diff. Without this strip, our own posted
+    review body would carry attacker-controlled marker tags and a
+    subsequent workflow run would short-circuit on the false cache
+    hit. The legitimate marker is appended by ``render_review_body``
+    AFTER all agent content is stripped, so only OUR tag survives.
+    """
     sev = (finding.severity or "").upper()
     emoji = _SEVERITY_EMOJI.get(sev, "•")
     conf = (finding.confidence or "").upper()
     conf_badge = _CONFIDENCE_BADGE.get(conf, conf.lower() or "?")
-    location = finding.file + (f":{finding.line}" if finding.line else "")
+    safe_file = strip_marker_tags(finding.file)
+    location = safe_file + (f":{finding.line}" if finding.line else "")
     agent_attr = f" · _{finding.agent}_" if finding.agent else ""
+    safe_issue = strip_marker_tags(finding.issue).strip()
+    safe_suggestion = strip_marker_tags(finding.suggestion).strip()
     body = (
         f"#### {emoji} {sev} · _{conf_badge}_{agent_attr} — `{location}`\n"
-        f"**Issue:** {finding.issue.strip()}\n\n"
-        f"**Suggestion:** {finding.suggestion.strip()}"
+        f"**Issue:** {safe_issue}\n\n"
+        f"**Suggestion:** {safe_suggestion}"
     )
-    evidence = (finding.evidence or "").strip()
+    evidence = strip_marker_tags(finding.evidence).strip()
     if evidence and evidence != "—":
         body += f"\n\n**Evidence:**\n```\n{evidence}\n```"
     return body
@@ -314,7 +341,11 @@ def render_review_body(
         per_agent_line = " · ".join(f"_{agent}_: {n}" for agent, n in verdict.per_agent.items())
         parts.append(f"**By agent:** {per_agent_line}")
     parts.append("")
-    parts.append(verdict.summary.strip())
+    # summary is agent-generated — strip our own marker tags so an
+    # agent that quotes a PR-author-planted marker can't poison the
+    # cache. Triple-backtick fences are preserved (agents legitimately
+    # quote code in summaries).
+    parts.append(strip_marker_tags(verdict.summary).strip())
 
     if verdict.review_complete:
         parts.append(
@@ -458,7 +489,12 @@ def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 — each return is a disti
 
     cached = find_cached_review(prior_reviews, head_sha=head_sha, bot_login=bot_login)
     if cached is not None:
-        conclusion = "failure" if cached.verdict == "reject" else "success"
+        # ``malformed`` → ``neutral`` (not ``success``): a malformed
+        # prior verdict isn't a green light, it's "we don't know what
+        # the prior council decided". Unknown verdicts also default to
+        # ``neutral`` so adding a new verdict value to the marker
+        # vocabulary later can't silently auto-approve.
+        conclusion = _CACHED_VERDICT_TO_CONCLUSION.get(cached.verdict, "neutral")
         title_map = {
             "approve": "Cached: no blocking findings (re-run)",
             "reject": "Cached: changes requested (re-run)",
