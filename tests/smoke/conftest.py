@@ -20,6 +20,80 @@ POLL_TIMEOUT_S = 10.0
 
 
 # ---------------------------------------------------------------------------
+# Auto-marker — unit vs integration (audit X2 + X6)
+# ---------------------------------------------------------------------------
+#
+# Lifts the per-file ``pytestmark`` boilerplate into one collection hook.
+# A test file lands on ``UNIT_FILES`` when it has no DB / engine boot /
+# subprocess — i.e. it tests a pure helper in isolation. Everything else
+# in ``tests/smoke/`` is integration (boots the engine app via the shared
+# ``client`` / ``authed_client`` fixture, hits the SQLite DB, or shells
+# out to a CLI runtime).
+#
+# CI can then split:
+#   - ``pytest -m unit``         → fast pre-commit / pre-push gate (sub-
+#                                  second total today)
+#   - ``pytest -m integration``  → slow CI job (the existing smoke run)
+#
+# Maintenance: when a new test file lands in ``tests/smoke/``, add it
+# here only if it qualifies as unit. The default is integration, which
+# matches what the smoke suite has always done — a forgotten entry
+# means a new test is "merely" slow, not silently un-marked.
+UNIT_FILES = frozenset(
+    {
+        "test_agent_schema_validation.py",
+        "test_api_call_adapter.py",
+        "test_claude_code_adapter.py",
+        "test_codex_adapter.py",
+        "test_conditions.py",
+        "test_db_url_helpers.py",
+        "test_gemini_cli_adapter.py",
+        "test_http_adapter.py",
+        "test_instance_env_vars_merge.py",
+        "test_output_parser.py",
+        "test_pipeline_state_description.py",
+        "test_prompt_builder.py",
+        "test_provider_gemini.py",
+        "test_provider_openai.py",
+        "test_python_func_adapter.py",
+        "test_run_registry.py",
+    }
+)
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    """Auto-apply ``unit`` / ``integration`` markers based on file name.
+
+    Runs after collection, before any test executes. The classification
+    is purely file-name based — no AST inspection, no import probing —
+    which keeps the hook trivial. Per-test override is still possible:
+    if a test explicitly carries ``@pytest.mark.integration`` it stays
+    integration even when it lives in a UNIT_FILES file.
+    """
+    for item in items:
+        # ``item.path`` is the test file's Path. We only auto-mark
+        # tests under ``tests/smoke/`` — the rest of the testpath
+        # tree (``apps/`` / ``packages/`` unit suites) is opt-in.
+        try:
+            parent = item.path.parent.name
+            filename = item.path.name
+        except AttributeError:
+            continue
+        if parent != "smoke":
+            continue
+        marker_name = "unit" if filename in UNIT_FILES else "integration"
+        # Respect a pre-existing explicit marker — don't downgrade an
+        # integration tag a test author put there on purpose.
+        existing = {mark.name for mark in item.iter_markers()}
+        if "unit" in existing or "integration" in existing:
+            continue
+        item.add_marker(getattr(pytest.mark, marker_name))
+
+
+# ---------------------------------------------------------------------------
 # Engine app + TestClient fixtures (#audit-X1)
 # ---------------------------------------------------------------------------
 #
