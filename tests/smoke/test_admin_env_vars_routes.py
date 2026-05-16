@@ -188,7 +188,7 @@ def test_post_bulk_upsert_uses_single_select(client: TestClient) -> None:
             compiled = str(
                 statement.compile(compile_kwargs={"literal_binds": False})
             ).lower()
-        except Exception:  # noqa: BLE001
+        except Exception:
             compiled = ""
         if compiled.startswith("select") and "instance_env_vars" in compiled:
             select_count["n"] += 1
