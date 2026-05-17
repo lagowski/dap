@@ -223,8 +223,13 @@ export function useAgentForm({
         input_schema: inputSchema,
         output_schema: outputSchema,
       });
-    } catch {
-      // intentional: parent already shows the error via submitError
+    } catch (err) {
+      // Mutation errors flow to ``submitError`` via the parent's
+      // create/update hook and render inline — no re-throw needed for
+      // those. We log here so non-mutation crashes (e.g. a bug in
+      // ``pruneRuntimeConfig`` or a thrown synchronous error from the
+      // parent's ``onSubmit``) don't vanish silently during dev.
+      console.error("Agent form submit failed", err);
     }
   });
 
