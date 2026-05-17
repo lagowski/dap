@@ -63,8 +63,12 @@ const API_CALL_PROVIDERS: RuntimeFieldOption[] = [
   { value: "openai", label: "OpenAI (GPT-5, o-series)" },
   { value: "glm", label: "Z.AI GLM (no base_url needed)" },
   {
+    value: "openrouter",
+    label: "OpenRouter (multi-model gateway, no base_url needed)",
+  },
+  {
     value: "openai-compat",
-    label: "OpenAI-compatible custom (Together, OpenRouter, internal proxies, …)",
+    label: "OpenAI-compatible custom (Together, llama.cpp, internal proxies, …)",
   },
   { value: "gemini", label: "Google Gemini" },
 ];

@@ -35,7 +35,8 @@ cat > .env.local <<'EOF'
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AI...
-GLM_API_KEY=...   # Z.AI GLM, optional
+GLM_API_KEY=...          # Z.AI GLM, optional
+OPENROUTER_API_KEY=...   # OpenRouter multi-model gateway, optional
 EOF
 
 # 2. Load + start the engine
@@ -43,7 +44,7 @@ set -a; source .env.local; set +a
 uv run dap-engine start`;
 
 const OPENAI_COMPAT_SNIPPET = `# Pick provider: "openai-compat" in the agent form, then:
-#   base_url:     https://your-endpoint/v1   (Together, OpenRouter, …)
+#   base_url:     https://your-endpoint/v1   (Together, llama.cpp, internal proxies, …)
 #   api_key_env:  YOUR_PROVIDER_API_KEY     (the env var name, not the key)
 
 # And export the matching env var on the engine before restart:
@@ -118,18 +119,20 @@ export function QuickSetup() {
               <li>
                 <span className="font-medium">Custom OpenAI-compatible
                 providers</span>{" "}
-                (Together, OpenRouter, internal proxies, llama.cpp, …) — pick{" "}
+                (Together, internal proxies, llama.cpp, …) — pick{" "}
                 <code className="font-mono text-xs">provider: openai-compat</code>{" "}
                 on the agent form, supply the endpoint{" "}
                 <code className="font-mono text-xs">base_url</code> and the env
                 var name in{" "}
                 <code className="font-mono text-xs">api_key_env</code>, then
-                export the matching env on the engine. Z.AI GLM is registered
-                as a first-class provider — use{" "}
-                <code className="font-mono text-xs">provider: glm</code> with
-                just{" "}
-                <code className="font-mono text-xs">GLM_API_KEY</code> in env;
-                the URL is hardcoded.
+                export the matching env on the engine. Z.AI GLM and OpenRouter
+                are registered as first-class providers — use{" "}
+                <code className="font-mono text-xs">provider: glm</code> with{" "}
+                <code className="font-mono text-xs">GLM_API_KEY</code>, or{" "}
+                <code className="font-mono text-xs">provider: openrouter</code>{" "}
+                with{" "}
+                <code className="font-mono text-xs">OPENROUTER_API_KEY</code>;
+                the URLs are hardcoded.
                 <CodeBlock code={OPENAI_COMPAT_SNIPPET} />
               </li>
             </ol>

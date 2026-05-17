@@ -9,9 +9,16 @@ Supported providers (v0.4):
 
 - ``anthropic`` — Anthropic SDK (Claude 4.x family).
 - ``openai`` — OpenAI SDK with default base URL (GPT-5, o-series).
+- ``glm`` — Z.AI GLM via OpenAI SDK, hardcoded base_url +
+  ``GLM_API_KEY`` (first-class registration, #115).
+- ``openrouter`` — OpenRouter multi-model gateway via OpenAI SDK,
+  hardcoded base_url + ``OPENROUTER_API_KEY`` + DAP identification
+  headers (first-class registration, #449). ``model_id`` is a
+  slash-namespaced id like ``anthropic/claude-3.5-sonnet``.
 - ``openai-compat`` — OpenAI SDK with a custom ``base_url`` and
-  ``api_key_env``. Covers GLM (z.ai), Together, OpenRouter, llama.cpp
-  servers and any other Chat Completions-compatible endpoint.
+  ``api_key_env``. Covers Together, llama.cpp servers, internal
+  proxies, and any other Chat Completions-compatible endpoint
+  that doesn't have a first-class registration above.
 - ``gemini`` — Google Gen AI SDK (Gemini 2.x / 3.x).
 """
 

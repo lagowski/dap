@@ -226,10 +226,15 @@ export function useAgentForm({
     } catch (err) {
       // Mutation errors flow to ``submitError`` via the parent's
       // create/update hook and render inline — no re-throw needed for
-      // those. We log here so non-mutation crashes (e.g. a bug in
-      // ``pruneRuntimeConfig`` or a thrown synchronous error from the
-      // parent's ``onSubmit``) don't vanish silently during dev.
-      console.error("Agent form submit failed", err);
+      // those. In development we log here so non-mutation crashes
+      // (e.g. a bug in ``pruneRuntimeConfig`` or a thrown synchronous
+      // error from the parent's ``onSubmit``) don't vanish silently.
+      // Gated to non-production so the full error object (which may
+      // carry response bodies, tokens, or PII) never reaches a
+      // production user's devtools console.
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Agent form submit failed", err);
+      }
     }
   });
 

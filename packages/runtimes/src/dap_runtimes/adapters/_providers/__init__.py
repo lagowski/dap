@@ -81,6 +81,17 @@ PROVIDER_REGISTRY: Final[dict[str, ProviderInfo]] = {
         default_env_var="GLM_API_KEY",
         display_name="Z.AI GLM (OpenAI-compatible)",
     ),
+    "openrouter": ProviderInfo(
+        id="openrouter",
+        # Multi-model gateway speaking the OpenAI Chat Completions
+        # shape. Hardcoded ``base_url`` + dedicated env var + DAP
+        # identification headers — see ``_openai.OPENROUTER_*``.
+        # Same recipe as the ``glm`` entry above. The ``model_id``
+        # is a slash-namespaced id like ``anthropic/claude-3.5-sonnet``.
+        module_path="dap_runtimes.adapters._providers._openai",
+        default_env_var="OPENROUTER_API_KEY",
+        display_name="OpenRouter (multi-model gateway)",
+    ),
     "gemini": ProviderInfo(
         id="gemini",
         module_path="dap_runtimes.adapters._providers._gemini",
