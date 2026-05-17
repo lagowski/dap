@@ -155,7 +155,7 @@ export default function AdminAuditLogPage() {
         <CardHeader>
           <CardTitle>
             {events.data
-              ? `${total.toLocaleString()} ${total === 1 ? "event" : "events"}`
+              ? `$<span suppressHydrationWarning>{total.toLocaleString()}</span> ${total === 1 ? "event" : "events"}`
               : "Events"}
           </CardTitle>
         </CardHeader>
@@ -196,7 +196,7 @@ export default function AdminAuditLogPage() {
                         className="border-b last:border-b-0 hover:bg-accent/30"
                       >
                         <td className="px-4 py-3 align-middle text-xs whitespace-nowrap text-muted-foreground">
-                          {formatTimestamp(event.created_at)}
+                          <span suppressHydrationWarning>{formatTimestamp(event.created_at)}</span>
                         </td>
                         <td className="px-4 py-3 align-middle">
                           <code className="text-xs font-mono">
@@ -235,7 +235,7 @@ export default function AdminAuditLogPage() {
           <div className="flex items-center justify-between border-t px-6 py-3 text-xs text-muted-foreground">
             <span>
               {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of{" "}
-              {total.toLocaleString()}
+              <span suppressHydrationWarning>{total.toLocaleString()}</span>
             </span>
             <div className="space-x-2">
               <Button

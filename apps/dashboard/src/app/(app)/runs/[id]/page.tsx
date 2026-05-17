@@ -84,17 +84,10 @@ export default function RunDetailPage({
         <Metric label="Cost" value={formatCost(run.cost_usd)} />
       </div>
       <div className="grid grid-cols-3 gap-4 text-xs">
-        <Metric
-          label="Started"
-          value={
-            <span suppressHydrationWarning>
-              {new Date(run.started_at).toLocaleString()}
-            </span>
-          }
-        />
+        <Metric label="Started" value={<span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span>} />
         <Metric
           label="Ended"
-          value={run.ended_at ? new Date(run.ended_at).toLocaleString() : "—"}
+          value={<span suppressHydrationWarning>{run.ended_at ? new Date(run.ended_at).toLocaleString() : "—"}</span>}
         />
         <Metric label="Duration" value={formatDuration(duration)} />
       </div>
@@ -133,16 +126,7 @@ export default function RunDetailPage({
   );
 }
 
-function Metric({
-  label,
-  value,
-}: {
-  label: string;
-  // ReactNode (not string) so the hydration-aware "Started" / "Duration"
-  // call sites can pass <span suppressHydrationWarning>...</span>. Plain
-  // strings still work — string is a subtype of ReactNode.
-  value: React.ReactNode;
-}) {
+function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="rounded border bg-background p-3">
       <div className="text-muted-foreground">{label}</div>

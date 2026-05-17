@@ -109,7 +109,7 @@ export default function AdminApiTokensPage() {
           <CardTitle className="flex items-center gap-2">
             <KeyRound className="h-5 w-5 text-muted-foreground" aria-hidden />
             {tokens.data
-              ? `${total.toLocaleString()} ${total === 1 ? "token" : "tokens"}`
+              ? `$<span suppressHydrationWarning>{total.toLocaleString()}</span> ${total === 1 ? "token" : "tokens"}`
               : "Tokens"}
           </CardTitle>
           <CardDescription>
@@ -176,7 +176,7 @@ export default function AdminApiTokensPage() {
           <div className="flex items-center justify-between border-t px-6 py-3 text-xs text-muted-foreground">
             <span>
               {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of{" "}
-              {total.toLocaleString()}
+              <span suppressHydrationWarning>{total.toLocaleString()}</span>
             </span>
             <div className="space-x-2">
               <Button
@@ -247,10 +247,10 @@ function TokenRow({ token, isSelf, isRevoking, onRevoke }: TokenRowProps) {
         )}
       </td>
       <td className="px-4 py-3 align-middle text-xs text-muted-foreground">
-        {formatTimestamp(token.created_at)}
+        <span suppressHydrationWarning>{formatTimestamp(token.created_at)}</span>
       </td>
       <td className="px-4 py-3 align-middle text-xs text-muted-foreground">
-        {formatTimestamp(token.last_used_at)}
+        <span suppressHydrationWarning>{formatTimestamp(token.last_used_at)}</span>
       </td>
       <td className="px-4 py-3 align-middle text-right">
         {(() => {

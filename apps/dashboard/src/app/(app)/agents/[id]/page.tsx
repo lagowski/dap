@@ -237,7 +237,7 @@ function VersionRow({ version }: { version: Agent }) {
         <Badge variant="outline">v{version.version}</Badge>
         <span className="font-medium">{version.name}</span>
         <span className="text-muted-foreground ml-auto">
-          <span suppressHydrationWarning>{new Date(version.created_at).toLocaleString()}</span>
+          <span suppressHydrationWarning><span suppressHydrationWarning>{new Date(version.created_at).toLocaleString()}</span></span>
         </span>
       </button>
       {expanded && (
