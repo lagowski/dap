@@ -436,6 +436,86 @@ def post_review(pr_number: int, verdict: str, body: str) -> None:
             raise
 
 
+def find_stale_changes_requested_review_ids(
+    reviews: list[dict[str, object]],
+    *,
+    bot_login: str,
+) -> list[int]:
+    """Return review IDs the bot should dismiss after a clean re-review.
+
+    Filters ``reviews`` to active ``CHANGES_REQUESTED`` reviews
+    submitted by ``bot_login`` (the same account this workflow runs
+    as). Excludes reviews already in state ``DISMISSED`` to avoid
+    re-dismissing them on each subsequent run.
+
+    Used when the council's new verdict is ``comment`` (a clean
+    re-review): GitHub's ``dismiss_stale_reviews`` branch-protection
+    setting only auto-dismisses APPROVED reviews on new commits, NOT
+    CHANGES_REQUESTED, so the prior reject stays stuck on the PR's
+    ``reviewDecision`` until something explicitly clears it. We
+    dismiss the stale reviews here so the next merge-readiness check
+    sees the new verdict instead of the old one.
+    """
+    out: list[int] = []
+    for r in reviews:
+        if not isinstance(r, dict):
+            continue
+        if r.get("state") != "CHANGES_REQUESTED":
+            continue
+        user = r.get("user")
+        if not isinstance(user, dict):
+            continue
+        if user.get("login") != bot_login:
+            continue
+        rid = r.get("id")
+        if isinstance(rid, int):
+            out.append(rid)
+    return out
+
+
+def dismiss_reviews(
+    *,
+    repo: str,
+    pr_number: int,
+    review_ids: list[int],
+    head_sha: str,
+) -> None:
+    """PUT each review's dismissals endpoint with a fix-pointing message.
+
+    Dismissal failures are warnings, not errors — branch protection
+    still sees the new check_run carrying the real verdict, so a
+    failed dismissal degrades us back to "human dismisses the stale
+    review manually" rather than breaking the workflow. The whole
+    point of this step is ergonomic; refusing to ship a clean verdict
+    because dismissal failed would be the wrong trade.
+    """
+    message = (
+        "Council re-reviewed at "
+        f"`{head_sha[:7]}` — no actionable findings. "
+        "Auto-dismissing the prior CHANGES_REQUESTED so "
+        "``reviewDecision`` reflects the latest verdict."
+    )
+    for rid in review_ids:
+        try:
+            gh_run(
+                "api",
+                "--method",
+                "PUT",
+                f"repos/{repo}/pulls/{pr_number}/reviews/{rid}/dismissals",
+                "-f",
+                f"message={message}",
+            )
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"::warning::Failed to dismiss stale review #{rid}; "
+                f"the prior CHANGES_REQUESTED may still block merge. "
+                f"Resolve via the PR UI or `gh api -X PUT "
+                f"repos/{repo}/pulls/{pr_number}/reviews/{rid}/dismissals`.\n"
+                f"{exc}",
+                file=sys.stderr,
+            )
+
+
 def post_check(
     *,
     repo: str,
@@ -616,6 +696,29 @@ def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 — each return is a disti
         head_sha=head_sha,
     )
     post_review(pr_number, verdict.verdict, body)
+
+    # When the new verdict is ``comment`` (clean re-review with no
+    # actionable findings), dismiss any prior CHANGES_REQUESTED reviews
+    # from this same bot account. GitHub's ``dismiss_stale_reviews``
+    # branch-protection setting only auto-dismisses APPROVED reviews on
+    # new commits — CHANGES_REQUESTED stays stuck until something
+    # explicitly clears it, so without this step a clean re-review
+    # still leaves the PR's ``reviewDecision`` as CHANGES_REQUESTED and
+    # blocks merge. ``prior_reviews`` is the same list we already
+    # fetched for the marker cache check (line above), so this adds
+    # one or two PUT calls per fix push, no extra reads.
+    if verdict.verdict == "comment":
+        stale_ids = find_stale_changes_requested_review_ids(
+            prior_reviews,
+            bot_login=bot_login,
+        )
+        if stale_ids:
+            dismiss_reviews(
+                repo=repo,
+                pr_number=pr_number,
+                review_ids=stale_ids,
+                head_sha=head_sha,
+            )
 
     # Gate fails iff the council kept a blocking finding. The arbiter
     # already filtered LOW-confidence speculation; we re-derive the
