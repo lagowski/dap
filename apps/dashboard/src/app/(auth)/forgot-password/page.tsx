@@ -77,6 +77,7 @@ export default function ForgotPasswordPage() {
               autoComplete="email"
               autoFocus
               disabled={forgot.isPending}
+              suppressHydrationWarning
               {...form.register("email")}
               aria-invalid={form.formState.errors.email ? true : undefined}
             />

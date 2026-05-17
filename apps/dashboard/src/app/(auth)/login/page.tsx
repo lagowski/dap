@@ -109,6 +109,7 @@ function LoginPageInner() {
               autoComplete="email"
               autoFocus
               disabled={login.isPending}
+              suppressHydrationWarning
               {...form.register("email")}
               aria-invalid={form.formState.errors.email ? true : undefined}
             />
@@ -125,6 +126,7 @@ function LoginPageInner() {
               type="password"
               autoComplete="current-password"
               disabled={login.isPending}
+              suppressHydrationWarning
               {...form.register("password")}
               aria-invalid={form.formState.errors.password ? true : undefined}
             />

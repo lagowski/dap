@@ -110,6 +110,7 @@ function ResetPasswordPageInner() {
               autoComplete="new-password"
               autoFocus
               disabled={reset.isPending}
+              suppressHydrationWarning
               {...form.register("password")}
               aria-invalid={form.formState.errors.password ? true : undefined}
             />
@@ -126,6 +127,7 @@ function ResetPasswordPageInner() {
               type="password"
               autoComplete="new-password"
               disabled={reset.isPending}
+              suppressHydrationWarning
               {...form.register("confirm")}
               aria-invalid={form.formState.errors.confirm ? true : undefined}
             />
