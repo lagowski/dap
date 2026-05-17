@@ -183,7 +183,7 @@ function RecentRuns({ projectId }: { projectId: string }) {
                   v{run.pipeline_version}
                 </span>
                 <span className="ml-auto text-xs text-muted-foreground">
-                  {new Date(run.started_at).toLocaleString()}
+                  <span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span>
                 </span>
               </li>
             ))}
