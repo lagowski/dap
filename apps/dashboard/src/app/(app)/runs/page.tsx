@@ -136,7 +136,7 @@ function RunRow({ run }: { run: Run }) {
         <RunStatusBadge status={run.final_status} />
       </td>
       <td className="px-4 py-3 text-muted-foreground text-xs">
-        <span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span>
+        <span suppressHydrationWarning><span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span></span>
       </td>
       <td className="px-4 py-3 text-right tabular-nums">
         {formatTokens(run.tokens_used)}
