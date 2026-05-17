@@ -84,10 +84,10 @@ export default function RunDetailPage({
         <Metric label="Cost" value={formatCost(run.cost_usd)} />
       </div>
       <div className="grid grid-cols-3 gap-4 text-xs">
-        <Metric label="Started" value=<span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span> />
+        <Metric label="Started" value=<span suppressHydrationWarning><span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span></span> />
         <Metric
           label="Ended"
-          value={run.ended_at ? new Date(run.ended_at).toLocaleString() : "—"}
+          value={<span suppressHydrationWarning>{run.ended_at ? new Date(run.ended_at).toLocaleString() : "—"}</span>}
         />
         <Metric label="Duration" value={formatDuration(duration)} />
       </div>
