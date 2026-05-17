@@ -26,7 +26,14 @@ from pathlib import Path
 _SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent / ".github" / "scripts"
 sys.path.insert(0, str(_SCRIPT_DIR))
 
-from gemini_review import find_stale_changes_requested_review_ids  # noqa: E402
+# ``gemini_review`` lives under ``.github/scripts/`` (not an installable
+# package), so mypy can't resolve it statically — the sys.path injection
+# above is a runtime-only mechanism. Suppress the import-not-found
+# diagnostic; the runtime import still validates that the function
+# exists.
+from gemini_review import (  # type: ignore[import-not-found] # noqa: E402
+    find_stale_changes_requested_review_ids,
+)
 
 BOT = "github-actions[bot]"
 
@@ -105,10 +112,11 @@ def test_tolerates_malformed_review_entries() -> None:
         },
         _review(review_id=99),  # the one valid entry
     ]
-    out = find_stale_changes_requested_review_ids(
-        reviews,  # type: ignore[arg-type]
-        bot_login=BOT,
-    )
+    # mypy sees the function as ``Any`` (the script lives outside the
+    # importable package tree — see the import line above), so the
+    # ``list[object]`` argument doesn't need a per-call cast. The
+    # runtime behaviour is what we're actually pinning here.
+    out = find_stale_changes_requested_review_ids(reviews, bot_login=BOT)
     assert out == [99]
 
 
