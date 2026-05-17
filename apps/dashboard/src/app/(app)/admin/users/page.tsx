@@ -234,10 +234,10 @@ function UserRow({
         )}
       </td>
       <td className="px-4 py-3 align-middle text-xs text-muted-foreground">
-        {formatTimestamp(user.created_at)}
+        <span suppressHydrationWarning>{formatTimestamp(user.created_at)}</span>
       </td>
       <td className="px-4 py-3 align-middle text-xs text-muted-foreground">
-        {formatTimestamp(user.last_login_at)}
+        <span suppressHydrationWarning>{formatTimestamp(user.last_login_at)}</span>
       </td>
       <td className="px-4 py-3 align-middle text-right space-x-1">
         {(() => {
