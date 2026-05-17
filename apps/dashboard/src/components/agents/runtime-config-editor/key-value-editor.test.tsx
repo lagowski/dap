@@ -67,17 +67,30 @@ describe("KeyValueEditor", () => {
   });
 
   it("emits undefined when the last row is removed (empty dict → unset)", async () => {
+    // Pinning a real production contract: when the editor empties out
+    // it must emit ``undefined`` (not ``{}``). The parent orchestrator
+    // (runtime-config-editor.tsx:89-96) keys on ``next === undefined``
+    // to delete the field key from the runtime_config dict — if we
+    // emitted ``{}`` instead, the key would survive as an empty dict
+    // and the engine's payload would carry a no-op field.
+    //
+    // The spy receives the raw ``next`` value before the ControlledKV
+    // harness coerces ``undefined → {}`` for its own re-render (which
+    // is just so the editor's non-nullable ``value`` prop stays
+    // valid). The assertion below checks the editor's emission, not
+    // the harness's coerced state.
     const onChange = vi.fn();
-    render(
-      <ControlledKV initial={{ FOO: "1" }} onChange={onChange} />,
-    );
-    // The X button is icon-only; find it as the only button inside
-    // the row (the bottom "Add entry" is outside).
-    const rowButtons = screen.getAllByRole("button");
-    // First button is the row's delete (X), second is "Add entry".
-    await userEvent.click(rowButtons[0]);
-    // ``undefined`` (not ``{}``) so downstream pruners can drop the
-    // field entirely from the runtime config payload.
+    render(<ControlledKV initial={{ FOO: "1" }} onChange={onChange} />);
+
+    // Find the delete button by scoping into the row that owns the
+    // FOO input. ``getAllByRole("button")[0]`` would work today but
+    // is order-dependent — an icon shuffle or layout change could
+    // produce a false pass.
+    const fooKeyInput = screen.getByDisplayValue("FOO");
+    const fooRow = fooKeyInput.closest("div")!;
+    const deleteButton = within(fooRow).getAllByRole("button").at(-1)!;
+    await userEvent.click(deleteButton);
+
     expect(onChange).toHaveBeenLastCalledWith(undefined);
   });
 
