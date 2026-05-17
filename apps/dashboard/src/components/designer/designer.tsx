@@ -1,7 +1,29 @@
 "use client";
 
+/**
+ * Pipeline designer orchestrator (audit D1 slice 5).
+ *
+ * Post-split this file owns the designer state (React Flow nodes /
+ * edges + designer-domain edge metadata + selection) and the
+ * mutation handlers that drive it. Derived projections + server
+ * save / validate live in dedicated hooks:
+ *
+ * - ``use-pipeline-projections``    — derived memos (canonical-
+ *                                      shape lists, annotations,
+ *                                      annotated edges, selection
+ *                                      detail)
+ * - ``use-pipeline-save``           — buildPayload + validate /
+ *                                      create / update mutations +
+ *                                      handlers
+ * - ``reactflow-adapters``          — pure model → React Flow
+ *                                      shape conversion + stroke
+ *                                      colours
+ *
+ * Pre-split this file was 512 LOC; post-split it stays under 260.
+ */
+
 import { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+
 import {
   Background,
   Controls,
@@ -18,37 +40,20 @@ import {
   type OnEdgesChange,
   type OnNodesChange,
 } from "@xyflow/react";
-import { useAgentsList, useCreatePipeline, useUpdatePipeline, useValidatePipeline } from "@/hooks/api";
-import {
-  annotationTooltip,
-  computeEdgeAnnotation,
-  END_SENTINEL,
-  formatEdgeLabel,
-  START_SENTINEL,
-  type EdgeAnnotation,
-} from "@/lib/edge-annotations";
+
+import { useAgentsList } from "@/hooks/api";
 import type {
   Agent,
   EdgeCondition,
   Pipeline,
-  PipelineEdge,
-  PipelineNode,
-  ValidationResult,
 } from "@/lib/api/types";
+
 import { AgentPalette } from "./agent-palette";
 import { Inspector } from "./inspector";
+import { toReactFlowEdge, toReactFlowNode } from "./reactflow-adapters";
 import { DesignerToolbar } from "./toolbar";
-import {
-  DEFAULT_DEFAULTS,
-  STATE_SCHEMA_REF,
-  type DesignerEdge,
-  type DesignerNode,
-  type PipelineFormPayload,
-} from "./types";
-
-const EDGE_WARNING_STROKE = "#dc2626"; // red-600
-const EDGE_CONDITION_STROKE = "#3b82f6"; // blue-500
-const EDGE_DEFAULT_STROKE = "#94a3b8"; // slate-400
+import { usePipelineProjections } from "./use-pipeline-projections";
+import { usePipelineSave } from "./use-pipeline-save";
 
 interface PipelineDesignerProps {
   /** The persisted pipeline being edited; ``null`` for a fresh pipeline. */
@@ -65,11 +70,11 @@ interface PipelineDesignerProps {
 
 const NEW_NODE_OFFSET = 80;
 
+
 export function PipelineDesigner({
   initialPipeline,
   seedFromPipeline = null,
 }: PipelineDesignerProps) {
-  const router = useRouter();
   const { data: agentsData } = useAgentsList();
   // Stable reference so memos that depend on `agents` don't re-run when
   // useAgentsList re-renders without a real data change.
@@ -127,8 +132,6 @@ export function PipelineDesigner({
     | { kind: "none" }
   >({ kind: "none" });
 
-  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
-
   const onNodesChange: OnNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
     [],
@@ -137,16 +140,11 @@ export function PipelineDesigner({
     (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
     [],
   );
-  const onConnect: OnConnect = useCallback(
-    (params: Connection) => {
-      const edgeId = `e_${Math.random().toString(36).slice(2, 8)}`;
-      setEdges((eds) =>
-        addEdge({ ...params, id: edgeId }, eds),
-      );
-      setEdgeMeta((meta) => ({ ...meta, [edgeId]: { condition: null, label: null } }));
-    },
-    [],
-  );
+  const onConnect: OnConnect = useCallback((params: Connection) => {
+    const edgeId = `e_${Math.random().toString(36).slice(2, 8)}`;
+    setEdges((eds) => addEdge({ ...params, id: edgeId }, eds));
+    setEdgeMeta((meta) => ({ ...meta, [edgeId]: { condition: null, label: null } }));
+  }, []);
 
   const handleAddNode = useCallback(
     (agentId: string, agentName: string) => {
@@ -233,210 +231,17 @@ export function PipelineDesigner({
     [],
   );
 
-  // Lifted from buildPayload so the Inspector can reuse the projections.
-  const designerNodes = useMemo<PipelineNode[]>(
-    () =>
-      nodes.map((n) => ({
-        id: n.id,
-        agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
-        position: { x: n.position.x, y: n.position.y },
-      })),
-    [nodes],
-  );
-  const designerEdges = useMemo<PipelineEdge[]>(
-    () =>
-      edges.map((e) => {
-        const meta = edgeMeta[e.id];
-        return {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          condition: meta?.condition ?? null,
-          label: meta?.label ?? null,
-        };
-      }),
-    [edges, edgeMeta],
-  );
+  const { designerNodes, designerEdges, annotatedEdges, selectionDetail } =
+    usePipelineProjections({ nodes, edges, edgeMeta, agents, selection });
 
-  const buildPayload = useCallback(
-    (): PipelineFormPayload => {
-      // Snapshot current node positions into ui_metadata so they survive
-      // page refresh. PipelineNode.position is the authoritative storage;
-      // node_positions here is an explicit UI-layer copy that the designer
-      // applies on load before ReactFlow's fitView can shift things (#226).
-      const nodePositions: Record<string, { x: number; y: number }> = {};
-      for (const n of designerNodes) {
-        nodePositions[n.id] = { x: n.position.x, y: n.position.y };
-      }
-      const existingMeta =
-        initialPipeline?.ui_metadata &&
-        typeof initialPipeline.ui_metadata === "object"
-          ? (initialPipeline.ui_metadata as Record<string, unknown>)
-          : {};
-      return {
-        name,
-        description,
-        schema_version: "langgraph/1.0",
-        state_schema_ref: STATE_SCHEMA_REF,
-        entry_point: entryPoint,
-        nodes: designerNodes,
-        edges: designerEdges,
-        defaults: DEFAULT_DEFAULTS,
-        ui_metadata: { ...existingMeta, node_positions: nodePositions },
-      };
-    },
-    [name, description, entryPoint, designerNodes, designerEdges, initialPipeline?.ui_metadata],
-  );
-
-  const validate = useValidatePipeline();
-  const create = useCreatePipeline();
-  const update = useUpdatePipeline();
-
-  const handleValidate = useCallback(async () => {
-    // Clear any previous result first — otherwise a stale "valid" sticks
-    // around if the next validation attempt fails (and the Save button
-    // would stay enabled based on the old success state).
-    setValidationResult(null);
-    try {
-      const result = await validate.mutateAsync(buildPayload());
-      setValidationResult(result);
-    } catch {
-      // The mutation's error state already drives the UI via submitError;
-      // swallow here to avoid an unhandled rejection in the dev overlay.
-    }
-  }, [buildPayload, validate]);
-
-  const handleSave = useCallback(async () => {
-    const payload = buildPayload();
-    try {
-      if (initialPipeline) {
-        const updated = await update.mutateAsync({
-          id: initialPipeline.id,
-          payload,
-        });
-        router.push(`/pipelines/${updated.id}/edit`);
-      } else {
-        const created = await create.mutateAsync(payload);
-        router.push(`/pipelines/${created.id}/edit`);
-      }
-    } catch {
-      // Save failure surfaces via create.error / update.error on the
-      // toolbar; swallow here to avoid the unhandled rejection.
-    }
-  }, [buildPayload, initialPipeline, create, update, router]);
-
-  // Single source-of-truth map: edge_id → EdgeAnnotation. Both the
-  // rendered edges and the inspector read from this so the chip on
-  // the canvas and the field list in the side panel can never drift.
-  const annotations = useMemo<Map<string, EdgeAnnotation>>(() => {
-    const agentsById = new Map<string, Agent>(agents.map((a) => [a.id, a]));
-    const agentForReactFlowNode = (nodeId: string): Agent | undefined => {
-      // Sentinels never resolve to an agent — return undefined so the
-      // empty-annotation branch below kicks in (no chip, no warning).
-      if (nodeId === START_SENTINEL || nodeId === END_SENTINEL) {
-        return undefined;
-      }
-      const node = nodes.find((n) => n.id === nodeId);
-      if (node === undefined) return undefined;
-      const agentId = String((node.data as { agentId?: string })?.agentId ?? "");
-      return agentsById.get(agentId);
-    };
-    const out = new Map<string, EdgeAnnotation>();
-    for (const e of edges) {
-      // Sentinel-touching edges have no contract to evaluate.
-      if (e.target === END_SENTINEL || e.source === START_SENTINEL) {
-        out.set(e.id, { fields: [], warning: false, unknown: false });
-        continue;
-      }
-      out.set(
-        e.id,
-        computeEdgeAnnotation(
-          agentForReactFlowNode(e.source),
-          agentForReactFlowNode(e.target),
-        ),
-      );
-    }
-    return out;
-  }, [edges, nodes, agents]);
-
-  // Decorate React Flow edges with field annotations (#62). Original
-  // ``edges`` stays the source of truth; we only rewrite cosmetic
-  // props (label / style / data) using the precomputed map above.
-  const annotatedEdges = useMemo<Edge[]>(() => {
-    return edges.map((e) => {
-      const annotation =
-        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
-      const meta = edgeMeta[e.id];
-      const hasCondition = meta?.condition != null;
-      const userLabel = meta?.label?.trim() ?? "";
-      const annotationLabel = formatEdgeLabel(annotation, hasCondition);
-      // User-set edge label takes priority — they wrote it deliberately.
-      // When unset we fall back to the auto annotation chip.
-      const label = userLabel.length > 0 ? userLabel : annotationLabel;
-      const stroke = annotation.warning
-        ? EDGE_WARNING_STROKE
-        : hasCondition
-          ? EDGE_CONDITION_STROKE
-          : EDGE_DEFAULT_STROKE;
-      return {
-        ...e,
-        label,
-        labelStyle: annotation.warning
-          ? { fill: EDGE_WARNING_STROKE, fontWeight: 600 }
-          : undefined,
-        labelBgStyle: annotation.warning ? { fill: "#fee2e2" } : undefined,
-        animated: hasCondition,
-        style: { stroke, strokeWidth: annotation.warning ? 2 : 1 },
-        data: {
-          ...(e.data as object | undefined),
-          tooltip: annotationTooltip(annotation),
-          annotation,
-        },
-      };
-    });
-  }, [edges, edgeMeta, annotations]);
-
-  // Compute current selection details for inspector. Pulls the
-  // edge's annotation from the shared ``annotations`` map so the
-  // inspector view never disagrees with the chip on the canvas.
-  const selectionDetail = useMemo<
-    | { kind: "node"; node: DesignerNode }
-    | { kind: "edge"; edge: DesignerEdge; annotation: EdgeAnnotation }
-    | { kind: "none" }
-  >(() => {
-    if (selection.kind === "node") {
-      const n = nodes.find((x) => x.id === selection.id);
-      if (!n) return { kind: "none" };
-      const node: DesignerNode = {
-        id: n.id,
-        agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
-        position: { x: n.position.x, y: n.position.y },
-      };
-      return { kind: "node", node };
-    }
-    if (selection.kind === "edge") {
-      const e = edges.find((x) => x.id === selection.id);
-      if (!e) return { kind: "none" };
-      const meta = edgeMeta[e.id];
-      const edge: DesignerEdge = {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        condition: meta?.condition ?? null,
-        label: meta?.label ?? null,
-      };
-      const annotation =
-        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
-      return { kind: "edge", edge, annotation };
-    }
-    return { kind: "none" };
-  }, [selection, nodes, edges, edgeMeta, annotations]);
-
-  const isSaving = create.isPending || update.isPending;
-  const saveLabel = initialPipeline ? `Save v${initialPipeline.version + 1}` : "Save";
-  // Surface server-side errors (422 from validate / save) in the toolbar
-  // so the user sees the actual reason instead of just a dev-overlay flash.
-  const submitError = create.error ?? update.error ?? validate.error;
+  const save = usePipelineSave({
+    name,
+    description,
+    entryPoint,
+    designerNodes,
+    designerEdges,
+    initialPipeline,
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -445,13 +250,13 @@ export function PipelineDesigner({
         description={description}
         onNameChange={setName}
         onDescriptionChange={setDescription}
-        onValidate={handleValidate}
-        onSave={handleSave}
-        validationResult={validationResult}
-        isValidating={validate.isPending}
-        isSaving={isSaving}
-        saveLabel={saveLabel}
-        submitError={submitError}
+        onValidate={save.handleValidate}
+        onSave={save.handleSave}
+        validationResult={save.validationResult}
+        isValidating={save.isValidating}
+        isSaving={save.isSaving}
+        saveLabel={save.saveLabel}
+        submitError={save.submitError}
         pipelineId={initialPipeline?.id}
         pipelineVersion={initialPipeline?.version}
         pipeline={initialPipeline}
@@ -490,23 +295,4 @@ export function PipelineDesigner({
       </div>
     </div>
   );
-}
-
-function toReactFlowNode(n: PipelineNode): Node {
-  return {
-    id: n.id,
-    type: "default",
-    position: n.position,
-    data: { label: n.id, agentId: n.agent_id },
-  };
-}
-
-function toReactFlowEdge(e: PipelineEdge): Edge {
-  return {
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    label: e.condition ? "if" : undefined,
-    animated: e.condition != null,
-  };
 }
