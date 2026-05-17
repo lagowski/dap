@@ -25,7 +25,7 @@ expensive CLI does the actual coding.
 | OpenAI | `api-call` (`provider="openai"`) | `codex` (stub) | Full (gpt-5, o-series) |
 | Google | `api-call` (`provider="gemini"`) | `gemini-cli` | Full (Gemini 2.x/3.x) |
 | GLM (z.ai) | `api-call` (`provider="glm"`, first-class — see #115) | — | None (3rd-party) |
-| OpenRouter | `api-call` (`provider="openai-compat"`) | — | None in DAP today (`http` adapter + explicit `cost_usd` extractor only) |
+| OpenRouter | `api-call` (`provider="openrouter"`, first-class — see #449) | — | None (3rd-party; per-model variable) |
 | Together / Groq | `api-call` (`provider="openai-compat"`) | — | None (3rd-party) |
 | Ollama / llama.cpp | `http` adapter | `bash` (`ollama run`) | n/a (local) |
 
@@ -170,28 +170,52 @@ for existing agents):
 
 ### OpenRouter
 
-**Env vars:** `OPENROUTER_API_KEY` (or any name you pick via
-`api_key_env`).
+OpenRouter is a first-class registered provider as of #449. The agent
+only needs `model_id` + `OPENROUTER_API_KEY` in env — `base_url` and
+identification headers are hardcoded inside the provider. Same recipe
+as the `glm` entry above.
+
+**Env var:** `OPENROUTER_API_KEY` (canonical — Settings page picks
+this up automatically). Generate at https://openrouter.ai/keys.
+
+**Models:** OpenRouter is a multi-model gateway — `model_id` is a
+slash-namespaced id like `anthropic/claude-3.5-sonnet`,
+`deepseek/deepseek-v3-pro`, `meta-llama/llama-3.1-405b-instruct`.
+The full catalogue lives at https://openrouter.ai/models; the
+`/api/v1/models` endpoint returns the authoritative list with current
+pricing.
 
 `runtime_config`:
 
 ```json
 {
-  "provider": "openai-compat",
-  "model_id": "anthropic/claude-opus-4-7",
-  "base_url": "https://openrouter.ai/api/v1",
-  "api_key_env": "OPENROUTER_API_KEY",
-  "max_tokens": 4096
+  "provider": "openrouter",
+  "model_id": "anthropic/claude-3.5-sonnet",
+  "max_tokens": 4096,
+  "temperature": 0.2
 }
 ```
 
-Model IDs follow OpenRouter's `provider/model` convention. Responses
-use the standard OpenAI-compatible usage shape, but the
-`openai-compat` provider does **not** populate `RuntimeResult.cost_usd`
-today — pricing tables only cover native OpenAI models. If you need
-OpenRouter cost tracking, use the `http` adapter instead and pull the
-value from `$.usage.cost` (or whatever field your route returns) via
-`response_extractor`.
+DAP injects two identification headers on every request (`HTTP-Referer`
++ `X-Title=DAP`) so traffic shows up labelled in the OpenRouter
+dashboard — no auth or billing impact, just attribution.
+
+Cost is reported as `null` — pricing is per-model on OpenRouter and we
+don't ship a table. If you need cost tracking, read the value off the
+`generation` endpoint that OpenRouter exposes per-request, or use the
+`http` adapter with a `response_extractor`.
+
+**Legacy `openai-compat` recipe** (still works, no migration needed
+for existing agents):
+
+```json
+{
+  "provider": "openai-compat",
+  "model_id": "anthropic/claude-3.5-sonnet",
+  "base_url": "https://openrouter.ai/api/v1",
+  "api_key_env": "OPENROUTER_API_KEY"
+}
+```
 
 ### Ollama (local)
 

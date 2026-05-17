@@ -1,16 +1,25 @@
-"""OpenAI provider — handles ``openai``, ``openai-compat``, and ``glm``.
+"""OpenAI provider — handles ``openai``, ``openai-compat``, ``glm``, and ``openrouter``.
 
 The OpenAI Python SDK speaks the Chat Completions shape. For the
 ``openai`` provider we use the default base URL + ``OPENAI_API_KEY``.
-For ``openai-compat`` (Together, OpenRouter, llama.cpp servers,
-internal proxies, plus any unregistered z.ai-style endpoint) the
-agent supplies ``base_url`` and an ``api_key_env`` naming the env
-var that holds the key.
+For ``openai-compat`` (llama.cpp servers, internal proxies, plus
+any unregistered z.ai-style endpoint) the agent supplies
+``base_url`` and an ``api_key_env`` naming the env var that holds
+the key.
 
-``glm`` is the first-class registration of Z.AI's GLM service (#115)
-— same SDK shape, but the operator doesn't have to repeat the
-``base_url`` + ``api_key_env`` pair on every agent. The constants
-below pin them so a one-line ``provider: "glm"`` is enough.
+``glm`` (#115) and ``openrouter`` (#449) are first-class
+registrations on top of the same SDK shape — the operator doesn't
+have to repeat the ``base_url`` + ``api_key_env`` pair on every
+agent. The constants below pin them so a one-line ``provider:
+"glm"`` or ``provider: "openrouter"`` is enough.
+
+OpenRouter is a multi-model gateway: the ``model_id`` is a
+slash-namespaced id like ``anthropic/claude-3.5-sonnet`` or
+``deepseek/deepseek-v3-pro``. We inject the OpenRouter convention
+headers (``HTTP-Referer`` + ``X-Title``) so requests show up
+labelled in the OpenRouter dashboard rather than as anonymous
+traffic — this is purely identification metadata, no auth or
+billing impact.
 """
 
 from __future__ import annotations
@@ -26,9 +35,19 @@ from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
 ID: Final = "openai"
 ID_COMPAT: Final = "openai-compat"
 ID_GLM: Final = "glm"
+ID_OPENROUTER: Final = "openrouter"
 DEFAULT_ENV_VAR: Final = "OPENAI_API_KEY"
 GLM_BASE_URL: Final = "https://api.z.ai/api/coding/paas/v4"
 GLM_ENV_VAR: Final = "GLM_API_KEY"
+OPENROUTER_BASE_URL: Final = "https://openrouter.ai/api/v1"
+OPENROUTER_ENV_VAR: Final = "OPENROUTER_API_KEY"
+# OpenRouter convention headers — show requests as coming from DAP
+# in the OpenRouter dashboard's traffic log. The URL is a stable
+# pointer; ``X-Title`` is a free-form short identifier.
+OPENROUTER_HEADERS: Final[dict[str, str]] = {
+    "HTTP-Referer": "https://github.com/rafeekpro/dap",
+    "X-Title": "DAP",
+}
 
 # USD per 1M tokens (input, output). Update as pricing changes.
 # Empty for ``openai-compat`` — we don't know third-party prices.
@@ -48,16 +67,20 @@ DEFAULT_USER_MESSAGE: Final = "Execute the task as specified in the system instr
 
 
 def env_var_for(config: dict[str, Any]) -> str:
-    """Native OpenAI → OPENAI_API_KEY; GLM → GLM_API_KEY; compat → api_key_env.
+    """Native OpenAI → OPENAI_API_KEY; GLM → GLM_API_KEY;
+    OpenRouter → OPENROUTER_API_KEY; compat → api_key_env.
 
     The split matters: ``_make_client`` only forwards ``api_key`` to the
-    SDK constructor for the compat / glm paths; honoring ``api_key_env``
-    for native OpenAI here would let validation pass while the actual
-    call still relied on ``OPENAI_API_KEY`` — silently inconsistent.
+    SDK constructor for the compat / glm / openrouter paths; honoring
+    ``api_key_env`` for native OpenAI here would let validation pass
+    while the actual call still relied on ``OPENAI_API_KEY`` —
+    silently inconsistent.
     """
     provider = config.get("provider")
     if provider == ID_GLM:
         return GLM_ENV_VAR
+    if provider == ID_OPENROUTER:
+        return OPENROUTER_ENV_VAR
     if provider == ID_COMPAT:
         custom = config.get("api_key_env")
         if isinstance(custom, str) and custom:
@@ -179,11 +202,23 @@ async def call(
 
 
 def _make_client(provider_id: str, config: dict[str, Any]) -> AsyncOpenAI:
-    """Build the SDK client. GLM + compat read a base_url + custom env var."""
+    """Build the SDK client. GLM / OpenRouter / compat read a base_url + custom env var.
+
+    OpenRouter also gets ``default_headers`` (``HTTP-Referer`` +
+    ``X-Title``) so requests are attributed to DAP in the OpenRouter
+    dashboard's traffic log — purely identification metadata, no
+    auth or billing impact.
+    """
     if provider_id == ID_GLM:
         return AsyncOpenAI(
             api_key=os.environ[GLM_ENV_VAR],
             base_url=GLM_BASE_URL,
+        )
+    if provider_id == ID_OPENROUTER:
+        return AsyncOpenAI(
+            api_key=os.environ[OPENROUTER_ENV_VAR],
+            base_url=OPENROUTER_BASE_URL,
+            default_headers=OPENROUTER_HEADERS,
         )
     if provider_id == ID_COMPAT:
         return AsyncOpenAI(
