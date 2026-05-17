@@ -142,7 +142,8 @@ export default function AccountPage() {
                 type="password"
                 autoComplete="current-password"
                 disabled={updatePassword.isPending}
-                {...form.register("currentPassword")}
+                suppressHydrationWarning
+              {...form.register("currentPassword")}
                 aria-invalid={
                   form.formState.errors.currentPassword ? true : undefined
                 }
@@ -160,7 +161,8 @@ export default function AccountPage() {
                 type="password"
                 autoComplete="new-password"
                 disabled={updatePassword.isPending}
-                {...form.register("newPassword")}
+                suppressHydrationWarning
+              {...form.register("newPassword")}
                 aria-invalid={form.formState.errors.newPassword ? true : undefined}
               />
               {form.formState.errors.newPassword && (
@@ -176,7 +178,8 @@ export default function AccountPage() {
                 type="password"
                 autoComplete="new-password"
                 disabled={updatePassword.isPending}
-                {...form.register("confirm")}
+                suppressHydrationWarning
+              {...form.register("confirm")}
                 aria-invalid={form.formState.errors.confirm ? true : undefined}
               />
               {form.formState.errors.confirm && (

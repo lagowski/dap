@@ -136,7 +136,7 @@ function RunRow({ run }: { run: Run }) {
         <RunStatusBadge status={run.final_status} />
       </td>
       <td className="px-4 py-3 text-muted-foreground text-xs">
-        {new Date(run.started_at).toLocaleString()}
+        <span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span>
       </td>
       <td className="px-4 py-3 text-right tabular-nums">
         {formatTokens(run.tokens_used)}
@@ -144,7 +144,7 @@ function RunRow({ run }: { run: Run }) {
       <td className="px-4 py-3 text-right tabular-nums">
         {formatCost(run.cost_usd)}
       </td>
-      <td className="px-4 py-3 text-right tabular-nums">{formatDuration(duration)}</td>
+      <td className="px-4 py-3 text-right tabular-nums" suppressHydrationWarning>{formatDuration(duration)}</td>
     </tr>
   );
 }
