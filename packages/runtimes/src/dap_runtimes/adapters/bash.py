@@ -13,11 +13,11 @@ timeout or engine cancellation kills the entire group (background jobs and
 nested children) rather than only the shell. Falls back to single-process
 kill on platforms without `os.setsid`.
 
-Security model (v0.1): single-user, local-trust. The command runs with the
-engine's privileges in the configured working directory; there is NO
-sandbox, network restriction, or filesystem confinement. Multi-user setups
-must wait for #38 (auth) plus a sandboxing layer before exposing this
-runtime to untrusted agent definitions.
+Security model: host-local code execution. The command runs with the engine's
+privileges in the configured working directory; there is NO sandbox, network
+restriction, or filesystem confinement. The engine blocks non-admin users from
+executing this runtime by default; operators can opt in for local-trust installs
+with DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1, but that does not add isolation.
 """
 
 from __future__ import annotations

@@ -266,7 +266,11 @@ def phase2_clean_client() -> Iterator[
 ]:
     """Client with code-reviewer configured to return 'clean' on first call."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-clean-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="smoke-secret",
+        allow_bash_runtime_for_non_admin=True,
+    )
     app = create_app(config)
     pf_stub = Phase2PythonFuncStub()
     reviewer = Phase2CodeReviewerStub(review_results=["clean"])
@@ -284,7 +288,11 @@ def phase2_retry_client() -> Iterator[
 ]:
     """Client with code-reviewer configured to return 'needs_work' repeatedly."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-retry-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="smoke-secret",
+        allow_bash_runtime_for_non_admin=True,
+    )
     app = create_app(config)
     pf_stub = Phase2PythonFuncStub()
     # needs_work, needs_work, then clean (but cap should trigger at 2)
