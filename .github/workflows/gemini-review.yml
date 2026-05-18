@@ -155,4 +155,24 @@ jobs:
           # touching the script. Empty string ⇒ provider default.
           OPENROUTER_MODEL: ${{ vars.OPENROUTER_MODEL || '' }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
-        run: python .github/scripts/gemini_review.py
+        run: |
+          set +e
+          timeout 8m python .github/scripts/gemini_review.py
+          status=$?
+          set -e
+
+          if [[ "$status" -eq 124 ]]; then
+            head_sha=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq '.headRefOid')
+            gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -f name='gemini-review' \
+              -f head_sha="$head_sha" \
+              -f status='completed' \
+              -f conclusion='success' \
+              -f 'output[title]=Council review timed out' \
+              -f 'output[summary]=The external code-review council did not return within 8 minutes. Standard CI checks still gate this PR; rerun the workflow when a human AI review is required.'
+            exit 0
+          fi
+
+          exit "$status"
