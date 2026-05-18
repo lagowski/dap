@@ -19,25 +19,30 @@ suite — same pattern ``test_runs_trigger.py`` uses.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
+from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.models import AuditLogORM, UserORM
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from tests.smoke._auth import register_and_login
+from tests.smoke._auth import authed_test_client, register_and_login
 
 
 @pytest.fixture
-def client(authed_client: TestClient) -> TestClient:
-    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
+def client(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> Iterator[TestClient]:
+    """Authed engine with bash runtime explicitly enabled for these smoke tests.
 
-    Kept as a local alias because most test bodies in this file already
-    take a ``client: TestClient`` parameter; renaming them all would
-    bloat the X1 diff without changing behaviour.
+    These tests predate the runtime policy and intentionally use the
+    deterministic bash adapter to exercise run ownership paths.
     """
-    return authed_client
+    app = create_app(engine_config_factory(allow_bash_runtime_for_non_admin=True))
+    with authed_test_client(app) as c:
+        yield c
 
 
 def _bearer(token: str) -> dict[str, str]:
