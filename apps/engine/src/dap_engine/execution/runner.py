@@ -515,12 +515,18 @@ class PipelineRunner:
 
     def _enforce_runtime_policy(
         self,
-        run_id: str,
+        current_run_id: str,
         agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
     ) -> None:
         """Defensive runtime gate for background/resume execution."""
-        run = self.session.get(RunORM, run_id)
-        user = self.session.get(UserORM, run.user_id) if run is not None and run.user_id else None
+        run = self.session.get(RunORM, current_run_id)
+        if run is None:
+            msg = f"Run not found: {current_run_id}"
+            raise RunnerError(msg)
+
+        user = self.session.get(UserORM, run.user_id) if run.user_id else None
+        # Conservative fallback: if the submitting user was deleted after trigger,
+        # treat the run as non-admin for bash policy purposes.
         is_admin = bool(user and user.is_superuser)
         for _agent, version in agent_lookup.values():
             try:
