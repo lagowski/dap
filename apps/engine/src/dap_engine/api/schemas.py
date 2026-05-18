@@ -11,48 +11,20 @@ from __future__ import annotations
 
 from typing import Any, Final, Literal, Self
 
-from dap_types.agent import coerce_legacy_field_list, validate_field_list
-from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from dap_engine.contracts import AgentNamedPayload, PipelineCreate
 
 AGENT_EXPORT_SCHEMA_VERSION = "agent-export/1"
 
 
-class AgentExportPayload(BaseModel):
+class AgentExportPayload(AgentNamedPayload):
     """The portable subset of an agent — no per-installation fields.
 
-    Mirrors :class:`AgentCreate` field-by-field minus the fields the
-    server fills in (id, version, timestamps, archived_at). Reuses the
-    same ``input_schema`` / ``output_schema`` validators so an
-    exported agent that's importable here is also creatable directly
-    via ``POST /agents``.
+    Inherits the shared create/import/dry-run agent payload contract
+    minus the fields the server fills in (id, version, timestamps,
+    archived_at), keeping validators aligned with ``POST /agents``.
     """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    role: str = Field(min_length=1, max_length=100)
-
-    runtime_id: str
-    runtime_config: dict[str, Any] = Field(default_factory=dict)
-    prompt_template: str
-
-    input_schema: list[str] = Field(default_factory=list)
-    output_schema: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
-
-    budget_limit_usd: float | None = None
-    timeout_ms: int = Field(default=60_000, gt=0)
-
-    @field_validator("input_schema", "output_schema", mode="before")
-    @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
-        return coerce_legacy_field_list(value)
-
-    @field_validator("input_schema", "output_schema")
-    @classmethod
-    def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return validate_field_list(value)
 
 
 class AgentExport(BaseModel):
@@ -94,14 +66,13 @@ class AgentImportRequest(BaseModel):
 PIPELINE_EXPORT_SCHEMA_VERSION: Final = "pipeline-export/1"
 
 
-class PipelineExportPayload(BaseModel):
+class PipelineExportPayload(PipelineCreate):
     """The portable subset of a pipeline — no per-installation fields.
 
-    Mirrors :class:`PipelineCreate` field-by-field minus the fields
+    Inherits the ``PipelineCreate`` payload contract minus the fields
     the server fills in (``id``, ``version``, timestamps,
-    ``archived_at``). Reuses the same node / edge / defaults shapes
-    so an exported pipeline that's importable here is also creatable
-    directly via ``POST /pipelines``.
+    ``archived_at``), so node / edge / defaults shapes stay aligned
+    between create, export, and import.
 
     ``node.agent_id`` references the *source installation's* agent
     ids. The importer doesn't rewrite them — the existing DAG
@@ -110,22 +81,6 @@ class PipelineExportPayload(BaseModel):
     into the export envelope (so import auto-creates them and
     rewrites the references) is a separate follow-up.
     """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    description: str = ""
-
-    schema_version: Literal["langgraph/1.0"] = "langgraph/1.0"
-    state_schema_ref: str = Field(min_length=1)
-    entry_point: str = Field(min_length=1)
-
-    nodes: list[PipelineNode]
-    edges: list[PipelineEdge]
-    defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
-    # Dashboard-private layout metadata (node positions, etc.). Included in
-    # exports so positions survive round-trips through export/import (#226).
-    ui_metadata: dict[str, Any] | None = None
 
 
 class PipelineExport(BaseModel):
@@ -246,40 +201,14 @@ class RenderPreviewResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AgentDryRunDraft(BaseModel):
+class AgentDryRunDraft(AgentNamedPayload):
     """Inline agent definition for dry-runs from an unsaved form (``/agents/new``).
 
-    Mirrors :class:`AgentCreate` field-by-field — same constraints, same
-    field validators — so a draft that dry-runs cleanly is also creatable
-    via ``POST /agents``. We don't reuse ``AgentCreate`` directly only to
-    keep the type independent of any future create-only fields.
+    Inherits the shared create/import/dry-run agent payload contract,
+    so a draft that dry-runs cleanly is also creatable via
+    ``POST /agents``. Kept as a separate public schema name to preserve
+    the OpenAPI component for clients.
     """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    role: str = Field(min_length=1, max_length=100)
-
-    runtime_id: str
-    runtime_config: dict[str, Any] = Field(default_factory=dict)
-    prompt_template: str
-
-    input_schema: list[str] = Field(default_factory=list)
-    output_schema: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
-
-    budget_limit_usd: float | None = None
-    timeout_ms: int = Field(default=60_000, gt=0)
-
-    @field_validator("input_schema", "output_schema", mode="before")
-    @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
-        return coerce_legacy_field_list(value)
-
-    @field_validator("input_schema", "output_schema")
-    @classmethod
-    def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return validate_field_list(value)
 
 
 class AgentDryRunRequest(BaseModel):

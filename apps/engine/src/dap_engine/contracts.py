@@ -43,99 +43,77 @@ def _validate_pipeline_bindings_dict(value: dict[str, str]) -> dict[str, str]:
     return value
 
 
-class AgentCreate(BaseModel):
-    """POST /agents body — server generates id, version=1, timestamps."""
+class AgentRuntimePayload(BaseModel):
+    """Shared request/export fields for an agent version payload."""
 
     model_config = ConfigDict(extra="forbid")
+
+    runtime_id: str
+    runtime_config: dict[str, Any] = Field(default_factory=dict)
+    prompt_template: str
+
+    input_schema: list[str] = Field(default_factory=list)
+    output_schema: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+
+    budget_limit_usd: float | None = None
+    timeout_ms: int = Field(default=60_000, gt=0)
+
+    @field_validator("input_schema", "output_schema", mode="before")
+    @classmethod
+    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
+        return coerce_legacy_field_list(value)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def _check_known_fields(cls, value: list[str]) -> list[str]:
+        return validate_field_list(value)
+
+
+class AgentNamedPayload(AgentRuntimePayload):
+    """Agent payload with the immutable role supplied by create/import/dry-run."""
 
     name: str = Field(min_length=1, max_length=200)
     role: str = Field(min_length=1, max_length=100)
 
-    runtime_id: str
-    runtime_config: dict[str, Any] = Field(default_factory=dict)
-    prompt_template: str
 
-    input_schema: list[str] = Field(default_factory=list)
-    output_schema: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
-
-    budget_limit_usd: float | None = None
-    timeout_ms: int = Field(default=60_000, gt=0)
-
-    @field_validator("input_schema", "output_schema", mode="before")
-    @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
-        return coerce_legacy_field_list(value)
-
-    @field_validator("input_schema", "output_schema")
-    @classmethod
-    def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return validate_field_list(value)
+class AgentCreate(AgentNamedPayload):
+    """POST /agents body — server generates id, version=1, timestamps."""
 
 
-class AgentUpdate(BaseModel):
+class AgentUpdate(AgentRuntimePayload):
     """PUT /agents/{id} body — creates a new immutable version."""
-
-    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
 
-    runtime_id: str
-    runtime_config: dict[str, Any] = Field(default_factory=dict)
-    prompt_template: str
 
-    input_schema: list[str] = Field(default_factory=list)
-    output_schema: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
-
-    budget_limit_usd: float | None = None
-    timeout_ms: int = Field(default=60_000, gt=0)
-
-    @field_validator("input_schema", "output_schema", mode="before")
-    @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
-        return coerce_legacy_field_list(value)
-
-    @field_validator("input_schema", "output_schema")
-    @classmethod
-    def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return validate_field_list(value)
-
-
-class PipelineCreate(BaseModel):
-    """POST /pipelines body."""
+class PipelineGraphPayload(BaseModel):
+    """Shared graph/defaults fields for pipeline create/update/export payloads."""
 
     model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["langgraph/1.0"] = "langgraph/1.0"
+    state_schema_ref: str = Field(min_length=1)
+    entry_point: str = Field(min_length=1)
+
+    nodes: list[PipelineNode]
+    edges: list[PipelineEdge]
+    defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
+    ui_metadata: dict[str, Any] | None = None
+
+
+class PipelineCreate(PipelineGraphPayload):
+    """POST /pipelines body."""
 
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
 
-    schema_version: Literal["langgraph/1.0"] = "langgraph/1.0"
-    state_schema_ref: str = Field(min_length=1)
-    entry_point: str = Field(min_length=1)
 
-    nodes: list[PipelineNode]
-    edges: list[PipelineEdge]
-    defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
-    ui_metadata: dict[str, Any] | None = None
-
-
-class PipelineUpdate(BaseModel):
+class PipelineUpdate(PipelineGraphPayload):
     """PUT /pipelines/{id} body — creates a new version."""
-
-    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
-
-    schema_version: Literal["langgraph/1.0"] = "langgraph/1.0"
-    state_schema_ref: str = Field(min_length=1)
-    entry_point: str = Field(min_length=1)
-
-    nodes: list[PipelineNode]
-    edges: list[PipelineEdge]
-    defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
-    ui_metadata: dict[str, Any] | None = None
 
 
 class ProjectCreate(BaseModel):
