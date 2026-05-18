@@ -8,6 +8,19 @@ sprint re-litigating the same trade-offs.
 If a flow listed here later becomes cheap to test (see [When to revisit](#when-to-revisit)),
 move it out of this file and add a spec.
 
+## Running the suite
+
+Local commands:
+
+```bash
+npm --prefix e2e test
+npm --prefix e2e run test:smoke
+```
+
+GitHub Actions runs `test:smoke` on pull requests that touch dashboard,
+engine, CLI, package, e2e, or workflow files. The full suite runs from the
+same workflow on `workflow_dispatch` and on the nightly schedule.
+
 ## What is covered
 
 The suite has five Playwright projects (see `playwright.config.ts`):

@@ -2,6 +2,7 @@
   "name": "dap-e2e",
   "scripts": {
     "test": "playwright test",
+    "test:smoke": "playwright test --project=app tests/app/smoke.spec.ts tests/app/settings/smoke.spec.ts",
     "test:headed": "playwright test --headed",
     "test:ui": "playwright test --ui"
   },

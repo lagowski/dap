@@ -1,0 +1,140 @@
+name: E2E
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - ".github/workflows/e2e.yml"
+      - "apps/dashboard/**"
+      - "apps/engine/**"
+      - "apps/cli/**"
+      - "packages/**"
+      - "e2e/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Playwright smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Pin Python from .python-version
+        run: uv python install
+
+      - name: Install Python workspace
+        run: uv sync --all-packages --frozen
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/dashboard/pnpm-lock.yaml
+
+      - name: Install dashboard dependencies
+        run: pnpm --dir apps/dashboard install --frozen-lockfile
+
+      - name: Install e2e dependencies
+        run: npm ci
+        working-directory: e2e
+
+      - name: Install Playwright Chromium
+        run: npm --prefix e2e exec playwright install --with-deps chromium
+
+      - name: Run smoke e2e
+        run: npm --prefix e2e run test:smoke
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-smoke-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  full:
+    name: Playwright full
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Pin Python from .python-version
+        run: uv python install
+
+      - name: Install Python workspace
+        run: uv sync --all-packages --frozen
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/dashboard/pnpm-lock.yaml
+
+      - name: Install dashboard dependencies
+        run: pnpm --dir apps/dashboard install --frozen-lockfile
+
+      - name: Install e2e dependencies
+        run: npm ci
+        working-directory: e2e
+
+      - name: Install Playwright Chromium
+        run: npm --prefix e2e exec playwright install --with-deps chromium
+
+      - name: Run full e2e
+        run: npm --prefix e2e test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-full-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
