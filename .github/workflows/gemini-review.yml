@@ -64,7 +64,10 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Gemini 3 Pro preview can exceed 10 minutes on multi-agent reviews
+    # even for small PRs; give the council enough room to post a verdict
+    # instead of burning quota and failing the required check on timeout.
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: write
