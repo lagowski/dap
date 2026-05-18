@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from dap_engine.version import __version__
 from fastapi.testclient import TestClient
 
 # The ``client`` fixture lives in ``tests/smoke/conftest.py``. The shared
@@ -17,7 +18,7 @@ def test_health_endpoint(client: TestClient) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["service"] == "dap-engine"
-    assert body["version"] == "0.0.1"
+    assert body["version"] == __version__
     assert body["db_dialect"] == "sqlite"
     assert "timestamp" in body
 

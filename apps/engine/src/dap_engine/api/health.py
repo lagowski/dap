@@ -45,8 +45,17 @@ def health(request: Request) -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "dap-engine",
-        "version": "0.0.1",
+        "version": request.app.version,
         "db_dialect": dialect,
         "db_reachable": _is_db_reachable(engine),
         "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
+@router.get("/version")
+def version(request: Request) -> dict[str, str]:
+    """Public engine version endpoint for bundle compatibility checks."""
+    return {
+        "service": "dap-engine",
+        "version": request.app.version,
     }

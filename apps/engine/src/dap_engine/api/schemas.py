@@ -60,10 +60,10 @@ class AgentImportRequest(BaseModel):
         return value
 
 
-# ``Final`` narrows the inferred type to ``Literal["pipeline-export/1"]``
+# ``Final`` narrows the inferred type to ``Literal["pipeline-export/2"]``
 # so the constant is assignable to the ``Literal`` schema_version
 # fields below without mypy complaining. Same string, stronger type.
-PIPELINE_EXPORT_SCHEMA_VERSION: Final = "pipeline-export/1"
+PIPELINE_EXPORT_SCHEMA_VERSION: Final = "pipeline-export/2"
 
 
 class PipelineExportPayload(PipelineCreate):
@@ -105,7 +105,10 @@ class PipelineExport(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["pipeline-export/1"] = PIPELINE_EXPORT_SCHEMA_VERSION
+    schema_version: Literal["pipeline-export/1", "pipeline-export/2"] = (
+        PIPELINE_EXPORT_SCHEMA_VERSION
+    )
+    min_dap_version: str | None = None
     pipeline: PipelineExportPayload
     bundled_agents: dict[str, AgentExportPayload] | None = None
 
@@ -113,10 +116,10 @@ class PipelineExport(BaseModel):
 class PipelineImportRequest(BaseModel):
     """Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`.
 
-    Pydantic enforces ``schema_version`` against the literal — a
-    different value comes back as a 422 from FastAPI's standard
-    request-validation error path with the offending value visible
-    in the detail. No custom validator needed.
+    ``schema_version`` accepts both the legacy v1 envelope and the
+    Cortex/DAP v2 envelope. v2 adds ``min_dap_version`` first; other
+    v2 fields remain extra-forbidden until their dedicated import
+    support lands.
 
     ``bundled_agents`` mirrors :class:`PipelineExport` — when
     present the importer creates each agent, builds an
@@ -127,7 +130,8 @@ class PipelineImportRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["pipeline-export/1"]
+    schema_version: Literal["pipeline-export/1", "pipeline-export/2"]
+    min_dap_version: str | None = None
     pipeline: PipelineExportPayload
     bundled_agents: dict[str, AgentExportPayload] | None = None
 

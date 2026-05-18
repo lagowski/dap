@@ -45,6 +45,7 @@ from dap_engine.persistence.db import (
     pg_conn_string,
     redact_database_url,
 )
+from dap_engine.version import __version__
 
 logger = logging.getLogger("dap.engine")
 
@@ -672,7 +673,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
 
     app = FastAPI(
         title="dap-engine",
-        version="0.0.1",
+        version=__version__,
         lifespan=lifespan,
     )
 
