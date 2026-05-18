@@ -1324,6 +1324,26 @@ export interface paths {
         patch: operations["users_patch_user_users__id__patch"];
         trace?: never;
     };
+    "/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Version
+         * @description Public engine version endpoint for bundle compatibility checks.
+         */
+        get: operations["version_version_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2209,13 +2229,15 @@ export interface components {
             bundled_agents?: {
                 [key: string]: components["schemas"]["AgentExportPayload"];
             } | null;
+            /** Min Dap Version */
+            min_dap_version?: string | null;
             pipeline: components["schemas"]["PipelineExportPayload-Output"];
             /**
              * Schema Version
-             * @default pipeline-export/1
-             * @constant
+             * @default pipeline-export/2
+             * @enum {string}
              */
-            schema_version: "pipeline-export/1";
+            schema_version: "pipeline-export/1" | "pipeline-export/2";
         };
         /**
          * PipelineExportPayload
@@ -2309,10 +2331,10 @@ export interface components {
          * PipelineImportRequest
          * @description Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`.
          *
-         *     Pydantic enforces ``schema_version`` against the literal — a
-         *     different value comes back as a 422 from FastAPI's standard
-         *     request-validation error path with the offending value visible
-         *     in the detail. No custom validator needed.
+         *     ``schema_version`` accepts both the legacy v1 envelope and the
+         *     Cortex/DAP v2 envelope. v2 adds ``min_dap_version`` first; other
+         *     v2 fields remain extra-forbidden until their dedicated import
+         *     support lands.
          *
          *     ``bundled_agents`` mirrors :class:`PipelineExport` — when
          *     present the importer creates each agent, builds an
@@ -2325,12 +2347,14 @@ export interface components {
             bundled_agents?: {
                 [key: string]: components["schemas"]["AgentExportPayload"];
             } | null;
+            /** Min Dap Version */
+            min_dap_version?: string | null;
             pipeline: components["schemas"]["PipelineExportPayload-Input"];
             /**
              * Schema Version
-             * @constant
+             * @enum {string}
              */
-            schema_version: "pipeline-export/1";
+            schema_version: "pipeline-export/1" | "pipeline-export/2";
         };
         /** PipelineNode */
         PipelineNode: {
@@ -5160,6 +5184,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    version_version_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
         };

@@ -136,7 +136,7 @@ export type AgentExport = Omit<ApiSchema<"AgentExport">, "agent"> & {
 // ---- Pipeline import / export (#124) ----
 
 /** Stable export schema version. Bump only when the shape changes incompatibly. */
-export const PIPELINE_EXPORT_SCHEMA_VERSION = "pipeline-export/1";
+export const PIPELINE_EXPORT_SCHEMA_VERSION = "pipeline-export/2";
 
 /**
  * Portable subset of a pipeline — no per-installation fields. Mirrors
@@ -165,7 +165,8 @@ export interface PipelineExportPayload {
 }
 
 export interface PipelineExport {
-  schema_version: typeof PIPELINE_EXPORT_SCHEMA_VERSION;
+  schema_version: "pipeline-export/1" | "pipeline-export/2";
+  min_dap_version?: string | null;
   pipeline: PipelineExportPayload;
   /**
    * Optional bundle (#126) — when present, the importer creates the

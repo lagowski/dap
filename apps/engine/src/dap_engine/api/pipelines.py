@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 from dap_types import Pipeline
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
@@ -27,10 +28,40 @@ from dap_engine.contracts import AgentCreate, PipelineCreate, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
+from dap_engine.version import __version__
 
 logger = logging.getLogger("dap.engine.pipelines")
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
+
+
+def _enforce_min_dap_version(payload: PipelineImportRequest) -> None:
+    """Reject bundles that require a newer DAP engine than this instance."""
+    required = payload.min_dap_version
+    if required is None:
+        return
+
+    try:
+        required_version = Version(required)
+    except InvalidVersion as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Invalid min_dap_version in pipeline bundle. Expected a "
+                f"valid version like 'MAJOR.MINOR.PATCH' or 'MAJOR.MINOR.PATCH-rc1', "
+                f"got '{required}'."
+            ),
+        ) from exc
+
+    current_version = Version(__version__)
+    if current_version < required_version:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Bundle requires DAP >= {required}, but this instance is {__version__}. "
+                "Update DAP before importing this bundle."
+            ),
+        )
 
 
 @router.get("")
@@ -181,6 +212,8 @@ def _materialise_pipeline_import(
     file-upload endpoint, so client error-handling code that worked
     for ``/pipelines/import`` works unchanged here.
     """
+    _enforce_min_dap_version(payload)
+
     bundled = payload.bundled_agents
     pipeline_payload = payload.pipeline
 
@@ -701,6 +734,7 @@ def export_pipeline(
 
     return PipelineExport(
         schema_version=PIPELINE_EXPORT_SCHEMA_VERSION,
+        min_dap_version=__version__,
         pipeline=payload,
         bundled_agents=bundled_agents,
     )

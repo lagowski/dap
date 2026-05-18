@@ -66,6 +66,7 @@ done
 # ``grep -rln '^__version__ =' apps/*/src packages/*/src``.
 VERSION_FILES=(
     "apps/cli/src/dap_cli/__init__.py"
+    "apps/engine/src/dap_engine/version.py"
 )
 for f in "${VERSION_FILES[@]}"; do
     if [[ ! -f "$f" ]]; then

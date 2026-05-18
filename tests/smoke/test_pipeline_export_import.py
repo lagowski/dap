@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from dap_engine.version import __version__
 from fastapi.testclient import TestClient
 
 
@@ -77,7 +78,8 @@ def test_export_returns_portable_shape(client: TestClient) -> None:
     assert response.status_code == 200, response.text
 
     body = response.json()
-    assert body["schema_version"] == "pipeline-export/1"
+    assert body["schema_version"] == "pipeline-export/2"
+    assert body["min_dap_version"] == __version__
     pipeline = body["pipeline"]
     # Per-installation fields stripped
     assert "id" not in pipeline
@@ -152,6 +154,76 @@ def test_import_rejects_wrong_schema_version(client: TestClient) -> None:
     detail = str(response.json()["detail"])
     assert "schema_version" in detail
     assert "pipeline-export/1" in detail
+    assert "pipeline-export/2" in detail
+
+
+def test_import_allows_legacy_bundle_without_min_dap_version(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/1",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_import_rejects_bundle_that_requires_newer_dap(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": "999.0.0",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "Bundle requires DAP >= 999.0.0" in detail
+    assert f"this instance is {__version__}" in detail
+    assert "Update DAP before importing this bundle" in detail
+
+
+def test_import_accepts_bundle_when_min_dap_version_is_met(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": __version__,
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_import_accepts_prerelease_min_dap_version(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": "0.3.0-rc1",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_import_rejects_invalid_min_dap_version(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": "next",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 422
+    assert "Invalid min_dap_version" in response.json()["detail"]
 
 
 def test_import_rejects_extra_top_level_field(client: TestClient) -> None:

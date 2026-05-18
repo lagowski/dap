@@ -10,6 +10,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from dap_engine.api.health import _is_db_reachable
+from dap_engine.version import __version__
 from fastapi.testclient import TestClient
 
 
@@ -20,6 +21,7 @@ def test_health_returns_db_dialect_and_reachable_for_healthy_sqlite(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "ok"
+    assert body["version"] == __version__
     assert body["db_dialect"] == "sqlite"
     # The default fixture brings up a fresh SQLite DB and migrations
     # complete during the TestClient context manager — probe should
@@ -52,3 +54,12 @@ def test_health_reports_unreachable_when_select_raises(client: TestClient) -> No
 
 def test_is_db_reachable_returns_false_for_none_engine() -> None:
     assert _is_db_reachable(None) is False
+
+
+def test_version_endpoint_returns_engine_version(client: TestClient) -> None:
+    resp = client.get("/version")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "service": "dap-engine",
+        "version": __version__,
+    }
