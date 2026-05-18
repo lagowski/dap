@@ -117,6 +117,21 @@ Dashboard nadal używa `pnpm` i `apps/dashboard/pnpm-lock.yaml`; Playwright e2e
 nadal używa `npm` i `e2e/package-lock.json`. Nie instaluj zależności dashboardu
 w root `node_modules`.
 
+### Dashboard API types
+
+Dashboard API contracts are generated from the engine FastAPI OpenAPI schema.
+The generator does not require a running engine server; it imports the app and
+exports OpenAPI locally.
+
+```bash
+pnpm --dir apps/dashboard gen:api    # rewrite src/lib/api/types.gen.ts
+pnpm --dir apps/dashboard check:api  # CI drift check
+```
+
+Run `gen:api` whenever engine request/response schemas change and commit the
+resulting `apps/dashboard/src/lib/api/types.gen.ts`. CI runs `check:api` before
+dashboard typecheck/lint/test/build, so stale generated contracts fail the PR.
+
 ### Pre-push hook (blokada main / develop + format guard)
 
 Repo dostarcza **pre-push hook** (patrz `.githooks/pre-push`) który robi dwie rzeczy:

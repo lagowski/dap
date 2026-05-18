@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "gen:api": "openapi-typescript http://127.0.0.1:7333/openapi.json -o src/lib/api/types.gen.ts",
+    "gen:api": "node scripts/generate-api-types.mjs",
+    "check:api": "node scripts/generate-api-types.mjs --check",
     "clean": "rm -rf .next dist .turbo node_modules",
     "test": "vitest run"
   },

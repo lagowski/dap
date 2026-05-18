@@ -7,4 +7,3 @@ next-env.d.ts
 .env.local
 .env.development.local
 .env.production.local
-src/lib/api/types.gen.ts
