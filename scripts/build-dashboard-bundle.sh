@@ -72,13 +72,33 @@ else
 EOF
 fi
 
-# Next standalone output lands at ``.next/standalone`` with
-# ``server.js`` at the root + a self-contained ``node_modules``. The
-# static assets (``.next/static``) and the public dir (if any) must
-# sit next to ``server.js`` so the runtime finds them — same shape
-# the Dockerfile assembles.
-cp -R "${DASHBOARD_SRC}/.next/standalone/." "${BUNDLE_DEST}/"
+# Next standalone output used to land directly at ``.next/standalone``.
+# Newer Next/Turbopack builds can preserve the workspace-relative path
+# instead (``.next/standalone/apps/dashboard``). Stage the directory
+# that actually contains ``server.js`` so the wheel still ships
+# ``dap_cli/_dashboard/server.js``.
+STANDALONE_ROOT="${DASHBOARD_SRC}/.next/standalone"
+if [[ ! -f "${STANDALONE_ROOT}/server.js" && -f "${STANDALONE_ROOT}/apps/dashboard/server.js" ]]; then
+    STANDALONE_ROOT="${STANDALONE_ROOT}/apps/dashboard"
+fi
+
+if [[ ! -f "${STANDALONE_ROOT}/server.js" ]]; then
+    echo >&2 "error: Next standalone server.js not found under ${DASHBOARD_SRC}/.next/standalone"
+    exit 1
+fi
+
+cp -R "${STANDALONE_ROOT}/." "${BUNDLE_DEST}/"
+mkdir -p "${BUNDLE_DEST}/.next"
 cp -R "${DASHBOARD_SRC}/.next/static" "${BUNDLE_DEST}/.next/static"
+
+# Next 16 + pnpm can leave dangling hoist links in the traced
+# standalone ``node_modules``. They are unusable at runtime and
+# hatchling refuses to package them because ``os.stat`` fails.
+if [[ -d "${BUNDLE_DEST}/node_modules" ]]; then
+    while IFS= read -r broken_link; do
+        rm -f "${broken_link}"
+    done < <(find "${BUNDLE_DEST}/node_modules" -type l -exec test ! -e {} \; -print)
+fi
 
 # ``public/`` doesn't exist in this repo today, but ship it when it
 # does so the bundle stays correct without script edits later.
