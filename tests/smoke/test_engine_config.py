@@ -110,6 +110,14 @@ def test_defaults_match_v0_3_0() -> None:
     assert cfg.template_registry.allowed_hosts == []
     assert cfg.template_registry.auth_token is None
     assert cfg.crypto.instance_env_vars_key is None
+    assert cfg.runtime_policy.allow_bash_runtime_for_non_admin is False
+
+
+def test_runtime_policy_accepts_flat_bash_allow_flag() -> None:
+    cfg = EngineConfig(allow_bash_runtime_for_non_admin=True)
+
+    assert cfg.runtime_policy.allow_bash_runtime_for_non_admin is True
+    assert cfg.allow_bash_runtime_for_non_admin is True
 
 
 def test_unknown_kwarg_raises_typeerror() -> None:

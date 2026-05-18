@@ -82,6 +82,10 @@ def main() -> None:
         # When unset the admin write paths refuse (503), so the operator
         # can't accidentally store rows that won't decrypt on restart.
         instance_env_vars_key=(os.environ.get("DAP_INSTANCE_ENV_VARS_KEY", "").strip() or None),
+        allow_bash_runtime_for_non_admin=(
+            os.environ.get("DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        ),
     )
 
     app = create_app(config)

@@ -327,6 +327,16 @@ class CryptoConfig:
     instance_env_vars_key: str | None = field(default=None, repr=False)
 
 
+@dataclass
+class RuntimePolicyConfig:
+    """Policy gates for runtimes that execute host-local code."""
+
+    # Secure default for multi-user installs: only admins may run bash.
+    # Single-user/local-trust deployments can opt in explicitly via
+    # DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1.
+    allow_bash_runtime_for_non_admin: bool = False
+
+
 # Maps every legacy flat field name → ``(group, nested_name)``. Used
 # by ``EngineConfig.__init__`` to route flat kwargs into the right
 # nested group, and by ``__getattr__`` to translate legacy attribute
@@ -359,9 +369,13 @@ _FLAT_TO_NESTED: dict[str, tuple[str, str]] = {
     "template_registry_auth_token": ("template_registry", "auth_token"),
     # CryptoConfig
     "instance_env_vars_key": ("crypto", "instance_env_vars_key"),
+    # RuntimePolicyConfig
+    "allow_bash_runtime_for_non_admin": ("runtime_policy", "allow_bash_runtime_for_non_admin"),
 }
 
-_NESTED_GROUP_NAMES = frozenset({"db", "server", "auth", "oauth", "template_registry", "crypto"})
+_NESTED_GROUP_NAMES = frozenset(
+    {"db", "server", "auth", "oauth", "template_registry", "crypto", "runtime_policy"}
+)
 
 
 class EngineConfigKwargs(TypedDict, total=False):
@@ -388,6 +402,7 @@ class EngineConfigKwargs(TypedDict, total=False):
     oauth: NotRequired[OAuthConfig]
     template_registry: NotRequired[TemplateRegistryConfig]
     crypto: NotRequired[CryptoConfig]
+    runtime_policy: NotRequired[RuntimePolicyConfig]
     # Flat-style kwargs (legacy — every test fixture uses these)
     db_path: NotRequired[str]
     database_url: NotRequired[str | None]
@@ -408,6 +423,7 @@ class EngineConfigKwargs(TypedDict, total=False):
     template_registry_allowed_hosts: NotRequired[list[str]]
     template_registry_auth_token: NotRequired[str | None]
     instance_env_vars_key: NotRequired[str | None]
+    allow_bash_runtime_for_non_admin: NotRequired[bool]
 
 
 @dataclass(init=False)
@@ -434,6 +450,7 @@ class EngineConfig:
     oauth: OAuthConfig
     template_registry: TemplateRegistryConfig
     crypto: CryptoConfig
+    runtime_policy: RuntimePolicyConfig
 
     def __init__(self, **kwargs: Unpack[EngineConfigKwargs]) -> None:
         # ``copy.copy`` defends against the ``dataclasses.replace``
@@ -458,6 +475,7 @@ class EngineConfig:
             ("oauth", OAuthConfig),
             ("template_registry", TemplateRegistryConfig),
             ("crypto", CryptoConfig),
+            ("runtime_policy", RuntimePolicyConfig),
         ):
             value = kwargs.pop(group_name, None)  # type: ignore[misc]
             nested[group_name] = copy.copy(value) if value is not None else default_cls()

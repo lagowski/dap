@@ -94,6 +94,9 @@ AuditEventType = Literal[
     # lives in ``node_execution_logs`` (would otherwise drown the log).
     # ------------------------------------------------------------------
     "run.triggered",
+    # Security policy denials that block execution before a run or dry-run
+    # can invoke a runtime.
+    "runtime_policy.denied",
     # ------------------------------------------------------------------
     # Settings (instance env vars — #388). The ``settings.env_var.*``
     # triple is the one place we use a three-segment name; the extra
