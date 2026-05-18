@@ -100,6 +100,23 @@ gh pr create --base main --head develop --title "release: vX.Y.Z"
 
 ## Lokalne zabezpieczenia
 
+### Root npm scripts
+
+Root `package.json` nie jest osobnym pakietem aplikacyjnym. Służy jako
+lekki orkiestrator dla najczęstszych lokalnych komend:
+
+```bash
+npm run lint       # pnpm --dir apps/dashboard lint
+npm run typecheck  # pnpm --dir apps/dashboard typecheck
+npm run test       # pnpm --dir apps/dashboard test
+npm run build      # pnpm --dir apps/dashboard build
+npm run e2e:test   # npm --prefix e2e test
+```
+
+Dashboard nadal używa `pnpm` i `apps/dashboard/pnpm-lock.yaml`; Playwright e2e
+nadal używa `npm` i `e2e/package-lock.json`. Nie instaluj zależności dashboardu
+w root `node_modules`.
+
 ### Pre-push hook (blokada main / develop + format guard)
 
 Repo dostarcza **pre-push hook** (patrz `.githooks/pre-push`) który robi dwie rzeczy:
