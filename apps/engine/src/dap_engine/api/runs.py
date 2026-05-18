@@ -38,6 +38,7 @@ from dap_engine.api.deps import (
     get_session,
     get_session_factory,
 )
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import RunCreateRequest
 from dap_engine.execution import (
@@ -48,7 +49,8 @@ from dap_engine.execution import (
     execute_run_background,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineVersionORM, UserORM
+from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineVersionORM, UserORM
+from dap_engine.runtime_policy import runtime_policy_error
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -131,6 +133,26 @@ async def trigger_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pipeline version not found: {payload.pipeline_id}@v{target_version}",
         )
+    denial = _pipeline_runtime_policy_error(
+        session,
+        pipeline_version,
+        is_admin=user.is_superuser,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+    )
+    if denial is not None:
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type="runtime_policy.denied",
+            event_data={
+                "surface": "runs.trigger",
+                "pipeline_id": payload.pipeline_id,
+                "pipeline_version": target_version,
+                "reason": denial,
+            },
+        )
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=denial)
 
     # Build initial state — defaults < project context (#65) < caller's
     # initial_state (caller wins). Project supplies ``repo`` from
@@ -185,12 +207,59 @@ async def trigger_run(
             checkpointer=checkpointer,
             resume=False,
             instance_env_vars_key=config.instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+            actor_is_admin=user.is_superuser,
         )
     )
     run_registry.register(run_id, task)
 
     # Re-fetch run to return current state (running)
     return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
+
+
+def _pipeline_runtime_policy_error(
+    session: Session,
+    pipeline_version: PipelineVersionORM,
+    *,
+    is_admin: bool,
+    allow_bash_runtime_for_non_admin: bool,
+) -> str | None:
+    agent_ids: set[str] = set()
+    for node in pipeline_version.nodes:
+        if not isinstance(node, dict):
+            logger.error(
+                "pipeline %s@v%s has malformed node entry: %r",
+                pipeline_version.pipeline_id,
+                pipeline_version.version,
+                node,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Pipeline version contains malformed node data",
+            )
+        agent_id = node.get("agent_id")
+        if isinstance(agent_id, str):
+            agent_ids.add(agent_id)
+    if not agent_ids:
+        return None
+    rows = session.execute(
+        select(AgentORM, AgentVersionORM)
+        .join(
+            AgentVersionORM,
+            (AgentVersionORM.agent_id == AgentORM.id)
+            & (AgentVersionORM.version == AgentORM.current_version),
+        )
+        .where(AgentORM.id.in_(agent_ids))
+    ).all()
+    for _agent, version in rows:
+        denial = runtime_policy_error(
+            version.runtime_id,
+            is_admin=is_admin,
+            allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+        )
+        if denial is not None:
+            return denial
+    return None
 
 
 @router.post("/{run_id}/abort", response_model=Run)
@@ -343,6 +412,8 @@ async def resume_run_endpoint(
             checkpointer=checkpointer,
             resume=True,
             instance_env_vars_key=config.instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+            actor_is_admin=user.is_superuser,
         )
     )
     run_registry.register(run_id, task)
@@ -462,6 +533,8 @@ async def approve_gate_endpoint(
             checkpointer=checkpointer,
             resume=True,
             instance_env_vars_key=config.instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+            actor_is_admin=user.is_superuser,
         )
     )
     run_registry.register(run_id, task)
@@ -497,6 +570,7 @@ async def retry_node(
         session_factory=session_factory,
         checkpointer=checkpointer,
         instance_env_vars_key=config.instance_env_vars_key,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
         user=user,
     )
 
@@ -531,6 +605,7 @@ async def skip_node(
         session_factory=session_factory,
         checkpointer=checkpointer,
         instance_env_vars_key=config.instance_env_vars_key,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
         user=user,
     )
 
@@ -546,6 +621,7 @@ async def _do_node_intervention(
     session_factory: sessionmaker[Session],
     checkpointer: BaseCheckpointSaver[Any],
     instance_env_vars_key: str | None,
+    allow_bash_runtime_for_non_admin: bool,
     user: UserORM,
 ) -> Run:
     """Shared validation + dispatch path for retry-node and skip-node."""
@@ -615,6 +691,8 @@ async def _do_node_intervention(
             run_registry=run_registry,
             checkpointer=checkpointer,
             instance_env_vars_key=instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+            actor_is_admin=user.is_superuser,
         )
     )
     run_registry.register(run_id, task)
