@@ -29,6 +29,7 @@ from dap_engine.persistence.models import (
     ProjectORM,
     RunORM,
 )
+from dap_engine.runtime_policy import RuntimePolicyError, ensure_runtime_allowed
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -98,6 +99,8 @@ class PipelineRunner:
         checkpointer: BaseCheckpointSaver[Any] | None = None,
         recursion_limit: int = DEFAULT_RECURSION_LIMIT,
         instance_env_vars_key: str | None = None,
+        allow_bash_runtime_for_non_admin: bool = False,
+        actor_is_admin: bool = False,
     ) -> None:
         self.session = session
         self.registry = registry
@@ -114,6 +117,8 @@ class PipelineRunner:
         # ``DAP_INSTANCE_ENV_VARS_KEY`` to ``None`` on restart;
         # flagging that loudly is the orchestrator's job, not ours.
         self.instance_env_vars_key = instance_env_vars_key
+        self.allow_bash_runtime_for_non_admin = allow_bash_runtime_for_non_admin
+        self.actor_is_admin = actor_is_admin
 
     async def run(
         self,
@@ -144,6 +149,7 @@ class PipelineRunner:
 
         # Pre-load agents referenced by the pipeline + verify they exist.
         agent_lookup = self._load_agents(pipeline)
+        self._enforce_runtime_policy(agent_lookup)
 
         # Project context (#65) — working_directory + env_vars overlay.
         # Bails out with a descriptive RunnerError when the bound project
@@ -330,6 +336,7 @@ class PipelineRunner:
 
         pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
         agent_lookup = self._load_agents(pipeline)
+        self._enforce_runtime_policy(agent_lookup)
         project_context = self._load_project_context(run_id)
         instance_env_vars = self._load_instance_env_vars()
         graph = self._build_graph(
@@ -506,6 +513,21 @@ class PipelineRunner:
             working_directory=project.working_directory,
             env_vars=dict(project.env_vars),
         )
+
+    def _enforce_runtime_policy(
+        self,
+        agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
+    ) -> None:
+        """Defensive runtime gate for background/resume execution."""
+        for _agent, version in agent_lookup.values():
+            try:
+                ensure_runtime_allowed(
+                    version.runtime_id,
+                    is_admin=self.actor_is_admin,
+                    allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
+                )
+            except RuntimePolicyError as exc:
+                raise RunnerError(str(exc)) from exc
 
     # -----------------------------------------------------------------------
     # ORM helpers

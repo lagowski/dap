@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.persistence.models import UserORM
 
@@ -35,6 +36,7 @@ from dap_engine.api.schemas import (
 )
 from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence import repository as repo
+from dap_engine.runtime_policy import runtime_policy_error
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -493,6 +495,24 @@ async def dry_run_agent(
                 "Install the adapter or pick a different runtime."
             ),
         )
+    denial = runtime_policy_error(
+        source.runtime_id,
+        is_admin=user.is_superuser,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+    )
+    if denial is not None:
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type="runtime_policy.denied",
+            event_data={
+                "surface": "agents.dry_run",
+                "runtime_id": source.runtime_id,
+                "reason": denial,
+            },
+        )
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=denial)
 
     # Budget cap. The lower of agent's own ``budget_limit_usd`` and the
     # engine-wide ``dry_run_budget_usd`` wins; if either declares a

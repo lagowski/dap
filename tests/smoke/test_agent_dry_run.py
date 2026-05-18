@@ -20,14 +20,17 @@ from tests.smoke._auth import authed_test_client
 
 
 @pytest.fixture
-def client(authed_client: TestClient) -> TestClient:
-    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
-
-    Kept as a local alias because most test bodies in this file already
-    take a ``client: TestClient`` parameter; renaming them all would
-    bloat the X1 diff without changing behaviour.
-    """
-    return authed_client
+def client() -> Iterator[TestClient]:
+    """Authed engine with bash dry-run explicitly enabled for these tests."""
+    with tempfile.TemporaryDirectory(prefix="dap-dryrun-") as tmp:
+        config = EngineConfig(
+            db_path=str(Path(tmp) / "state.db"),
+            auth_jwt_secret="smoke-secret",
+            allow_bash_runtime_for_non_admin=True,
+        )
+        app = create_app(config)
+        with authed_test_client(app) as c:
+            yield c
 
 
 @pytest.fixture
@@ -38,6 +41,7 @@ def low_cap_client() -> Iterator[TestClient]:
             db_path=str(Path(tmp) / "state.db"),
             auth_jwt_secret="smoke-secret",
             dry_run_budget_usd=0.05,
+            allow_bash_runtime_for_non_admin=True,
         )
         app = create_app(config)
         with authed_test_client(app) as c:
