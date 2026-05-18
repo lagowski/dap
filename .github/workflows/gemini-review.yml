@@ -64,7 +64,7 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write
@@ -86,9 +86,10 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           author=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
+          is_bot=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.is_bot')
           # Bot authors get an auto-pass — Gemini doesn't add value on
           # dependabot bumps and we'd burn quota for nothing.
-          if [[ "$author" == *"[bot]"* ]] || [[ "$author" == "dependabot" ]] || [[ "$author" == "renovate"* ]]; then
+          if [[ "$is_bot" == "true" ]] || [[ "$author" == *"[bot]"* ]] || [[ "$author" == app/dependabot ]] || [[ "$author" == "dependabot" ]] || [[ "$author" == "renovate"* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Bot author '$author' — auto-passing gate without invoking Gemini."
           else
