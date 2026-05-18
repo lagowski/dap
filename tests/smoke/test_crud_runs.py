@@ -14,6 +14,7 @@ import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.models import (
     NodeExecutionLogORM,
+    ProjectORM,
     RunORM,
     StateSnapshotORM,
 )
@@ -50,8 +51,10 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
     }
 
     with session_factory() as session:
+        started_at = overrides.get("started_at", now)
         run = RunORM(
             id=run_id,
+            project_id=overrides.get("project_id"),
             pipeline_id=str(overrides.get("pipeline_id", "pipe-1")),
             pipeline_version=int(overrides.get("pipeline_version", 1)),
             trigger_source=str(overrides.get("trigger_source", "cli")),
@@ -59,7 +62,7 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
             current_node=None,
             node_statuses={},
             final_status=str(overrides.get("final_status", "running")),
-            started_at=now,
+            started_at=started_at,
             ended_at=None,
             tokens_used=0,
             cost_usd=0.0,
@@ -68,7 +71,7 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
             id=str(uuid.uuid4()),
             run_id=run_id,
             node_id="select_task",
-            timestamp=now,
+            timestamp=started_at,
             state={**initial_state, "selected_issue_ids": [42]},
         )
         log = NodeExecutionLogORM(
@@ -77,8 +80,8 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
             node_id="select_task",
             agent_id="agent-1",
             runtime_id="api-call",
-            started_at=now,
-            ended_at=now,
+            started_at=started_at,
+            ended_at=started_at,
             prompt_xml="<agent_prompt><role>task_selector</role></agent_prompt>",
             stdout="",
             stderr="",
@@ -95,6 +98,27 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
         session.commit()
 
     return run_id
+
+
+def _seed_project(session_factory: sessionmaker[Session], project_id: str, name: str) -> None:
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            ProjectORM(
+                id=project_id,
+                name=name,
+                description="",
+                working_directory=None,
+                repo_url=None,
+                default_branch="main",
+                pipelines={},
+                env_vars={},
+                created_at=now,
+                updated_at=now,
+                archived_at=None,
+            )
+        )
+        session.commit()
 
 
 @pytest.fixture
@@ -148,6 +172,55 @@ def test_list_runs_seeded(client_and_factory: tuple[TestClient, sessionmaker[Ses
 
     by_pipeline = client.get("/runs?pipeline_id=other-pipe").json()
     assert by_pipeline["total"] == 1
+
+
+def test_list_runs_filters_status_date_and_project(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, factory = client_and_factory
+    _seed_project(factory, "project-1", "Project One")
+    _seed_project(factory, "project-2", "Project Two")
+    _seed_run(
+        factory,
+        final_status="success",
+        project_id="project-1",
+        started_at=datetime(2026, 5, 10, 12, 0, tzinfo=UTC),
+    )
+    _seed_run(
+        factory,
+        final_status="failed",
+        project_id="project-1",
+        started_at=datetime(2026, 5, 11, 12, 0, tzinfo=UTC),
+    )
+    _seed_run(
+        factory,
+        final_status="aborted",
+        project_id="project-2",
+        started_at=datetime(2026, 5, 12, 0, 0, tzinfo=UTC),
+    )
+    _seed_run(
+        factory,
+        final_status="running",
+        project_id=None,
+        started_at=datetime(2026, 5, 13, 12, 0, tzinfo=UTC),
+    )
+
+    by_status = client.get("/runs?status=success&status=failed").json()
+    assert by_status["total"] == 2
+
+    by_date = client.get("/runs?from=2026-05-11&to=2026-05-12").json()
+    assert by_date["total"] == 2
+
+    by_project = client.get("/runs?project_id=project-1&status=failed").json()
+    assert by_project["total"] == 1
+    assert by_project["items"][0]["project_id"] == "project-1"
+
+    ad_hoc = client.get("/runs?project_id=null").json()
+    assert ad_hoc["total"] == 1
+    assert ad_hoc["items"][0]["project_id"] is None
+
+    invalid_range = client.get("/runs?from=2026-05-12&to=2026-05-11")
+    assert invalid_range.status_code == 422
 
 
 def test_get_run(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -> None:

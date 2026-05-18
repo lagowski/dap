@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, Final
 
 from dap_types import (
@@ -127,8 +128,11 @@ def list_runs(
     is_admin: bool,
     pipeline_id: str | None = None,
     final_status: str | None = None,
+    final_statuses: Sequence[str] | None = None,
     project_id: str | None = None,
     only_unscoped: bool = False,
+    started_from: datetime | None = None,
+    started_to: datetime | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Run], int]:
@@ -143,12 +147,17 @@ def list_runs(
     where_clauses.extend(_ownership_filter(actor_id, is_admin))
     if pipeline_id is not None:
         where_clauses.append(RunORM.pipeline_id == pipeline_id)
-    if final_status is not None:
-        where_clauses.append(RunORM.final_status == final_status)
+    statuses = list(final_statuses or ([final_status] if final_status is not None else []))
+    if statuses:
+        where_clauses.append(RunORM.final_status.in_(statuses))
     if only_unscoped:
         where_clauses.append(RunORM.project_id.is_(None))
     elif project_id is not None:
         where_clauses.append(RunORM.project_id == project_id)
+    if started_from is not None:
+        where_clauses.append(RunORM.started_at >= started_from)
+    if started_to is not None:
+        where_clauses.append(RunORM.started_at <= started_to)
 
     total = session.scalar(select(func.count()).select_from(RunORM).where(*where_clauses)) or 0
 

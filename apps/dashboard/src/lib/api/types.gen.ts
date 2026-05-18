@@ -4347,7 +4347,10 @@ export interface operations {
         parameters: {
             query?: {
                 pipeline_id?: string | null;
-                final_status?: string | null;
+                final_status?: string[] | null;
+                status?: string[] | null;
+                from?: string | null;
+                to?: string | null;
                 /** @description Filter by project: omit for all runs, supply a project id for that project only, or pass the literal "null" to return only ad-hoc / legacy runs without a project. */
                 project_id?: string | null;
                 offset?: number;
