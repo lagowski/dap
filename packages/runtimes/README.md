@@ -147,16 +147,20 @@ first `<command>...</command>` block from `prompt_xml` — this allows
 commands derived from `PipelineState` via Jinja in the agent's
 template.
 
-### Security model (v0.1)
+### Security model
 
-**Single-user, local-trust.** The command runs with the engine
+**Host-local code execution.** The command runs with the engine
 process's permissions inside the configured `working_directory` —
 **no sandbox, no network isolation, no file confinement**. Every
 agent definition that uses the `bash` runtime effectively controls
-the host. A multi-user deployment requires auth (which ships in
-v0.3) **plus** an additional isolation layer (firejail / Docker /
-nsjail) before this runtime can safely accept untrusted agent
-definitions.
+the host.
+
+The engine blocks `bash` execution for non-admin users by default
+in multi-user mode. Operators who run a single-user / local-trust
+instance can opt in with `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1`.
+That flag only removes the RBAC gate; it does **not** add sandboxing.
+Expose `bash` to untrusted agent authors only behind a separate
+isolation layer (firejail / Docker / nsjail / VM).
 
 ---
 

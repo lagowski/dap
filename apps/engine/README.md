@@ -47,6 +47,7 @@ at the repo root. The big ones:
 | `DAP_CORS_ORIGINS` | yes in prod | Comma-separated dashboard origins. Defaults to a local-dev allow-list. |
 | `DAP_OAUTH_GITHUB_CLIENT_ID` / `_SECRET` | optional | Enables `/auth/github/*` when both are set. |
 | `DAP_OAUTH_GOOGLE_CLIENT_ID` / `_SECRET` | optional | Enables `/auth/google/*` when both are set. |
+| `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN` | no (default `0`) | Opt-in escape hatch for single-user/local-trust installs. When unset, only admins may execute `bash` agents or dry-runs. |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GLM_API_KEY` | per-runtime | Provider API keys; only needed for the runtimes you actually call. |
 
 ## API surface (v0.3)
