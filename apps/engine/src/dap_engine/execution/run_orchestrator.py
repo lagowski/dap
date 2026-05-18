@@ -145,6 +145,7 @@ async def execute_run_background(
     checkpointer: BaseCheckpointSaver[Any],
     resume: bool,
     instance_env_vars_key: str | None = None,
+    allow_bash_runtime_for_non_admin: bool = False,
 ) -> None:
     """Run the pipeline in a fresh DB session and finalize the Run row."""
     try:
@@ -171,6 +172,7 @@ async def execute_run_background(
                 registry=registry,
                 checkpointer=checkpointer,
                 instance_env_vars_key=instance_env_vars_key,
+                allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
             )
             try:
                 final_state = await runner.run(
@@ -245,6 +247,7 @@ async def execute_rewind_background(
     run_registry: RunRegistry,
     checkpointer: BaseCheckpointSaver[Any],
     instance_env_vars_key: str | None = None,
+    allow_bash_runtime_for_non_admin: bool = False,
 ) -> None:
     """Run a retry/skip rewind in a fresh DB session and finalize the Run row."""
     try:
@@ -271,6 +274,7 @@ async def execute_rewind_background(
                 registry=registry,
                 checkpointer=checkpointer,
                 instance_env_vars_key=instance_env_vars_key,
+                allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
             )
             try:
                 final_state = await runner.rewind_and_run(

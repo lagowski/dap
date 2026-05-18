@@ -124,6 +124,9 @@ You don't need to:
   from the agent's template + the current `PipelineState`.
 - Persist anything — `node_executor.py` writes `NodeExecutionLog` and
   `StateSnapshot` rows from your `RuntimeResult` automatically.
+- Enforce user-level runtime policy — the engine blocks dangerous
+  host-local runtimes such as `bash` for non-admin users unless the
+  operator explicitly opts in with `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1`.
 - Merge results into state — keys in `RuntimeResult.structured` that match
   `PipelineState` field names are merged into the state diff for you;
   unknown keys are dropped.

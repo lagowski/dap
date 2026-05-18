@@ -35,6 +35,7 @@ from dap_engine.api.schemas import (
 )
 from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence import repository as repo
+from dap_engine.runtime_policy import runtime_policy_error
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -493,6 +494,13 @@ async def dry_run_agent(
                 "Install the adapter or pick a different runtime."
             ),
         )
+    denial = runtime_policy_error(
+        source.runtime_id,
+        is_admin=user.is_superuser,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+    )
+    if denial is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=denial)
 
     # Budget cap. The lower of agent's own ``budget_limit_usd`` and the
     # engine-wide ``dry_run_budget_usd`` wins; if either declares a

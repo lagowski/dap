@@ -48,7 +48,8 @@ from dap_engine.execution import (
     execute_run_background,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineVersionORM, UserORM
+from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineVersionORM, UserORM
+from dap_engine.runtime_policy import runtime_policy_error
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -131,6 +132,14 @@ async def trigger_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pipeline version not found: {payload.pipeline_id}@v{target_version}",
         )
+    denial = _pipeline_runtime_policy_error(
+        session,
+        pipeline_version,
+        is_admin=user.is_superuser,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+    )
+    if denial is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=denial)
 
     # Build initial state — defaults < project context (#65) < caller's
     # initial_state (caller wins). Project supplies ``repo`` from
@@ -185,12 +194,47 @@ async def trigger_run(
             checkpointer=checkpointer,
             resume=False,
             instance_env_vars_key=config.instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
         )
     )
     run_registry.register(run_id, task)
 
     # Re-fetch run to return current state (running)
     return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
+
+
+def _pipeline_runtime_policy_error(
+    session: Session,
+    pipeline_version: PipelineVersionORM,
+    *,
+    is_admin: bool,
+    allow_bash_runtime_for_non_admin: bool,
+) -> str | None:
+    agent_ids = {
+        node.get("agent_id")
+        for node in pipeline_version.nodes
+        if isinstance(node, dict) and isinstance(node.get("agent_id"), str)
+    }
+    if not agent_ids:
+        return None
+    rows = session.execute(
+        select(AgentORM, AgentVersionORM)
+        .join(
+            AgentVersionORM,
+            (AgentVersionORM.agent_id == AgentORM.id)
+            & (AgentVersionORM.version == AgentORM.current_version),
+        )
+        .where(AgentORM.id.in_(agent_ids))
+    ).all()
+    for _agent, version in rows:
+        denial = runtime_policy_error(
+            version.runtime_id,
+            is_admin=is_admin,
+            allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+        )
+        if denial is not None:
+            return denial
+    return None
 
 
 @router.post("/{run_id}/abort", response_model=Run)
@@ -343,6 +387,7 @@ async def resume_run_endpoint(
             checkpointer=checkpointer,
             resume=True,
             instance_env_vars_key=config.instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
         )
     )
     run_registry.register(run_id, task)
@@ -462,6 +507,7 @@ async def approve_gate_endpoint(
             checkpointer=checkpointer,
             resume=True,
             instance_env_vars_key=config.instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
         )
     )
     run_registry.register(run_id, task)
@@ -497,6 +543,7 @@ async def retry_node(
         session_factory=session_factory,
         checkpointer=checkpointer,
         instance_env_vars_key=config.instance_env_vars_key,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
         user=user,
     )
 
@@ -531,6 +578,7 @@ async def skip_node(
         session_factory=session_factory,
         checkpointer=checkpointer,
         instance_env_vars_key=config.instance_env_vars_key,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
         user=user,
     )
 
@@ -546,6 +594,7 @@ async def _do_node_intervention(
     session_factory: sessionmaker[Session],
     checkpointer: BaseCheckpointSaver[Any],
     instance_env_vars_key: str | None,
+    allow_bash_runtime_for_non_admin: bool,
     user: UserORM,
 ) -> Run:
     """Shared validation + dispatch path for retry-node and skip-node."""
@@ -615,6 +664,7 @@ async def _do_node_intervention(
             run_registry=run_registry,
             checkpointer=checkpointer,
             instance_env_vars_key=instance_env_vars_key,
+            allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
         )
     )
     run_registry.register(run_id, task)
