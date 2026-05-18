@@ -1,10 +1,15 @@
 /**
- * Hand-rolled mirror of dap_types Pydantic models.
+ * Dashboard API type facade.
  *
- * For full type sync run `pnpm gen:api` (requires running engine on
- * NEXT_PUBLIC_DAP_ENGINE_URL) — this writes types.gen.ts. The hand-rolled
- * shapes here are a stable subset used by F6 MVP screens.
+ * Server-owned request/response contracts are generated into
+ * `types.gen.ts` from the engine OpenAPI schema (`pnpm gen:api`).
+ * This file keeps dashboard-only convenience aliases and tightens a
+ * few defaulted response fields that the UI receives as normalized values.
  */
+
+import type { components } from "./types.gen";
+
+type ApiSchema<Name extends keyof components["schemas"]> = components["schemas"][Name];
 
 export type AgentRole =
   | "task_selector"
@@ -15,39 +20,33 @@ export type AgentRole =
   | "post_check"
   | string;
 
-export interface Agent {
-  id: string;
-  name: string;
-  role: AgentRole;
-  version: number;
-  runtime_id: string;
+type AgentPayloadDefaults = {
   runtime_config: Record<string, unknown>;
-  prompt_template: string;
   input_schema: string[];
   output_schema: string[];
   constraints: string[];
   budget_limit_usd: number | null;
   timeout_ms: number;
-  created_at: string;
-  updated_at: string;
-  is_active: boolean;
-  // Populated only on list responses. null on detail/create/update endpoints;
-  // undefined on responses from older engines that predate the field.
-  used_in_pipelines?: number | null;
-}
+};
 
-export interface AgentCreate {
-  name: string;
+export type Agent = Omit<
+  ApiSchema<"Agent">,
+  keyof AgentPayloadDefaults | "role"
+> &
+  AgentPayloadDefaults & {
+    role: AgentRole;
+    // Populated only on list responses. null on detail/create/update endpoints;
+    // undefined on responses from older engines that predate the field.
+    used_in_pipelines?: number | null;
+  };
+
+export type AgentCreate = Omit<
+  ApiSchema<"AgentCreate">,
+  "timeout_ms" | "role"
+> & {
   role: string;
-  runtime_id: string;
-  runtime_config?: Record<string, unknown>;
-  prompt_template: string;
-  input_schema?: string[];
-  output_schema?: string[];
-  constraints?: string[];
-  budget_limit_usd?: number | null;
   timeout_ms?: number;
-}
+};
 
 // ---- Agent dry-run (#103 / #104) ----
 
@@ -56,30 +55,26 @@ export interface AgentCreate {
  * caller hasn't persisted the agent yet (the New / dirty Edit form).
  * Mirrors the server's ``AgentDryRunDraft`` field-by-field.
  */
-export interface AgentDryRunDraft {
-  name: string;
-  role: string;
-  runtime_id: string;
-  runtime_config: Record<string, unknown>;
-  prompt_template: string;
-  input_schema: string[];
-  output_schema: string[];
-  constraints: string[];
-  budget_limit_usd: number | null;
-  timeout_ms: number;
-}
+export type AgentDryRunDraft = Omit<
+  ApiSchema<"AgentDryRunDraft">,
+  keyof AgentPayloadDefaults | "role"
+> &
+  AgentPayloadDefaults & {
+    role: string;
+  };
 
 /**
  * Body of ``POST /agents/dry-run`` — exactly one of ``agent_id`` (saved)
  * or ``draft`` (inline) must be set. ``context`` is the sample state
  * the prompt template renders against.
  */
-export interface AgentDryRunRequest {
-  agent_id?: string;
-  agent_version?: number;
-  draft?: AgentDryRunDraft;
+export type AgentDryRunRequest = Omit<
+  ApiSchema<"AgentDryRunRequest">,
+  "context" | "draft"
+> & {
+  draft?: AgentDryRunDraft | null;
   context: Record<string, unknown>;
-}
+};
 
 /**
  * Soft check of the runtime's structured payload against the agent's
@@ -126,23 +121,17 @@ export const AGENT_EXPORT_SCHEMA_VERSION = "agent-export/1";
  * Portable subset of an agent — no per-installation fields. Mirrors
  * ``AgentExportPayload`` on the server.
  */
-export interface AgentExportPayload {
-  name: string;
-  role: string;
-  runtime_id: string;
-  runtime_config: Record<string, unknown>;
-  prompt_template: string;
-  input_schema: string[];
-  output_schema: string[];
-  constraints: string[];
-  budget_limit_usd: number | null;
-  timeout_ms: number;
-}
+export type AgentExportPayload = Omit<
+  ApiSchema<"AgentExportPayload">,
+  keyof AgentPayloadDefaults | "role"
+> &
+  AgentPayloadDefaults & {
+    role: string;
+  };
 
-export interface AgentExport {
-  schema_version: string;
+export type AgentExport = Omit<ApiSchema<"AgentExport">, "agent"> & {
   agent: AgentExportPayload;
-}
+};
 
 // ---- Pipeline import / export (#124) ----
 
