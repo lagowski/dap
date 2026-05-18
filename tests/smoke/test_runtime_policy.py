@@ -7,7 +7,9 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from dap_engine.app import EngineConfig, create_app
+from dap_engine.persistence.models import AuditLogORM
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from tests.smoke._auth import authed_test_client
 
@@ -67,6 +69,16 @@ def _wait_for_status(client: TestClient, run_id: str) -> str:
     raise AssertionError(f"run {run_id} did not finish")
 
 
+def _runtime_policy_audit_payloads(client: TestClient) -> list[dict[str, object]]:
+    with client.app.state.session_factory() as session:  # type: ignore[attr-defined]
+        rows = session.scalars(
+            select(AuditLogORM)
+            .where(AuditLogORM.event_type == "runtime_policy.denied")
+            .order_by(AuditLogORM.created_at)
+        ).all()
+        return [dict(row.event_data or {}) for row in rows]
+
+
 @contextmanager
 def _client_with_config(config: EngineConfig) -> Iterator[TestClient]:
     app = create_app(config)
@@ -85,6 +97,17 @@ def test_non_admin_dry_run_rejects_bash_by_default(
 
     assert response.status_code == 403
     assert "bash runtime is disabled for non-admin users" in response.text
+    payloads = _runtime_policy_audit_payloads(client)
+    assert payloads == [
+        {
+            "surface": "agents.dry_run",
+            "runtime_id": "bash",
+            "reason": (
+                "bash runtime is disabled for non-admin users. "
+                "Set DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1 to opt in."
+            ),
+        }
+    ]
 
 
 def test_non_admin_run_rejects_bash_pipeline_by_default(
@@ -98,6 +121,18 @@ def test_non_admin_run_rejects_bash_pipeline_by_default(
 
     assert response.status_code == 403
     assert "bash runtime is disabled for non-admin users" in response.text
+    payloads = _runtime_policy_audit_payloads(client)
+    assert payloads == [
+        {
+            "surface": "runs.trigger",
+            "pipeline_id": pipeline_id,
+            "pipeline_version": 1,
+            "reason": (
+                "bash runtime is disabled for non-admin users. "
+                "Set DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1 to opt in."
+            ),
+        }
+    ]
 
 
 def test_explicit_config_allows_non_admin_bash_run(

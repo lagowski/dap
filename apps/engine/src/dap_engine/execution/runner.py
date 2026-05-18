@@ -28,7 +28,6 @@ from dap_engine.persistence.models import (
     PipelineVersionORM,
     ProjectORM,
     RunORM,
-    UserORM,
 )
 from dap_engine.runtime_policy import RuntimePolicyError, ensure_runtime_allowed
 
@@ -101,6 +100,7 @@ class PipelineRunner:
         recursion_limit: int = DEFAULT_RECURSION_LIMIT,
         instance_env_vars_key: str | None = None,
         allow_bash_runtime_for_non_admin: bool = False,
+        actor_is_admin: bool = False,
     ) -> None:
         self.session = session
         self.registry = registry
@@ -118,6 +118,7 @@ class PipelineRunner:
         # flagging that loudly is the orchestrator's job, not ours.
         self.instance_env_vars_key = instance_env_vars_key
         self.allow_bash_runtime_for_non_admin = allow_bash_runtime_for_non_admin
+        self.actor_is_admin = actor_is_admin
 
     async def run(
         self,
@@ -148,7 +149,7 @@ class PipelineRunner:
 
         # Pre-load agents referenced by the pipeline + verify they exist.
         agent_lookup = self._load_agents(pipeline)
-        self._enforce_runtime_policy(run_id, agent_lookup)
+        self._enforce_runtime_policy(agent_lookup)
 
         # Project context (#65) — working_directory + env_vars overlay.
         # Bails out with a descriptive RunnerError when the bound project
@@ -335,7 +336,7 @@ class PipelineRunner:
 
         pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
         agent_lookup = self._load_agents(pipeline)
-        self._enforce_runtime_policy(run_id, agent_lookup)
+        self._enforce_runtime_policy(agent_lookup)
         project_context = self._load_project_context(run_id)
         instance_env_vars = self._load_instance_env_vars()
         graph = self._build_graph(
@@ -515,24 +516,14 @@ class PipelineRunner:
 
     def _enforce_runtime_policy(
         self,
-        current_run_id: str,
         agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
     ) -> None:
         """Defensive runtime gate for background/resume execution."""
-        run = self.session.get(RunORM, current_run_id)
-        if run is None:
-            msg = f"Run not found: {current_run_id}"
-            raise RunnerError(msg)
-
-        user = self.session.get(UserORM, run.user_id) if run.user_id else None
-        # Conservative fallback: if the submitting user was deleted after trigger,
-        # treat the run as non-admin for bash policy purposes.
-        is_admin = bool(user and user.is_superuser)
         for _agent, version in agent_lookup.values():
             try:
                 ensure_runtime_allowed(
                     version.runtime_id,
-                    is_admin=is_admin,
+                    is_admin=self.actor_is_admin,
                     allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
                 )
             except RuntimePolicyError as exc:
