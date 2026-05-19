@@ -235,6 +235,14 @@ class _BaseCliAdapter(BaseAdapter):
         """Assemble the CLI argv (``[binary, *flags, *extra_args]``)."""
         raise NotImplementedError
 
+    def _decode_stdout(self, stdout: str) -> dict[str, Any]:
+        """Parse subprocess stdout into a payload dict.
+
+        Default: treat the entire stdout as a single JSON object.
+        Override for streaming formats (e.g. NDJSON / stream-json).
+        """
+        return json.loads(stdout)  # type: ignore[no-any-return]
+
     def _parse_payload(
         self,
         payload: dict[str, Any],
@@ -359,7 +367,7 @@ class _BaseCliAdapter(BaseAdapter):
             )
 
         try:
-            payload = json.loads(outcome.stdout)
+            payload = self._decode_stdout(outcome.stdout)
         except json.JSONDecodeError as exc:
             return self._failed(
                 f"Could not parse {self.display_label} CLI output as JSON: {exc.msg}",

@@ -73,8 +73,14 @@ def _success_payload(
     total_cost_usd: float = 0.0125,
     session_id: str = "sess-1",
     num_turns: int = 3,
+    extra_lines: list[str] | None = None,
 ) -> bytes:
-    return json.dumps(
+    """Return stream-json NDJSON bytes — one event per line.
+
+    Includes optional leading events (e.g. assistant turn events) before the
+    required ``result`` event to exercise the NDJSON parser.
+    """
+    result_event = json.dumps(
         {
             "type": "result",
             "subtype": "success",
@@ -93,7 +99,9 @@ def _success_payload(
                 "service_tier": "standard",
             },
         }
-    ).encode("utf-8")
+    )
+    lines = (extra_lines or []) + [result_event]
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 # _build_subprocess_mock moved to tests/smoke/conftest.py — shared across
@@ -208,12 +216,13 @@ async def test_execute_success_extracts_result_and_usage(with_api_key: None) -> 
     assert result.structured["num_turns"] == 3
     assert result.structured["timed_out"] is False
 
-    # Verify CLI invocation shape
+    # Verify CLI invocation shape — stream-json for reliable usage extraction (#472)
     argv = create_mock.call_args.args
     assert argv[0].endswith("claude") or argv[0] == "claude"
     assert "--print" in argv
     assert "--output-format" in argv
-    assert "json" in argv
+    assert "stream-json" in argv
+    assert "json" not in argv  # plain json format must NOT be used
     assert "--model" in argv
     assert "claude-opus-4-7" in argv
 
@@ -316,6 +325,49 @@ async def test_execute_with_cache_tokens(with_api_key: None) -> None:
     assert result.structured["usage"]["cache_read_input_tokens"] == 1000
 
 
+async def test_stream_json_with_leading_turn_events(with_api_key: None) -> None:
+    """result event is correctly found even when preceded by assistant turn events."""
+    turn_event = json.dumps(
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "thinking..."}]}}
+    )
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(
+        stdout=_success_payload(
+            text="final answer",
+            input_tokens=50,
+            output_tokens=25,
+            extra_lines=[turn_event, turn_event],
+        )
+    )
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task())
+
+    assert result.success is True
+    assert result.output == "final answer"
+    assert result.tokens_used == 75  # 50 + 25
+
+
+async def test_missing_usage_falls_back_to_zero(with_api_key: None) -> None:
+    """If the result event has no usage field, tokens_used is 0 (graceful fallback)."""
+    payload = json.dumps(
+        {"type": "result", "subtype": "success", "result": "done", "is_error": False}
+    )
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=(payload + "\n").encode("utf-8"))
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task())
+
+    assert result.success is True
+    assert result.tokens_used == 0
+    assert result.cost_usd is None
+
+
 # ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------
@@ -356,12 +408,15 @@ async def test_unparseable_json_returns_descriptive_error(
     assert any("not parse" in e.lower() for e in result.errors)
 
 
-async def test_non_object_payload_returns_descriptive_error(
+async def test_no_result_event_returns_descriptive_error(
     with_api_key: None,
 ) -> None:
-    """Valid JSON that isn't an object (e.g. an array) shouldn't crash the adapter."""
+    """stdout with no result event (e.g. only assistant events or a JSON array) fails gracefully."""
     adapter = ClaudeCodeAdapter()
-    proc = build_subprocess_mock(stdout=b"[1, 2, 3]")
+    # No result event — only a non-result line
+    proc = build_subprocess_mock(
+        stdout=json.dumps({"type": "assistant", "message": "thinking"}).encode("utf-8") + b"\n"
+    )
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -369,7 +424,7 @@ async def test_non_object_payload_returns_descriptive_error(
         result = await adapter.execute(_task())
 
     assert result.success is False
-    assert any("expected object" in e for e in result.errors)
+    assert any("result event" in e.lower() or "parse" in e.lower() for e in result.errors)
 
 
 async def test_non_dict_usage_returns_descriptive_error(
