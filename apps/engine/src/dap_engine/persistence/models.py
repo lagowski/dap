@@ -447,7 +447,9 @@ class PipelineVersionORM(Base):
     edges: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     defaults: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     ui_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
-    backend_profiles: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
+    backend_profiles: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

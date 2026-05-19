@@ -22,9 +22,33 @@ class AgentExportPayload(AgentNamedPayload):
     """The portable subset of an agent — no per-installation fields.
 
     Inherits the shared create/import/dry-run agent payload contract
-    minus the fields the server fills in (id, version, timestamps,
+    minus the fields the server filled in (id, version, timestamps,
     archived_at), keeping validators aligned with ``POST /agents``.
     """
+
+
+class BundledAgentImportPayload(AgentNamedPayload):
+    """AgentExportPayload variant used inside pipeline-export/2 bundles.
+
+    Overrides the PipelineState field-list validator so bundled agents
+    can declare extension fields (e.g. ``issue_number``, ``pr_url``,
+    ``files_changed``) that live in ``PipelineState.extensions`` rather
+    than as top-level fields. Applies only to the bundle-import path —
+    ``POST /agents/import`` and ``POST /agents`` still enforce the
+    strict PipelineState field list.
+    """
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def _check_known_fields(cls, value: list[str]) -> list[str]:
+        if not value:
+            return value
+        duplicates = sorted({f for f in value if value.count(f) > 1})
+        if duplicates:
+            raise ValueError(
+                f"input_schema/output_schema contain duplicate field(s): {', '.join(duplicates)}"
+            )
+        return value
 
 
 class AgentExport(BaseModel):
@@ -117,23 +141,30 @@ class PipelineImportRequest(BaseModel):
     """Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`.
 
     ``schema_version`` accepts both the legacy v1 envelope and the
-    Cortex/DAP v2 envelope. v2 adds ``min_dap_version`` first; other
-    v2 fields remain extra-forbidden until their dedicated import
-    support lands.
+    Cortex/DAP v2 envelope.
 
-    ``bundled_agents`` mirrors :class:`PipelineExport` — when
-    present the importer creates each agent, builds an
-    ``old_id → new_id`` map, and rewrites ``node.agent_id`` before
-    persisting the pipeline. Missing field = legacy pipeline-only
-    import (referenced agents must already exist locally).
+    v2 optional fields:
+    - ``min_dap_version``: semver gate — engine rejects bundles that
+      require a newer DAP than the running instance.
+    - ``_comment``: free-text documentation block, silently ignored.
+    - ``install_instructions``: operator install guide, silently ignored.
+    - ``backend_profiles``: per-provider agent assignment map,
+      persisted on the pipeline version and returned on GET.
+    - ``bundled_agents``: same as v1 but allows extension fields in
+      agent ``input_schema``/``output_schema`` (pipeline-defined extra
+      state that lives in ``PipelineState.extensions``).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     schema_version: Literal["pipeline-export/1", "pipeline-export/2"]
     min_dap_version: str | None = None
     pipeline: PipelineExportPayload
-    bundled_agents: dict[str, AgentExportPayload] | None = None
+    bundled_agents: dict[str, BundledAgentImportPayload] | None = None
+    backend_profiles: dict[str, Any] | None = None
+    install_instructions: str | None = None
+    # ``_comment`` is a reserved Python name convention; accept it via alias.
+    comment: str | None = Field(default=None, alias="_comment")
 
 
 class ProjectRunRequest(BaseModel):

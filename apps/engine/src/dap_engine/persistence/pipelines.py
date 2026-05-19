@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
 from dap_types import Pipeline
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
@@ -66,6 +67,7 @@ def _pipeline_from_orm(
         updated_at=pipeline.updated_at if is_current else version.created_at,
         is_active=pipeline.archived_at is None,
         ui_metadata=version.ui_metadata,
+        backend_profiles=version.backend_profiles,
     )
 
 
@@ -100,6 +102,7 @@ def create_pipeline(
         edges=[e.model_dump(mode="json") for e in payload.edges],
         defaults=payload.defaults.model_dump(mode="json"),
         ui_metadata=payload.ui_metadata,
+        backend_profiles=getattr(payload, "backend_profiles", None),
         created_at=now,
     )
     session.add(pipeline)
