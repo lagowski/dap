@@ -54,6 +54,7 @@ def _project_from_orm(project: ProjectORM) -> Project:
         default_branch=project.default_branch,
         pipelines=dict(project.pipelines),
         env_vars=dict(project.env_vars),
+        auto_approve_nodes=list(project.auto_approve_nodes or []),
         created_at=project.created_at,
         updated_at=project.updated_at,
         archived_at=project.archived_at,
@@ -138,6 +139,7 @@ def create_project(
         default_branch=payload.default_branch,
         pipelines=dict(payload.pipelines),
         env_vars=dict(payload.env_vars),
+        auto_approve_nodes=list(payload.auto_approve_nodes),
         created_at=now,
         updated_at=now,
         archived_at=None,
@@ -178,6 +180,7 @@ def update_project(
     project.default_branch = payload.default_branch
     project.pipelines = dict(payload.pipelines)
     project.env_vars = dict(payload.env_vars)
+    project.auto_approve_nodes = list(payload.auto_approve_nodes)
     project.updated_at = _now()
     session.flush()
     record_audit_event(

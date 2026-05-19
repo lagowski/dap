@@ -161,17 +161,28 @@ async def trigger_run(
     # ``repo_url`` and ``branch`` from ``default_branch`` so a project
     # owner doesn't have to repeat them on every trigger.
     project_defaults: dict[str, Any] = {}
+    project_extensions: dict[str, Any] = {}
     if project is not None:
         if project.repo_url:
             project_defaults["repo"] = project.repo_url
         project_defaults["branch"] = project.default_branch
+        if project.auto_approve_nodes:
+            project_extensions["auto_approve_nodes"] = project.auto_approve_nodes
+
+    # Merge extensions: project-level < caller's extensions (caller wins).
+    caller_extensions: dict[str, Any] = payload.initial_state.get("extensions") or {}
+    merged_extensions = {**project_extensions, **caller_extensions}
+
+    caller_state = dict(payload.initial_state)
+    if merged_extensions:
+        caller_state["extensions"] = merged_extensions
 
     state_dict: dict[str, Any] = {
         "run_id": "pending",
         "repo": "",
         "branch": "",
         **project_defaults,
-        **payload.initial_state,
+        **caller_state,
     }
     try:
         initial_state = PipelineState.model_validate(state_dict)
