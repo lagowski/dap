@@ -1,7 +1,7 @@
 """pipeline_versions.backend_profiles column — pipeline-export/2 (#478).
 
-Revision ID: 0002_pipeline_versions_backend_profiles
-Revises: 0001_baseline
+Revision ID: 0003_pipeline_versions_backend_profiles
+Revises: 0002_batch_runs
 Create Date: 2026-05-19
 """
 
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0002_pipeline_versions_backend_profiles"
-down_revision: str | None = "0001_baseline"
+revision: str = "0003_pipeline_versions_backend_profiles"
+down_revision: str | None = "0002_batch_runs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
