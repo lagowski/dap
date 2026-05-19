@@ -28,6 +28,7 @@ process environment itself.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Final
 
 from dap_types import RuntimeResult
@@ -74,11 +75,41 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
             binary,
             "--print",
             "--output-format",
-            "json",
+            "stream-json",  # NDJSON — reliably includes usage per turn (#472)
             "--model",
             config["model_id"],
             *extra_args,
         ]
+
+    def _decode_stdout(self, stdout: str) -> dict[str, Any]:
+        """Find the ``result`` event in stream-json NDJSON output.
+
+        ``stream-json`` emits one JSON object per line (assistant turns,
+        tool calls, etc.). The final ``{"type": "result", ...}`` event
+        carries the aggregated output, token usage, and cost. Non-result
+        lines are skipped so stray malformed lines from tool output don't
+        abort the parse.
+
+        Raises ``json.JSONDecodeError`` (with a descriptive message) when
+        no result event is found — the base class maps this to a failed
+        RuntimeResult.
+        """
+        result_event: dict[str, Any] | None = None
+        for line in stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("type") == "result":
+                result_event = event
+        if result_event is None:
+            raise json.JSONDecodeError(
+                "No result event found in stream-json output", stdout, 0
+            )
+        return result_event
 
     def _parse_payload(
         self,

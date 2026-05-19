@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
+import json
 import logging
 import platform
 import time
@@ -195,7 +196,7 @@ class PythonFuncAdapter(BaseAdapter):
             # Stringify state_delta (the user's return minus __audit), not the
             # raw result — keeps __audit metadata out of stdout/execution logs
             # the same way the original pop()-mutating code did.
-            output=str(state_delta),
+            output=json.dumps(state_delta, default=str),
             duration_ms=duration_ms,
             errors=[],
             structured={"state_delta": state_delta, "audit": audit},

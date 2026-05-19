@@ -307,7 +307,12 @@ def _field_is_born_satisfied(field_name: str) -> bool:
     """
     info = PipelineState.model_fields.get(field_name)
     if info is None:
-        return False  # unknown — caller already rejected it via field validators
+        # Extension field not in PipelineState — lives in initial_state.extensions
+        # and is supplied by the caller at run trigger time.  Bundled pipeline-
+        # export/2 agents may declare such fields in input_schema (#478); the
+        # cohesion check has no way to verify them statically, so we treat them
+        # as born-satisfied (the run will fail at execution time if missing).
+        return True
     if info.is_required():
         return True
     if info.default_factory is not None:

@@ -100,6 +100,7 @@ class PipelineGraphPayload(BaseModel):
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
     ui_metadata: dict[str, Any] | None = None
+    backend_profiles: dict[str, Any] | None = None
 
 
 class PipelineCreate(PipelineGraphPayload):
@@ -134,6 +135,7 @@ class ProjectCreate(BaseModel):
 
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)
+    auto_approve_nodes: list[str] = Field(default_factory=list)
 
     @field_validator("pipelines")
     @classmethod
@@ -158,6 +160,7 @@ class ProjectUpdate(BaseModel):
 
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)
+    auto_approve_nodes: list[str] = Field(default_factory=list)
 
     @field_validator("pipelines")
     @classmethod
@@ -181,3 +184,16 @@ class RunCreateRequest(BaseModel):
     pipeline_version: int | None = None
     project_id: str | None = None
     initial_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class BatchRunCreateRequest(BaseModel):
+    """POST /runs/batch body — trigger sequential execution of multiple issues."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_id: str = Field(min_length=1)
+    pipeline_version: int | None = None
+    project_id: str | None = None
+    issue_numbers: list[int] = Field(min_length=1)
+    stop_on_failure: bool = True
+    auto_approve: bool = False

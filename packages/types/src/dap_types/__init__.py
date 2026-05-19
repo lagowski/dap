@@ -1,4 +1,5 @@
 from dap_types.agent import Agent, AgentRole
+from dap_types.batch_run import BatchRun, BatchRunResult, BatchRunStatus
 from dap_types.pipeline import (
     ComparisonCondition,
     EdgeCondition,
@@ -27,6 +28,9 @@ from dap_types.state import FinalStatus, PipelineState, StateSnapshot, Verificat
 
 __all__ = [
     "RECOMMENDED_PIPELINE_KINDS",
+    "BatchRun",
+    "BatchRunResult",
+    "BatchRunStatus",
     "ROLE_FIELDS",
     "Agent",
     "AgentRole",
