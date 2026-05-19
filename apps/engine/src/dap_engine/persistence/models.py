@@ -447,6 +447,7 @@ class PipelineVersionORM(Base):
     edges: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     defaults: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     ui_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
+    backend_profiles: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -581,6 +582,37 @@ class RunORM(Base):
         # symmetric with the other resource tables (sub-A4a, #299).
         Index("ix_runs_user_id", "user_id"),
     )
+
+
+class BatchRunORM(Base):
+    """Sequential batch of pipeline executions, one per issue number (#473)."""
+
+    __tablename__ = "batch_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("users.id", ondelete="cascade"),
+        nullable=True,
+    )
+    project_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("projects.id"), nullable=True, default=None
+    )
+    pipeline_id: Mapped[str] = mapped_column(String, nullable=False)
+    pipeline_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    issue_numbers: Mapped[list[int]] = mapped_column(JSON, nullable=False)
+    stop_on_failure: Mapped[bool] = mapped_column(Integer, nullable=False, default=1)
+    auto_approve: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
+
+    current_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="running")
+    results: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_batch_runs_user_id", "user_id"),)
 
 
 class StateSnapshotORM(Base):

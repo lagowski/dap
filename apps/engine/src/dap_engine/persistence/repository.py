@@ -54,6 +54,12 @@ from dap_engine.persistence.projects import (
     list_projects,
     update_project,
 )
+from dap_engine.persistence.batch_runs import (
+    append_batch_result,
+    create_batch_run,
+    finalize_batch_run,
+    get_batch_run,
+)
 from dap_engine.persistence.runs import (
     create_run,
     finalize_run,
@@ -70,6 +76,10 @@ from dap_engine.persistence.runs import (
 
 __all__ = [
     "NotFoundError",
+    "append_batch_result",
+    "create_batch_run",
+    "finalize_batch_run",
+    "get_batch_run",
     "archive_agent",
     "archive_pipeline",
     "archive_project",

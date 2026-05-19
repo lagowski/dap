@@ -181,3 +181,16 @@ class RunCreateRequest(BaseModel):
     pipeline_version: int | None = None
     project_id: str | None = None
     initial_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class BatchRunCreateRequest(BaseModel):
+    """POST /runs/batch body — trigger sequential execution of multiple issues."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_id: str = Field(min_length=1)
+    pipeline_version: int | None = None
+    project_id: str | None = None
+    issue_numbers: list[int] = Field(min_length=1)
+    stop_on_failure: bool = True
+    auto_approve: bool = False
