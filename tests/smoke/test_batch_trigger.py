@@ -42,7 +42,11 @@ def _wait_for_batch(client: TestClient, batch_id: str) -> dict[str, Any]:
 def _issue_number_from_task(task: RuntimeTask) -> int | None:
     """Extract issue_number from task.runtime_config.__pipeline_state.extensions."""
     state: dict[str, Any] = task.runtime_config.get("__pipeline_state", {})
-    return state.get("extensions", {}).get("issue_number")
+    extensions = state.get("extensions", {})
+    if not isinstance(extensions, dict):
+        return None
+    issue_number = extensions.get("issue_number")
+    return issue_number if isinstance(issue_number, int) else None
 
 
 class _StubAdapter:

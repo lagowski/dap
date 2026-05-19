@@ -28,12 +28,12 @@ from dap_types.state import FinalStatus, PipelineState, StateSnapshot, Verificat
 
 __all__ = [
     "RECOMMENDED_PIPELINE_KINDS",
-    "BatchRun",
-    "BatchRunResult",
-    "BatchRunStatus",
     "ROLE_FIELDS",
     "Agent",
     "AgentRole",
+    "BatchRun",
+    "BatchRunResult",
+    "BatchRunStatus",
     "ComparisonCondition",
     "EdgeCondition",
     "FinalStatus",

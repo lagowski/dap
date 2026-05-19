@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 from dap_runtimes import RuntimeRegistry
 from dap_types import NodeExecutionLog, PipelineDefaults, PipelineState, Run, StateSnapshot
+from dap_types.batch_run import BatchRun
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
@@ -53,7 +54,6 @@ from dap_engine.execution import (
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineVersionORM, UserORM
 from dap_engine.runtime_policy import runtime_policy_error
-from dap_types.batch_run import BatchRun
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -317,7 +317,7 @@ async def trigger_batch_run(
     session.commit()
     batch_run_id = batch_run_orm.id
 
-    asyncio.create_task(
+    batch_task = asyncio.create_task(
         execute_batch_run_background(
             batch_run_id=batch_run_id,
             pipeline_id=payload.pipeline_id,
@@ -337,6 +337,7 @@ async def trigger_batch_run(
             actor_is_admin=user.is_superuser,
         )
     )
+    batch_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
 
     return repo.get_batch_run(session, batch_run_id)
 

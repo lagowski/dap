@@ -328,7 +328,13 @@ async def test_execute_with_cache_tokens(with_api_key: None) -> None:
 async def test_stream_json_with_leading_turn_events(with_api_key: None) -> None:
     """result event is correctly found even when preceded by assistant turn events."""
     turn_event = json.dumps(
-        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "thinking..."}]}}
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "thinking..."}],
+            },
+        }
     )
     adapter = ClaudeCodeAdapter()
     proc = build_subprocess_mock(

@@ -17,7 +17,6 @@ from dap_engine.execution.validator import ValidationResult, validate_pipeline_d
 
 __all__ = [
     "REWIND_RETRY",
-    "execute_batch_run_background",
     "REWIND_SKIP",
     "CheckpointNotFoundError",
     "PipelineRunner",
@@ -26,6 +25,7 @@ __all__ = [
     "RunnerInterrupt",
     "ValidationResult",
     "evaluate_condition",
+    "execute_batch_run_background",
     "execute_rewind_background",
     "execute_run_background",
     "validate_pipeline_dag",

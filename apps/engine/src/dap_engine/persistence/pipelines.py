@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from typing import Any
 
 from dap_types import Pipeline
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode

@@ -150,7 +150,9 @@ def test_listed_gate_auto_approved_run_completes(
     assert resp.status_code == 201, resp.text
     run_id = resp.json()["id"]
 
-    final = wait_for_status(client, run_id, {"success", "failed", "aborted"}, timeout_s=POLL_TIMEOUT_S)
+    final = wait_for_status(
+        client, run_id, {"success", "failed", "aborted"}, timeout_s=POLL_TIMEOUT_S
+    )
     assert final["final_status"] == "success", (
         f"listed gate should be auto-approved; got {final['final_status']}"
     )
@@ -181,9 +183,7 @@ def test_unlisted_gate_still_pauses(
     # Should pause at n3 (n2 auto-approved, n3 is not in the list)
     final = wait_for_status(client, run_id, {"paused"}, timeout_s=POLL_TIMEOUT_S)
     assert final["final_status"] == "paused"
-    assert final["paused_at_node"] == "n3", (
-        f"expected pause at n3, got {final['paused_at_node']}"
-    )
+    assert final["paused_at_node"] == "n3", f"expected pause at n3, got {final['paused_at_node']}"
 
 
 # ---------------------------------------------------------------------------
@@ -286,5 +286,7 @@ def test_run_level_auto_approve_nodes_without_project(
     assert resp.status_code == 201, resp.text
     run_id = resp.json()["id"]
 
-    final = wait_for_status(client, run_id, {"success", "failed", "aborted"}, timeout_s=POLL_TIMEOUT_S)
+    final = wait_for_status(
+        client, run_id, {"success", "failed", "aborted"}, timeout_s=POLL_TIMEOUT_S
+    )
     assert final["final_status"] == "success"
