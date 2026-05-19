@@ -228,26 +228,23 @@ def _materialise_pipeline_import(
         # fresh local ids.
         id_remap: dict[str, str] = {}
         for source_id, agent_payload in bundled.items():
-            try:
-                agent_create = AgentCreate.model_validate(agent_payload.model_dump())
-            except ValidationError as exc:
-                # Keep the structured Pydantic error list intact
-                # under ``agent_validation_errors`` so frontends can
-                # surface field-level issues. ``errors`` keeps the
-                # human-friendly summary the rest of the import
-                # paths use, including the offending source id so
-                # operators know which entry in the bundle broke.
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail={
-                        "errors": [
-                            f"bundled_agents['{source_id}'] is not a valid agent payload",
-                        ],
-                        "warnings": [],
-                        "agent_validation_errors": exc.errors(),
-                        "source_id": source_id,
-                    },
-                ) from exc
+            # Use model_construct to skip re-validation through AgentCreate —
+            # BundledAgentImportPayload already validated the payload at parse
+            # time (including the relaxed field-list check for extension fields).
+            # Re-validating via AgentCreate would reject pipeline-defined
+            # extension fields like issue_number or pr_url (#478).
+            agent_create = AgentCreate.model_construct(
+                name=agent_payload.name,
+                role=agent_payload.role,
+                runtime_id=agent_payload.runtime_id,
+                runtime_config=agent_payload.runtime_config,
+                prompt_template=agent_payload.prompt_template,
+                input_schema=agent_payload.input_schema,
+                output_schema=agent_payload.output_schema,
+                constraints=agent_payload.constraints,
+                budget_limit_usd=agent_payload.budget_limit_usd,
+                timeout_ms=agent_payload.timeout_ms,
+            )
             new_agent = repo.create_agent(session, agent_create, user_id=user.id)
             id_remap[source_id] = new_agent.id
 
@@ -265,7 +262,9 @@ def _materialise_pipeline_import(
         pipeline_payload = pipeline_payload.model_copy(update={"nodes": rewritten_nodes})
 
     try:
-        create_payload = PipelineCreate.model_validate(pipeline_payload.model_dump())
+        create_payload = PipelineCreate.model_validate(
+            {**pipeline_payload.model_dump(), "backend_profiles": payload.backend_profiles}
+        )
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

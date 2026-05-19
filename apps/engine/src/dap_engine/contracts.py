@@ -100,6 +100,7 @@ class PipelineGraphPayload(BaseModel):
     edges: list[PipelineEdge]
     defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
     ui_metadata: dict[str, Any] | None = None
+    backend_profiles: dict[str, Any] | None = None
 
 
 class PipelineCreate(PipelineGraphPayload):

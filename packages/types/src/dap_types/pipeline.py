@@ -104,6 +104,7 @@ class Pipeline(BaseModel):
     updated_at: datetime
     is_active: bool = True
     ui_metadata: dict[str, Any] | None = None
+    backend_profiles: dict[str, Any] | None = None
 
 
 # Resolve forward reference for self-referential LogicalCondition.children
