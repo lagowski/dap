@@ -497,6 +497,7 @@ class ProjectORM(Base):
 
     pipelines: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     env_vars: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    auto_approve_nodes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

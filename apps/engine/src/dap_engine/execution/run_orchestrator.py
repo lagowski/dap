@@ -32,9 +32,26 @@ from dap_engine.execution.runner import (
     RunnerInterrupt,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
+from dap_engine.persistence.models import PipelineORM, PipelineVersionORM, RunORM
 
 logger = logging.getLogger("dap.engine.execution.orchestrator")
+
+
+def _auto_approve_nodes_for_run(session: Session, run_id: str) -> frozenset[str]:
+    """Return the auto_approve_nodes list from the run's persisted initial_state.
+
+    Reads ``initial_state.extensions.auto_approve_nodes`` from the DB row so
+    the check works for both initial and resumed executions (the list is
+    always stored in the original initial_state at trigger time).
+    """
+    run_orm = session.get(RunORM, run_id)
+    if run_orm is None:
+        return frozenset()
+    extensions: dict[str, Any] = (run_orm.initial_state or {}).get("extensions") or {}
+    nodes = extensions.get("auto_approve_nodes")
+    if not isinstance(nodes, list):
+        return frozenset()
+    return frozenset(n for n in nodes if isinstance(n, str))
 
 
 def _gate_node_from_interrupt(
@@ -185,13 +202,45 @@ async def execute_run_background(
                     resume=resume,
                 )
             except RunnerInterrupt as interrupt:
+                paused_at_node = _gate_node_from_interrupt(interrupt, version_orm)
                 repo.pause_run(
                     bg_session,
                     run_id,
-                    paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
+                    paused_at_node=paused_at_node,
                     gate_payload=_gate_payload_from_interrupt(interrupt),
                 )
                 bg_session.commit()
+                # Auto-resume if this gate is in the run's auto_approve_nodes (#477).
+                if paused_at_node is not None:
+                    auto_nodes = _auto_approve_nodes_for_run(bg_session, run_id)
+                    if paused_at_node in auto_nodes:
+                        logger.info(
+                            "auto-approving gate %s for run %s", paused_at_node, run_id
+                        )
+                        if repo.try_claim_resume(bg_session, run_id):
+                            bg_session.commit()
+                            # Spawn resume without re-registering: the current
+                            # task is still in the registry and run_registry
+                            # raises if we try to register a second slot while
+                            # the first is non-done. The run is now in "running"
+                            # state (try_claim_resume set it), so any concurrent
+                            # POST /approve will see it as non-paused and 409.
+                            asyncio.create_task(
+                                execute_run_background(
+                                    run_id=run_id,
+                                    pipeline_id=pipeline_id,
+                                    pipeline_version=pipeline_version,
+                                    initial_state=None,
+                                    session_factory=session_factory,
+                                    registry=registry,
+                                    run_registry=run_registry,
+                                    checkpointer=checkpointer,
+                                    resume=True,
+                                    instance_env_vars_key=instance_env_vars_key,
+                                    allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+                                    actor_is_admin=actor_is_admin,
+                                )
+                            )
                 return
             except RunnerError as exc:
                 logger.exception("run %s failed: %s", run_id, exc)

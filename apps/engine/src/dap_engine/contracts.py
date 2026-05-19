@@ -135,6 +135,7 @@ class ProjectCreate(BaseModel):
 
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)
+    auto_approve_nodes: list[str] = Field(default_factory=list)
 
     @field_validator("pipelines")
     @classmethod
@@ -159,6 +160,7 @@ class ProjectUpdate(BaseModel):
 
     pipelines: dict[str, str] = Field(default_factory=dict)
     env_vars: dict[str, str] = Field(default_factory=dict)
+    auto_approve_nodes: list[str] = Field(default_factory=list)
 
     @field_validator("pipelines")
     @classmethod
