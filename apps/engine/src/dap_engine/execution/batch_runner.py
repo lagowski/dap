@@ -11,15 +11,15 @@ import logging
 import uuid
 from typing import Any
 
-from dap_types import PipelineState
 from dap_runtimes import RuntimeRegistry
+from dap_types import PipelineState
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.execution.run_orchestrator import execute_run_background
 from dap_engine.execution.run_registry import RunRegistry
-from dap_engine.persistence import repository as repo
 from dap_engine.persistence import batch_runs as batch_runs_repo
+from dap_engine.persistence import repository as repo
 
 logger = logging.getLogger("dap.engine.execution.batch_runner")
 

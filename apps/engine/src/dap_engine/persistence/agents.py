@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Sequence
+from typing import Any
 
 from dap_types import Agent
+from pydantic import ValidationError
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
@@ -50,23 +52,29 @@ def _agent_from_orm(
     *,
     is_current: bool,
 ) -> Agent:
-    return Agent(
-        id=agent.id,
-        name=agent.name if is_current else version.name,
-        role=agent.role,
-        version=version.version,
-        runtime_id=version.runtime_id,
-        runtime_config=version.runtime_config,
-        prompt_template=version.prompt_template,
-        input_schema=version.input_schema,
-        output_schema=version.output_schema,
-        constraints=version.constraints,
-        budget_limit_usd=version.budget_limit_usd,
-        timeout_ms=version.timeout_ms,
-        created_at=agent.created_at,
-        updated_at=agent.updated_at if is_current else version.created_at,
-        is_active=agent.archived_at is None,
-    )
+    payload: dict[str, Any] = {
+        "id": agent.id,
+        "name": agent.name if is_current else version.name,
+        "role": agent.role,
+        "version": version.version,
+        "runtime_id": version.runtime_id,
+        "runtime_config": version.runtime_config,
+        "prompt_template": version.prompt_template,
+        "input_schema": version.input_schema,
+        "output_schema": version.output_schema,
+        "constraints": version.constraints,
+        "budget_limit_usd": version.budget_limit_usd,
+        "timeout_ms": version.timeout_ms,
+        "created_at": agent.created_at,
+        "updated_at": agent.updated_at if is_current else version.created_at,
+        "is_active": agent.archived_at is None,
+    }
+    try:
+        return Agent.model_validate(payload)
+    except ValidationError as exc:
+        if all(error["loc"] in {("input_schema",), ("output_schema",)} for error in exc.errors()):
+            return Agent.model_construct(**payload)
+        raise
 
 
 def create_agent(

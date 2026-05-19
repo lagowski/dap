@@ -22,6 +22,9 @@ export const queryKeys = {
   runsList: (filters?: {
     pipelineId?: string;
     finalStatus?: string;
+    statuses?: string[];
+    from?: string;
+    to?: string;
     projectId?: string;
   }) => ["runs", "list", filters ?? {}] as const,
   run: (id: string) => ["runs", id] as const,
@@ -70,6 +73,9 @@ export function useRunsList(
   filters?: {
     pipelineId?: string;
     finalStatus?: string;
+    statuses?: string[];
+    from?: string;
+    to?: string;
     projectId?: string;
   },
   options?: { enabled?: boolean },

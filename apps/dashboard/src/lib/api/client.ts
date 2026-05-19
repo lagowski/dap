@@ -162,6 +162,9 @@ export async function request<T>(
 export async function listRuns(params: {
   pipelineId?: string;
   finalStatus?: string;
+  statuses?: string[];
+  from?: string;
+  to?: string;
   /**
    * Project scope (#64 / #68). Pass a project id to scope the list,
    * the literal string ``"null"`` for ad-hoc-only (runs without
@@ -174,6 +177,9 @@ export async function listRuns(params: {
   const search = new URLSearchParams();
   if (params.pipelineId) search.set("pipeline_id", params.pipelineId);
   if (params.finalStatus) search.set("final_status", params.finalStatus);
+  for (const status of params.statuses ?? []) search.append("status", status);
+  if (params.from) search.set("from", params.from);
+  if (params.to) search.set("to", params.to);
   if (params.projectId) search.set("project_id", params.projectId);
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   if (params.limit !== undefined) search.set("limit", String(params.limit));

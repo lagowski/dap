@@ -106,9 +106,7 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
             if isinstance(event, dict) and event.get("type") == "result":
                 result_event = event
         if result_event is None:
-            raise json.JSONDecodeError(
-                "No result event found in stream-json output", stdout, 0
-            )
+            raise json.JSONDecodeError("No result event found in stream-json output", stdout, 0)
         return result_event
 
     def _parse_payload(

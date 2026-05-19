@@ -856,6 +856,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Batch Run
+         * @description Trigger sequential batch execution: one run per issue number.
+         *
+         *     Returns immediately with a BatchRun in 'running' state. Poll
+         *     GET /runs/batch/{id} until status is terminal.
+         */
+        post: operations["trigger_batch_run_runs_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/batch/{batch_run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Batch Run
+         * @description Poll batch run status and results.
+         */
+        get: operations["get_batch_run_runs_batch__batch_run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1628,7 +1671,7 @@ export interface components {
          * @description The portable subset of an agent — no per-installation fields.
          *
          *     Inherits the shared create/import/dry-run agent payload contract
-         *     minus the fields the server fills in (id, version, timestamps,
+         *     minus the fields the server filled in (id, version, timestamps,
          *     archived_at), keeping validators aligned with ``POST /agents``.
          */
         AgentExportPayload: {
@@ -1823,6 +1866,91 @@ export interface components {
             /** Refresh Token */
             refresh_token?: string | null;
         };
+        /**
+         * BatchRun
+         * @description A batch of sequential pipeline executions, one per issue number.
+         */
+        BatchRun: {
+            /**
+             * Auto Approve
+             * @default false
+             */
+            auto_approve: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Current Index
+             * @default 0
+             */
+            current_index: number;
+            /** Id */
+            id: string;
+            /** Issue Numbers */
+            issue_numbers: number[];
+            /** Pipeline Id */
+            pipeline_id: string;
+            /** Pipeline Version */
+            pipeline_version?: number | null;
+            /** Project Id */
+            project_id?: string | null;
+            /** Results */
+            results?: components["schemas"]["BatchRunResult"][];
+            /**
+             * Status
+             * @default running
+             * @enum {string}
+             */
+            status: "running" | "success" | "failed" | "aborted";
+            /**
+             * Stop On Failure
+             * @default true
+             */
+            stop_on_failure: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * BatchRunCreateRequest
+         * @description POST /runs/batch body — trigger sequential execution of multiple issues.
+         */
+        BatchRunCreateRequest: {
+            /**
+             * Auto Approve
+             * @default false
+             */
+            auto_approve: boolean;
+            /** Issue Numbers */
+            issue_numbers: number[];
+            /** Pipeline Id */
+            pipeline_id: string;
+            /** Pipeline Version */
+            pipeline_version?: number | null;
+            /** Project Id */
+            project_id?: string | null;
+            /**
+             * Stop On Failure
+             * @default true
+             */
+            stop_on_failure: boolean;
+        };
+        /**
+         * BatchRunResult
+         * @description Outcome for one issue within a batch run.
+         */
+        BatchRunResult: {
+            /** Issue Number */
+            issue_number: number;
+            /** Run Id */
+            run_id?: string | null;
+            /** Status */
+            status: string;
+        };
         /** BearerResponse */
         BearerResponse: {
             /** Access Token */
@@ -1868,6 +1996,44 @@ export interface components {
             password: string;
             /** Token */
             token: string;
+        };
+        /**
+         * BundledAgentImportPayload
+         * @description AgentExportPayload variant used inside pipeline-export/2 bundles.
+         *
+         *     Overrides the PipelineState field-list validator so bundled agents
+         *     can declare extension fields (e.g. ``issue_number``, ``pr_url``,
+         *     ``files_changed``) that live in ``PipelineState.extensions`` rather
+         *     than as top-level fields. Applies only to the bundle-import path —
+         *     ``POST /agents/import`` and ``POST /agents`` still enforce the
+         *     strict PipelineState field list.
+         */
+        BundledAgentImportPayload: {
+            /** Budget Limit Usd */
+            budget_limit_usd?: number | null;
+            /** Constraints */
+            constraints?: string[];
+            /** Input Schema */
+            input_schema?: string[];
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema?: string[];
+            /** Prompt Template */
+            prompt_template: string;
+            /** Role */
+            role: string;
+            /** Runtime Config */
+            runtime_config?: {
+                [key: string]: unknown;
+            };
+            /** Runtime Id */
+            runtime_id: string;
+            /**
+             * Timeout Ms
+             * @default 60000
+             */
+            timeout_ms: number;
         };
         /** ComparisonCondition */
         ComparisonCondition: {
@@ -2079,6 +2245,10 @@ export interface components {
          * @description LangGraph-compatible DAG definition.
          */
         Pipeline: {
+            /** Backend Profiles */
+            backend_profiles?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Created At
              * Format: date-time
@@ -2130,6 +2300,10 @@ export interface components {
          * @description POST /pipelines body.
          */
         PipelineCreate: {
+            /** Backend Profiles */
+            backend_profiles?: {
+                [key: string]: unknown;
+            } | null;
             defaults?: components["schemas"]["PipelineDefaults"];
             /**
              * Description
@@ -2256,6 +2430,10 @@ export interface components {
          *     rewrites the references) is a separate follow-up.
          */
         "PipelineExportPayload-Input": {
+            /** Backend Profiles */
+            backend_profiles?: {
+                [key: string]: unknown;
+            } | null;
             defaults?: components["schemas"]["PipelineDefaults"];
             /**
              * Description
@@ -2300,6 +2478,10 @@ export interface components {
          *     rewrites the references) is a separate follow-up.
          */
         "PipelineExportPayload-Output": {
+            /** Backend Profiles */
+            backend_profiles?: {
+                [key: string]: unknown;
+            } | null;
             defaults?: components["schemas"]["PipelineDefaults"];
             /**
              * Description
@@ -2332,21 +2514,32 @@ export interface components {
          * @description Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`.
          *
          *     ``schema_version`` accepts both the legacy v1 envelope and the
-         *     Cortex/DAP v2 envelope. v2 adds ``min_dap_version`` first; other
-         *     v2 fields remain extra-forbidden until their dedicated import
-         *     support lands.
+         *     Cortex/DAP v2 envelope.
          *
-         *     ``bundled_agents`` mirrors :class:`PipelineExport` — when
-         *     present the importer creates each agent, builds an
-         *     ``old_id → new_id`` map, and rewrites ``node.agent_id`` before
-         *     persisting the pipeline. Missing field = legacy pipeline-only
-         *     import (referenced agents must already exist locally).
+         *     v2 optional fields:
+         *     - ``min_dap_version``: semver gate — engine rejects bundles that
+         *       require a newer DAP than the running instance.
+         *     - ``_comment``: free-text documentation block, silently ignored.
+         *     - ``install_instructions``: operator install guide, silently ignored.
+         *     - ``backend_profiles``: per-provider agent assignment map,
+         *       persisted on the pipeline version and returned on GET.
+         *     - ``bundled_agents``: same as v1 but allows extension fields in
+         *       agent ``input_schema``/``output_schema`` (pipeline-defined extra
+         *       state that lives in ``PipelineState.extensions``).
          */
         PipelineImportRequest: {
+            /** Comment */
+            _comment?: string | null;
+            /** Backend Profiles */
+            backend_profiles?: {
+                [key: string]: unknown;
+            } | null;
             /** Bundled Agents */
             bundled_agents?: {
-                [key: string]: components["schemas"]["AgentExportPayload"];
+                [key: string]: components["schemas"]["BundledAgentImportPayload"];
             } | null;
+            /** Install Instructions */
+            install_instructions?: string | null;
             /** Min Dap Version */
             min_dap_version?: string | null;
             pipeline: components["schemas"]["PipelineExportPayload-Input"];
@@ -2446,6 +2639,10 @@ export interface components {
          * @description PUT /pipelines/{id} body — creates a new version.
          */
         PipelineUpdate: {
+            /** Backend Profiles */
+            backend_profiles?: {
+                [key: string]: unknown;
+            } | null;
             defaults?: components["schemas"]["PipelineDefaults"];
             /** Description */
             description?: string | null;
@@ -2477,6 +2674,8 @@ export interface components {
         Project: {
             /** Archived At */
             archived_at?: string | null;
+            /** Auto Approve Nodes */
+            auto_approve_nodes?: string[];
             /**
              * Created At
              * Format: date-time
@@ -2530,6 +2729,8 @@ export interface components {
          *     repository validates and raises ``ValueError`` (mapped to 422) if not.
          */
         ProjectCreate: {
+            /** Auto Approve Nodes */
+            auto_approve_nodes?: string[];
             /**
              * Default Branch
              * @default main
@@ -2578,6 +2779,8 @@ export interface components {
          *     Same shape as ``ProjectCreate`` minus the auto fields.
          */
         ProjectUpdate: {
+            /** Auto Approve Nodes */
+            auto_approve_nodes?: string[];
             /**
              * Default Branch
              * @default main
@@ -4347,7 +4550,10 @@ export interface operations {
         parameters: {
             query?: {
                 pipeline_id?: string | null;
-                final_status?: string | null;
+                final_status?: string[] | null;
+                status?: string[] | null;
+                from?: string | null;
+                to?: string | null;
                 /** @description Filter by project: omit for all runs, supply a project id for that project only, or pass the literal "null" to return only ad-hoc / legacy runs without a project. */
                 project_id?: string | null;
                 offset?: number;
@@ -4401,6 +4607,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_batch_run_runs_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchRunCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_batch_run_runs_batch__batch_run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchRun"];
                 };
             };
             /** @description Validation Error */

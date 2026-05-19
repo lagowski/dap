@@ -150,7 +150,7 @@ def _gate_payload_from_interrupt(interrupt: RunnerInterrupt) -> dict[str, Any] |
     return payload
 
 
-async def execute_run_background(
+async def execute_run_background(  # noqa: PLR0915
     *,
     run_id: str,
     pipeline_id: str,
@@ -214,9 +214,7 @@ async def execute_run_background(
                 if paused_at_node is not None:
                     auto_nodes = _auto_approve_nodes_for_run(bg_session, run_id)
                     if paused_at_node in auto_nodes:
-                        logger.info(
-                            "auto-approving gate %s for run %s", paused_at_node, run_id
-                        )
+                        logger.info("auto-approving gate %s for run %s", paused_at_node, run_id)
                         if repo.try_claim_resume(bg_session, run_id):
                             bg_session.commit()
                             # Spawn resume without re-registering: the current
@@ -225,7 +223,7 @@ async def execute_run_background(
                             # the first is non-done. The run is now in "running"
                             # state (try_claim_resume set it), so any concurrent
                             # POST /approve will see it as non-paused and 409.
-                            asyncio.create_task(
+                            resume_task = asyncio.create_task(
                                 execute_run_background(
                                     run_id=run_id,
                                     pipeline_id=pipeline_id,
@@ -240,6 +238,9 @@ async def execute_run_background(
                                     allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
                                     actor_is_admin=actor_is_admin,
                                 )
+                            )
+                            resume_task.add_done_callback(
+                                lambda task: None if task.cancelled() else task.exception()
                             )
                 return
             except RunnerError as exc:

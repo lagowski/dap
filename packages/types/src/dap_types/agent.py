@@ -85,3 +85,8 @@ class Agent(BaseModel):
     @classmethod
     def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
         return coerce_legacy_field_list(value)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def _check_known_fields(cls, value: list[str]) -> list[str]:
+        return validate_field_list(value)

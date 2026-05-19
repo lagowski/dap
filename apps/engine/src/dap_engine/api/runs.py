@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 
 from dap_runtimes import RuntimeRegistry
 from dap_types import NodeExecutionLog, PipelineDefaults, PipelineState, Run, StateSnapshot
+from dap_types.batch_run import BatchRun
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
@@ -52,7 +54,6 @@ from dap_engine.execution import (
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineVersionORM, UserORM
 from dap_engine.runtime_policy import runtime_policy_error
-from dap_types.batch_run import BatchRun
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -316,7 +317,7 @@ async def trigger_batch_run(
     session.commit()
     batch_run_id = batch_run_orm.id
 
-    asyncio.create_task(
+    batch_task = asyncio.create_task(
         execute_batch_run_background(
             batch_run_id=batch_run_id,
             pipeline_id=payload.pipeline_id,
@@ -336,6 +337,7 @@ async def trigger_batch_run(
             actor_is_admin=user.is_superuser,
         )
     )
+    batch_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
 
     return repo.get_batch_run(session, batch_run_id)
 
@@ -842,7 +844,10 @@ def list_runs(
     session: Session = Depends(get_session),
     user: UserORM = Depends(current_active_user),
     pipeline_id: str | None = Query(default=None),
-    final_status: str | None = Query(default=None),
+    final_status: list[str] | None = Query(default=None),
+    status_filter: list[str] | None = Query(default=None, alias="status"),
+    started_from_date: date | None = Query(default=None, alias="from"),
+    started_to_date: date | None = Query(default=None, alias="to"),
     project_id: str | None = Query(
         default=None,
         description=(
@@ -854,16 +859,39 @@ def list_runs(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict[str, Any]:
+    if (
+        started_from_date is not None
+        and started_to_date is not None
+        and started_from_date > started_to_date
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="from must be on or before to",
+        )
+
     only_unscoped = project_id == "null"
     effective_project_id = None if only_unscoped else project_id
+    final_statuses = status_filter if status_filter is not None else final_status
+    started_from = (
+        datetime.combine(started_from_date, time.min, tzinfo=UTC)
+        if started_from_date is not None
+        else None
+    )
+    started_to = (
+        datetime.combine(started_to_date, time.max, tzinfo=UTC)
+        if started_to_date is not None
+        else None
+    )
     items, total = repo.list_runs(
         session,
         actor_id=user.id,
         is_admin=user.is_superuser,
         pipeline_id=pipeline_id,
-        final_status=final_status,
+        final_statuses=final_statuses,
         project_id=effective_project_id,
         only_unscoped=only_unscoped,
+        started_from=started_from,
+        started_to=started_to,
         offset=offset,
         limit=limit,
     )
