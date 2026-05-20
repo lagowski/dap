@@ -82,6 +82,11 @@ jobs:
             echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Classify low-risk PRs
         id: low-risk
         env:
@@ -91,57 +96,23 @@ jobs:
           set -euo pipefail
 
           files_output="$(mktemp)"
-          trap 'rm -f "$files_output"' EXIT
+          policy_output="$(mktemp)"
+          trap 'rm -f "$files_output" "$policy_output"' EXIT
           if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename' > "$files_output"; then
             echo "::warning::Could not fetch PR file list; running the full code review council."
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          mapfile -t files < "$files_output"
-          if [[ "${#files[@]}" -eq 0 ]]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          docs_seen=false
-          lockfile_seen=false
-          low_risk=true
-          for file in "${files[@]}"; do
-            case "$file" in
-              docs/*|README.md|DEPLOYMENT.md|packages/*/README.md|.claude/**)
-                docs_seen=true
-                continue
-                ;;
-              *.md)
-                docs_seen=true
-                continue
-                ;;
-              uv.lock|apps/dashboard/pnpm-lock.yaml|package-lock.json|e2e/package-lock.json)
-                lockfile_seen=true
-                continue
-                ;;
-              *)
-                low_risk=false
-                break
-                ;;
-            esac
-          done
-
-          if [[ "$low_risk" == "true" && "$docs_seen" == "true" && "$lockfile_seen" == "false" ]]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "reason=Docs-only PR — standard CI still validates configured docs/workflow checks." >> "$GITHUB_OUTPUT"
-            echo "Docs-only PR — auto-passing AI review gate."
-          elif [[ "$low_risk" == "true" && "$docs_seen" == "false" && "$lockfile_seen" == "true" ]]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "reason=Lockfile-only PR — standard CI still validates install and tests." >> "$GITHUB_OUTPUT"
-            echo "Lockfile-only PR — auto-passing AI review gate."
-          elif [[ "$low_risk" == "true" && "$docs_seen" == "true" && "$lockfile_seen" == "true" ]]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "reason=Docs/lockfiles-only PR — standard CI still validates configured docs and dependency checks." >> "$GITHUB_OUTPUT"
-            echo "Docs/lockfiles-only PR — auto-passing AI review gate."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          # Path policy: docs-only and lockfile-only PRs auto-pass the AI gate;
+          # workflow/config/review-script changes always run the council.
+          python3 .github/scripts/classify_ci_paths.py "$files_output" > "$policy_output"
+          skip="$(grep '^skip_ai_review=' "$policy_output" | cut -d= -f2-)"
+          reason="$(grep '^ai_review_reason=' "$policy_output" | cut -d= -f2-)"
+          echo "skip=${skip:-false}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason:-Code or workflow paths changed; running AI review.}" >> "$GITHUB_OUTPUT"
+          if [[ "${skip:-false}" == "true" ]]; then
+            echo "$reason"
           fi
 
       - name: Check PR author (skip bots)
@@ -178,12 +149,6 @@ jobs:
             -f conclusion='success' \
             -f "output[title]=${SKIP_REASON}" \
             -f "output[summary]=${SKIP_REASON} Standard CI checks still gate the merge."
-
-      - name: Checkout (for gh CLI auth + repo metadata)
-        if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
