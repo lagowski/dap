@@ -35,6 +35,11 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_VERSION: "0.8.15"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
+
 concurrency:
   group: docker-build-${{ github.ref }}
   cancel-in-progress: true
@@ -155,16 +160,16 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.0.0 --activate
-
-      - uses: astral-sh/setup-uv@v3
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
         with:
-          version: "0.5.18"
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Install Python toolchain

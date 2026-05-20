@@ -14,6 +14,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  UV_VERSION: "0.8.15"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
+
 jobs:
   python:
     # NOTE: name kept stable — GitHub branch protection references it.
@@ -28,7 +33,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.8.15"
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
@@ -66,7 +71,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.8.15"
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
@@ -96,7 +101,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.8.15"
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
@@ -109,12 +114,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: apps/dashboard/pnpm-lock.yaml
 
