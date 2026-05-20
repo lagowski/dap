@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
-import { useTriggerRun, usePipelineVersions } from "@/hooks/api";
+import { useCurrentUser, useTriggerRun, usePipelineVersions } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
+import { withAutoApprove } from "@/lib/run-trigger-options";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,10 +35,13 @@ export function TriggerRunDialog({
 }: TriggerRunDialogProps) {
   const router = useRouter();
   const trigger = useTriggerRun();
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser.data?.is_superuser === true;
 
   const [open, setOpen] = useState(false);
   const [versionStr, setVersionStr] = useState<string>("current");
   const [stateText, setStateText] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
 
   // Defer the (potentially heavy) versions fetch until the user opens the
@@ -49,6 +53,7 @@ export function TriggerRunDialog({
     if (!next) {
       // Clear transient state so a reopen doesn't show stale errors.
       setParseError(null);
+      setAutoApprove(false);
       trigger.reset();
     }
   };
@@ -81,7 +86,7 @@ export function TriggerRunDialog({
       {
         pipeline_id: pipelineId,
         ...(pipelineVersion !== undefined ? { pipeline_version: pipelineVersion } : {}),
-        initial_state: initialState,
+        initial_state: withAutoApprove(initialState, isAdmin && autoApprove),
       },
       {
         onSuccess: (run) => {
@@ -144,6 +149,29 @@ export function TriggerRunDialog({
                 Merged over PipelineState defaults. Leave empty for an empty state.
               </p>
             </div>
+
+            {isAdmin ? (
+              <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-primary"
+                  checked={autoApprove}
+                  aria-describedby="trigger-auto-approve-description"
+                  onChange={(event) => setAutoApprove(event.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">
+                    Skip all approval gates for this run
+                  </span>
+                  <span
+                    id="trigger-auto-approve-description"
+                    className="block text-xs text-muted-foreground"
+                  >
+                    Sets extensions.auto_approve for this trigger only.
+                  </span>
+                </span>
+              </label>
+            ) : null}
 
             {parseError ? (
               <p className="text-xs text-destructive" role="alert">

@@ -199,6 +199,8 @@ export interface Project {
   default_branch: string;
   /** Workflow kind → pipeline_id. Recommended kinds get first-class UI. */
   pipelines: Record<string, string>;
+  /** Approval gate node ids that should auto-resume for project-triggered runs. */
+  auto_approve_nodes: string[];
   /** Project-scoped env (#65). Layered onto subprocess env. */
   env_vars: Record<string, string>;
   created_at: string;
@@ -214,6 +216,7 @@ export interface ProjectCreate {
   repo_url?: string | null;
   default_branch?: string;
   pipelines?: Record<string, string>;
+  auto_approve_nodes?: string[];
   env_vars?: Record<string, string>;
 }
 
@@ -232,6 +235,7 @@ export interface ProjectUpdate {
   repo_url: string | null;
   default_branch: string;
   pipelines: Record<string, string>;
+  auto_approve_nodes: string[];
   env_vars: Record<string, string>;
 }
 

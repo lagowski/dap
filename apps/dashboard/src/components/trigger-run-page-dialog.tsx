@@ -9,9 +9,11 @@ import {
   useTriggerRun,
   usePipelineVersions,
   useProjectsList,
+  useCurrentUser,
 } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
 import { formatApiError } from "@/lib/api/client";
+import { withAutoApprove } from "@/lib/run-trigger-options";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -40,12 +42,15 @@ export function TriggerRunPageDialog({
   const trigger = useTriggerRun();
   const pipelines = usePipelinesList();
   const projects = useProjectsList();
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser.data?.is_superuser === true;
 
   const [open, setOpen] = useState(false);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
   const [projectId, setProjectId] = useState<string>(activeProjectId ?? "");
   const [versionStr, setVersionStr] = useState<string>("latest");
   const [stateText, setStateText] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
 
   const versions = usePipelineVersions(selectedPipelineId || null, {
@@ -60,6 +65,7 @@ export function TriggerRunPageDialog({
     setOpen(next);
     if (!next) {
       setParseError(null);
+      setAutoApprove(false);
       trigger.reset();
     } else {
       // Reset project to active on every open
@@ -102,7 +108,7 @@ export function TriggerRunPageDialog({
           ? { pipeline_version: pipelineVersion }
           : {}),
         ...(projectId ? { project_id: projectId } : {}),
-        initial_state: initialState,
+        initial_state: withAutoApprove(initialState, isAdmin && autoApprove),
       },
       {
         onSuccess: (run) => {
@@ -233,6 +239,29 @@ export function TriggerRunPageDialog({
                   </p>
                 </div>
               </details>
+
+              {isAdmin ? (
+                <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                    checked={autoApprove}
+                    aria-describedby="trigger-page-auto-approve-description"
+                    onChange={(event) => setAutoApprove(event.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">
+                      Skip all approval gates for this run
+                    </span>
+                    <span
+                      id="trigger-page-auto-approve-description"
+                      className="block text-xs text-muted-foreground"
+                    >
+                      Sets extensions.auto_approve for this trigger only.
+                    </span>
+                  </span>
+                </label>
+              ) : null}
 
               {parseError ? (
                 <p className="text-xs text-destructive" role="alert">

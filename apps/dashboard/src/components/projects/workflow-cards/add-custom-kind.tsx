@@ -67,6 +67,7 @@ export function AddCustomKind({ project }: { project: Project }) {
           repo_url: project.repo_url,
           default_branch: project.default_branch,
           pipelines: { ...project.pipelines, [trimmed]: pipelineId },
+          auto_approve_nodes: project.auto_approve_nodes,
           env_vars: project.env_vars,
         },
       });
