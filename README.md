@@ -189,6 +189,7 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 - [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
 - [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
 - [`docs/dependency-updates.md`](docs/dependency-updates.md) — Dependabot grouping policy and review expectations.
+- [`docs/testing.md`](docs/testing.md) — Python test markers, fast required gate, and smoke integration shards.
 - [`docs/release.md`](docs/release.md) — release pipeline, per-tag publishing, rollback procedures.
 - [`packages/runtimes/README.md`](packages/runtimes/README.md) — per-runtime config reference.
 - [`examples/pipelines/`](examples/pipelines/) — importable pipeline bundles + their READMEs.
@@ -219,7 +220,9 @@ e2e/           Playwright browser e2e (see e2e/COVERAGE.md for scope rationale)
 
 ```bash
 # Backend
-uv run pytest                             # all smoke tests
+uv run pytest -q -m "not integration" --ignore=tests/standalone  # fast Python gate
+uv run pytest -q -m integration tests/smoke                       # smoke integration
+uv run pytest -q --ignore=tests/standalone                        # all CI Python tests
 uv run ruff check apps packages           # lint
 uv run ruff format apps packages          # format
 uv run mypy apps packages tests           # type-check
