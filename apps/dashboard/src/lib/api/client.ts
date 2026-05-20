@@ -3,6 +3,9 @@
  *
  * All endpoints throw `ApiError` on non-2xx responses; callers handle via
  * TanStack Query's error state.
+ *
+ * This module remains the compatibility barrel. New resource-scoped imports
+ * can use `@/lib/api/client/{runs,agents,pipelines,projects,settings,admin}`.
  */
 
 import type {
