@@ -342,6 +342,7 @@ def test_export_bundle_scrubs_secrets_in_runtime_config(client: TestClient) -> N
             "runtime_id": "api-call",
             "runtime_config": {
                 "model_id": "claude-haiku-4-5",
+                "max_tokens": 1024,
                 "api_key": "sk-very-secret",
             },
             "prompt_template": "<agent_prompt><role>x</role></agent_prompt>",
@@ -353,6 +354,7 @@ def test_export_bundle_scrubs_secrets_in_runtime_config(client: TestClient) -> N
 
     bundled = client.get(f"/pipelines/{pipeline['id']}/export?bundle=true").json()
     bundled_config = bundled["bundled_agents"][agent_id]["runtime_config"]
+    assert bundled_config["max_tokens"] == 1024
     assert bundled_config["api_key"] == "<redacted>"
 
 

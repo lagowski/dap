@@ -92,6 +92,8 @@ def test_export_redacts_secret_like_keys(client: TestClient) -> None:
         runtime_config={
             "provider": "anthropic",
             "model_id": "claude-haiku-4-5",
+            "max_tokens": 1024,
+            "tokenizer": "claude",
             "api_key": "sk-ant-live-secret-XYZ",
             "auth_token": "bearer-XYZ",
             "nested": {"openai_api_key": "sk-live-secret"},
@@ -103,6 +105,8 @@ def test_export_redacts_secret_like_keys(client: TestClient) -> None:
     runtime = body["agent"]["runtime_config"]
     assert runtime["provider"] == "anthropic"
     assert runtime["model_id"] == "claude-haiku-4-5"
+    assert runtime["max_tokens"] == 1024
+    assert runtime["tokenizer"] == "claude"
     assert runtime["api_key"] == "<redacted>"
     assert runtime["auth_token"] == "<redacted>"
     assert runtime["nested"]["openai_api_key"] == "<redacted>"

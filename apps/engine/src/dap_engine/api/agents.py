@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
+from dap_engine.api.export_redaction import scrub_secret_like_keys
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.persistence.models import UserORM
@@ -39,38 +40,6 @@ from dap_engine.persistence import repository as repo
 from dap_engine.runtime_policy import runtime_policy_error
 
 router = APIRouter(prefix="/agents", tags=["agents"])
-
-
-_SECRET_KEY_PATTERNS = (
-    "api_key",
-    "apikey",
-    "token",
-    "secret",
-    "password",
-    "credential",
-)
-_REDACTED_PLACEHOLDER = "<redacted>"
-
-
-def _scrub_secret_like_keys(value: dict[str, Any]) -> dict[str, Any]:
-    """Best-effort redaction of keys whose name suggests a credential.
-
-    Secrets are *supposed* to live in environment variables — adapters
-    read API keys from ``os.environ``, not from ``runtime_config``. But
-    nothing in the schema enforces that, so old or hand-edited agents
-    may have a literal key sitting in ``runtime_config``. Exports are
-    portable artifacts (checked into git, shared between machines), so
-    we redact known-suspect keys before serialising.
-    """
-    redacted: dict[str, Any] = {}
-    for key, val in value.items():
-        if any(pattern in key.lower() for pattern in _SECRET_KEY_PATTERNS):
-            redacted[key] = _REDACTED_PLACEHOLDER
-        elif isinstance(val, dict):
-            redacted[key] = _scrub_secret_like_keys(val)
-        else:
-            redacted[key] = val
-    return redacted
 
 
 @router.get("")
@@ -294,7 +263,7 @@ def build_agent_export_payload(agent: Agent) -> AgentExportPayload:
             name=agent.name,
             role=agent.role,
             runtime_id=agent.runtime_id,
-            runtime_config=_scrub_secret_like_keys(agent.runtime_config),
+            runtime_config=scrub_secret_like_keys(agent.runtime_config),
             prompt_template=agent.prompt_template,
             input_schema=list(agent.input_schema),
             output_schema=list(agent.output_schema),
