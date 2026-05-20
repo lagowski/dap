@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "dap-schemas",
-    "dap-runtimes",
+    "dap-runtimes[all]",
     "dap-prompt-dsl",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
