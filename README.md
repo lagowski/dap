@@ -188,6 +188,7 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 - [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
 - [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
 - [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
+- [`docs/dependency-updates.md`](docs/dependency-updates.md) — Dependabot grouping policy and review expectations.
 - [`docs/release.md`](docs/release.md) — release pipeline, per-tag publishing, rollback procedures.
 - [`packages/runtimes/README.md`](packages/runtimes/README.md) — per-runtime config reference.
 - [`examples/pipelines/`](examples/pipelines/) — importable pipeline bundles + their READMEs.
