@@ -336,6 +336,8 @@ Both run with `journal_mode=WAL`. App tables: `agents`,
 `node_execution_logs`. Alembic revisions live under
 `apps/engine/src/dap_engine/alembic/`; legacy in-code migrations for older
 SQLite upgrades remain in `apps/engine/src/dap_engine/persistence/migrations.py`.
+The migration policy and developer workflow are documented in
+[`database-migrations.md`](database-migrations.md).
 
 Alembic startup and legacy migration tests must continue importing
 `dap_engine.persistence.models.Base`; bounded model modules are considered

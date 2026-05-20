@@ -188,6 +188,7 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 - [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
 - [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
 - [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
+- [`docs/database-migrations.md`](docs/database-migrations.md) — legacy migration freeze, Alembic policy, and developer workflow for new schema changes.
 - [`docs/database-indexes.md`](docs/database-indexes.md) — query-shape notes for indexes that support hot API paths.
 - [`docs/dependency-updates.md`](docs/dependency-updates.md) — Dependabot grouping policy and review expectations.
 - [`docs/testing.md`](docs/testing.md) — Python test markers, fast required gate, and smoke integration shards.
