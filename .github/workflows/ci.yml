@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   UV_VERSION: "0.8.15"
@@ -20,17 +21,74 @@ env:
   PNPM_VERSION: "9"
 
 jobs:
+  classify:
+    name: Classify changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      run_python: ${{ steps.paths.outputs.run_python }}
+      run_python_smoke: ${{ steps.paths.outputs.run_python_smoke }}
+      run_pip_audit: ${{ steps.paths.outputs.run_pip_audit }}
+      run_dashboard: ${{ steps.paths.outputs.run_dashboard }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Classify PR paths
+        id: paths
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # Pushes do not have a PR file list, so they run the full CI gate.
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            {
+              echo "run_python=true"
+              echo "run_python_smoke=true"
+              echo "run_pip_audit=true"
+              echo "run_dashboard=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files_output="$(mktemp)"
+          trap 'rm -f "$files_output"' EXIT
+          if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename' > "$files_output"; then
+            echo "::warning::Could not fetch PR file list; running all CI jobs."
+            {
+              echo "run_python=true"
+              echo "run_python_smoke=true"
+              echo "run_pip_audit=true"
+              echo "run_dashboard=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Path policy:
+          # - docs-only PRs keep stable check names but skip Python, audit and dashboard work;
+          # - dashboard-only PRs skip Python smoke unless engine/OpenAPI contracts changed;
+          # - backend-only PRs skip dashboard build unless generated API types may be affected.
+          python3 .github/scripts/classify_ci_paths.py "$files_output" >> "$GITHUB_OUTPUT"
+
   python:
     # NOTE: name kept stable — GitHub branch protection references it.
     # Steps below cover ruff, mypy and the fast pytest gate.
     name: Python (ruff + pytest)
     runs-on: ubuntu-latest
+    needs: classify
 
     steps:
+      - name: Skip Python checks
+        if: needs.classify.outputs.run_python != 'true'
+        run: echo "Python checks skipped by path policy for this PR."
+
       - name: Checkout
+        if: needs.classify.outputs.run_python == 'true'
         uses: actions/checkout@v6
 
       - name: Install uv
+        if: needs.classify.outputs.run_python == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
@@ -38,21 +96,27 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Pin Python from .python-version
+        if: needs.classify.outputs.run_python == 'true'
         run: uv python install
 
       - name: Install workspace (frozen)
+        if: needs.classify.outputs.run_python == 'true'
         run: uv sync --all-packages --frozen
 
       - name: Ruff lint
+        if: needs.classify.outputs.run_python == 'true'
         run: uv run ruff check apps packages tests
 
       - name: Ruff format check
+        if: needs.classify.outputs.run_python == 'true'
         run: uv run ruff format --check apps packages tests
 
       - name: Mypy
+        if: needs.classify.outputs.run_python == 'true'
         run: uv run mypy apps packages tests
 
       - name: Pytest
+        if: needs.classify.outputs.run_python == 'true'
         # Fast required gate: all non-integration Python tests plus
         # smoke files tagged ``unit`` by ``tests/smoke/conftest.py``.
         # Heavier smoke tests run in the sharded job below.
@@ -61,6 +125,7 @@ jobs:
   python-smoke:
     name: Python smoke integration (${{ matrix.shard_name }})
     runs-on: ubuntu-latest
+    needs: classify
     strategy:
       fail-fast: false
       matrix:
@@ -73,10 +138,16 @@ jobs:
             shard_name: "3/3"
 
     steps:
+      - name: Skip Python smoke integration
+        if: needs.classify.outputs.run_python_smoke != 'true'
+        run: echo "Python smoke integration skipped by path policy for this PR."
+
       - name: Checkout
+        if: needs.classify.outputs.run_python_smoke == 'true'
         uses: actions/checkout@v6
 
       - name: Install uv
+        if: needs.classify.outputs.run_python_smoke == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
@@ -84,12 +155,15 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Pin Python from .python-version
+        if: needs.classify.outputs.run_python_smoke == 'true'
         run: uv python install
 
       - name: Install workspace (frozen)
+        if: needs.classify.outputs.run_python_smoke == 'true'
         run: uv sync --all-packages --frozen
 
       - name: Pytest smoke integration shard
+        if: needs.classify.outputs.run_python_smoke == 'true'
         run: |
           files=()
           while IFS= read -r file; do
@@ -100,12 +174,19 @@ jobs:
   pip-audit:
     name: Python deps CVE scan
     runs-on: ubuntu-latest
+    needs: classify
 
     steps:
+      - name: Skip Python dependency audit
+        if: needs.classify.outputs.run_pip_audit != 'true'
+        run: echo "Python dependency audit skipped by path policy for this PR."
+
       - name: Checkout
+        if: needs.classify.outputs.run_pip_audit == 'true'
         uses: actions/checkout@v6
 
       - name: Install uv
+        if: needs.classify.outputs.run_pip_audit == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
@@ -113,12 +194,15 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Pin Python from .python-version
+        if: needs.classify.outputs.run_pip_audit == 'true'
         run: uv python install
 
       - name: Install workspace (frozen)
+        if: needs.classify.outputs.run_pip_audit == 'true'
         run: uv sync --all-packages --frozen
 
       - name: pip-audit
+        if: needs.classify.outputs.run_pip_audit == 'true'
         # Audits the synced venv (uv.lock-frozen). Workspace packages
         # (dap-*) are skipped as expected — they are local, not
         # on PyPI. CVE detection covers all transitive dependencies.
@@ -133,15 +217,23 @@ jobs:
   dashboard:
     name: Dashboard (typecheck + build)
     runs-on: ubuntu-latest
+    needs: classify
     defaults:
       run:
         working-directory: apps/dashboard
 
     steps:
+      - name: Skip dashboard checks
+        if: needs.classify.outputs.run_dashboard != 'true'
+        working-directory: .
+        run: echo "Dashboard checks skipped by path policy for this PR."
+
       - name: Checkout
+        if: needs.classify.outputs.run_dashboard == 'true'
         uses: actions/checkout@v6
 
       - name: Install uv
+        if: needs.classify.outputs.run_dashboard == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
@@ -149,17 +241,21 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Pin Python from .python-version
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: uv python install
 
       - name: Install Python workspace (frozen)
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: uv sync --all-packages --frozen
 
       - name: Setup pnpm
+        if: needs.classify.outputs.run_dashboard == 'true'
         uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node
+        if: needs.classify.outputs.run_dashboard == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -167,19 +263,25 @@ jobs:
           cache-dependency-path: apps/dashboard/pnpm-lock.yaml
 
       - name: Install dependencies
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Check generated API types
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: pnpm check:api
 
       - name: Typecheck
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: pnpm typecheck
 
       - name: Lint
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: pnpm lint
 
       - name: Test
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: pnpm test
 
       - name: Build
+        if: needs.classify.outputs.run_dashboard == 'true'
         run: pnpm build
