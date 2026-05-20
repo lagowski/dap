@@ -40,6 +40,7 @@ from dap_engine.api.deps import (
     get_session,
     get_session_factory,
 )
+from dap_engine.api.run_runtime_policy import pipeline_runtime_policy_error
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import BatchRunCreateRequest, RunCreateRequest
@@ -52,8 +53,7 @@ from dap_engine.execution import (
     execute_run_background,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineVersionORM, UserORM
-from dap_engine.runtime_policy import runtime_policy_error
+from dap_engine.persistence.models import PipelineVersionORM, UserORM
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -136,7 +136,7 @@ async def trigger_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pipeline version not found: {payload.pipeline_id}@v{target_version}",
         )
-    denial = _pipeline_runtime_policy_error(
+    denial = pipeline_runtime_policy_error(
         session,
         pipeline_version,
         is_admin=user.is_superuser,
@@ -353,51 +353,6 @@ def get_batch_run(
         return repo.get_batch_run(session, batch_run_id)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-
-def _pipeline_runtime_policy_error(
-    session: Session,
-    pipeline_version: PipelineVersionORM,
-    *,
-    is_admin: bool,
-    allow_bash_runtime_for_non_admin: bool,
-) -> str | None:
-    agent_ids: set[str] = set()
-    for node in pipeline_version.nodes:
-        if not isinstance(node, dict):
-            logger.error(
-                "pipeline %s@v%s has malformed node entry: %r",
-                pipeline_version.pipeline_id,
-                pipeline_version.version,
-                node,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Pipeline version contains malformed node data",
-            )
-        agent_id = node.get("agent_id")
-        if isinstance(agent_id, str):
-            agent_ids.add(agent_id)
-    if not agent_ids:
-        return None
-    rows = session.execute(
-        select(AgentORM, AgentVersionORM)
-        .join(
-            AgentVersionORM,
-            (AgentVersionORM.agent_id == AgentORM.id)
-            & (AgentVersionORM.version == AgentORM.current_version),
-        )
-        .where(AgentORM.id.in_(agent_ids))
-    ).all()
-    for _agent, version in rows:
-        denial = runtime_policy_error(
-            version.runtime_id,
-            is_admin=is_admin,
-            allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
-        )
-        if denial is not None:
-            return denial
-    return None
 
 
 @router.post("/{run_id}/abort", response_model=Run)
