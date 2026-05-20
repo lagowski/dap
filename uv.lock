@@ -503,7 +503,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-postgres", specifier = ">=2.0" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.0" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.4" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.9.2" },
     { name = "sqlalchemy", specifier = ">=2.0.36" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
@@ -566,9 +566,9 @@ openai = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.103.1" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.103.1" },
-    { name = "anthropic", marker = "extra == 'api-call'", specifier = ">=0.103.1" },
+    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'api-call'", specifier = ">=0.40.0" },
     { name = "anyio", specifier = ">=4.6.0" },
     { name = "dap-schemas", editable = "packages/types" },
     { name = "google-genai", marker = "extra == 'all'", specifier = ">=0.3.0" },

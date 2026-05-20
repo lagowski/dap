@@ -5,7 +5,7 @@ description = "DAP CLI launcher (dap init / start / stop / status)"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "dap-engine",
+    "dap-engine>=0.3,<0.4",
     "typer>=0.12.5",
     "rich>=13.9.2",
     "uvicorn[standard]>=0.32.0",

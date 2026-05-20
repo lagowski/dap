@@ -5,7 +5,7 @@ description = "Runtime adapters for DAP (claude-code, gemini-cli, codex, aider, 
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "dap-schemas",
+    "dap-schemas>=0.3,<0.4",
     "anyio>=4.6.0",
 ]
 keywords = ["agent", "llm", "pipeline", "runtime", "workflow"]

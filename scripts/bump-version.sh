@@ -22,25 +22,34 @@ if ! [[ "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
     exit 64
 fi
 
+MAJOR="${NEW%%.*}"
+REST="${NEW#*.}"
+MINOR="${REST%%.*}"
+NEXT_MINOR=$((MINOR + 1))
+UPPER_BOUND="${MAJOR}.${NEXT_MINOR}"
+if [[ "$NEW" == *-* ]]; then
+    LOWER_BOUND="$NEW"
+else
+    LOWER_BOUND="${MAJOR}.${MINOR}"
+fi
+FIRST_PARTY_SPEC=">=${LOWER_BOUND},<${UPPER_BOUND}"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Detect every pyproject.toml under the workspace. Excludes anything
-# under .venv / node_modules / dist / build so we don't accidentally
-# rewrite vendored dependencies.
-PYPROJECTS=$(
-    find . \
-        -name pyproject.toml \
-        -not -path "./.venv/*" \
-        -not -path "./node_modules/*" \
-        -not -path "*/_dashboard/*" \
-        -not -path "*/dist/*" \
-        -not -path "*/build/*" \
-    | sort
+# Bump the root workspace metadata plus the five packages published by
+# release.yml. Internal tooling packages can keep their own cadence.
+PYPROJECTS=(
+    "pyproject.toml"
+    "packages/types/pyproject.toml"
+    "packages/runtimes/pyproject.toml"
+    "packages/prompt-dsl/pyproject.toml"
+    "apps/engine/pyproject.toml"
+    "apps/cli/pyproject.toml"
 )
 
 echo "Bumping workspace to $NEW..."
-for f in $PYPROJECTS; do
+for f in "${PYPROJECTS[@]}"; do
     if ! grep -q '^version = "' "$f"; then
         echo "  skip (no version field): $f"
         continue
@@ -85,6 +94,35 @@ for f in "${VERSION_FILES[@]}"; do
     sed -i.bak 's/^__version__ = "[^"]*"$/__version__ = "'"$NEW"'"/' "$f"
     rm "${f}.bak"
     echo "  $OLD -> $NEW: $f"
+done
+
+# Keep PyPI dependency metadata aligned with the compatibility matrix.
+# Workspace sources hide these specifiers in local development, but
+# published wheels rely on them to prevent mixed minor versions such as
+# dap-engine 0.4.x with dap-schemas 0.3.x.
+FIRST_PARTY_DEPS=(
+    "packages/runtimes/pyproject.toml:dap-schemas"
+    "apps/engine/pyproject.toml:dap-schemas"
+    "apps/engine/pyproject.toml:dap-runtimes[all]"
+    "apps/engine/pyproject.toml:dap-prompt-dsl"
+    "apps/cli/pyproject.toml:dap-engine"
+)
+echo "Aligning first-party dependency bounds to ${FIRST_PARTY_SPEC}..."
+for entry in "${FIRST_PARTY_DEPS[@]}"; do
+    file="${entry%%:*}"
+    dep="${entry#*:}"
+    if [[ ! -f "$file" ]]; then
+        echo "  skip (missing): $file"
+        continue
+    fi
+    if ! grep -Fq "\"${dep}" "$file"; then
+        echo "  WARN: dependency '${dep}' not found in $file — manual edit needed" >&2
+        continue
+    fi
+    dep_regex=$(printf '%s' "$dep" | sed 's/[][\/.^$*+?{}()|]/\\&/g')
+    sed -E -i.bak 's#"'${dep_regex}'([>=<][^"]*)?"#"'${dep}${FIRST_PARTY_SPEC}'"#' "$file"
+    rm "${file}.bak"
+    echo "  ${file}: ${dep}${FIRST_PARTY_SPEC}"
 done
 
 # uv.lock embeds the workspace member versions; refresh it so the
