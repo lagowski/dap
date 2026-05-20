@@ -160,7 +160,7 @@ def _patch_httpx_stream(
     outer_cm.__exit__ = MagicMock(return_value=False)
 
     return patch(
-        "dap_engine.api.pipelines.httpx.Client",
+        "dap_engine.api.pipeline_bundles.httpx.Client",
         return_value=outer_cm,
     ), inner_client.stream
 
