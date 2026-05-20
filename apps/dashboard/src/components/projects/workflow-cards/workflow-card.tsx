@@ -13,8 +13,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Play, X } from "lucide-react";
 
-import { useTriggerProjectRun, useWorkspaceStatus } from "@/hooks/api";
+import { useCurrentUser, useTriggerProjectRun, useWorkspaceStatus } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
+import { withAutoApprove } from "@/lib/run-trigger-options";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Pipeline, Project } from "@/lib/api/types";
@@ -44,9 +45,12 @@ export function WorkflowCard({
 }: WorkflowCardProps) {
   const router = useRouter();
   const trigger = useTriggerProjectRun();
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser.data?.is_superuser === true;
   const boundId = project.pipelines[kind] ?? "";
   const boundPipeline = pipelines.find((p) => p.id === boundId);
   const [showIssuePicker, setShowIssuePicker] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
   const [repoUrlError, setRepoUrlError] = useState<string | null>(null);
 
   // Workspace must exist before triggering cortex (#371).
@@ -65,7 +69,8 @@ export function WorkflowCard({
     if (!boundId) return;
     setRepoUrlError(null);
     try {
-      let payload: Parameters<typeof trigger.mutateAsync>[0]["payload"] | undefined;
+      let initialState: Record<string, unknown> = {};
+      let hasInitialState = false;
 
       if (issueNumber) {
         // Extract owner/repo from repo_url — fail explicitly if unparseable
@@ -80,21 +85,25 @@ export function WorkflowCard({
           return;
         }
         const repo = repoMatch[1];
-        payload = {
-          initial_state: {
-            run_id: `${project.name}-${issueNumber}`,
-            repo,
-            branch: project.default_branch,
-            extensions: {
-              issue_number: issueNumber,
-              issue_url: issueUrl ?? `https://github.com/${repo}/issues/${issueNumber}`,
-              issue_title: issueTitle ?? "",
-              issue_body: (issueBody ?? "").slice(0, 1000),
-              workspace_path: project.working_directory ?? "",
-            },
+        hasInitialState = true;
+        initialState = {
+          run_id: `${project.name}-${issueNumber}`,
+          repo,
+          branch: project.default_branch,
+          extensions: {
+            issue_number: issueNumber,
+            issue_url: issueUrl ?? `https://github.com/${repo}/issues/${issueNumber}`,
+            issue_title: issueTitle ?? "",
+            issue_body: (issueBody ?? "").slice(0, 1000),
+            workspace_path: project.working_directory ?? "",
           },
         };
       }
+
+      const payload =
+        hasInitialState || (isAdmin && autoApprove)
+          ? { initial_state: withAutoApprove(initialState, isAdmin && autoApprove) }
+          : undefined;
 
       const run = await trigger.mutateAsync({ id: project.id, kind, payload });
       router.push(`/runs/${run.id}`);
@@ -126,6 +135,28 @@ export function WorkflowCard({
           </Button>
         ) : null}
       </div>
+
+      {isAdmin ? (
+        <label className="flex items-start gap-2 rounded-md border px-2 py-2 text-xs">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-primary"
+            checked={autoApprove}
+            aria-describedby={`workflow-${kind}-auto-approve-description`}
+            onChange={(event) => setAutoApprove(event.target.checked)}
+            disabled={!boundId || trigger.isPending || isUpdating}
+          />
+          <span>
+            <span className="font-medium">Skip approval gates for next trigger</span>
+            <span
+              id={`workflow-${kind}-auto-approve-description`}
+              className="block text-muted-foreground"
+            >
+              Run-level override; project gate settings stay unchanged.
+            </span>
+          </span>
+        </label>
+      ) : null}
 
       <div className="flex items-center gap-2 flex-wrap">
         <select

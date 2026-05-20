@@ -35,6 +35,7 @@ export default function NewProjectPage() {
                 default_branch: values.default_branch,
                 env_vars: values.env_vars,
                 pipelines: values.pipelines,
+                auto_approve_nodes: values.auto_approve_nodes,
               });
               router.push(`/projects/${created.id}`);
             }}

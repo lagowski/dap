@@ -127,6 +127,8 @@ def create_project(
     workflows). For non-admin creators, every bound pipeline_id must
     be owned by the creator.
     """
+    if not is_admin and payload.auto_approve_nodes:
+        raise PermissionError("auto_approve_nodes requires an admin user")
     _validate_pipeline_bindings(session, payload.pipelines, actor_id=user_id, is_admin=is_admin)
     now = _now()
     project = ProjectORM(
@@ -171,6 +173,8 @@ def update_project(
         # Anti-enumeration: cross-user lookup looks indistinguishable
         # from "doesn't exist".
         raise NotFoundError(f"Project not found: {project_id}")
+    if not is_admin and list(payload.auto_approve_nodes) != list(project.auto_approve_nodes or []):
+        raise PermissionError("auto_approve_nodes requires an admin user")
     _validate_pipeline_bindings(session, payload.pipelines, actor_id=actor_id, is_admin=is_admin)
 
     project.name = payload.name

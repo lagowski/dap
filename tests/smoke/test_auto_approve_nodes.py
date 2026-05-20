@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
+from dap_engine.persistence.models import UserORM
 from dap_runtimes import RuntimeRegistry
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
@@ -51,6 +52,16 @@ def ctx() -> Iterator[tuple[TestClient, _StubAdapter]]:
     app = create_app(config)
     stub = _StubAdapter()
     with authed_test_client(app) as client:
+        with app.state.session_factory() as session:
+            user = session.query(UserORM).filter(UserORM.email == "test@local.dev").one()
+            user.is_superuser = True
+            session.commit()
+        login = client.post(
+            "/auth/jwt/login",
+            data={"username": "test@local.dev", "password": "test-password-123"},
+        )
+        assert login.status_code == 200, login.text
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         registry: RuntimeRegistry = app.state.runtime_registry
         registry.register(stub)
         yield client, stub
@@ -261,6 +272,35 @@ def test_project_returns_auto_approve_nodes(
     fetched = client.get(f"/projects/{project_id}")
     assert fetched.status_code == 200, fetched.text
     assert fetched.json()["auto_approve_nodes"] == ["n2", "n4"]
+
+
+def test_non_admin_cannot_create_project_with_auto_approve_nodes() -> None:
+    tmp = tempfile.mkdtemp(prefix="dap-auto-approve-nodes-non-admin-")
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="auto-approve-nodes-non-admin-secret",
+    )
+    app = create_app(config)
+    stub = _StubAdapter()
+    with authed_test_client(app) as client:
+        registry: RuntimeRegistry = app.state.runtime_registry
+        registry.register(stub)
+        agent_id = _create_agent(client)
+        pipeline_id = _create_pipeline(client, agent_id)
+
+        response = client.post(
+            "/projects",
+            json={
+                "name": "Non-admin Project",
+                "description": "",
+                "pipelines": {"cortex": pipeline_id},
+                "env_vars": {},
+                "auto_approve_nodes": ["n2"],
+            },
+        )
+
+    assert response.status_code == 403
+    assert "auto_approve_nodes requires an admin user" in response.text
 
 
 # ---------------------------------------------------------------------------
