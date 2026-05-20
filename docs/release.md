@@ -2,7 +2,7 @@
 
 DAP ships through three channels on every `v*.*.*` tag:
 
-- **PyPI** — six wheels (one per first-party package), published
+- **PyPI** — five wheels (one per published first-party package), published
   via trusted-publisher OIDC so no long-lived API token has to
   live in this repo.
 - **GHCR** — multi-platform Docker image
@@ -13,6 +13,34 @@ DAP ships through three channels on every `v*.*.*` tag:
 Everything runs from `.github/workflows/release.yml`. This document
 covers the **one-time operator setup** and the **per-release
 checklist**.
+
+## Package compatibility matrix
+
+Published DAP packages move as a minor-version family. Patch releases
+within a family are compatible with each other; crossing a minor
+boundary is intentionally blocked by package metadata so PyPI cannot
+install a mixed workspace such as `dap-engine 0.4.x` with
+`dap-schemas 0.3.x`.
+
+| Package | Import name | Published from | Compatibility rule |
+|---|---|---|---|
+| `dap-schemas` | `dap_types` | `packages/types` | Base schema package for the release family. |
+| `dap-prompt-dsl` | `dap_prompt_dsl` | `packages/prompt-dsl` | Independent within the same DAP release family. |
+| `dap-runtimes` | `dap_runtimes` | `packages/runtimes` | Depends on `dap-schemas >=X.Y,<X.(Y+1)`. |
+| `dap-engine` | `dap_engine` | `apps/engine` | Depends on `dap-schemas`, `dap-runtimes[all]`, and `dap-prompt-dsl` in the same `>=X.Y,<X.(Y+1)` family. |
+| `dap-cli` | `dap_cli` | `apps/cli` | Depends on `dap-engine >=X.Y,<X.(Y+1)`. |
+
+Current `0.3.x` release-family constraints:
+
+| Consumer | Required first-party packages |
+|---|---|
+| `dap-runtimes 0.3.x` | `dap-schemas >=0.3,<0.4` |
+| `dap-engine 0.3.x` | `dap-schemas >=0.3,<0.4`; `dap-runtimes[all] >=0.3,<0.4`; `dap-prompt-dsl >=0.3,<0.4` |
+| `dap-cli 0.3.x` | `dap-engine >=0.3,<0.4` |
+
+`code-review-council` is an internal CI tool in this repository. It is
+not part of the public DAP PyPI release set and is intentionally not
+published by `release.yml`.
 
 > **History note.** v0.3.0 was published in "bootstrap mode" with
 > an account-scoped API token because PyPI's *pending* publishers
@@ -25,7 +53,7 @@ checklist**.
 
 ### PyPI trusted publishers
 
-Each PyPI project (`dap-cli`, `dap-engine`, `dap-schemas`,
+Each published PyPI project (`dap-cli`, `dap-engine`, `dap-schemas`,
 `dap-runtimes`, `dap-prompt-dsl`) needs a trusted-publisher rule
 pointing at this repo's `release.yml` workflow. (`dap-cortex` was
 extracted to its own repo after v0.3.0 — releases now flow from
@@ -82,14 +110,25 @@ commands below use the placeholder so you can copy them verbatim.
    ```bash
    ./scripts/bump-version.sh <version>
    ```
-   Rewrites every `pyproject.toml` version field, every first-party
-   `__version__` constant (currently only ``apps/cli``), and
-   refreshes `uv.lock`
-   so the lock matches the bumped pyprojects. Idempotent —
-   re-running with the same value is a no-op. Validates the input
-   shape (loose semver: `x.y.z` or `x.y.z-rcN`).
+   Rewrites the root workspace and published-package `pyproject.toml`
+   version fields, every first-party `__version__` constant, and
+   the first-party dependency bounds in the compatibility matrix
+   (`>=X.Y,<X.(Y+1)`). It also refreshes `uv.lock` so the lock
+   matches the bumped pyprojects. Idempotent — re-running with the
+   same value is a no-op. Validates the input shape (loose semver:
+   `x.y.z` or `x.y.z-rcN`).
 
-3. **Update `CHANGELOG.md`** with the section for this release.
+3. **Validate release metadata locally.**
+   ```bash
+   uv run --frozen python scripts/check-release-metadata.py
+   ```
+   This checks package names, versions, hatchling metadata, wheel
+   package paths, and first-party dependency bounds before a tag can
+   publish. The release workflow runs the same script before building
+   wheels, and builds with `uv build --no-sources` so local workspace
+   sources cannot hide missing PyPI dependency metadata.
+
+4. **Update `CHANGELOG.md`** with the section for this release.
    Keep-a-Changelog style:
    ```markdown
    ## [<version>] — YYYY-MM-DD
@@ -104,9 +143,9 @@ commands below use the placeholder so you can copy them verbatim.
    - ...
    ```
 
-4. **PR + merge** the bump + changelog to `main`.
+5. **PR + merge** the bump + changelog to `main`.
 
-5. **Tag + push**:
+6. **Tag + push**:
    ```bash
    git checkout main
    git pull origin main
@@ -114,13 +153,14 @@ commands below use the placeholder so you can copy them verbatim.
    git push origin v<version>
    ```
 
-6. **Watch the run.** `release.yml` should:
-   - Build all six wheels.
+7. **Watch the run.** `release.yml` should:
+   - Check release metadata.
+   - Build all five published wheels.
    - Publish to PyPI (skipped if `workflow_dispatch`).
    - Build + push the multi-platform Docker image to GHCR.
    - Create the GitHub Release with attached wheels.
 
-7. **Smoke test.**
+8. **Smoke test.**
    ```bash
    # PyPI
    pipx install dap-cli==<version>
@@ -166,7 +206,7 @@ broken `<version>`:
 ```bash
 pipx upgrade twine
 twine yank dap-cli==<version>
-# repeat for each of the six packages
+# repeat for each published package
 ```
 
 For Docker: keep the bad version available but bump `latest` to

@@ -46,7 +46,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Stage 1: build all six first-party wheels (+ sdist for each).
+  # Stage 1: build all five published first-party wheels (+ sdist for each).
   # The dap-cli wheel gets the dashboard bundle staged into it
   # before the build runs.
   # ---------------------------------------------------------------
@@ -118,6 +118,9 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
+      - name: Check release metadata
+        run: uv run --frozen python scripts/check-release-metadata.py
+
       - name: Build dashboard bundle
         # This stages apps/cli/src/dap_cli/_dashboard/ — must run
         # BEFORE ``uv build`` so the dap-cli wheel picks it up.
@@ -133,7 +136,7 @@ jobs:
           mkdir -p dist
           for pkg in packages/types packages/runtimes packages/prompt-dsl apps/engine apps/cli; do
               echo "==> building $pkg"
-              uv build --out-dir dist/ "$pkg"
+              uv build --no-sources --out-dir dist/ "$pkg"
           done
           ls -la dist/
 
