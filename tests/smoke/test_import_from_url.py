@@ -390,11 +390,12 @@ def test_import_from_url_writes_audit_entry() -> None:
 
     app, cfg = _make_app(allowed_hosts=[_TRUSTED_HOST])
     patcher, _ = _patch_httpx_stream(json_body=_bundle_body())
+    url_with_query = f"{_TRUSTED_URL}?token=do-not-log#frag"
 
     with authed_test_client(app) as c, patcher:
         response = c.post(
             "/pipelines/import-from-url",
-            json={"url": _TRUSTED_URL},
+            json={"url": url_with_query},
         )
         assert response.status_code == 201
         pipeline_id = response.json()["id"]
@@ -416,6 +417,7 @@ def test_import_from_url_writes_audit_entry() -> None:
         if data.get("url") == _TRUSTED_URL and data.get("pipeline_id") == pipeline_id
     ]
     assert matching, f"audit entry missing url/pipeline_id; rows={rows}"
+    assert "do-not-log" not in json.dumps(rows)
 
 
 # Suppress unused-import warnings — ``Session`` is referenced only by

@@ -242,14 +242,14 @@ def import_pipeline_from_url(
         _raise_bundle_http_error(exc)
 
     # Audit trail — operators need to know *where* this pipeline came
-    # from later. We log the URL (operator already controls the
-    # allow-list so the URL isn't sensitive) + the resulting pipeline id.
+    # from later. Query strings/fragments are stripped by the fetch
+    # helper before audit so accidental URL tokens don't land in logs.
     try:
         record_audit_event(
             session,
             user_id=user.id,
             event_type="pipeline.imported_from_url",
-            event_data={"url": payload.url, "pipeline_id": pipeline.id},
+            event_data={"url": fetched.audit_url, "pipeline_id": pipeline.id},
         )
     except Exception:
         # Audit-log failures shouldn't block a successful import; we

@@ -19,6 +19,7 @@ from packaging.version import InvalidVersion, Version
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from dap_engine.api.export_redaction import scrub_secret_like_keys
 from dap_engine.api.schemas import (
     PIPELINE_EXPORT_SCHEMA_VERSION,
     AgentExportPayload,
@@ -36,15 +37,6 @@ BundleDetail = str | dict[str, Any] | list[Any]
 
 _BUNDLE_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 _BUNDLE_FETCH_TIMEOUT_SECONDS = 10.0
-_SECRET_KEY_PATTERNS = (
-    "api_key",
-    "apikey",
-    "token",
-    "secret",
-    "password",
-    "credential",
-)
-_REDACTED_PLACEHOLDER = "<redacted>"
 
 
 class PipelineBundleError(Exception):
@@ -61,6 +53,7 @@ class FetchedPipelineBundle:
     """Parsed bundle fetched from a trusted template registry."""
 
     import_request: PipelineImportRequest
+    audit_url: str
 
 
 def _raise(status_code: int, detail: BundleDetail) -> NoReturn:
@@ -103,19 +96,6 @@ def _enforce_validation(payload: PipelineCreate, session: Session) -> None:
         _raise(422, {"errors": result.errors, "warnings": result.warnings})
 
 
-def _scrub_secret_like_keys(value: dict[str, Any]) -> dict[str, Any]:
-    """Best-effort redaction of keys whose name suggests a credential."""
-    redacted: dict[str, Any] = {}
-    for key, val in value.items():
-        if any(pattern in key.lower() for pattern in _SECRET_KEY_PATTERNS):
-            redacted[key] = _REDACTED_PLACEHOLDER
-        elif isinstance(val, dict):
-            redacted[key] = _scrub_secret_like_keys(val)
-        else:
-            redacted[key] = val
-    return redacted
-
-
 def _build_bundled_agent_export_payload(agent: Agent) -> AgentExportPayload:
     """Project an agent onto the portable bundle export shape."""
     try:
@@ -123,7 +103,7 @@ def _build_bundled_agent_export_payload(agent: Agent) -> AgentExportPayload:
             name=agent.name,
             role=agent.role,
             runtime_id=agent.runtime_id,
-            runtime_config=_scrub_secret_like_keys(agent.runtime_config),
+            runtime_config=scrub_secret_like_keys(agent.runtime_config),
             prompt_template=agent.prompt_template,
             input_schema=list(agent.input_schema),
             output_schema=list(agent.output_schema),
@@ -300,6 +280,12 @@ def validate_registry_url(url: str, allowed_hosts: list[str]) -> str:
     return hostname
 
 
+def _sanitize_url_for_audit(url: str) -> str:
+    """Drop query/fragment data before writing a user-supplied URL to audit."""
+    parsed = urlparse(url)
+    return parsed._replace(query="", fragment="").geturl()
+
+
 def fetch_pipeline_import_request_from_url(
     url: str,
     *,
@@ -370,4 +356,7 @@ def fetch_pipeline_import_request_from_url(
             {"errors": ["bundle JSON failed validation"], "details": sanitized},
         ) from exc
 
-    return FetchedPipelineBundle(import_request=import_request)
+    return FetchedPipelineBundle(
+        import_request=import_request,
+        audit_url=_sanitize_url_for_audit(url),
+    )
