@@ -22,7 +22,7 @@ env:
 jobs:
   python:
     # NOTE: name kept stable — GitHub branch protection references it.
-    # Steps below cover ruff, mypy and pytest.
+    # Steps below cover ruff, mypy and the fast pytest gate.
     name: Python (ruff + pytest)
     runs-on: ubuntu-latest
 
@@ -53,12 +53,49 @@ jobs:
         run: uv run mypy apps packages tests
 
       - name: Pytest
-        # ``tests/standalone/`` exercises the pip-installable wheel
-        # and needs Node + pnpm; the dedicated ``bundle-wheel`` job in
-        # the Packaging workflow runs it. Ignore here so this job
-        # stays focused and doesn't silently skip wheel coverage when
-        # Node isn't available on the runner.
-        run: uv run pytest -q --ignore=tests/standalone
+        # Fast required gate: all non-integration Python tests plus
+        # smoke files tagged ``unit`` by ``tests/smoke/conftest.py``.
+        # Heavier smoke tests run in the sharded job below.
+        run: uv run pytest -q -m "not integration" --ignore=tests/standalone
+
+  python-smoke:
+    name: Python smoke integration (${{ matrix.shard_name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard_index: 0
+            shard_name: "1/3"
+          - shard_index: 1
+            shard_name: "2/3"
+          - shard_index: 2
+            shard_name: "3/3"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Pin Python from .python-version
+        run: uv python install
+
+      - name: Install workspace (frozen)
+        run: uv sync --all-packages --frozen
+
+      - name: Pytest smoke integration shard
+        run: |
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(uv run python .github/scripts/select_pytest_files.py tests/smoke --total 3 --index ${{ matrix.shard_index }})
+          uv run pytest -q -m integration "${files[@]}"
 
   pip-audit:
     name: Python deps CVE scan
