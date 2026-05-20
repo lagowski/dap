@@ -181,13 +181,13 @@ jobs:
 
       - name: Checkout (for gh CLI auth + repo metadata)
         if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
         if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
