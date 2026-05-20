@@ -38,6 +38,15 @@ from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
 
 
 @dataclass(frozen=True)
+class ProviderConfigField:
+    """Provider-owned runtime_config metadata for operator/UI surfaces."""
+
+    key: str
+    required: bool
+    description: str
+
+
+@dataclass(frozen=True)
 class ProviderInfo:
     """Metadata for a registered provider — usable without importing it.
 
@@ -50,6 +59,7 @@ class ProviderInfo:
     module_path: str
     default_env_var: str | None
     display_name: str
+    config_fields: tuple[ProviderConfigField, ...] = ()
 
 
 PROVIDER_REGISTRY: Final[dict[str, ProviderInfo]] = {
@@ -58,18 +68,56 @@ PROVIDER_REGISTRY: Final[dict[str, ProviderInfo]] = {
         module_path="dap_runtimes.adapters._providers._anthropic",
         default_env_var="ANTHROPIC_API_KEY",
         display_name="Anthropic SDK",
+        config_fields=(
+            ProviderConfigField("model_id", True, "Anthropic model id, e.g. claude-haiku-4-5."),
+            ProviderConfigField(
+                "max_tokens", False, "Positive output token limit; defaults to 4096."
+            ),
+            ProviderConfigField(
+                "effort", False, "Optional reasoning effort: low, medium, high, xhigh, max."
+            ),
+            ProviderConfigField("enable_thinking", False, "Enable Claude thinking blocks."),
+            ProviderConfigField("prompt_cache", False, "Enable ephemeral prompt caching."),
+            ProviderConfigField(
+                "system_prompt", False, "Extra system prompt prepended to prompt XML."
+            ),
+        ),
     ),
     "openai": ProviderInfo(
         id="openai",
         module_path="dap_runtimes.adapters._providers._openai",
         default_env_var="OPENAI_API_KEY",
         display_name="OpenAI SDK",
+        config_fields=(
+            ProviderConfigField("model_id", True, "OpenAI model id, e.g. gpt-5-mini."),
+            ProviderConfigField(
+                "max_tokens", False, "Positive output token limit; defaults to 4096."
+            ),
+            ProviderConfigField("temperature", False, "Optional sampling temperature."),
+            ProviderConfigField(
+                "system_prompt", False, "Extra system prompt prepended to prompt XML."
+            ),
+        ),
     ),
     "openai-compat": ProviderInfo(
         id="openai-compat",
         module_path="dap_runtimes.adapters._providers._openai",
         default_env_var=None,
         display_name="OpenAI-compatible (custom base_url)",
+        config_fields=(
+            ProviderConfigField("model_id", True, "Provider-specific model id."),
+            ProviderConfigField("base_url", True, "OpenAI-compatible Chat Completions base URL."),
+            ProviderConfigField(
+                "api_key_env", True, "Env var name holding this provider's API key."
+            ),
+            ProviderConfigField(
+                "max_tokens", False, "Positive output token limit; defaults to 4096."
+            ),
+            ProviderConfigField("temperature", False, "Optional sampling temperature."),
+            ProviderConfigField(
+                "system_prompt", False, "Extra system prompt prepended to prompt XML."
+            ),
+        ),
     ),
     "glm": ProviderInfo(
         id="glm",
@@ -80,6 +128,16 @@ PROVIDER_REGISTRY: Final[dict[str, ProviderInfo]] = {
         module_path="dap_runtimes.adapters._providers._openai",
         default_env_var="GLM_API_KEY",
         display_name="Z.AI GLM (OpenAI-compatible)",
+        config_fields=(
+            ProviderConfigField("model_id", True, "GLM model id, e.g. glm-5-flash."),
+            ProviderConfigField(
+                "max_tokens", False, "Positive output token limit; defaults to 4096."
+            ),
+            ProviderConfigField("temperature", False, "Optional sampling temperature."),
+            ProviderConfigField(
+                "system_prompt", False, "Extra system prompt prepended to prompt XML."
+            ),
+        ),
     ),
     "openrouter": ProviderInfo(
         id="openrouter",
@@ -91,12 +149,33 @@ PROVIDER_REGISTRY: Final[dict[str, ProviderInfo]] = {
         module_path="dap_runtimes.adapters._providers._openai",
         default_env_var="OPENROUTER_API_KEY",
         display_name="OpenRouter (multi-model gateway)",
+        config_fields=(
+            ProviderConfigField("model_id", True, "OpenRouter slash-namespaced model id."),
+            ProviderConfigField(
+                "max_tokens", False, "Positive output token limit; defaults to 4096."
+            ),
+            ProviderConfigField("temperature", False, "Optional sampling temperature."),
+            ProviderConfigField(
+                "system_prompt", False, "Extra system prompt prepended to prompt XML."
+            ),
+        ),
     ),
     "gemini": ProviderInfo(
         id="gemini",
         module_path="dap_runtimes.adapters._providers._gemini",
         default_env_var="GEMINI_API_KEY",
         display_name="Google Gen AI SDK",
+        config_fields=(
+            ProviderConfigField("model_id", True, "Gemini model id, e.g. gemini-3.0-flash."),
+            ProviderConfigField(
+                "max_tokens", False, "Positive output token limit; defaults to 4096."
+            ),
+            ProviderConfigField("temperature", False, "Optional sampling temperature."),
+            ProviderConfigField("thinking_budget", False, "Optional Gemini thinking budget."),
+            ProviderConfigField(
+                "system_prompt", False, "Extra system prompt prepended to prompt XML."
+            ),
+        ),
     ),
 }
 
@@ -122,6 +201,7 @@ def list_provider_ids() -> list[str]:
 
 __all__ = [
     "PROVIDER_REGISTRY",
+    "ProviderConfigField",
     "ProviderError",
     "ProviderInfo",
     "ProviderResult",

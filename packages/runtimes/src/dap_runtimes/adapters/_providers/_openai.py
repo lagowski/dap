@@ -30,7 +30,11 @@ from typing import Any, Final
 import openai
 from openai import AsyncOpenAI
 
-from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
+from dap_runtimes.adapters._providers._base import (
+    ProviderError,
+    ProviderResult,
+    calculate_cost_usd,
+)
 
 ID: Final = "openai"
 ID_COMPAT: Final = "openai-compat"
@@ -62,7 +66,6 @@ PRICING: Final[dict[str, tuple[float, float]]] = {
     "o3-mini": (1.10, 4.40),
 }
 
-TOKENS_PER_MILLION: Final = 1_000_000
 DEFAULT_USER_MESSAGE: Final = "Execute the task as specified in the system instructions."
 
 
@@ -256,8 +259,9 @@ def _calculate_cost(
     output_tokens: int,
 ) -> float | None:
     """USD cost from token counts. None for unknown models."""
-    pricing = PRICING.get(model_id)
-    if pricing is None:
-        return None
-    input_rate, output_rate = pricing
-    return (input_tokens * input_rate + output_tokens * output_rate) / TOKENS_PER_MILLION
+    return calculate_cost_usd(
+        model_id=model_id,
+        pricing=PRICING,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )

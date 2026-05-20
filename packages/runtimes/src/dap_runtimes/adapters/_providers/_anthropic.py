@@ -8,7 +8,11 @@ from typing import Any, Final
 import anthropic
 from anthropic import AsyncAnthropic
 
-from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
+from dap_runtimes.adapters._providers._base import (
+    ProviderError,
+    ProviderResult,
+    calculate_cost_usd,
+)
 
 ID: Final = "anthropic"
 DEFAULT_ENV_VAR: Final = "ANTHROPIC_API_KEY"
@@ -26,8 +30,6 @@ PRICING: Final[dict[str, tuple[float, float]]] = {
 
 CACHE_WRITE_MULTIPLIER: Final = 1.25
 CACHE_READ_MULTIPLIER: Final = 0.10
-TOKENS_PER_MILLION: Final = 1_000_000
-
 DEFAULT_USER_MESSAGE: Final = "Execute the task as specified in the system instructions."
 VALID_EFFORT: Final = frozenset({"low", "medium", "high", "xhigh", "max"})
 
@@ -164,15 +166,13 @@ def _calculate_cost(
     output_tokens: int,
 ) -> float | None:
     """USD cost from token counts. None for unknown models."""
-    pricing = PRICING.get(model_id)
-    if pricing is None:
-        return None
-    input_rate, output_rate = pricing
-
-    input_cost = input_tokens * input_rate
-    cache_creation_cost = cache_creation_tokens * input_rate * CACHE_WRITE_MULTIPLIER
-    cache_read_cost = cache_read_tokens * input_rate * CACHE_READ_MULTIPLIER
-    output_cost = output_tokens * output_rate
-
-    total_micro = input_cost + cache_creation_cost + cache_read_cost + output_cost
-    return total_micro / TOKENS_PER_MILLION
+    return calculate_cost_usd(
+        model_id=model_id,
+        pricing=PRICING,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_multiplier=CACHE_WRITE_MULTIPLIER,
+        cache_read_multiplier=CACHE_READ_MULTIPLIER,
+    )

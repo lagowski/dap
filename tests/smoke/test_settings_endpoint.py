@@ -60,6 +60,9 @@ def test_settings_glm_provider_uses_glm_api_key_env(client: TestClient) -> None:
     glm = next(p for p in body["providers"] if p["id"] == "glm")
     assert glm["default_env_var"] == "GLM_API_KEY"
     assert "GLM" in glm["display_name"]
+    fields = {field["key"]: field for field in glm["config_fields"]}
+    assert fields["model_id"]["required"] is True
+    assert "base_url" not in fields
 
 
 def test_settings_provider_configured_reflects_env_state(
@@ -86,6 +89,9 @@ def test_settings_openai_compat_default_env_is_null(client: TestClient) -> None:
     assert compat["default_env_var"] is None
     # And `configured` is always False at the provider level.
     assert compat["configured"] is False
+    fields = {field["key"]: field for field in compat["config_fields"]}
+    assert fields["base_url"]["required"] is True
+    assert fields["api_key_env"]["required"] is True
 
 
 def test_settings_engine_section_has_paths_and_version(client: TestClient) -> None:
