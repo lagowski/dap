@@ -174,12 +174,9 @@ def test_legacy_migrations_list_frozen_at_18() -> None:
     """``MIGRATIONS[]`` is frozen as of v0.3.x — new schema changes
     land as Alembic revisions, not as new entries here.
 
-    A pre-commit hook would be a stronger guarantee but a smoke
-    test that fails when someone appends to ``MIGRATIONS[]`` is a
-    fine forcing function in the meantime. If you genuinely need
-    to extend the list (you almost certainly don't), update this
-    expected count and the contract docstring at the top of
-    ``persistence/migrations.py``.
+    This test is the guardrail: if someone appends to ``MIGRATIONS[]``,
+    the failure should send them to a new Alembic revision instead of
+    updating this expected count.
     """
     from dap_engine.persistence.migrations import MIGRATIONS
 

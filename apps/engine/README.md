@@ -84,12 +84,14 @@ var is set:
 - **PostgreSQL** — `DAP_DATABASE_URL=postgresql+asyncpg://...`.
   Required for any deployment with concurrent writers (5+ users).
   Connection pooling tuned via `DAP_PG_POOL_MIN_SIZE` /
-  `_MAX_SIZE`; in-code migrations run on startup.
+  `_MAX_SIZE`; migrations run on startup.
 
-Schema migrations (in `dap_engine.persistence.migrations`) are
-applied automatically on engine startup — there's no separate
-`alembic upgrade` step. The migration ledger lives in
-`schema_migrations` table.
+Schema migrations are applied automatically on engine startup. The frozen
+legacy ledger in `dap_engine.persistence.migrations` upgrades pre-Alembic
+databases and records rows in `schema_migrations`; Alembic then upgrades the
+database to head and records the active revision in `alembic_version`. New
+schema changes are Alembic-only. See
+[`../../docs/database-migrations.md`](../../docs/database-migrations.md).
 
 ## Upgrading from 0.0.1
 
