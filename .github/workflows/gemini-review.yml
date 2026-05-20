@@ -82,7 +82,7 @@ jobs:
             echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Classify low-risk lockfile-only PRs
+      - name: Classify low-risk PRs
         id: low-risk
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -104,23 +104,42 @@ jobs:
             exit 0
           fi
 
-          lockfile_only=false
+          docs_seen=false
+          lockfile_seen=false
+          low_risk=true
           for file in "${files[@]}"; do
             case "$file" in
+              docs/*|README.md|DEPLOYMENT.md|packages/*/README.md|.claude/**)
+                docs_seen=true
+                continue
+                ;;
+              *.md)
+                docs_seen=true
+                continue
+                ;;
               uv.lock|apps/dashboard/pnpm-lock.yaml|package-lock.json|e2e/package-lock.json)
-                lockfile_only=true
+                lockfile_seen=true
+                continue
                 ;;
               *)
-                lockfile_only=false
+                low_risk=false
                 break
                 ;;
             esac
           done
 
-          if [[ "$lockfile_only" == "true" ]]; then
+          if [[ "$low_risk" == "true" && "$docs_seen" == "true" && "$lockfile_seen" == "false" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=Docs-only PR — standard CI still validates configured docs/workflow checks." >> "$GITHUB_OUTPUT"
+            echo "Docs-only PR — auto-passing AI review gate."
+          elif [[ "$low_risk" == "true" && "$docs_seen" == "false" && "$lockfile_seen" == "true" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "reason=Lockfile-only PR — standard CI still validates install and tests." >> "$GITHUB_OUTPUT"
             echo "Lockfile-only PR — auto-passing AI review gate."
+          elif [[ "$low_risk" == "true" && "$docs_seen" == "true" && "$lockfile_seen" == "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=Docs/lockfiles-only PR — standard CI still validates configured docs and dependency checks." >> "$GITHUB_OUTPUT"
+            echo "Docs/lockfiles-only PR — auto-passing AI review gate."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
