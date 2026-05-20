@@ -4,10 +4,28 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PipelineDesigner } from "@/components/designer/designer";
 import { PipelineTemplatePicker } from "@/components/designer/pipeline-template-picker";
+import { BackendProfileImportDialog } from "@/components/pipelines/backend-profile-import-dialog";
 import { Card, CardContent } from "@/components/ui/card";
-import { useImportPipeline, usePipeline } from "@/hooks/api";
+import {
+  useImportPipeline,
+  useInspectPipelineImportBackends,
+  usePipeline,
+} from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
+import type {
+  BackendProfilesInspectionResponse,
+  PipelineExport,
+} from "@/lib/api/types";
+import {
+  bundleHasBackendProfiles,
+  hasInspectableProfiles,
+} from "@/lib/backend-profile-import";
 import type { PipelineTemplate } from "@/lib/pipeline-templates";
+
+interface BackendProfileDialogState {
+  bundle: PipelineExport;
+  inspection: BackendProfilesInspectionResponse;
+}
 
 export default function NewPipelinePage() {
   return (
@@ -28,8 +46,16 @@ function NewPipelinePageContent() {
   const fromId = fromIdRaw && fromIdRaw.trim() !== "" ? fromIdRaw.trim() : null;
   const sourceQuery = usePipeline(fromId);
   const importPipeline = useImportPipeline();
+  const inspectBackends = useInspectPipelineImportBackends();
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [backendDialog, setBackendDialog] =
+    useState<BackendProfileDialogState | null>(null);
+
+  const importBundle = async (bundle: PipelineExport) => {
+    const created = await importPipeline.mutateAsync(bundle);
+    router.push(`/pipelines/${created.id}/edit`);
+  };
 
   const handleUseTemplate = async (template: PipelineTemplate) => {
     // Guard at the top of the handler: ``importPipeline.isPending``
@@ -42,8 +68,14 @@ function NewPipelinePageContent() {
     setTemplateError(null);
     setPendingTemplateId(template.id);
     try {
-      const created = await importPipeline.mutateAsync(template.bundle);
-      router.push(`/pipelines/${created.id}/edit`);
+      if (bundleHasBackendProfiles(template.bundle)) {
+        const inspection = await inspectBackends.mutateAsync(template.bundle);
+        if (hasInspectableProfiles(inspection)) {
+          setBackendDialog({ bundle: template.bundle, inspection });
+          return;
+        }
+      }
+      await importBundle(template.bundle);
     } catch (err) {
       setTemplateError(formatApiError(err));
     } finally {
@@ -52,6 +84,16 @@ function NewPipelinePageContent() {
       // cancels mid-navigation. On success the page unmounts and
       // the setter is a no-op.
       setPendingTemplateId(null);
+    }
+  };
+
+  const handleConfiguredImport = async (bundle: PipelineExport) => {
+    setTemplateError(null);
+    try {
+      await importBundle(bundle);
+      setBackendDialog(null);
+    } catch (err) {
+      setTemplateError(formatApiError(err));
     }
   };
 
@@ -91,7 +133,7 @@ function NewPipelinePageContent() {
             // would leave a one-render-cycle hole where multiple
             // cards could be clicked before the mutation has
             // committed its state change.
-            disabled={pendingTemplateId !== null}
+            disabled={pendingTemplateId !== null || backendDialog !== null}
             pendingTemplateId={pendingTemplateId}
           />
           <p className="mt-3 text-xs text-muted-foreground">
@@ -106,6 +148,16 @@ function NewPipelinePageContent() {
           seedFromPipeline={sourceQuery.data ?? null}
         />
       </div>
+      {backendDialog ? (
+        <BackendProfileImportDialog
+          open
+          bundle={backendDialog.bundle}
+          inspection={backendDialog.inspection}
+          pending={importPipeline.isPending}
+          onCancel={() => setBackendDialog(null)}
+          onConfirm={handleConfiguredImport}
+        />
+      ) : null}
     </div>
   );
 }

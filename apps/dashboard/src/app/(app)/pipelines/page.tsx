@@ -7,6 +7,7 @@ import { Archive, Play, Plus, Upload } from "lucide-react";
 import {
   useArchivePipeline,
   useImportPipeline,
+  useInspectPipelineImportBackends,
   usePipelinesList,
   useProject,
 } from "@/hooks/api";
@@ -17,9 +18,22 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TriggerRunDialog } from "@/components/trigger-run-dialog";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
-import type { PipelineExport } from "@/lib/api/types";
+import { BackendProfileImportDialog } from "@/components/pipelines/backend-profile-import-dialog";
+import type {
+  BackendProfilesInspectionResponse,
+  PipelineExport,
+} from "@/lib/api/types";
+import {
+  bundleHasBackendProfiles,
+  hasInspectableProfiles,
+} from "@/lib/backend-profile-import";
 
 const ID_PREFIX = 8;
+
+interface BackendProfileDialogState {
+  bundle: PipelineExport;
+  inspection: BackendProfilesInspectionResponse;
+}
 
 export default function PipelinesPage() {
   const router = useRouter();
@@ -27,9 +41,12 @@ export default function PipelinesPage() {
   const { activeProjectId } = useActiveProject();
   const { data: activeProject } = useProject(activeProjectId);
   const importPipeline = useImportPipeline();
+  const inspectBackends = useInspectPipelineImportBackends();
   const archive = useArchivePipeline();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [backendDialog, setBackendDialog] =
+    useState<BackendProfileDialogState | null>(null);
   const confirmDestructive = useConfirmDestructive();
 
   const handleImportClick = () => {
@@ -47,6 +64,11 @@ export default function PipelinesPage() {
       return;
     }
     archive.mutate(id);
+  };
+
+  const importBundle = async (bundle: PipelineExport) => {
+    const created = await importPipeline.mutateAsync(bundle);
+    router.push(`/pipelines/${created.id}/edit`);
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,8 +97,24 @@ export default function PipelinesPage() {
     }
 
     try {
-      const created = await importPipeline.mutateAsync(parsed);
-      router.push(`/pipelines/${created.id}/edit`);
+      if (bundleHasBackendProfiles(parsed)) {
+        const inspection = await inspectBackends.mutateAsync(parsed);
+        if (hasInspectableProfiles(inspection)) {
+          setBackendDialog({ bundle: parsed, inspection });
+          return;
+        }
+      }
+      await importBundle(parsed);
+    } catch (err) {
+      setImportError(formatApiError(err));
+    }
+  };
+
+  const handleConfiguredImport = async (bundle: PipelineExport) => {
+    setImportError(null);
+    try {
+      await importBundle(bundle);
+      setBackendDialog(null);
     } catch (err) {
       setImportError(formatApiError(err));
     }
@@ -122,10 +160,12 @@ export default function PipelinesPage() {
             variant="outline"
             size="sm"
             onClick={handleImportClick}
-            disabled={importPipeline.isPending}
+            disabled={importPipeline.isPending || inspectBackends.isPending}
           >
             <Upload className="h-4 w-4 mr-1" />
-            {importPipeline.isPending ? "Importing…" : "Import JSON"}
+            {importPipeline.isPending || inspectBackends.isPending
+              ? "Importing…"
+              : "Import JSON"}
           </Button>
           <Button asChild size="sm">
             <Link href="/pipelines/new">
@@ -241,6 +281,16 @@ export default function PipelinesPage() {
           </table>
         </Card>
       )}
+      {backendDialog ? (
+        <BackendProfileImportDialog
+          open
+          bundle={backendDialog.bundle}
+          inspection={backendDialog.inspection}
+          pending={importPipeline.isPending}
+          onCancel={() => setBackendDialog(null)}
+          onConfirm={handleConfiguredImport}
+        />
+      ) : null}
     </div>
   );
 }
