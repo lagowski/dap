@@ -13,125 +13,23 @@ import type {
   ProjectCreate,
   ProjectRunRequest,
   ProjectUpdate,
-  RunCreateRequest,
   ValidateEnvRequest,
 } from "@/lib/api/types";
+import { queryKeys } from "./api/query-keys";
 
-export const queryKeys = {
-  runs: ["runs"] as const,
-  runsList: (filters?: {
-    pipelineId?: string;
-    finalStatus?: string;
-    statuses?: string[];
-    from?: string;
-    to?: string;
-    projectId?: string;
-  }) => ["runs", "list", filters ?? {}] as const,
-  run: (id: string) => ["runs", id] as const,
-  runState: (id: string) => ["runs", id, "state"] as const,
-  runHistory: (id: string) => ["runs", id, "history"] as const,
-  runNodeLog: (runId: string, nodeId: string) =>
-    ["runs", runId, "nodes", nodeId] as const,
-  agents: ["agents"] as const,
-  agentsList: (filters?: { role?: string }) => ["agents", "list", filters ?? {}] as const,
-  agent: (id: string) => ["agents", id] as const,
-  agentVersions: (id: string) => ["agents", id, "versions"] as const,
-  pipelines: ["pipelines"] as const,
-  pipelinesList: ["pipelines", "list"] as const,
-  pipeline: (id: string) => ["pipelines", id] as const,
-  pipelineVersions: (id: string) => ["pipelines", id, "versions"] as const,
-  projects: ["projects"] as const,
-  projectsList: (filters?: { archived?: boolean }) =>
-    ["projects", "list", filters ?? {}] as const,
-  project: (id: string) => ["projects", id] as const,
-  settings: ["settings"] as const,
-  currentUser: ["auth", "me"] as const,
-  adminUsers: ["admin", "users"] as const,
-  adminUsersList: (filters?: { includeDeleted?: boolean }) =>
-    ["admin", "users", "list", filters ?? {}] as const,
-  adminAuditEvents: ["admin", "audit-events"] as const,
-  adminAuditEventsList: (filters?: {
-    eventType?: string;
-    userId?: string;
-    offset?: number;
-    limit?: number;
-  }) => ["admin", "audit-events", "list", filters ?? {}] as const,
-  adminApiTokens: ["admin", "api-tokens"] as const,
-  adminApiTokensList: (filters?: {
-    includeRevoked?: boolean;
-    offset?: number;
-    limit?: number;
-  }) => ["admin", "api-tokens", "list", filters ?? {}] as const,
-  adminSettings: ["admin", "settings"] as const,
-};
-
-const RUNS_LIST_REFETCH_MS = 2_000;
-const RUN_DETAIL_REFETCH_MS = 2_000;
-const RUN_DETAIL_BURST_MS = 500; // fast poll right after approve
-
-export function useRunsList(
-  filters?: {
-    pipelineId?: string;
-    finalStatus?: string;
-    statuses?: string[];
-    from?: string;
-    to?: string;
-    projectId?: string;
-  },
-  options?: { enabled?: boolean },
-) {
-  return useQuery({
-    queryKey: queryKeys.runsList(filters),
-    queryFn: () => api.listRuns(filters),
-    enabled: options?.enabled ?? true,
-    refetchInterval: (query) => {
-      // Stop polling when there are no running runs
-      const data = query.state.data;
-      if (data && !data.items.some((r) => r.final_status === "running")) {
-        return false;
-      }
-      return RUNS_LIST_REFETCH_MS;
-    },
-  });
-}
-
-export function useRun(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.run(id) : ["runs", "noop"],
-    queryFn: () => (id ? api.getRun(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      // Keep polling while running OR paused (paused needs to pick up
-      // gate_payload as soon as the interrupt fires).
-      if (data && data.final_status !== "running" && data.final_status !== "paused") return false;
-      return RUN_DETAIL_REFETCH_MS;
-    },
-  });
-}
-
-export function useRunStateHistory(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.runHistory(id) : ["runs", "noop", "history"],
-    queryFn: () =>
-      id ? api.getRunStateHistory(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
-  });
-}
-
-export function useRunNodeLog(runId: string | null, nodeId: string | null) {
-  return useQuery({
-    queryKey:
-      runId && nodeId
-        ? queryKeys.runNodeLog(runId, nodeId)
-        : ["runs", "noop", "nodes", "noop"],
-    queryFn: () =>
-      runId && nodeId
-        ? api.getRunNodeLog(runId, nodeId)
-        : Promise.reject(new Error("no id")),
-    enabled: runId != null && nodeId != null,
-  });
-}
+export { queryKeys } from "./api/query-keys";
+export {
+  useAbortRun,
+  useApproveGate,
+  usePauseRun,
+  usePipelineVersions,
+  useResumeRun,
+  useRun,
+  useRunNodeLog,
+  useRunsList,
+  useRunStateHistory,
+  useTriggerRun,
+} from "./api/runs";
 
 export function usePipeline(id: string | null) {
   return useQuery({
@@ -273,83 +171,6 @@ export function useDryRunAgent() {
   // is here purely for the loading/error/result UI on the Test panel.
   return useMutation({
     mutationFn: (payload: AgentDryRunRequest) => api.dryRunAgent(payload),
-  });
-}
-
-function useRunActionMutation<T>(action: (id: string) => Promise<T>) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: action,
-    onSuccess: (_data, runId) => {
-      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
-  });
-}
-
-export function useAbortRun() {
-  return useRunActionMutation(api.abortRun);
-}
-
-export function usePauseRun() {
-  return useRunActionMutation(api.pauseRun);
-}
-
-export function useResumeRun() {
-  return useRunActionMutation(api.resumeRun);
-}
-
-export function useApproveGate() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ runId, nodeId }: { runId: string; nodeId: string }) =>
-      api.approveGate(runId, nodeId),
-    // The engine may still be committing "paused" to the DB when the user
-    // clicks — retry once after a short delay so the user never has to
-    // click twice.
-    retry: (failureCount, error) =>
-      failureCount < 1 &&
-      error instanceof api.ApiError &&
-      (error.status === 409 ||
-        String(error.detail).toLowerCase().includes("not paused")),
-    retryDelay: 1200,
-    onSuccess: (_data, { runId }) => {
-      // Immediate invalidate + burst-poll for 3s so the UI snaps to
-      // "running" without waiting for the normal 2s interval.
-      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-      const burst = setInterval(() => {
-        qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
-      }, RUN_DETAIL_BURST_MS);
-      setTimeout(() => clearInterval(burst), 3_000);
-    },
-    onError: (_err, { runId }) => {
-      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
-  });
-}
-
-export function usePipelineVersions(
-  id: string | null,
-  options?: { enabled?: boolean },
-) {
-  const enabled = (options?.enabled ?? true) && id != null;
-  return useQuery({
-    queryKey: id ? queryKeys.pipelineVersions(id) : ["pipelines", "noop", "versions"],
-    queryFn: () =>
-      id ? api.listPipelineVersions(id) : Promise.reject(new Error("no id")),
-    enabled,
-  });
-}
-
-export function useTriggerRun() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: RunCreateRequest) => api.triggerRun(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
   });
 }
 

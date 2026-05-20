@@ -261,21 +261,9 @@ export type RecommendedPipelineKind = (typeof RECOMMENDED_PIPELINE_KINDS)[number
 
 // ---- Env var validation (#350) ----
 
-export interface ValidateEnvRequest {
-  env_vars: Record<string, string>;
-}
-
-export interface EnvVarValidationResult {
-  key: string;
-  is_token: boolean;
-  valid: boolean | null;
-  login: string | null;
-  error: string | null;
-}
-
-export interface ValidateEnvResponse {
-  results: EnvVarValidationResult[];
-}
+export type ValidateEnvRequest = ApiSchema<"ValidateEnvRequest">;
+export type EnvVarValidationResult = ApiSchema<"EnvVarValidationResult">;
+export type ValidateEnvResponse = ApiSchema<"ValidateEnvResponse">;
 
 // ---- Settings (dashboard /settings page) ----
 
@@ -579,16 +567,7 @@ export interface RegisterCredentials {
  * ``created_at`` / ``last_login_at`` / ``deleted_at`` so the admin
  * table can show "joined", "last active", and the soft-delete state.
  */
-export interface AdminUser {
-  id: string;
-  email: string;
-  is_active: boolean;
-  is_superuser: boolean;
-  is_verified: boolean;
-  created_at: string | null;
-  last_login_at: string | null;
-  deleted_at: string | null;
-}
+export type AdminUser = ApiSchema<"AdminUserRead">;
 
 /**
  * Fields the dashboard's "edit user" actions toggle. Matches
@@ -610,13 +589,7 @@ export interface AdminUserUpdate {
  * legitimate "no actor" events (pre-auth failures, system events)
  * without faking values.
  */
-export interface AuditEvent {
-  id: string;
-  user_id: string | null;
-  event_type: string;
-  event_data: Record<string, unknown> | null;
-  created_at: string;
-}
+export type AuditEvent = ApiSchema<"AuditEventRead">;
 
 export interface AuditEventFilters {
   eventType?: string;
@@ -637,17 +610,7 @@ export interface AuditEventFilters {
  * substring *after* ``dap_``); the raw token itself only exists in
  * the response of the create endpoint.
  */
-export interface AdminApiToken {
-  id: string;
-  name: string;
-  prefix: string;
-  created_at: string;
-  expires_at: string | null;
-  last_used_at: string | null;
-  revoked_at: string | null;
-  owner_id: string;
-  owner_email: string;
-}
+export type AdminApiToken = ApiSchema<"AdminApiTokenRead">;
 
 // ---------------------------------------------------------------------------
 // Admin — Instance settings (#301, sub-C5)
