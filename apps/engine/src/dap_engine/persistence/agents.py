@@ -20,7 +20,6 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from dap_types import Agent
-from pydantic import ValidationError
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
@@ -69,12 +68,7 @@ def _agent_from_orm(
         "updated_at": agent.updated_at if is_current else version.created_at,
         "is_active": agent.archived_at is None,
     }
-    try:
-        return Agent.model_validate(payload)
-    except ValidationError as exc:
-        if all(error["loc"] in {("input_schema",), ("output_schema",)} for error in exc.errors()):
-            return Agent.model_construct(**payload)
-        raise
+    return Agent.model_validate(payload)
 
 
 def create_agent(

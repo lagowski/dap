@@ -191,12 +191,12 @@ def test_dry_run_draft_validates_input_schema(client: TestClient) -> None:
     response = client.post(
         "/agents/dry-run",
         json={
-            "draft": _bash_draft(input_schema=["definitely_not_a_field"]),
+            "draft": _bash_draft(input_schema=["extensions."]),
             "context": {},
         },
     )
     assert response.status_code == 422
-    assert "definitely_not_a_field" in str(response.json()["detail"])
+    assert "extensions." in str(response.json()["detail"])
 
 
 def test_dry_run_prompt_render_error_returns_422(client: TestClient) -> None:

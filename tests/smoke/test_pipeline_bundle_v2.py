@@ -257,6 +257,26 @@ def test_v2_bundle_bundled_agents_with_extension_fields_import_ok(client: TestCl
     assert "__audit" in agent_body["output_schema"]
 
 
+def test_v2_bundle_bundled_agent_malformed_extension_field_rejected(
+    client: TestClient,
+) -> None:
+    """Malformed bundled-agent schema refs fail normal AgentCreate validation."""
+    source_agent_id = "cortex-coder-source-id"
+    bundle = {
+        "schema_version": "pipeline-export/2",
+        "pipeline": _pipeline_payload(source_agent_id),
+        "bundled_agents": {
+            source_agent_id: _agent_export_payload(
+                name="Cortex Coder",
+                input_schema=["extensions."],
+            ),
+        },
+    }
+    response = client.post("/pipelines/import", json=bundle)
+    assert response.status_code == 422, response.text
+    assert "extensions." in str(response.json()["detail"])
+
+
 def test_v2_bundle_cortex_style_multi_agent_bundle_imports_ok(client: TestClient) -> None:
     """Simulate a Cortex-style bundle with multiple agents using extension fields."""
     # Two-node pipeline with extension-schema agents (mimics cortex full bundle)

@@ -216,20 +216,33 @@ def test_create_agent_persists_field_list_schemas(client: TestClient) -> None:
     ]
 
 
-def test_create_agent_rejects_unknown_field_in_input_schema(client: TestClient) -> None:
-    payload = _create_payload(input_schema=["selected_issue_ids", "definitely_not_a_field"])
+def test_create_agent_accepts_extension_schema_fields(client: TestClient) -> None:
+    payload = _create_payload(
+        input_schema=["selected_issue_ids", "issue_number", "extensions.pr_url"],
+        output_schema=["files_changed", "__audit"],
+    )
+    response = client.post("/agents", json=payload)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["input_schema"] == ["selected_issue_ids", "issue_number", "extensions.pr_url"]
+    assert body["output_schema"] == ["files_changed", "__audit"]
+
+
+def test_create_agent_rejects_malformed_field_in_input_schema(client: TestClient) -> None:
+    payload = _create_payload(input_schema=["selected_issue_ids", "extensions."])
     response = client.post("/agents", json=payload)
     assert response.status_code == 422
     body = response.json()
     detail = str(body["detail"])
-    assert "definitely_not_a_field" in detail
+    assert "extensions." in detail
+    assert "unsupported field" in detail
 
 
-def test_create_agent_rejects_unknown_field_in_output_schema(client: TestClient) -> None:
-    payload = _create_payload(output_schema=["nope_not_a_field"])
+def test_create_agent_rejects_malformed_field_in_output_schema(client: TestClient) -> None:
+    payload = _create_payload(output_schema=["repo.url"])
     response = client.post("/agents", json=payload)
     assert response.status_code == 422
-    assert "nope_not_a_field" in str(response.json()["detail"])
+    assert "repo.url" in str(response.json()["detail"])
 
 
 def test_create_agent_rejects_duplicate_field_names(client: TestClient) -> None:
@@ -244,10 +257,10 @@ def test_update_agent_rejects_unknown_field(client: TestClient) -> None:
     agent_id = created["id"]
     response = client.put(
         f"/agents/{agent_id}",
-        json=_update_payload(output_schema=["bogus_field"]),
+        json=_update_payload(output_schema=["extensions."]),
     )
     assert response.status_code == 422
-    assert "bogus_field" in str(response.json()["detail"])
+    assert "extensions." in str(response.json()["detail"])
 
 
 def test_create_agent_coerces_legacy_dict_schema_to_empty_list(

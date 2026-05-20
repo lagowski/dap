@@ -1,8 +1,7 @@
 """Tests for ``GET /agents/{id}/export`` and ``POST /agents/import`` (#94).
 
 Round-trip + the full set of 422 paths (extra field, unknown
-runtime_id, unknown PipelineState field in input_schema,
-schema_version mismatch).
+runtime_id, malformed schema field reference, schema_version mismatch).
 """
 
 from __future__ import annotations
@@ -140,6 +139,24 @@ def test_round_trip_preserves_all_portable_fields(client: TestClient) -> None:
     assert imported["timeout_ms"] == created["timeout_ms"]
 
 
+def test_round_trip_preserves_extension_schema_fields(client: TestClient) -> None:
+    created = client.post(
+        "/agents",
+        json=_agent_payload(
+            input_schema=["issue_number", "extensions.pr_url"],
+            output_schema=["files_changed", "__audit"],
+        ),
+    ).json()
+    exported = client.get(f"/agents/{created['id']}/export").json()
+
+    response = client.post("/agents/import", json=exported)
+    assert response.status_code == 201, response.text
+    imported = response.json()
+
+    assert imported["input_schema"] == ["issue_number", "extensions.pr_url"]
+    assert imported["output_schema"] == ["files_changed", "__audit"]
+
+
 # ---------------------------------------------------------------------------
 # Import 422 paths
 # ---------------------------------------------------------------------------
@@ -200,28 +217,28 @@ def test_import_rejects_unknown_runtime_id(client: TestClient) -> None:
     assert "no adapter" in detail
 
 
-def test_import_rejects_unknown_field_in_input_schema(client: TestClient) -> None:
+def test_import_rejects_malformed_field_in_input_schema(client: TestClient) -> None:
     response = client.post(
         "/agents/import",
         json={
             "schema_version": "agent-export/1",
-            "agent": _agent_payload(input_schema=["definitely_not_a_field"]),
+            "agent": _agent_payload(input_schema=["extensions."]),
         },
     )
     assert response.status_code == 422
-    assert "definitely_not_a_field" in str(response.json()["detail"])
+    assert "extensions." in str(response.json()["detail"])
 
 
-def test_import_rejects_unknown_field_in_output_schema(client: TestClient) -> None:
+def test_import_rejects_malformed_field_in_output_schema(client: TestClient) -> None:
     response = client.post(
         "/agents/import",
         json={
             "schema_version": "agent-export/1",
-            "agent": _agent_payload(output_schema=["bogus_output"]),
+            "agent": _agent_payload(output_schema=["repo.url"]),
         },
     )
     assert response.status_code == 422
-    assert "bogus_output" in str(response.json()["detail"])
+    assert "repo.url" in str(response.json()["detail"])
 
 
 def test_import_rejects_blank_name(client: TestClient) -> None:

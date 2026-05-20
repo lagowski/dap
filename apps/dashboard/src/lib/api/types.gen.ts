@@ -1999,14 +1999,12 @@ export interface components {
         };
         /**
          * BundledAgentImportPayload
-         * @description AgentExportPayload variant used inside pipeline-export/2 bundles.
+         * @description Agent payload variant used inside pipeline-export bundles.
          *
-         *     Overrides the PipelineState field-list validator so bundled agents
-         *     can declare extension fields (e.g. ``issue_number``, ``pr_url``,
-         *     ``files_changed``) that live in ``PipelineState.extensions`` rather
-         *     than as top-level fields. Applies only to the bundle-import path —
-         *     ``POST /agents/import`` and ``POST /agents`` still enforce the
-         *     strict PipelineState field list.
+         *     Kept as a named API component so generated OpenAPI clients retain the
+         *     existing bundle schema surface. Validation is intentionally inherited from
+         *     ``AgentNamedPayload``: top-level PipelineState fields and extension field
+         *     references use the same formalized rules as normal agent create/import.
          */
         BundledAgentImportPayload: {
             /** Budget Limit Usd */
@@ -2523,9 +2521,10 @@ export interface components {
          *     - ``install_instructions``: operator install guide, silently ignored.
          *     - ``backend_profiles``: per-provider agent assignment map,
          *       persisted on the pipeline version and returned on GET.
-         *     - ``bundled_agents``: same as v1 but allows extension fields in
-         *       agent ``input_schema``/``output_schema`` (pipeline-defined extra
-         *       state that lives in ``PipelineState.extensions``).
+         *     - ``bundled_agents``: same as v1; agent ``input_schema`` and
+         *       ``output_schema`` may reference top-level ``PipelineState`` fields
+         *       or pipeline-defined extension fields that live in
+         *       ``PipelineState.extensions``.
          */
         PipelineImportRequest: {
             /** Comment */
