@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,8 +23,8 @@ if TYPE_CHECKING:
     from dap_engine.app import EngineConfig
 
 from dap_runtimes import RuntimeRegistry
-from dap_types import NodeExecutionLog, PipelineDefaults, PipelineState, Run, StateSnapshot
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from dap_types import PipelineDefaults, PipelineState, Run
+from fastapi import APIRouter, Depends, HTTPException, status
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -40,6 +39,7 @@ from dap_engine.api.deps import (
     get_session_factory,
 )
 from dap_engine.api.run_batches import router as batch_router
+from dap_engine.api.run_reads import register_run_read_routes
 from dap_engine.api.run_runtime_policy import pipeline_runtime_policy_error
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
@@ -672,118 +672,4 @@ async def _do_node_intervention(
     return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
 
 
-@router.get("")
-def list_runs(
-    session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
-    pipeline_id: str | None = Query(default=None),
-    final_status: list[str] | None = Query(default=None),
-    status_filter: list[str] | None = Query(default=None, alias="status"),
-    started_from_date: date | None = Query(default=None, alias="from"),
-    started_to_date: date | None = Query(default=None, alias="to"),
-    project_id: str | None = Query(
-        default=None,
-        description=(
-            "Filter by project: omit for all runs, supply a project id "
-            'for that project only, or pass the literal "null" to return '
-            "only ad-hoc / legacy runs without a project."
-        ),
-    ),
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=500),
-) -> dict[str, Any]:
-    if (
-        started_from_date is not None
-        and started_to_date is not None
-        and started_from_date > started_to_date
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="from must be on or before to",
-        )
-
-    only_unscoped = project_id == "null"
-    effective_project_id = None if only_unscoped else project_id
-    final_statuses = status_filter if status_filter is not None else final_status
-    started_from = (
-        datetime.combine(started_from_date, time.min, tzinfo=UTC)
-        if started_from_date is not None
-        else None
-    )
-    started_to = (
-        datetime.combine(started_to_date, time.max, tzinfo=UTC)
-        if started_to_date is not None
-        else None
-    )
-    items, total = repo.list_runs(
-        session,
-        actor_id=user.id,
-        is_admin=user.is_superuser,
-        pipeline_id=pipeline_id,
-        final_statuses=final_statuses,
-        project_id=effective_project_id,
-        only_unscoped=only_unscoped,
-        started_from=started_from,
-        started_to=started_to,
-        offset=offset,
-        limit=limit,
-    )
-    return {
-        "items": [r.model_dump(mode="json") for r in items],
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-    }
-
-
-@router.get("/{run_id}", response_model=Run)
-def get_run(
-    run_id: str,
-    session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
-) -> Run:
-    try:
-        return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
-    except repo.NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-
-@router.get("/{run_id}/state", response_model=PipelineState)
-def get_run_state(
-    run_id: str,
-    session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
-) -> PipelineState:
-    try:
-        return repo.get_run_state(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
-    except repo.NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-
-@router.get("/{run_id}/state/history", response_model=list[StateSnapshot])
-def list_run_state_history(
-    run_id: str,
-    session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
-) -> list[StateSnapshot]:
-    try:
-        return repo.list_run_state_history(
-            session, run_id, actor_id=user.id, is_admin=user.is_superuser
-        )
-    except repo.NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-
-@router.get("/{run_id}/nodes/{node_id}", response_model=NodeExecutionLog)
-def get_run_node_log(
-    run_id: str,
-    node_id: str,
-    session: Session = Depends(get_session),
-    user: UserORM = Depends(current_active_user),
-) -> NodeExecutionLog:
-    try:
-        return repo.get_run_node_log(
-            session, run_id, node_id, actor_id=user.id, is_admin=user.is_superuser
-        )
-    except repo.NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+register_run_read_routes(router)
