@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  skipToken,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import type { RunCreateRequest } from "@/lib/api/types";
 import { queryKeys } from "./query-keys";
@@ -38,7 +43,7 @@ export function useRunsList(
 export function useRun(id: string | null) {
   return useQuery({
     queryKey: id ? queryKeys.run(id) : ["runs", "noop"],
-    queryFn: () => (id ? api.getRun(id) : Promise.reject(new Error("no id"))),
+    queryFn: id ? () => api.getRun(id) : skipToken,
     enabled: id != null,
     refetchInterval: (query) => {
       const data = query.state.data;
@@ -53,8 +58,7 @@ export function useRun(id: string | null) {
 export function useRunStateHistory(id: string | null) {
   return useQuery({
     queryKey: id ? queryKeys.runHistory(id) : ["runs", "noop", "history"],
-    queryFn: () =>
-      id ? api.getRunStateHistory(id) : Promise.reject(new Error("no id")),
+    queryFn: id ? () => api.getRunStateHistory(id) : skipToken,
     enabled: id != null,
   });
 }
@@ -65,10 +69,8 @@ export function useRunNodeLog(runId: string | null, nodeId: string | null) {
       runId && nodeId
         ? queryKeys.runNodeLog(runId, nodeId)
         : ["runs", "noop", "nodes", "noop"],
-    queryFn: () =>
-      runId && nodeId
-        ? api.getRunNodeLog(runId, nodeId)
-        : Promise.reject(new Error("no id")),
+    queryFn:
+      runId && nodeId ? () => api.getRunNodeLog(runId, nodeId) : skipToken,
     enabled: runId != null && nodeId != null,
   });
 }
@@ -134,8 +136,7 @@ export function usePipelineVersions(
   const enabled = (options?.enabled ?? true) && id != null;
   return useQuery({
     queryKey: id ? queryKeys.pipelineVersions(id) : ["pipelines", "noop", "versions"],
-    queryFn: () =>
-      id ? api.listPipelineVersions(id) : Promise.reject(new Error("no id")),
+    queryFn: id ? () => api.listPipelineVersions(id) : skipToken,
     enabled,
   });
 }
