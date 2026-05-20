@@ -134,6 +134,14 @@ def _collect_providers() -> list[dict[str, Any]]:
                 "display_name": info.display_name,
                 "default_env_var": info.default_env_var,
                 "configured": configured,
+                "config_fields": [
+                    {
+                        "key": field.key,
+                        "required": field.required,
+                        "description": field.description,
+                    }
+                    for field in info.config_fields
+                ],
             }
         )
     rows.sort(key=lambda row: row["id"])

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+TOKENS_PER_MILLION = 1_000_000
+
 
 @dataclass
 class ProviderResult:
@@ -37,3 +39,31 @@ class ProviderError(Exception):
     The api-call adapter catches this and surfaces ``str(error)`` in
     the ``RuntimeResult.errors`` list.
     """
+
+
+def calculate_cost_usd(
+    *,
+    model_id: str,
+    pricing: dict[str, tuple[float, float]],
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_write_multiplier: float = 1.0,
+    cache_read_multiplier: float = 1.0,
+) -> float | None:
+    """Return USD cost for token usage, or ``None`` for unknown models.
+
+    Provider modules own their pricing tables, but the arithmetic is
+    shared so cache-aware providers and simple input/output providers
+    cannot drift in how they normalize "USD per 1M tokens".
+    """
+    rates = pricing.get(model_id)
+    if rates is None:
+        return None
+    input_rate, output_rate = rates
+    input_cost = input_tokens * input_rate
+    cache_creation_cost = cache_creation_tokens * input_rate * cache_write_multiplier
+    cache_read_cost = cache_read_tokens * input_rate * cache_read_multiplier
+    output_cost = output_tokens * output_rate
+    return (input_cost + cache_creation_cost + cache_read_cost + output_cost) / TOKENS_PER_MILLION

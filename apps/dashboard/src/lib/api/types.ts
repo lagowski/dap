@@ -289,6 +289,13 @@ export interface ProviderStatus {
   display_name: string;
   default_env_var: string | null;
   configured: boolean;
+  config_fields: ProviderConfigField[];
+}
+
+export interface ProviderConfigField {
+  key: string;
+  required: boolean;
+  description: string;
 }
 
 export interface EngineInfo {

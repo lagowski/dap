@@ -8,7 +8,11 @@ from typing import Any, Final
 from google import genai
 from google.genai import errors as genai_errors
 
-from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
+from dap_runtimes.adapters._providers._base import (
+    ProviderError,
+    ProviderResult,
+    calculate_cost_usd,
+)
 
 ID: Final = "gemini"
 DEFAULT_ENV_VAR: Final = "GEMINI_API_KEY"
@@ -22,8 +26,6 @@ PRICING: Final[dict[str, tuple[float, float]]] = {
     "gemini-2.0-flash": (0.10, 0.40),
     "gemini-2.0-flash-exp": (0.10, 0.40),
 }
-
-TOKENS_PER_MILLION: Final = 1_000_000
 
 
 def env_var_for(_config: dict[str, Any]) -> str:
@@ -147,8 +149,9 @@ def _calculate_cost(
     output_tokens: int,
 ) -> float | None:
     """USD cost from token counts. None for unknown models."""
-    pricing = PRICING.get(model_id)
-    if pricing is None:
-        return None
-    input_rate, output_rate = pricing
-    return (input_tokens * input_rate + output_tokens * output_rate) / TOKENS_PER_MILLION
+    return calculate_cost_usd(
+        model_id=model_id,
+        pricing=PRICING,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )

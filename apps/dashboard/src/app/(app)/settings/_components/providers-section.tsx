@@ -36,6 +36,7 @@ export function ProvidersSection({ providers }: { providers: ProviderStatus[] })
               <th className="px-4 py-2 font-medium">Provider</th>
               <th className="px-4 py-2 font-medium">API key env</th>
               <th className="px-4 py-2 font-medium">Status</th>
+              <th className="px-4 py-2 font-medium">runtime_config</th>
               <th className="px-4 py-2 font-medium">How to enable</th>
             </tr>
           </thead>
@@ -68,6 +69,9 @@ export function ProvidersSection({ providers }: { providers: ProviderStatus[] })
                     />
                   )}
                 </td>
+                <td className="px-4 py-3">
+                  <ProviderConfigFields provider={provider} />
+                </td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">
                   {provider.default_env_var === null ? (
                     <span>
@@ -90,6 +94,27 @@ export function ProvidersSection({ providers }: { providers: ProviderStatus[] })
         </table>
       </Card>
     </section>
+  );
+}
+
+
+function ProviderConfigFields({ provider }: { provider: ProviderStatus }) {
+  if (provider.config_fields.length === 0) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="flex max-w-[18rem] flex-wrap gap-1">
+      {provider.config_fields.map((field) => (
+        <span
+          key={field.key}
+          title={field.description}
+          className="rounded border bg-background px-1.5 py-0.5 font-mono text-[11px]"
+        >
+          {field.key}
+          {field.required ? <span className="text-destructive">*</span> : null}
+        </span>
+      ))}
+    </div>
   );
 }
 

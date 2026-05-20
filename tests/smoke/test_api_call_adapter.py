@@ -132,6 +132,8 @@ def test_provider_registry_holds_only_metadata() -> None:
         # module_path is the stringly-named module, not the imported module
         assert isinstance(info.module_path, str)
         assert info.module_path.startswith("dap_runtimes.adapters._providers._")
+        assert info.config_fields
+        assert any(field.key == "model_id" and field.required for field in info.config_fields)
 
 
 async def test_unknown_provider_returns_error(with_api_key: None) -> None:
