@@ -35,6 +35,23 @@ Standalone:
 pip install dap-runtimes
 ```
 
+The base install includes the runtime registry, subprocess-backed
+adapters (`bash`, `claude-code`, `codex`, `gemini-cli`, `python-func`),
+and the shared `dap-schemas` contract. Provider SDKs and the HTTP
+adapter dependencies are optional so small tools do not install every
+LLM vendor package by default:
+
+```bash
+pip install "dap-runtimes[anthropic]"  # api-call provider="anthropic"
+pip install "dap-runtimes[openai]"     # openai, openai-compat, glm, openrouter
+pip install "dap-runtimes[google]"     # api-call provider="gemini"
+pip install "dap-runtimes[http]"       # http adapter
+pip install "dap-runtimes[all]"        # same runtime coverage dap-engine uses
+```
+
+`dap-engine` depends on `dap-runtimes[all]` to preserve the full
+out-of-the-box adapter set.
+
 ## Quick start
 
 ```python

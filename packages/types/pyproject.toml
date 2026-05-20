@@ -12,6 +12,14 @@ requires-python = ">=3.13"
 dependencies = [
     "pydantic>=2.9.2",
 ]
+keywords = ["agent", "pipeline", "pydantic", "schemas", "workflow"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
 
 [build-system]
 requires = ["hatchling"]

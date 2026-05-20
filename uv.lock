@@ -475,7 +475,7 @@ dependencies = [
     { name = "anyio" },
     { name = "cryptography" },
     { name = "dap-prompt-dsl" },
-    { name = "dap-runtimes" },
+    { name = "dap-runtimes", extra = ["all"] },
     { name = "dap-schemas" },
     { name = "fastapi" },
     { name = "fastapi-users", extra = ["oauth", "sqlalchemy"] },
@@ -495,7 +495,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.6.0" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "dap-prompt-dsl", editable = "packages/prompt-dsl" },
-    { name = "dap-runtimes", editable = "packages/runtimes" },
+    { name = "dap-runtimes", extras = ["all"], editable = "packages/runtimes" },
     { name = "dap-schemas", editable = "packages/types" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastapi-users", extras = ["sqlalchemy", "oauth"], specifier = ">=15.0.5" },
@@ -531,27 +531,60 @@ name = "dap-runtimes"
 version = "0.3.0"
 source = { editable = "packages/runtimes" }
 dependencies = [
-    { name = "anthropic" },
     { name = "anyio" },
     { name = "dap-schemas" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "anthropic" },
     { name = "google-genai" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "jsonpath-ng" },
     { name = "openai" },
 ]
+anthropic = [
+    { name = "anthropic" },
+]
+api-call = [
+    { name = "anthropic" },
+    { name = "google-genai" },
+    { name = "openai" },
+]
+google = [
+    { name = "google-genai" },
+]
+http = [
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "jsonpath-ng" },
+]
+openai = [
+    { name = "openai" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'api-call'", specifier = ">=0.40.0" },
     { name = "anyio", specifier = ">=4.6.0" },
     { name = "dap-schemas", editable = "packages/types" },
-    { name = "google-genai", specifier = ">=0.3.0" },
-    { name = "httpx", specifier = ">=0.27.2" },
-    { name = "jinja2", specifier = ">=3.1.4" },
-    { name = "jsonpath-ng", specifier = ">=1.6.1" },
-    { name = "openai", specifier = ">=1.55.0" },
+    { name = "google-genai", marker = "extra == 'all'", specifier = ">=0.3.0" },
+    { name = "google-genai", marker = "extra == 'api-call'", specifier = ">=0.3.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=0.3.0" },
+    { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27.2" },
+    { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27.2" },
+    { name = "jinja2", marker = "extra == 'all'", specifier = ">=3.1.4" },
+    { name = "jinja2", marker = "extra == 'http'", specifier = ">=3.1.4" },
+    { name = "jsonpath-ng", marker = "extra == 'all'", specifier = ">=1.6.1" },
+    { name = "jsonpath-ng", marker = "extra == 'http'", specifier = ">=1.6.1" },
+    { name = "openai", marker = "extra == 'all'", specifier = ">=1.55.0" },
+    { name = "openai", marker = "extra == 'api-call'", specifier = ">=1.55.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.55.0" },
 ]
+provides-extras = ["anthropic", "openai", "google", "api-call", "http", "all"]
 
 [[package]]
 name = "dap-schemas"
