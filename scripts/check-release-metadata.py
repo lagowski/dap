@@ -206,18 +206,23 @@ def _minor_compat_spec(version: str) -> str:
         return ">=0.0,<0.1"
     major = int(match.group("major"))
     minor = int(match.group("minor"))
-    lower = version if "-" in version else f"{major}.{minor}"
+    lower = f"{major}.{minor}"
     return f">={lower},<{major}.{minor + 1}"
 
 
 def _wheel_packages(data: dict[str, Any]) -> list[Any]:
-    tool = data.get("tool", {})
-    hatch = tool.get("hatch", {})
-    build = hatch.get("build", {})
-    targets = build.get("targets", {})
-    wheel = targets.get("wheel", {})
+    tool = _dict_value(data, "tool")
+    hatch = _dict_value(tool, "hatch")
+    build = _dict_value(hatch, "build")
+    targets = _dict_value(build, "targets")
+    wheel = _dict_value(targets, "wheel")
     packages = wheel.get("packages", [])
     return packages if isinstance(packages, list) else []
+
+
+def _dict_value(data: dict[str, Any], key: str) -> dict[str, Any]:
+    value = data.get(key)
+    return value if isinstance(value, dict) else {}
 
 
 def _matching_dependencies(dependencies: list[Any], package: str) -> list[str]:

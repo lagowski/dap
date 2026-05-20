@@ -27,11 +27,7 @@ REST="${NEW#*.}"
 MINOR="${REST%%.*}"
 NEXT_MINOR=$((MINOR + 1))
 UPPER_BOUND="${MAJOR}.${NEXT_MINOR}"
-if [[ "$NEW" == *-* ]]; then
-    LOWER_BOUND="$NEW"
-else
-    LOWER_BOUND="${MAJOR}.${MINOR}"
-fi
+LOWER_BOUND="${MAJOR}.${MINOR}"
 FIRST_PARTY_SPEC=">=${LOWER_BOUND},<${UPPER_BOUND}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -120,8 +116,16 @@ for entry in "${FIRST_PARTY_DEPS[@]}"; do
         continue
     fi
     dep_regex=$(printf '%s' "$dep" | sed 's/[][\/.^$*+?{}()|]/\\&/g')
-    sed -E -i.bak 's#"'${dep_regex}'([>=<][^"]*)?"#"'${dep}${FIRST_PARTY_SPEC}'"#' "$file"
-    rm "${file}.bak"
+    if ! sed -E -i.bak 's#"'${dep_regex}'([>=<][^"]*)?"#"'${dep}${FIRST_PARTY_SPEC}'"#' "$file"; then
+        echo "ERROR: failed to update dependency '${dep}' in ${file}" >&2
+        rm -f "${file}.bak"
+        exit 1
+    fi
+    rm -f "${file}.bak"
+    if ! grep -Fq "\"${dep}${FIRST_PARTY_SPEC}\"" "$file"; then
+        echo "ERROR: dependency '${dep}' in ${file} was not updated to ${FIRST_PARTY_SPEC}" >&2
+        exit 1
+    fi
     echo "  ${file}: ${dep}${FIRST_PARTY_SPEC}"
 done
 
