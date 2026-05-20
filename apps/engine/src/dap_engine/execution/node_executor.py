@@ -52,6 +52,8 @@ class NodeContext:
         agent_version: AgentVersionORM,
         registry: RuntimeRegistry,
         session: Session,
+        runtime_id: str | None = None,
+        runtime_config: dict[str, Any] | None = None,
         runtime_overrides: dict[str, Any] | None = None,
         timeout_override_ms: int | None = None,
         project_working_directory: str | None = None,
@@ -64,6 +66,10 @@ class NodeContext:
         self.agent_version = agent_version
         self.registry = registry
         self.session = session
+        self.runtime_id = runtime_id or agent_version.runtime_id
+        self.base_runtime_config = (
+            dict(runtime_config) if runtime_config is not None else agent_version.runtime_config
+        )
         self.runtime_overrides = runtime_overrides or {}
         self.timeout_override_ms = timeout_override_ms
         # Project context (#65) — propagated into RuntimeTask so adapters
@@ -79,7 +85,7 @@ class NodeContext:
     @property
     def merged_runtime_config(self) -> dict[str, Any]:
         """Agent's runtime_config merged with per-node overrides."""
-        return {**self.agent_version.runtime_config, **self.runtime_overrides}
+        return {**self.base_runtime_config, **self.runtime_overrides}
 
     @property
     def timeout_ms(self) -> int:
@@ -154,7 +160,7 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
         )
 
         # 3. Call adapter
-        adapter = ctx.registry.get(ctx.agent_version.runtime_id)
+        adapter = ctx.registry.get(ctx.runtime_id)
         result: RuntimeResult = await adapter.execute(task)
         ended_at = datetime.now(UTC)
 
@@ -224,7 +230,7 @@ def _record_failure(
         run_id=ctx.run_id,
         node_id=ctx.node_id,
         agent_id=ctx.agent.id,
-        runtime_id=ctx.agent_version.runtime_id,
+        runtime_id=ctx.runtime_id,
         started_at=started_at,
         ended_at=ended_at,
         prompt_xml=prompt_xml,
@@ -263,7 +269,7 @@ def _save_execution_log(
         run_id=ctx.run_id,
         node_id=ctx.node_id,
         agent_id=ctx.agent.id,
-        runtime_id=ctx.agent_version.runtime_id,
+        runtime_id=ctx.runtime_id,
         started_at=started_at,
         ended_at=ended_at,
         prompt_xml=prompt_xml,
