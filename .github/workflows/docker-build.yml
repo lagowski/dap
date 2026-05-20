@@ -83,23 +83,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: classify
+    # If classification fails, run the full job instead of skipping packaging CI.
+    if: always()
 
     steps:
       - name: Skip Docker build
-        if: needs.classify.outputs.run_docker != 'true'
+        if: needs.classify.result == 'success' && needs.classify.outputs.run_docker != 'true'
         run: echo "Docker build skipped by path policy for this PR."
 
       - uses: actions/checkout@v6
-        if: needs.classify.outputs.run_docker == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_docker == 'true'
 
       - name: Set up Docker buildx
-        if: needs.classify.outputs.run_docker == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_docker == 'true'
         uses: docker/setup-buildx-action@v4
 
       # Build only — no registry login, no push. Caches via GitHub
       # Actions cache backend so re-runs on the same PR finish fast.
       - name: Build image
-        if: needs.classify.outputs.run_docker == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_docker == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -111,7 +113,7 @@ jobs:
       # Smoke: start the container with a throwaway JWT secret + SQLite,
       # wait for the healthcheck to pass, then check /health responds.
       - name: Smoke test — engine /health
-        if: needs.classify.outputs.run_docker == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_docker == 'true'
         env:
           IMAGE_TAG: dap:pr-${{ github.event.pull_request.number || 'develop' }}
         run: |
@@ -181,7 +183,7 @@ jobs:
           docker rm -f "${CID}"
 
       - name: Verify image runs as non-root
-        if: needs.classify.outputs.run_docker == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_docker == 'true'
         env:
           IMAGE_TAG: dap:pr-${{ github.event.pull_request.number || 'develop' }}
         run: |
@@ -200,33 +202,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: classify
+    # If classification fails, run the full job instead of skipping packaging CI.
+    if: always()
     steps:
       - name: Skip wheel bundle check
-        if: needs.classify.outputs.run_bundle_wheel != 'true'
+        if: needs.classify.result == 'success' && needs.classify.outputs.run_bundle_wheel != 'true'
         run: echo "Wheel bundle check skipped by path policy for this PR."
 
       - uses: actions/checkout@v6
-        if: needs.classify.outputs.run_bundle_wheel == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_bundle_wheel == 'true'
 
       - uses: actions/setup-node@v6
-        if: needs.classify.outputs.run_bundle_wheel == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_bundle_wheel == 'true'
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Setup pnpm
-        if: needs.classify.outputs.run_bundle_wheel == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_bundle_wheel == 'true'
         uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - uses: astral-sh/setup-uv@v7
-        if: needs.classify.outputs.run_bundle_wheel == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_bundle_wheel == 'true'
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Install Python toolchain
-        if: needs.classify.outputs.run_bundle_wheel == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_bundle_wheel == 'true'
         # ``--all-packages`` installs every workspace member (dap-cli,
         # dap-engine, …) so the standalone tests can ``import dap_cli``.
         # Without it, ``uv sync`` only installs third-party deps and
@@ -234,5 +238,5 @@ jobs:
         run: uv sync --frozen --dev --all-packages
 
       - name: Build dashboard bundle + dap-cli wheel + smoke test
-        if: needs.classify.outputs.run_bundle_wheel == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_bundle_wheel == 'true'
         run: uv run pytest tests/standalone/ -v

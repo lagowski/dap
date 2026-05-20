@@ -60,18 +60,20 @@ jobs:
     name: Playwright smoke
     runs-on: ubuntu-latest
     needs: classify
+    # If classification fails, run the full job instead of skipping e2e CI.
+    if: always()
 
     steps:
       - name: Skip Playwright smoke
-        if: needs.classify.outputs.run_e2e != 'true'
+        if: needs.classify.result == 'success' && needs.classify.outputs.run_e2e != 'true'
         run: echo "Playwright smoke skipped by path policy for this PR."
 
       - name: Checkout
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         uses: actions/checkout@v6
 
       - name: Install uv
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
@@ -79,21 +81,21 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Pin Python from .python-version
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         run: uv python install
 
       - name: Install Python workspace
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         run: uv sync --all-packages --frozen
 
       - name: Setup pnpm
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -101,24 +103,24 @@ jobs:
           cache-dependency-path: apps/dashboard/pnpm-lock.yaml
 
       - name: Install dashboard dependencies
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         run: pnpm --dir apps/dashboard install --frozen-lockfile
 
       - name: Install e2e dependencies
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         run: npm ci
         working-directory: e2e
 
       - name: Install Playwright Chromium
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         run: npm --prefix e2e exec playwright install --with-deps chromium
 
       - name: Run smoke e2e
-        if: needs.classify.outputs.run_e2e == 'true'
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true'
         run: npm --prefix e2e run test:smoke
 
       - name: Upload Playwright report
-        if: always() && needs.classify.outputs.run_e2e == 'true'
+        if: always() && (needs.classify.result != 'success' || needs.classify.outputs.run_e2e == 'true')
         uses: actions/upload-artifact@v7
         with:
           name: playwright-smoke-report
