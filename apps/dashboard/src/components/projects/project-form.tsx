@@ -322,7 +322,7 @@ export function buildGateAutoApproveRows(
   for (const pipelineId of Object.values(bindings)) {
     const pipeline = pipelineById.get(pipelineId);
     if (!pipeline) continue;
-    for (const nodeId of pipeline.defaults.approval_required_nodes) {
+    for (const nodeId of pipeline.defaults?.approval_required_nodes ?? []) {
       const names = namesByNode.get(nodeId) ?? new Set<string>();
       names.add(pipeline.name);
       namesByNode.set(nodeId, names);
