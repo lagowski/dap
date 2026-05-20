@@ -19,6 +19,7 @@ from dap_engine.persistence.models import (
     StateSnapshotORM,
 )
 from fastapi.testclient import TestClient
+from sqlalchemy import Table
 from sqlalchemy.orm import Session, sessionmaker
 
 from tests.smoke._auth import authed_test_client
@@ -221,6 +222,22 @@ def test_list_runs_filters_status_date_and_project(
 
     invalid_range = client.get("/runs?from=2026-05-12&to=2026-05-11")
     assert invalid_range.status_code == 422
+
+
+def test_run_listing_index_metadata_matches_documented_query_shapes() -> None:
+    table = RunORM.__table__
+    assert isinstance(table, Table)
+    indexes = {
+        str(index.name): [column.name for column in index.columns]
+        for index in table.indexes
+        if index.name is not None
+    }
+
+    assert indexes["ix_runs_started_at"] == ["started_at"]
+    assert indexes["ix_runs_project_started"] == ["project_id", "started_at"]
+    assert indexes["ix_runs_pipeline_started"] == ["pipeline_id", "started_at"]
+    assert indexes["ix_runs_user_id"] == ["user_id"]
+    assert all("final_status" not in columns for columns in indexes.values())
 
 
 def test_get_run(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -> None:

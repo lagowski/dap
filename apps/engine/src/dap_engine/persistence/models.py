@@ -570,11 +570,14 @@ class RunORM(Base):
     )
 
     __table_args__ = (
-        # ``list_runs`` unfiltered: ORDER BY started_at DESC (#251).
+        # ``list_runs`` unfiltered/admin and date-window pages:
+        # ``ORDER BY started_at DESC`` plus optional started_at range (#251).
         Index("ix_runs_started_at", "started_at"),
         # Project-scoped runs view: ``WHERE project_id = ? ORDER BY started_at
         # DESC``. Composite folds filter + sort into one index walk on SQLite,
-        # which can't bitmap-intersect single-column indexes (#251).
+        # which can't bitmap-intersect single-column indexes. final_status /
+        # ownership filters are residual predicates unless query evidence shows
+        # a more selective composite is worth the write cost (#251, #537).
         Index("ix_runs_project_started", "project_id", "started_at"),
         # Per-pipeline runs view: same shape with ``pipeline_id`` (#251).
         Index("ix_runs_pipeline_started", "pipeline_id", "started_at"),
@@ -582,7 +585,9 @@ class RunORM(Base):
         # "my runs" tab in Phase B). The composites above lead with
         # project_id / pipeline_id, so they don't help the user-only
         # filter; this single-column index keeps the access pattern
-        # symmetric with the other resource tables (sub-A4a, #299).
+        # symmetric with the other resource tables. A future
+        # (user_id, started_at) index needs production query evidence,
+        # because it would duplicate part of this access path (#299, #537).
         Index("ix_runs_user_id", "user_id"),
     )
 
