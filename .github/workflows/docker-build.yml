@@ -58,7 +58,7 @@ jobs:
       # Build only — no registry login, no push. Caches via GitHub
       # Actions cache backend so re-runs on the same PR finish fast.
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
