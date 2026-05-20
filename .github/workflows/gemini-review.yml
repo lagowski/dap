@@ -181,7 +181,7 @@ jobs:
 
       - name: Checkout (for gh CLI auth + repo metadata)
         if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
