@@ -138,10 +138,7 @@ def materialise_pipeline_import(
     if bundled is not None:
         id_remap: dict[str, str] = {}
         for source_id, agent_payload in bundled.items():
-            # BundledAgentImportPayload already validated this relaxed bundle
-            # shape, including extension fields. Re-validating through
-            # AgentCreate would reject supported bundle extension fields.
-            agent_create = AgentCreate.model_construct(
+            agent_create = AgentCreate(
                 name=agent_payload.name,
                 role=agent_payload.role,
                 runtime_id=agent_payload.runtime_id,

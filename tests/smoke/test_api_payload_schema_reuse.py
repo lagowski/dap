@@ -56,18 +56,33 @@ def _pipeline_payload(**overrides: Any) -> dict[str, Any]:
 @pytest.mark.parametrize(
     "model,payload",
     [
-        (AgentCreate, _agent_payload(input_schema=["definitely_not_a_field"])),
-        (AgentUpdate, _agent_update_payload(name=None, input_schema=["definitely_not_a_field"])),
-        (AgentExportPayload, _agent_payload(input_schema=["definitely_not_a_field"])),
-        (AgentDryRunDraft, _agent_payload(input_schema=["definitely_not_a_field"])),
+        (AgentCreate, _agent_payload(input_schema=["extensions."])),
+        (AgentUpdate, _agent_update_payload(name=None, input_schema=["extensions."])),
+        (AgentExportPayload, _agent_payload(input_schema=["extensions."])),
+        (AgentDryRunDraft, _agent_payload(input_schema=["extensions."])),
     ],
 )
 def test_agent_payload_variants_share_field_schema_validation(
     model: type[BaseModel],
     payload: dict[str, Any],
 ) -> None:
-    with pytest.raises(ValidationError, match="definitely_not_a_field"):
+    with pytest.raises(ValidationError, match="unsupported field"):
         model.model_validate(payload)
+
+
+@pytest.mark.parametrize("model", [AgentCreate, AgentUpdate, AgentExportPayload, AgentDryRunDraft])
+def test_agent_payload_variants_share_extension_schema_support(
+    model: type[BaseModel],
+) -> None:
+    payload = (
+        _agent_update_payload(name=None, input_schema=["issue_number"])
+        if model is AgentUpdate
+        else _agent_payload(input_schema=["issue_number"])
+    )
+
+    parsed = model.model_validate(payload)
+
+    assert parsed.model_dump()["input_schema"] == ["issue_number"]
 
 
 @pytest.mark.parametrize("model", [AgentCreate, AgentUpdate, AgentExportPayload, AgentDryRunDraft])

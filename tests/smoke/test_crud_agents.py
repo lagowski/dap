@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from dap_engine.persistence.models import AgentVersionORM
 from fastapi.testclient import TestClient
 
 
@@ -216,20 +217,54 @@ def test_create_agent_persists_field_list_schemas(client: TestClient) -> None:
     ]
 
 
-def test_create_agent_rejects_unknown_field_in_input_schema(client: TestClient) -> None:
-    payload = _create_payload(input_schema=["selected_issue_ids", "definitely_not_a_field"])
+def test_create_agent_accepts_extension_schema_fields(client: TestClient) -> None:
+    payload = _create_payload(
+        input_schema=["selected_issue_ids", "issue_number", "extensions.pr_url"],
+        output_schema=["files_changed", "__audit"],
+    )
+    response = client.post("/agents", json=payload)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["input_schema"] == ["selected_issue_ids", "issue_number", "extensions.pr_url"]
+    assert body["output_schema"] == ["files_changed", "__audit"]
+
+
+def test_create_agent_rejects_malformed_field_in_input_schema(client: TestClient) -> None:
+    payload = _create_payload(input_schema=["selected_issue_ids", "extensions."])
     response = client.post("/agents", json=payload)
     assert response.status_code == 422
     body = response.json()
     detail = str(body["detail"])
-    assert "definitely_not_a_field" in detail
+    assert "extensions." in detail
+    assert "unsupported field" in detail
 
 
-def test_create_agent_rejects_unknown_field_in_output_schema(client: TestClient) -> None:
-    payload = _create_payload(output_schema=["nope_not_a_field"])
+def test_create_agent_rejects_malformed_field_in_output_schema(client: TestClient) -> None:
+    payload = _create_payload(output_schema=["repo.url"])
     response = client.post("/agents", json=payload)
     assert response.status_code == 422
-    assert "nope_not_a_field" in str(response.json()["detail"])
+    assert "repo.url" in str(response.json()["detail"])
+
+
+def test_get_agent_sanitizes_malformed_legacy_schema_refs(client: TestClient) -> None:
+    created = client.post("/agents", json=_create_payload()).json()
+    agent_id = created["id"]
+
+    with client.app.state.session_factory() as session:  # type: ignore[attr-defined]
+        version = (
+            session.query(AgentVersionORM)
+            .filter(AgentVersionORM.agent_id == agent_id, AgentVersionORM.version == 1)
+            .one()
+        )
+        version.input_schema = ["available_issues", "repo.url", "available_issues", 42]
+        version.output_schema = ["files_changed", "extensions.", "__audit"]
+        session.commit()
+
+    response = client.get(f"/agents/{agent_id}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["input_schema"] == ["available_issues"]
+    assert body["output_schema"] == ["files_changed", "__audit"]
 
 
 def test_create_agent_rejects_duplicate_field_names(client: TestClient) -> None:
@@ -244,10 +279,10 @@ def test_update_agent_rejects_unknown_field(client: TestClient) -> None:
     agent_id = created["id"]
     response = client.put(
         f"/agents/{agent_id}",
-        json=_update_payload(output_schema=["bogus_field"]),
+        json=_update_payload(output_schema=["extensions."]),
     )
     assert response.status_code == 422
-    assert "bogus_field" in str(response.json()["detail"])
+    assert "extensions." in str(response.json()["detail"])
 
 
 def test_create_agent_coerces_legacy_dict_schema_to_empty_list(

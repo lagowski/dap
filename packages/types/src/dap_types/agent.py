@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dap_types.state import PipelineState
 
 AgentRole = str  # "task_selector" | "test_author" | "implementer" | "verifier" | ... | custom
+AgentSchemaFieldKind = Literal["pipeline_state", "extension"]
+
+_EXTENSION_FIELD_RE = re.compile(r"^[_A-Za-z][_A-Za-z0-9]*$")
+_EXTENSION_PREFIX = "extensions."
 
 
 def coerce_legacy_field_list(value: Any) -> Any:
@@ -31,22 +36,48 @@ def coerce_legacy_field_list(value: Any) -> Any:
     return value
 
 
-def validate_field_list(fields: list[str]) -> list[str]:
-    """Reject any name that doesn't exist in ``PipelineState.model_fields``."""
-    if not fields:
-        return fields
+def classify_schema_field_ref(field: str) -> AgentSchemaFieldKind:
+    """Classify an agent schema reference as PipelineState or extension state.
+
+    ``input_schema`` / ``output_schema`` remain ``list[str]`` on the wire for
+    OpenAPI compatibility. A value that exactly matches ``PipelineState`` is a
+    top-level state field. Any other valid identifier is pipeline-defined extra
+    state stored under ``PipelineState.extensions``. ``extensions.foo`` is also
+    accepted as an explicit extension reference; persisted Cortex/DAP v2 bundles
+    that used bare extension names remain readable.
+    """
     known = set(PipelineState.model_fields.keys())
-    unknown = sorted({f for f in fields if f not in known})
-    if unknown:
+    if field in known:
+        return "pipeline_state"
+
+    extension_name = field.removeprefix(_EXTENSION_PREFIX)
+    if (
+        not extension_name
+        or "." in extension_name
+        or not _EXTENSION_FIELD_RE.fullmatch(extension_name)
+    ):
+        known_fields = ", ".join(sorted(known))
         msg = (
-            "input_schema/output_schema reference unknown PipelineState "
-            f"field(s): {', '.join(unknown)}. Known fields: {', '.join(sorted(known))}"
+            "input_schema/output_schema reference unsupported field "
+            f"'{field}'. Use a PipelineState field ({known_fields}) or an "
+            "extension field identifier such as 'issue_number' or "
+            "'extensions.issue_number'."
         )
         raise ValueError(msg)
+
+    return "extension"
+
+
+def validate_field_list(fields: list[str]) -> list[str]:
+    """Validate agent schema references and reject duplicate entries."""
+    if not fields:
+        return fields
     duplicates = sorted({f for f in fields if fields.count(f) > 1})
     if duplicates:
         msg = f"input_schema/output_schema contain duplicate field(s): {', '.join(duplicates)}"
         raise ValueError(msg)
+    for field in fields:
+        classify_schema_field_ref(field)
     return fields
 
 

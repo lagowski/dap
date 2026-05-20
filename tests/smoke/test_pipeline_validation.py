@@ -387,6 +387,16 @@ def test_cohesion_linear_chain_writer_satisfies_reader(client: TestClient) -> No
     assert all("no downstream node reads" not in w for w in body["warnings"])
 
 
+def test_cohesion_extension_field_writer_satisfies_reader(client: TestClient) -> None:
+    """Extension fields are valid contracts and participate in cohesion checks."""
+    a = _create_agent_with_contract(client, name="Issue Loader", output_schema=["issue_number"])
+    b = _create_agent_with_contract(client, name="Coder", input_schema=["issue_number"])
+    body = client.post("/pipelines/validate", json=_two_node_payload(a_id=a, b_id=b)).json()
+    assert body["valid"] is True
+    assert body["errors"] == []
+    assert all("issue_number" not in w for w in body["warnings"])
+
+
 def test_cohesion_missing_writer_fails(client: TestClient) -> None:
     """A → B where B reads selected_issue_ids but A doesn't write it → error."""
     a = _create_agent_with_contract(client, name="Empty")  # no output_schema
