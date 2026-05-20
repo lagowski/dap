@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from dap_engine.api.backend_profiles import inspect_backend_profiles
 from dap_engine.api.deps import get_session
 from dap_engine.api.pipeline_bundles import (
     PipelineBundleError,
@@ -18,6 +19,7 @@ from dap_engine.api.pipeline_bundles import (
     materialise_pipeline_import,
 )
 from dap_engine.api.schemas import (
+    BackendProfilesInspectionResponse,
     PipelineExport,
     PipelineImportRequest,
 )
@@ -175,6 +177,25 @@ def import_pipeline(
         return materialise_pipeline_import(payload, session, user)
     except PipelineBundleError as exc:
         _raise_bundle_http_error(exc)
+
+
+@router.post(
+    "/import/inspect-backends",
+    response_model=BackendProfilesInspectionResponse,
+)
+def inspect_pipeline_import_backends(
+    payload: PipelineImportRequest,
+    session: Session = Depends(get_session),
+    _user: UserORM = Depends(current_active_user),
+) -> BackendProfilesInspectionResponse:
+    """Inspect backend profiles declared by a pipeline bundle.
+
+    This is the read-only preflight endpoint for the dashboard's import
+    configuration step. It accepts the same bundle envelope as
+    ``POST /pipelines/import`` and returns only non-secret availability
+    metadata; the actual import path remains unchanged.
+    """
+    return inspect_backend_profiles(payload, session)
 
 
 # ---------------------------------------------------------------------------

@@ -224,6 +224,95 @@ def test_v2_bundle_backend_profiles_absent_returns_none(client: TestClient) -> N
     assert fetched.json().get("backend_profiles") is None
 
 
+def test_v2_bundle_backend_profiles_inspection_absent_is_empty(
+    client: TestClient,
+) -> None:
+    """Backend inspection is backward-compatible for bundles without profiles."""
+    agent_id = _create_minimal_agent(client)
+    bundle = _v2_bundle(agent_id)
+
+    response = client.post("/pipelines/import/inspect-backends", json=bundle)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "default_profile": None,
+        "overrides": {},
+        "profiles": [],
+    }
+
+
+def test_v2_bundle_backend_profiles_inspection_reports_env_and_service(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inspection marks profiles available only when requirements are met."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    def fake_which(command: str) -> str | None:
+        return "/usr/bin/claude" if command == "claude" else None
+
+    monkeypatch.setattr("dap_engine.api.backend_profiles.shutil.which", fake_which)
+
+    agent_id = _create_minimal_agent(client)
+    profiles = {
+        "available": {
+            "claude-api": {
+                "label": "Claude API",
+                "description": "Uses Anthropic API.",
+                "requires_env": ["ANTHROPIC_API_KEY"],
+                "requires_service": None,
+            },
+            "claude-subscription": {
+                "label": "Claude Code",
+                "requires_env": [],
+                "requires_service": "claude-cli",
+            },
+            "deepseek-api": {
+                "label": "DeepSeek API",
+                "requires_env": ["DEEPSEEK_API_KEY"],
+                "requires_service": None,
+            },
+            "local-gemma": {
+                "label": "Local Ollama",
+                "requires_env": [],
+                "requires_service": "ollama",
+            },
+        },
+        "agent_assignments": {
+            "default_profile": "claude-subscription",
+            "overrides": {"coder": "claude-api"},
+        },
+    }
+    bundle = _v2_bundle(agent_id, backend_profiles=profiles)
+
+    response = client.post("/pipelines/import/inspect-backends", json=bundle)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["default_profile"] == "claude-subscription"
+    assert body["overrides"] == {"coder": "claude-api"}
+
+    by_id = {profile["id"]: profile for profile in body["profiles"]}
+    assert by_id["claude-api"] == {
+        "id": "claude-api",
+        "label": "Claude API",
+        "description": "Uses Anthropic API.",
+        "requires_env": ["ANTHROPIC_API_KEY"],
+        "missing_env": [],
+        "requires_service": None,
+        "service_available": None,
+        "available": True,
+    }
+    assert by_id["claude-subscription"]["available"] is True
+    assert by_id["claude-subscription"]["requires_service"] == "claude-cli"
+    assert by_id["claude-subscription"]["service_available"] is True
+    assert by_id["deepseek-api"]["available"] is False
+    assert by_id["deepseek-api"]["missing_env"] == ["DEEPSEEK_API_KEY"]
+    assert by_id["local-gemma"]["available"] is False
+    assert by_id["local-gemma"]["service_available"] is False
+
+
 # ---------------------------------------------------------------------------
 # 5. Extension fields in bundled-agent input_schema/output_schema
 # ---------------------------------------------------------------------------
