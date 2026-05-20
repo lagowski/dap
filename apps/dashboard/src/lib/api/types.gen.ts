@@ -512,6 +512,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pipelines/import/inspect-backends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inspect Pipeline Import Backends
+         * @description Inspect backend profiles declared by a pipeline bundle.
+         *
+         *     This is the read-only preflight endpoint for the dashboard's import
+         *     configuration step. It accepts the same bundle envelope as
+         *     ``POST /pipelines/import`` and returns only non-secret availability
+         *     metadata; the actual import path remains unchanged.
+         */
+        post: operations["inspect_pipeline_import_backends_pipelines_import_inspect_backends_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pipelines/validate": {
         parameters: {
             query?: never;
@@ -1845,6 +1870,42 @@ export interface components {
             id: string;
             /** User Id */
             user_id: string | null;
+        };
+        /**
+         * BackendProfileInspection
+         * @description Availability result for one backend profile declared by a bundle.
+         */
+        BackendProfileInspection: {
+            /** Available */
+            available: boolean;
+            /** Description */
+            description?: string | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Missing Env */
+            missing_env?: string[];
+            /** Requires Env */
+            requires_env?: string[];
+            /** Requires Service */
+            requires_service?: string | null;
+            /** Service Available */
+            service_available?: boolean | null;
+        };
+        /**
+         * BackendProfilesInspectionResponse
+         * @description Response for the bundle-import backend configuration step.
+         */
+        BackendProfilesInspectionResponse: {
+            /** Default Profile */
+            default_profile?: string | null;
+            /** Overrides */
+            overrides?: {
+                [key: string]: string;
+            };
+            /** Profiles */
+            profiles?: components["schemas"]["BackendProfileInspection"][];
         };
         /**
          * BaseOAuthAccount
@@ -3940,6 +4001,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Pipeline"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inspect_pipeline_import_backends_pipelines_import_inspect_backends_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackendProfilesInspectionResponse"];
                 };
             };
             /** @description Validation Error */

@@ -154,6 +154,31 @@ class PipelineImportRequest(BaseModel):
     comment: str | None = Field(default=None, alias="_comment")
 
 
+class BackendProfileInspection(BaseModel):
+    """Availability result for one backend profile declared by a bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    description: str | None = None
+    requires_env: list[str] = Field(default_factory=list)
+    missing_env: list[str] = Field(default_factory=list)
+    requires_service: str | None = None
+    service_available: bool | None = None
+    available: bool
+
+
+class BackendProfilesInspectionResponse(BaseModel):
+    """Response for the bundle-import backend configuration step."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_profile: str | None = None
+    overrides: dict[str, str] = Field(default_factory=dict)
+    profiles: list[BackendProfileInspection] = Field(default_factory=list)
+
+
 class ProjectRunRequest(BaseModel):
     """POST /projects/{project_id}/run/{kind} body — convenience trigger.
 
