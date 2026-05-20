@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from dap_engine.persistence.models import AgentVersionORM
 from fastapi.testclient import TestClient
 
 
@@ -243,6 +244,27 @@ def test_create_agent_rejects_malformed_field_in_output_schema(client: TestClien
     response = client.post("/agents", json=payload)
     assert response.status_code == 422
     assert "repo.url" in str(response.json()["detail"])
+
+
+def test_get_agent_sanitizes_malformed_legacy_schema_refs(client: TestClient) -> None:
+    created = client.post("/agents", json=_create_payload()).json()
+    agent_id = created["id"]
+
+    with client.app.state.session_factory() as session:  # type: ignore[attr-defined]
+        version = (
+            session.query(AgentVersionORM)
+            .filter(AgentVersionORM.agent_id == agent_id, AgentVersionORM.version == 1)
+            .one()
+        )
+        version.input_schema = ["available_issues", "repo.url", "available_issues", 42]
+        version.output_schema = ["files_changed", "extensions.", "__audit"]
+        session.commit()
+
+    response = client.get(f"/agents/{agent_id}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["input_schema"] == ["available_issues"]
+    assert body["output_schema"] == ["files_changed", "__audit"]
 
 
 def test_create_agent_rejects_duplicate_field_names(client: TestClient) -> None:

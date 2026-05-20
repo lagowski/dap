@@ -15,11 +15,14 @@ operate on pipeline data, so they reuse the private
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Iterable, Sequence
 from typing import Any
 
 from dap_types import Agent
+from dap_types.agent import validate_field_list
+from pydantic import ValidationError
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
@@ -28,6 +31,8 @@ from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
 from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineORM
 from dap_engine.persistence.pipelines import _current_pipeline_versions
+
+logger = logging.getLogger("dap.engine.persistence.agents")
 
 
 def _ownership_filter(
@@ -68,7 +73,44 @@ def _agent_from_orm(
         "updated_at": agent.updated_at if is_current else version.created_at,
         "is_active": agent.archived_at is None,
     }
-    return Agent.model_validate(payload)
+    try:
+        return Agent.model_validate(payload)
+    except ValidationError as exc:
+        if not _is_schema_ref_validation_error(exc):
+            raise
+        sanitized = {
+            **payload,
+            "input_schema": _sanitize_stored_schema_refs(version.input_schema),
+            "output_schema": _sanitize_stored_schema_refs(version.output_schema),
+        }
+        logger.warning(
+            "Agent %s version %s has invalid stored schema refs; sanitized on read",
+            agent.id,
+            version.version,
+        )
+        return Agent.model_validate(sanitized)
+
+
+def _is_schema_ref_validation_error(exc: ValidationError) -> bool:
+    """Return True when every validation error is scoped to agent schemas."""
+    schema_fields = {"input_schema", "output_schema"}
+    return all(error["loc"] and error["loc"][0] in schema_fields for error in exc.errors())
+
+
+def _sanitize_stored_schema_refs(raw: Any) -> list[str]:
+    """Drop malformed legacy schema refs while preserving valid unique strings."""
+    if not isinstance(raw, list):
+        return []
+    sanitized: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or item in sanitized:
+            continue
+        try:
+            validate_field_list([item])
+        except ValueError:
+            continue
+        sanitized.append(item)
+    return sanitized
 
 
 def create_agent(
