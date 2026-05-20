@@ -21,6 +21,7 @@ import type {
   AgentDryRunResponse,
   AgentExport,
   AgentUpdate,
+  BackendProfilesInspectionResponse,
   CurrentUser,
   LoginCredentials,
   NodeExecutionLog,
@@ -298,6 +299,15 @@ export async function exportPipeline(
 
 export async function importPipeline(payload: PipelineExport): Promise<Pipeline> {
   return request<Pipeline>("/pipelines/import", { method: "POST", json: payload });
+}
+
+export async function inspectPipelineImportBackends(
+  payload: PipelineExport,
+): Promise<BackendProfilesInspectionResponse> {
+  return request<BackendProfilesInspectionResponse>(
+    "/pipelines/import/inspect-backends",
+    { method: "POST", json: payload },
+  );
 }
 
 export async function archivePipeline(id: string): Promise<void> {

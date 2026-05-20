@@ -66,6 +66,12 @@ export function useImportPipeline() {
   });
 }
 
+export function useInspectPipelineImportBackends() {
+  return useMutation({
+    mutationFn: (payload: PipelineExport) => api.inspectPipelineImportBackends(payload),
+  });
+}
+
 export function useUpdatePipeline() {
   const qc = useQueryClient();
   return useMutation({

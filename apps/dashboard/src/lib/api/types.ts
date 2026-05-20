@@ -181,7 +181,13 @@ export interface PipelineExport {
    * ``undefined`` and a missing key as "no bundle".
    */
   bundled_agents?: Record<string, AgentExportPayload>;
+  /** Optional pipeline-export/2 backend profile metadata. */
+  backend_profiles?: Record<string, unknown> | null;
 }
+
+export type BackendProfileInspection = ApiSchema<"BackendProfileInspection">;
+export type BackendProfilesInspectionResponse =
+  ApiSchema<"BackendProfilesInspectionResponse">;
 
 // ---- Projects (#63 / #67) ----
 
