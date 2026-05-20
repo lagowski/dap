@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { AlertCircle, CheckCircle2, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,15 +37,9 @@ export function BackendProfileImportDialog({
   onCancel,
   onConfirm,
 }: BackendProfileImportDialogProps) {
-  const initialProfile = useMemo(
-    () => (inspection ? selectableDefaultProfile(inspection) : null),
-    [inspection],
+  const [selectedProfile, setSelectedProfile] = useState<string>(
+    () => (inspection ? selectableDefaultProfile(inspection) : null) ?? "",
   );
-  const [selectedProfile, setSelectedProfile] = useState<string>("");
-
-  useEffect(() => {
-    setSelectedProfile(initialProfile ?? "");
-  }, [initialProfile]);
 
   const profiles = inspection?.profiles ?? [];
   const selected = profiles.find((profile) => profile.id === selectedProfile);
@@ -68,9 +62,16 @@ export function BackendProfileImportDialog({
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="default-backend-profile">Default profile</Label>
+            <Label
+              htmlFor="default-backend-profile"
+              id="default-backend-profile-label"
+            >
+              Default profile
+            </Label>
             <select
               id="default-backend-profile"
+              aria-labelledby="default-backend-profile-label"
+              autoFocus
               value={selectedProfile}
               onChange={(event) => setSelectedProfile(event.target.value)}
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"

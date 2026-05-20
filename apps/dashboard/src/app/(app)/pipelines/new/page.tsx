@@ -148,14 +148,16 @@ function NewPipelinePageContent() {
           seedFromPipeline={sourceQuery.data ?? null}
         />
       </div>
-      <BackendProfileImportDialog
-        open={backendDialog !== null}
-        bundle={backendDialog?.bundle ?? null}
-        inspection={backendDialog?.inspection ?? null}
-        pending={importPipeline.isPending}
-        onCancel={() => setBackendDialog(null)}
-        onConfirm={handleConfiguredImport}
-      />
+      {backendDialog ? (
+        <BackendProfileImportDialog
+          open
+          bundle={backendDialog.bundle}
+          inspection={backendDialog.inspection}
+          pending={importPipeline.isPending}
+          onCancel={() => setBackendDialog(null)}
+          onConfirm={handleConfiguredImport}
+        />
+      ) : null}
     </div>
   );
 }
