@@ -82,6 +82,39 @@ jobs:
             echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Classify low-risk lockfile-only PRs
+        id: low-risk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t files < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          lockfile_only=true
+          for file in "${files[@]}"; do
+            case "$file" in
+              uv.lock|apps/dashboard/pnpm-lock.yaml|package-lock.json|e2e/package-lock.json)
+                ;;
+              *)
+                lockfile_only=false
+                ;;
+            esac
+          done
+
+          if [[ "$lockfile_only" == "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=Lockfile-only PR — standard CI still validates install and tests." >> "$GITHUB_OUTPUT"
+            echo "Lockfile-only PR — auto-passing AI review gate."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check PR author (skip bots)
         id: skip-bot
         env:
@@ -99,11 +132,12 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Auto-pass bot-authored PRs
-        if: steps.skip-bot.outputs.skip == 'true'
+      - name: Auto-pass low-risk review skips
+        if: steps.skip-bot.outputs.skip == 'true' || steps.low-risk.outputs.skip == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SKIP_REASON: ${{ steps.low-risk.outputs.reason || 'Bot author — review skipped' }}
         run: |
           head_sha=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq '.headRefOid')
           gh api "repos/$GITHUB_REPOSITORY/check-runs" \
@@ -113,23 +147,23 @@ jobs:
             -f head_sha="$head_sha" \
             -f status='completed' \
             -f conclusion='success' \
-            -f 'output[title]=Bot author — review skipped' \
-            -f 'output[summary]=Gemini does not review bot-authored PRs (dependabot, renovate, etc.). Standard CI checks still gate the merge.'
+            -f "output[title]=${SKIP_REASON}" \
+            -f "output[summary]=${SKIP_REASON} Standard CI checks still gate the merge."
 
       - name: Checkout (for gh CLI auth + repo metadata)
-        if: steps.skip-bot.outputs.skip != 'true'
+        if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        if: steps.skip-bot.outputs.skip != 'true'
+        if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Install code-review-council
-        if: steps.skip-bot.outputs.skip != 'true'
+        if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
         run: |
           # Install the in-tree council package — pulls google-genai,
           # httpx (OpenRouter route), and pydantic transitively via
@@ -140,7 +174,7 @@ jobs:
           pip install --no-cache-dir -e ./packages/code-review-council
 
       - name: Run code review council
-        if: steps.skip-bot.outputs.skip != 'true'
+        if: steps.skip-bot.outputs.skip != 'true' && steps.low-risk.outputs.skip != 'true'
         env:
           # Provider keys: OpenRouter preferred, Gemini fallback. The
           # script picks based on which is non-empty (see
