@@ -50,6 +50,7 @@ export function WorkflowCards({ project }: WorkflowCardsProps) {
         repo_url: project.repo_url,
         default_branch: project.default_branch,
         pipelines: next,
+        auto_approve_nodes: project.auto_approve_nodes,
         env_vars: project.env_vars,
       },
     });

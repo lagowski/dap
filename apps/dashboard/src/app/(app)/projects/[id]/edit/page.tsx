@@ -57,6 +57,7 @@ export default function EditProjectPage({
               default_branch: project.default_branch,
               env_vars: project.env_vars,
               pipelines: project.pipelines,
+              auto_approve_nodes: project.auto_approve_nodes,
             }}
             onSubmit={async (values) => {
               await update.mutateAsync({
@@ -69,6 +70,7 @@ export default function EditProjectPage({
                   default_branch: values.default_branch,
                   env_vars: values.env_vars,
                   pipelines: values.pipelines,
+                  auto_approve_nodes: values.auto_approve_nodes,
                 },
               });
               router.push(`/projects/${id}`);

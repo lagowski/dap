@@ -11,8 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
-import { usePipelinesList, useValidateProjectEnv } from "@/hooks/api";
-import type { EnvVarValidationResult } from "@/lib/api/types";
+import { useCurrentUser, usePipelinesList, useValidateProjectEnv } from "@/hooks/api";
+import type { EnvVarValidationResult, Pipeline } from "@/lib/api/types";
 import {
   addBinding,
   updateBinding,
@@ -37,6 +37,7 @@ export interface ProjectFormValues {
   default_branch: string;
   env_vars: Record<string, string>;
   pipelines: Record<string, string>;
+  auto_approve_nodes: string[];
 }
 
 interface ProjectFormProps {
@@ -74,10 +75,15 @@ export function ProjectForm({
     Record<string, EnvVarValidationResult>
   >({});
   const [validationWarning, setValidationWarning] = useState<string | null>(null);
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser.data?.is_superuser === true;
   const validateEnv = useValidateProjectEnv();
 
   const [pipelines, setPipelines] = useState<Record<string, string>>(
     () => initialValues?.pipelines ?? {},
+  );
+  const [autoApproveNodes, setAutoApproveNodes] = useState<string[]>(
+    () => initialValues?.auto_approve_nodes ?? [],
   );
 
   const handleSubmit = form.handleSubmit(async (values) => {
@@ -119,6 +125,7 @@ export function ProjectForm({
             ([k, v]) => k.trim().length > 0 && v.trim().length > 0,
           ),
         ),
+        auto_approve_nodes: autoApproveNodes,
       });
     } catch {
       // Parent surfaces submitError.
@@ -186,6 +193,20 @@ export function ProjectForm({
         </p>
       </Field>
 
+      {isAdmin ? (
+        <Field label="Gate auto-approval">
+          <GateAutoApproveEditor
+            pipelines={pipelines}
+            selectedNodes={autoApproveNodes}
+            onChange={setAutoApproveNodes}
+          />
+          <p className="text-xs text-muted-foreground">
+            Checked gates auto-resume for runs triggered through this project.
+            Unchecked gates still pause for review.
+          </p>
+        </Field>
+      ) : null}
+
       {validationWarning ? (
         <p className="text-sm text-yellow-600" role="status">
           {validationWarning}
@@ -208,6 +229,118 @@ export function ProjectForm({
       </div>
     </form>
   );
+}
+
+function toggleString(list: readonly string[], value: string, checked: boolean): string[] {
+  const current = new Set(list);
+  if (checked) {
+    current.add(value);
+  } else {
+    current.delete(value);
+  }
+  return [...current];
+}
+
+interface GateAutoApproveEditorProps {
+  pipelines: Record<string, string>;
+  selectedNodes: string[];
+  onChange: (next: string[]) => void;
+}
+
+function GateAutoApproveEditor({
+  pipelines,
+  selectedNodes,
+  onChange,
+}: GateAutoApproveEditorProps) {
+  const { data: pipelinesList } = usePipelinesList();
+  const pipelineById = new Map((pipelinesList?.items ?? []).map((pipeline) => [pipeline.id, pipeline]));
+  const rows = buildGateAutoApproveRows(pipelines, selectedNodes, pipelineById);
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        No approval gates found in the bound pipelines.
+      </p>
+    );
+  }
+
+  return (
+    <div className="rounded-md border">
+      <div className="grid grid-cols-[1fr_auto] gap-3 border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+        <span>Gate node</span>
+        <span>Auto-approve</span>
+      </div>
+      <div className="divide-y">
+        {rows.map((row) => (
+          <label
+            key={row.nodeId}
+            className="grid grid-cols-[1fr_auto] items-center gap-3 px-3 py-2 text-sm"
+          >
+            <span>
+              <span className="font-mono">{row.nodeId}</span>
+              {row.pipelineNames.length > 0 ? (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {row.pipelineNames.join(", ")}
+                </span>
+              ) : (
+                <span className="ml-2 text-xs text-yellow-600">
+                  not in current bindings
+                </span>
+              )}
+            </span>
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-primary"
+              checked={selectedNodes.includes(row.nodeId)}
+              aria-describedby={`gate-auto-approve-${row.nodeId}-description`}
+              onChange={(event) =>
+                onChange(toggleString(selectedNodes, row.nodeId, event.target.checked))
+              }
+              aria-label={`Auto-approve ${row.nodeId}`}
+            />
+            <span id={`gate-auto-approve-${row.nodeId}-description`} className="sr-only">
+              Auto-resume this approval gate for project-triggered runs.
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface GateAutoApproveRow {
+  nodeId: string;
+  pipelineNames: string[];
+}
+
+export function buildGateAutoApproveRows(
+  bindings: Record<string, string>,
+  selectedNodes: readonly string[],
+  pipelineById: ReadonlyMap<string, Pick<Pipeline, "id" | "name" | "defaults">>,
+): GateAutoApproveRow[] {
+  const namesByNode = new Map<string, Set<string>>();
+  for (const pipelineId of Object.values(bindings)) {
+    const pipeline = pipelineById.get(pipelineId);
+    if (!pipeline) continue;
+    for (const nodeId of pipeline.defaults.approval_required_nodes) {
+      const names = namesByNode.get(nodeId) ?? new Set<string>();
+      names.add(pipeline.name);
+      namesByNode.set(nodeId, names);
+    }
+  }
+
+  for (const nodeId of selectedNodes) {
+    if (!namesByNode.has(nodeId)) {
+      namesByNode.set(nodeId, new Set());
+    }
+  }
+
+  return [...namesByNode.entries()]
+    .map(([nodeId, pipelineNames]) => ({
+      nodeId,
+      pipelineNames: [...pipelineNames].sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort((a, b) => a.nodeId.localeCompare(b.nodeId));
 }
 
 interface EnvVarsEditorProps {
