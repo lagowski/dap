@@ -9,6 +9,7 @@ import type {
   AgentUpdate,
   PipelineCreate,
   PipelineExport,
+  PipelineUiMetadataPatch,
   PipelineUpdate,
   ProjectCreate,
   ProjectRunRequest,
@@ -80,6 +81,18 @@ export function useUpdatePipeline() {
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: queryKeys.pipelines });
       qc.invalidateQueries({ queryKey: queryKeys.pipeline(variables.id) });
+    },
+  });
+}
+
+export function useUpdatePipelineUiMetadata() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: PipelineUiMetadataPatch }) =>
+      api.updatePipelineUiMetadata(id, payload),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: queryKeys.pipeline(variables.id) });
+      qc.invalidateQueries({ queryKey: queryKeys.pipelineVersions(variables.id) });
     },
   });
 }

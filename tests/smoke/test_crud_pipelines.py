@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
+from dap_engine.app import EngineConfig, create_app
+from dap_engine.persistence.models import AuditLogORM
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 
 @pytest.fixture
@@ -140,6 +144,93 @@ def test_update_pipeline_creates_new_version(
     assert body["version"] == 2
     assert body["description"] == "Updated description"
     assert len(body["nodes"]) == 3
+
+
+def test_patch_pipeline_ui_metadata_merges_without_new_version(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    created = client.post(
+        "/pipelines",
+        json=_pipeline_payload(
+            agents,
+            ui_metadata={
+                "node_positions": {"select_task": {"x": 0, "y": 0}},
+                "custom": {"keep": True},
+            },
+        ),
+    ).json()
+    pipeline_id = created["id"]
+
+    response = client.patch(
+        f"/pipelines/{pipeline_id}/ui-metadata",
+        json={
+            "ui_metadata": {
+                "viewport": {"x": -120, "y": 80, "zoom": 0.75},
+                "node_positions": {"select_task": {"x": 50, "y": 60}},
+            }
+        },
+    )
+    assert response.status_code == 204, response.text
+
+    fetched = client.get(f"/pipelines/{pipeline_id}").json()
+    assert fetched["version"] == 1
+    assert fetched["ui_metadata"] == {
+        "node_positions": {"select_task": {"x": 50, "y": 60}},
+        "custom": {"keep": True},
+        "viewport": {"x": -120, "y": 80, "zoom": 0.75},
+    }
+    versions = client.get(f"/pipelines/{pipeline_id}/versions").json()
+    assert [v["version"] for v in versions] == [1]
+
+    with client.app.state.session_factory() as session:  # type: ignore[attr-defined]
+        audit = session.scalar(
+            select(AuditLogORM)
+            .where(AuditLogORM.event_type == "pipeline.ui_metadata_updated")
+            .order_by(AuditLogORM.created_at.desc())
+        )
+    assert audit is not None
+    assert audit.event_data == {
+        "pipeline_id": pipeline_id,
+        "version": 1,
+        "keys": ["node_positions", "viewport"],
+    }
+
+
+def test_patch_pipeline_ui_metadata_requires_auth(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> None:
+    app = create_app(engine_config_factory())
+    with TestClient(app) as plain_client:
+        response = plain_client.patch(
+            "/pipelines/anything/ui-metadata",
+            json={"ui_metadata": {"viewport": {"x": 0, "y": 0, "zoom": 1}}},
+        )
+
+    assert response.status_code in {401, 403}
+
+
+def test_patch_pipeline_ui_metadata_rejects_invalid_viewport_zoom(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    created = client.post("/pipelines", json=_pipeline_payload(agents)).json()
+
+    response = client.patch(
+        f"/pipelines/{created['id']}/ui-metadata",
+        json={"ui_metadata": {"viewport": {"x": 0, "y": 0, "zoom": 10}}},
+    )
+
+    assert response.status_code == 422
+
+
+def test_patch_unknown_pipeline_ui_metadata_returns_404(client: TestClient) -> None:
+    response = client.patch(
+        "/pipelines/missing/ui-metadata",
+        json={"ui_metadata": {"viewport": {"x": 0, "y": 0, "zoom": 1}}},
+    )
+
+    assert response.status_code == 404
 
 
 def test_pipeline_version_history(

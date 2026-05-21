@@ -38,7 +38,9 @@ import {
   type NodeChange,
   type OnConnect,
   type OnEdgesChange,
+  type OnMoveEnd,
   type OnNodesChange,
+  type Viewport,
 } from "@xyflow/react";
 
 import { useAgentsList } from "@/hooks/api";
@@ -53,7 +55,7 @@ import { Inspector } from "./inspector";
 import { toReactFlowEdge, toReactFlowNode } from "./reactflow-adapters";
 import { DesignerToolbar } from "./toolbar";
 import { usePipelineProjections } from "./use-pipeline-projections";
-import { usePipelineSave } from "./use-pipeline-save";
+import { useAutoSaveLayout, usePipelineSave } from "./use-pipeline-save";
 
 interface PipelineDesignerProps {
   /** The persisted pipeline being edited; ``null`` for a fresh pipeline. */
@@ -69,6 +71,25 @@ interface PipelineDesignerProps {
 }
 
 const NEW_NODE_OFFSET = 80;
+
+function parseSavedViewport(uiMetadata: Record<string, unknown> | undefined): Viewport | null {
+  const viewport = uiMetadata?.viewport;
+  if (!viewport || typeof viewport !== "object") return null;
+  const candidate = viewport as Partial<Viewport>;
+  if (
+    typeof candidate.x !== "number" ||
+    typeof candidate.y !== "number" ||
+    typeof candidate.zoom !== "number" ||
+    !Number.isFinite(candidate.x) ||
+    !Number.isFinite(candidate.y) ||
+    !Number.isFinite(candidate.zoom) ||
+    candidate.zoom < 0.1 ||
+    candidate.zoom > 4
+  ) {
+    return null;
+  }
+  return { x: candidate.x, y: candidate.y, zoom: candidate.zoom };
+}
 
 
 export function PipelineDesigner({
@@ -98,6 +119,8 @@ export function PipelineDesigner({
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(seed?.description ?? "");
   const [entryPoint, setEntryPoint] = useState(seed?.entry_point ?? "");
+  const savedViewport = parseSavedViewport(seed?.ui_metadata);
+  const [viewport, setViewport] = useState<Viewport | null>(savedViewport);
 
   const [nodes, setNodes] = useState<Node[]>(() => {
     // Prefer positions stored in ui_metadata.node_positions (saved by
@@ -140,6 +163,9 @@ export function PipelineDesigner({
     (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
     [],
   );
+  const onMoveEnd: OnMoveEnd = useCallback((_event, nextViewport) => {
+    setViewport(nextViewport);
+  }, []);
   const onConnect: OnConnect = useCallback((params: Connection) => {
     const edgeId = `e_${Math.random().toString(36).slice(2, 8)}`;
     setEdges((eds) => addEdge({ ...params, id: edgeId }, eds));
@@ -241,6 +267,13 @@ export function PipelineDesigner({
     designerNodes,
     designerEdges,
     initialPipeline,
+    viewport,
+  });
+  const layoutSave = useAutoSaveLayout({
+    pipelineId: initialPipeline?.id ?? null,
+    designerNodes,
+    existingUiMetadata: initialPipeline?.ui_metadata ?? null,
+    viewport,
   });
 
   return (
@@ -257,6 +290,9 @@ export function PipelineDesigner({
         isSaving={save.isSaving}
         saveLabel={save.saveLabel}
         submitError={save.submitError}
+        layoutSaveStatus={layoutSave.status}
+        layoutSavedAt={layoutSave.savedAt}
+        layoutSaveError={layoutSave.error}
         pipelineId={initialPipeline?.id}
         pipelineVersion={initialPipeline?.version}
         pipeline={initialPipeline}
@@ -273,7 +309,9 @@ export function PipelineDesigner({
             onNodeClick={(_e, node) => setSelection({ kind: "node", id: node.id })}
             onEdgeClick={(_e, edge) => setSelection({ kind: "edge", id: edge.id })}
             onPaneClick={() => setSelection({ kind: "none" })}
-            fitView
+            onMoveEnd={onMoveEnd}
+            defaultViewport={savedViewport ?? undefined}
+            fitView={savedViewport == null}
             proOptions={{ hideAttribution: true }}
           >
             <Background />

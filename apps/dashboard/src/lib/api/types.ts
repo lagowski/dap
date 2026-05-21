@@ -531,6 +531,10 @@ export interface PipelineUpdate {
   ui_metadata?: Record<string, unknown>;
 }
 
+export interface PipelineUiMetadataPatch {
+  ui_metadata: Record<string, unknown>;
+}
+
 export interface ValidationResult {
   valid: boolean;
   errors: string[];

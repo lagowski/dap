@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AlertCircle, ArrowLeft, CheckCircle2, Copy, Download, Package, Play } from "lucide-react";
 import type { Pipeline, ValidationResult } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
+import type { AutoSaveLayoutStatus } from "./use-pipeline-save";
 import { downloadPipelineExportWithAlert } from "@/lib/pipeline-export";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,9 @@ interface DesignerToolbarProps {
    *  Surfaced inline so users see the reason instead of just the
    *  Next.js dev-mode unhandled-rejection overlay. */
   submitError?: unknown;
+  layoutSaveStatus?: AutoSaveLayoutStatus;
+  layoutSavedAt?: Date | null;
+  layoutSaveError?: unknown;
   /** Set when editing an existing saved pipeline — enables the
    *  "Run", "Clone", and "Export JSON" buttons. None of those make
    *  sense before the pipeline has an id. */
@@ -48,6 +52,9 @@ export function DesignerToolbar({
   isSaving,
   saveLabel,
   submitError,
+  layoutSaveStatus = "idle",
+  layoutSavedAt,
+  layoutSaveError,
   pipelineId,
   pipelineVersion,
   pipeline,
@@ -88,6 +95,11 @@ export function DesignerToolbar({
         </div>
 
         <div className="flex items-center gap-2">
+          <LayoutSaveStatus
+            status={layoutSaveStatus}
+            savedAt={layoutSavedAt}
+            error={layoutSaveError}
+          />
           <Button
             type="button"
             variant="outline"
@@ -205,6 +217,33 @@ export function DesignerToolbar({
         </div>
       )}
     </div>
+  );
+}
+
+function LayoutSaveStatus({
+  status,
+  savedAt,
+  error,
+}: {
+  status: AutoSaveLayoutStatus;
+  savedAt?: Date | null;
+  error?: unknown;
+}) {
+  if (status === "idle") return null;
+  if (status === "saving") {
+    return <span className="text-xs text-muted-foreground">Saving layout...</span>;
+  }
+  if (status === "error") {
+    return (
+      <span className="text-xs text-destructive" title={error ? formatApiError(error) : undefined}>
+        Layout save failed
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-muted-foreground">
+      Saved {savedAt ? savedAt.toLocaleTimeString() : ""}
+    </span>
   );
 }
 

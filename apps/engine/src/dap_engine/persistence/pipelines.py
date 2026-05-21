@@ -25,7 +25,7 @@ from sqlalchemy import ColumnElement, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
-from dap_engine.contracts import PipelineCreate, PipelineUpdate
+from dap_engine.contracts import PipelineCreate, PipelineUiMetadataPatch, PipelineUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
 
@@ -167,6 +167,38 @@ def update_pipeline(
         event_data={"pipeline_id": pipeline.id, "version": new_version_number},
     )
     return _pipeline_from_orm(pipeline, version, is_current=True)
+
+
+def update_pipeline_ui_metadata(
+    session: Session,
+    pipeline_id: str,
+    payload: PipelineUiMetadataPatch,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> None:
+    """Merge UI metadata into the current version without bumping version."""
+    pipeline = session.get(PipelineORM, pipeline_id)
+    if pipeline is None or pipeline.archived_at is not None:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    if not is_admin and pipeline.user_id != actor_id:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+
+    version = _get_pipeline_version_orm(session, pipeline_id, pipeline.current_version)
+    existing = version.ui_metadata if isinstance(version.ui_metadata, dict) else {}
+    version.ui_metadata = {**existing, **payload.ui_metadata}
+    pipeline.updated_at = _now()
+    session.flush()
+    record_audit_event(
+        session,
+        user_id=actor_id,
+        event_type="pipeline.ui_metadata_updated",
+        event_data={
+            "pipeline_id": pipeline.id,
+            "version": pipeline.current_version,
+            "keys": sorted(payload.ui_metadata),
+        },
+    )
 
 
 def archive_pipeline(

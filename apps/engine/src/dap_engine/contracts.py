@@ -12,11 +12,19 @@ pagination wrappers, and other API-only types live in
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import math
+from typing import Any, Literal, TypeGuard
 
 from dap_types.agent import coerce_legacy_field_list, validate_field_list
 from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+MIN_UI_VIEWPORT_ZOOM = 0.1
+MAX_UI_VIEWPORT_ZOOM = 4.0
+
+
+def _is_number(value: Any) -> TypeGuard[int | float]:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _validate_pipeline_bindings_dict(value: dict[str, str]) -> dict[str, str]:
@@ -115,6 +123,52 @@ class PipelineUpdate(PipelineGraphPayload):
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
+
+
+class PipelineUiMetadataPatch(BaseModel):
+    """PATCH /pipelines/{id}/ui-metadata body.
+
+    The dashboard owns this JSON blob, but the engine validates the
+    layout keys it knows about so autosave cannot persist unusable
+    viewport or waypoint data. Unknown keys stay forward-compatible.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ui_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("ui_metadata")
+    @classmethod
+    def _validate_layout_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        viewport = value.get("viewport")
+        if viewport is not None:
+            if not isinstance(viewport, dict):
+                raise ValueError("ui_metadata.viewport must be an object")
+            zoom = viewport.get("zoom")
+            if not _is_number(viewport.get("x")) or not _is_number(viewport.get("y")):
+                raise ValueError("ui_metadata.viewport.x/y must be numbers")
+            if not _is_number(zoom):
+                raise ValueError("ui_metadata.viewport.zoom must be between 0.1 and 4")
+            zoom_value = float(zoom)
+            if not MIN_UI_VIEWPORT_ZOOM <= zoom_value <= MAX_UI_VIEWPORT_ZOOM:
+                raise ValueError("ui_metadata.viewport.zoom must be between 0.1 and 4")
+
+        edge_waypoints = value.get("edge_waypoints")
+        if edge_waypoints is not None:
+            if not isinstance(edge_waypoints, dict):
+                raise ValueError("ui_metadata.edge_waypoints must be an object")
+            for edge_id, points in edge_waypoints.items():
+                if not isinstance(edge_id, str) or not isinstance(points, list):
+                    raise ValueError("ui_metadata.edge_waypoints entries must be point lists")
+                for point in points:
+                    if (
+                        not isinstance(point, dict)
+                        or not _is_number(point.get("x"))
+                        or not _is_number(point.get("y"))
+                    ):
+                        raise ValueError("ui_metadata.edge_waypoints points need numeric x/y")
+
+        return value
 
 
 class ProjectCreate(BaseModel):

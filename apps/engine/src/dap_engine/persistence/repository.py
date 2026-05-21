@@ -52,6 +52,7 @@ from dap_engine.persistence.pipelines import (
     list_pipeline_versions,
     list_pipelines,
     update_pipeline,
+    update_pipeline_ui_metadata,
 )
 from dap_engine.persistence.projects import (
     archive_project,
@@ -117,5 +118,6 @@ __all__ = [
     "try_claim_revive",
     "update_agent",
     "update_pipeline",
+    "update_pipeline_ui_metadata",
     "update_project",
 ]
