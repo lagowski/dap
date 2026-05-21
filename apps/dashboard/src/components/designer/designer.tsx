@@ -296,7 +296,9 @@ export function PipelineDesigner({
         ...edge,
         type: "waypoint",
         data: {
-          ...(edge.data as object | undefined),
+          ...(edge.data && typeof edge.data === "object"
+            ? (edge.data as Record<string, unknown>)
+            : {}),
           onWaypointsChange: handleUpdateEdgeWaypoints,
         },
       })),

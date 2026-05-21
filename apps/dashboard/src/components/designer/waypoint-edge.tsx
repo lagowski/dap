@@ -7,7 +7,7 @@ import {
   type XYPosition,
   useReactFlow,
 } from "@xyflow/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type React from "react";
 
 type WaypointEdgeData = {
@@ -67,6 +67,8 @@ export function WaypointEdge({
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const edgeData = (data ?? {}) as WaypointEdgeData;
   const waypoints = edgeData.waypoints ?? EMPTY_WAYPOINTS;
+  const latestWaypointsRef = useRef(waypoints);
+  const latestOnWaypointsChangeRef = useRef(edgeData.onWaypointsChange);
   const pathPoints = useMemo(
     () => [
       { x: sourceX, y: sourceY },
@@ -78,53 +80,64 @@ export function WaypointEdge({
   const path = waypointPath(pathPoints);
   const labelPosition = midpoint(pathPoints);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    latestWaypointsRef.current = waypoints;
+    latestOnWaypointsChangeRef.current = edgeData.onWaypointsChange;
+  }, [waypoints, edgeData.onWaypointsChange]);
+
+  const cleanupDrag = useCallback(() => {
       dragCleanupRef.current?.();
       dragCleanupRef.current = null;
-    },
-    [],
-  );
+  }, []);
 
-  const updateWaypoints = (next: XYPosition[]) => {
-    edgeData.onWaypointsChange?.(id, next);
-  };
+  useEffect(() => cleanupDrag, [cleanupDrag]);
+
+  const updateWaypoints = useCallback(
+    (next: XYPosition[]) => {
+      latestOnWaypointsChangeRef.current?.(id, next);
+    },
+    [id],
+  );
 
   const addWaypoint = (event: React.MouseEvent<SVGPathElement>) => {
     event.preventDefault();
     event.stopPropagation();
     const point = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-    updateWaypoints([...waypoints, point]);
+    updateWaypoints([...latestWaypointsRef.current, point]);
   };
 
   const addWaypointFromKeyboard = (event: React.KeyboardEvent<SVGPathElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     event.stopPropagation();
-    updateWaypoints([...waypoints, midpoint(pathPoints)]);
+    updateWaypoints([...latestWaypointsRef.current, midpoint(pathPoints)]);
   };
 
   const removeWaypoint = (event: React.MouseEvent<SVGCircleElement>, index: number) => {
     event.preventDefault();
     event.stopPropagation();
-    updateWaypoints(waypoints.filter((_, itemIndex) => itemIndex !== index));
+    updateWaypoints(
+      latestWaypointsRef.current.filter((_, itemIndex) => itemIndex !== index),
+    );
   };
 
   const editWaypointFromKeyboard = (
     event: React.KeyboardEvent<SVGCircleElement>,
     index: number,
   ) => {
-    if (event.key === "Enter" || event.key === " " || event.key === "Delete" || event.key === "Backspace") {
+    if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       event.stopPropagation();
-      updateWaypoints(waypoints.filter((_, itemIndex) => itemIndex !== index));
+      updateWaypoints(
+        latestWaypointsRef.current.filter((_, itemIndex) => itemIndex !== index),
+      );
       return;
     }
     if (!event.key.startsWith("Arrow")) return;
     event.preventDefault();
     event.stopPropagation();
     updateWaypoints(
-      waypoints.map((point, itemIndex) =>
+      latestWaypointsRef.current.map((point, itemIndex) =>
         itemIndex === index ? nudgeWaypoint(point, event.key, event.shiftKey ? 3 : 12) : point,
       ),
     );
@@ -134,11 +147,13 @@ export function WaypointEdge({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragCleanupRef.current?.();
+    cleanupDrag();
     const move = (moveEvent: PointerEvent) => {
       const point = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
       updateWaypoints(
-        waypoints.map((item, itemIndex) => (itemIndex === index ? point : item)),
+        latestWaypointsRef.current.map((item, itemIndex) =>
+          itemIndex === index ? point : item,
+        ),
       );
     };
     const stop = () => {
@@ -181,7 +196,7 @@ export function WaypointEdge({
           onKeyDown={(event) => editWaypointFromKeyboard(event, index)}
           tabIndex={0}
           role="button"
-          aria-label={`Edit waypoint ${index + 1} of ${waypoints.length}`}
+          aria-label={`Delete waypoint ${index + 1} of ${waypoints.length}; use arrow keys to move`}
         />
       ))}
       {label ? (

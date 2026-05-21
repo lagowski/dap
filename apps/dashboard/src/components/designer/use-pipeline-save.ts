@@ -249,7 +249,7 @@ export function useAutoSaveLayout({
   viewport,
   edgeWaypoints,
 }: UseAutoSaveLayoutParams): UseAutoSaveLayoutResult {
-  const { mutateAsync, error } = useUpdatePipelineUiMetadata();
+  const { mutateAsync } = useUpdatePipelineUiMetadata();
   const [status, setStatus] = useState<AutoSaveLayoutStatus>("idle");
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [currentError, setCurrentError] = useState<unknown>(null);
@@ -300,5 +300,5 @@ export function useAutoSaveLayout({
     return () => window.clearTimeout(timeout);
   }, [pipelineId, uiMetadata, mutateAsync]);
 
-  return { status, savedAt, error: currentError ?? error };
+  return { status, savedAt, error: currentError };
 }
