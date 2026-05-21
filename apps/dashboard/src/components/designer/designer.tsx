@@ -87,7 +87,21 @@ type DesignerEdgeData = {
 };
 
 function designerEdgeData(data: unknown): DesignerEdgeData {
-  return data != null && typeof data === "object" ? (data as DesignerEdgeData) : {};
+  if (data == null || typeof data !== "object") return {};
+
+  const waypoints = Reflect.get(data, "waypoints");
+  const onWaypointsChange = Reflect.get(data, "onWaypointsChange");
+
+  return {
+    ...(waypoints !== undefined ? { waypoints } : {}),
+    ...(typeof onWaypointsChange === "function"
+      ? {
+          onWaypointsChange: (edgeId: string, nextWaypoints: XYPosition[]) => {
+            onWaypointsChange(edgeId, nextWaypoints);
+          },
+        }
+      : {}),
+  };
 }
 
 function parseSavedViewport(uiMetadata: Record<string, unknown> | undefined): Viewport | null {
