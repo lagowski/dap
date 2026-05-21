@@ -141,7 +141,7 @@ export function WaypointEdge({
         fill="none"
         stroke="transparent"
         strokeWidth={18}
-        className="react-flow__edge-interaction"
+        className="react-flow__edge-interaction focus:outline-none focus-visible:stroke-primary"
         onDoubleClick={addWaypoint}
         onKeyDown={addWaypointFromKeyboard}
         tabIndex={0}
@@ -163,7 +163,7 @@ export function WaypointEdge({
           onKeyDown={(event) => editWaypointFromKeyboard(event, index)}
           tabIndex={0}
           role="button"
-          aria-label={`Edit waypoint ${index + 1}`}
+          aria-label={`Edit waypoint ${index + 1} of ${waypoints.length}`}
         />
       ))}
       {label ? (
