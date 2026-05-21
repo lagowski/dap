@@ -7,6 +7,7 @@ import {
   type XYPosition,
   useReactFlow,
 } from "@xyflow/react";
+import { useEffect, useMemo, useRef } from "react";
 import type React from "react";
 
 type WaypointEdgeData = {
@@ -14,6 +15,8 @@ type WaypointEdgeData = {
   onWaypointsChange?: (edgeId: string, waypoints: XYPosition[]) => void;
   tooltip?: string;
 };
+
+const EMPTY_WAYPOINTS: XYPosition[] = [];
 
 export function waypointPath(points: XYPosition[]): string {
   if (points.length === 0) return "";
@@ -61,15 +64,27 @@ export function WaypointEdge({
   data,
 }: EdgeProps) {
   const { screenToFlowPosition } = useReactFlow();
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   const edgeData = (data ?? {}) as WaypointEdgeData;
-  const waypoints = edgeData.waypoints ?? [];
-  const pathPoints = [
-    { x: sourceX, y: sourceY },
-    ...waypoints,
-    { x: targetX, y: targetY },
-  ];
+  const waypoints = edgeData.waypoints ?? EMPTY_WAYPOINTS;
+  const pathPoints = useMemo(
+    () => [
+      { x: sourceX, y: sourceY },
+      ...waypoints,
+      { x: targetX, y: targetY },
+    ],
+    [sourceX, sourceY, targetX, targetY, waypoints],
+  );
   const path = waypointPath(pathPoints);
   const labelPosition = midpoint(pathPoints);
+
+  useEffect(
+    () => () => {
+      dragCleanupRef.current?.();
+      dragCleanupRef.current = null;
+    },
+    [],
+  );
 
   const updateWaypoints = (next: XYPosition[]) => {
     edgeData.onWaypointsChange?.(id, next);
@@ -119,6 +134,7 @@ export function WaypointEdge({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
+    dragCleanupRef.current?.();
     const move = (moveEvent: PointerEvent) => {
       const point = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
       updateWaypoints(
@@ -128,7 +144,9 @@ export function WaypointEdge({
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
+      dragCleanupRef.current = null;
     };
+    dragCleanupRef.current = stop;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop, { once: true });
   };
