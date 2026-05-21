@@ -639,6 +639,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pipelines/{pipeline_id}/ui-metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Pipeline Ui Metadata
+         * @description Merge dashboard layout metadata into the current version.
+         *
+         *     Unlike ``PUT /pipelines/{id}``, this is intentionally versionless:
+         *     drag/pan autosave should not create v2/v3 history rows.
+         */
+        patch: operations["update_pipeline_ui_metadata_pipelines__pipeline_id__ui_metadata_patch"];
+        trace?: never;
+    };
     "/pipelines/{pipeline_id}/versions": {
         parameters: {
             query?: never;
@@ -2695,6 +2718,20 @@ export interface components {
             verification_status: "pending" | "approved" | "rejected";
         };
         /**
+         * PipelineUiMetadataPatch
+         * @description PATCH /pipelines/{id}/ui-metadata body.
+         *
+         *     The dashboard owns this JSON blob, but the engine validates the
+         *     layout keys it knows about so autosave cannot persist unusable
+         *     viewport or waypoint data. Unknown keys stay forward-compatible.
+         */
+        PipelineUiMetadataPatch: {
+            /** Ui Metadata */
+            ui_metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
          * PipelineUpdate
          * @description PUT /pipelines/{id} body — creates a new version.
          */
@@ -4197,6 +4234,39 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PipelineExport"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_pipeline_ui_metadata_pipelines__pipeline_id__ui_metadata_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineUiMetadataPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

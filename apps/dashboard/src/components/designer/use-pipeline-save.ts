@@ -15,12 +15,14 @@
  * resulting pipeline ID on success.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Viewport } from "@xyflow/react";
 
 import {
   useCreatePipeline,
   useUpdatePipeline,
+  useUpdatePipelineUiMetadata,
   useValidatePipeline,
 } from "@/hooks/api";
 import type {
@@ -36,16 +38,87 @@ import {
   type PipelineFormPayload,
 } from "./types";
 
+const AUTOSAVE_LAYOUT_DEBOUNCE_MS = 500;
 
-interface UsePipelineSaveParams {
+export type AutoSaveLayoutStatus = "idle" | "saving" | "saved" | "error";
+
+interface BuildPipelinePayloadParams {
   name: string;
   description: string;
   entryPoint: string;
   designerNodes: PipelineNode[];
   designerEdges: PipelineEdge[];
   initialPipeline: Pipeline | null;
+  viewport?: Viewport | null;
 }
 
+interface BuildLayoutUiMetadataParams {
+  designerNodes: PipelineNode[];
+  existingUiMetadata?: Record<string, unknown> | null;
+  viewport?: Viewport | null;
+}
+
+function existingMetadata(pipeline: Pipeline | null): Record<string, unknown> {
+  return pipeline?.ui_metadata && typeof pipeline.ui_metadata === "object"
+    ? (pipeline.ui_metadata as Record<string, unknown>)
+    : {};
+}
+
+function isValidViewport(viewport: Viewport | null | undefined): viewport is Viewport {
+  return (
+    viewport != null &&
+    Number.isFinite(viewport.x) &&
+    Number.isFinite(viewport.y) &&
+    Number.isFinite(viewport.zoom) &&
+    viewport.zoom >= 0.1 &&
+    viewport.zoom <= 4
+  );
+}
+
+export function buildLayoutUiMetadata({
+  designerNodes,
+  existingUiMetadata = {},
+  viewport,
+}: BuildLayoutUiMetadataParams): Record<string, unknown> {
+  const nodePositions: Record<string, { x: number; y: number }> = {};
+  for (const n of designerNodes) {
+    nodePositions[n.id] = { x: n.position.x, y: n.position.y };
+  }
+
+  return {
+    ...(existingUiMetadata ?? {}),
+    node_positions: nodePositions,
+    ...(isValidViewport(viewport) ? { viewport } : {}),
+  };
+}
+
+export function buildPipelinePayload({
+  name,
+  description,
+  entryPoint,
+  designerNodes,
+  designerEdges,
+  initialPipeline,
+  viewport,
+}: BuildPipelinePayloadParams): PipelineFormPayload {
+  return {
+    name,
+    description,
+    schema_version: "langgraph/1.0",
+    state_schema_ref: STATE_SCHEMA_REF,
+    entry_point: entryPoint,
+    nodes: designerNodes,
+    edges: designerEdges,
+    defaults: DEFAULT_DEFAULTS,
+    ui_metadata: buildLayoutUiMetadata({
+      designerNodes,
+      existingUiMetadata: existingMetadata(initialPipeline),
+      viewport,
+    }),
+  };
+}
+
+type UsePipelineSaveParams = BuildPipelinePayloadParams;
 
 interface UsePipelineSaveResult {
   handleValidate: () => Promise<void>;
@@ -65,6 +138,7 @@ export function usePipelineSave({
   designerNodes,
   designerEdges,
   initialPipeline,
+  viewport,
 }: UsePipelineSaveParams): UsePipelineSaveResult {
   const router = useRouter();
   const validate = useValidatePipeline();
@@ -72,32 +146,19 @@ export function usePipelineSave({
   const update = useUpdatePipeline();
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
 
-  const buildPayload = useCallback((): PipelineFormPayload => {
-    // Snapshot current node positions into ui_metadata so they survive
-    // page refresh. PipelineNode.position is the authoritative storage;
-    // node_positions here is an explicit UI-layer copy that the designer
-    // applies on load before ReactFlow's fitView can shift things (#226).
-    const nodePositions: Record<string, { x: number; y: number }> = {};
-    for (const n of designerNodes) {
-      nodePositions[n.id] = { x: n.position.x, y: n.position.y };
-    }
-    const existingMeta =
-      initialPipeline?.ui_metadata &&
-      typeof initialPipeline.ui_metadata === "object"
-        ? (initialPipeline.ui_metadata as Record<string, unknown>)
-        : {};
-    return {
-      name,
-      description,
-      schema_version: "langgraph/1.0",
-      state_schema_ref: STATE_SCHEMA_REF,
-      entry_point: entryPoint,
-      nodes: designerNodes,
-      edges: designerEdges,
-      defaults: DEFAULT_DEFAULTS,
-      ui_metadata: { ...existingMeta, node_positions: nodePositions },
-    };
-  }, [name, description, entryPoint, designerNodes, designerEdges, initialPipeline]);
+  const buildPayload = useCallback(
+    (): PipelineFormPayload =>
+      buildPipelinePayload({
+        name,
+        description,
+        entryPoint,
+        designerNodes,
+        designerEdges,
+        initialPipeline,
+        viewport,
+      }),
+    [name, description, entryPoint, designerNodes, designerEdges, initialPipeline, viewport],
+  );
 
   const handleValidate = useCallback(async () => {
     // Clear any previous result first — otherwise a stale "valid" sticks
@@ -147,4 +208,67 @@ export function usePipelineSave({
     saveLabel,
     submitError,
   };
+}
+
+interface UseAutoSaveLayoutParams {
+  pipelineId: string | null;
+  designerNodes: PipelineNode[];
+  existingUiMetadata?: Record<string, unknown> | null;
+  viewport?: Viewport | null;
+}
+
+interface UseAutoSaveLayoutResult {
+  status: AutoSaveLayoutStatus;
+  savedAt: Date | null;
+  error: unknown;
+}
+
+export function useAutoSaveLayout({
+  pipelineId,
+  designerNodes,
+  existingUiMetadata,
+  viewport,
+}: UseAutoSaveLayoutParams): UseAutoSaveLayoutResult {
+  const { mutateAsync, error } = useUpdatePipelineUiMetadata();
+  const [status, setStatus] = useState<AutoSaveLayoutStatus>("idle");
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const lastSnapshotRef = useRef<string | null>(null);
+  const requestSeqRef = useRef(0);
+
+  const uiMetadata = useMemo(
+    () => buildLayoutUiMetadata({ designerNodes, existingUiMetadata, viewport }),
+    [designerNodes, existingUiMetadata, viewport],
+  );
+
+  useEffect(() => {
+    if (!pipelineId) return;
+
+    const snapshot = JSON.stringify(uiMetadata);
+    if (lastSnapshotRef.current === null) {
+      lastSnapshotRef.current = snapshot;
+      return;
+    }
+    if (lastSnapshotRef.current === snapshot) return;
+
+    const timeout = window.setTimeout(() => {
+      const requestSeq = requestSeqRef.current + 1;
+      requestSeqRef.current = requestSeq;
+      setStatus("saving");
+      mutateAsync({ id: pipelineId, payload: { ui_metadata: uiMetadata } })
+        .then(() => {
+          if (requestSeq !== requestSeqRef.current) return;
+          lastSnapshotRef.current = snapshot;
+          setSavedAt(new Date());
+          setStatus("saved");
+        })
+        .catch(() => {
+          if (requestSeq !== requestSeqRef.current) return;
+          setStatus("error");
+        });
+    }, AUTOSAVE_LAYOUT_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [pipelineId, uiMetadata, mutateAsync]);
+
+  return { status, savedAt, error };
 }

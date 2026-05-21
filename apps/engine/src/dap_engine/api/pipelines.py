@@ -25,7 +25,7 @@ from dap_engine.api.schemas import (
 )
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
-from dap_engine.contracts import PipelineCreate, PipelineUpdate
+from dap_engine.contracts import PipelineCreate, PipelineUiMetadataPatch, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
@@ -329,6 +329,31 @@ def update_pipeline(
         )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.patch("/{pipeline_id}/ui-metadata", status_code=status.HTTP_204_NO_CONTENT)
+def update_pipeline_ui_metadata(
+    pipeline_id: str,
+    payload: PipelineUiMetadataPatch,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Response:
+    """Merge dashboard layout metadata into the current version.
+
+    Unlike ``PUT /pipelines/{id}``, this is intentionally versionless:
+    drag/pan autosave should not create v2/v3 history rows.
+    """
+    try:
+        repo.update_pipeline_ui_metadata(
+            session,
+            pipeline_id,
+            payload,
+            actor_id=user.id,
+            is_admin=user.is_superuser,
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)

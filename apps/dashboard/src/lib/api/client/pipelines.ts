@@ -8,5 +8,6 @@ export {
   inspectPipelineImportBackends,
   listPipelines,
   updatePipeline,
+  updatePipelineUiMetadata,
   validatePipeline,
 } from "../client";

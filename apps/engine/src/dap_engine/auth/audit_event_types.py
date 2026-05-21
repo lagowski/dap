@@ -81,6 +81,7 @@ AuditEventType = Literal[
     "agent.archived",
     "pipeline.created",
     "pipeline.updated",
+    "pipeline.ui_metadata_updated",
     "pipeline.archived",
     # Bundle import is its own event (distinct from ``pipeline.created``)
     # so the audit query can spot externally-sourced pipelines without

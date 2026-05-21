@@ -30,6 +30,7 @@ import type {
   PipelineCreate,
   PipelineExport,
   PipelineState,
+  PipelineUiMetadataPatch,
   PipelineUpdate,
   Project,
   ProjectCreate,
@@ -270,6 +271,16 @@ export async function updatePipeline(
 ): Promise<Pipeline> {
   return request<Pipeline>(`/pipelines/${encodeURIComponent(id)}`, {
     method: "PUT",
+    json: payload,
+  });
+}
+
+export async function updatePipelineUiMetadata(
+  id: string,
+  payload: PipelineUiMetadataPatch,
+): Promise<void> {
+  await request<void>(`/pipelines/${encodeURIComponent(id)}/ui-metadata`, {
+    method: "PATCH",
     json: payload,
   });
 }
