@@ -28,7 +28,7 @@ interface DesignerToolbarProps {
   submitError?: unknown;
   layoutSaveStatus?: AutoSaveLayoutStatus;
   layoutSavedAt?: Date | null;
-  layoutSaveError?: unknown;
+  layoutSaveError?: string | null;
   /** Set when editing an existing saved pipeline — enables the
    *  "Run", "Clone", and "Export JSON" buttons. None of those make
    *  sense before the pipeline has an id. */
@@ -227,21 +227,30 @@ function LayoutSaveStatus({
 }: {
   status: AutoSaveLayoutStatus;
   savedAt?: Date | null;
-  error?: unknown;
+  error?: string | null;
 }) {
   if (status === "idle") return null;
   if (status === "saving") {
-    return <span className="text-xs text-muted-foreground">Saving layout...</span>;
+    return (
+      <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
+        Saving layout...
+      </span>
+    );
   }
   if (status === "error") {
     return (
-      <span className="text-xs text-destructive" title={error ? formatApiError(error) : undefined}>
+      <span
+        className="text-xs text-destructive"
+        title={error ?? undefined}
+        role="status"
+        aria-live="polite"
+      >
         Layout save failed
       </span>
     );
   }
   return (
-    <span className="text-xs text-muted-foreground">
+    <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
       Saved {savedAt ? savedAt.toLocaleTimeString() : ""}
     </span>
   );
