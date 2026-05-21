@@ -17,7 +17,12 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.encryption import EncryptionError, decrypt_value
+from dap_engine.execution.backend_profiles import (
+    merge_backend_profile_env_layers,
+    resolve_backend_profile,
+)
 from dap_engine.execution.conditions import evaluate_condition
 from dap_engine.execution.node_executor import NodeContext, make_node_fn
 from dap_engine.persistence.models import (
@@ -149,7 +154,7 @@ class PipelineRunner:
 
         # Pre-load agents referenced by the pipeline + verify they exist.
         agent_lookup = self._load_agents(pipeline)
-        self._enforce_runtime_policy(agent_lookup)
+        self._enforce_runtime_policy(run_id, agent_lookup)
 
         # Project context (#65) — working_directory + env_vars overlay.
         # Bails out with a descriptive RunnerError when the bound project
@@ -162,6 +167,7 @@ class PipelineRunner:
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
+            backend_profiles=pipeline_version_orm.backend_profiles,
             project_context=project_context,
             instance_env_vars=instance_env_vars,
         )
@@ -336,13 +342,14 @@ class PipelineRunner:
 
         pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
         agent_lookup = self._load_agents(pipeline)
-        self._enforce_runtime_policy(agent_lookup)
+        self._enforce_runtime_policy(run_id, agent_lookup)
         project_context = self._load_project_context(run_id)
         instance_env_vars = self._load_instance_env_vars()
         graph = self._build_graph(
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
+            backend_profiles=pipeline_version_orm.backend_profiles,
             project_context=project_context,
             instance_env_vars=instance_env_vars,
         )
@@ -395,6 +402,7 @@ class PipelineRunner:
         run_id: str,
         pipeline: Pipeline,
         agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
+        backend_profiles: dict[str, Any] | None = None,
         project_context: _ProjectContext | None = None,
         instance_env_vars: dict[str, str] | None = None,
     ) -> Any:
@@ -403,9 +411,38 @@ class PipelineRunner:
         # (instance vars loaded once per ``run()`` — see
         # ``_load_instance_env_vars``).
         instance_overlay: dict[str, str] = dict(instance_env_vars or {})
+        project_env_overlay = dict(project_context.env_vars) if project_context else None
+        backend_profile_env_layers = merge_backend_profile_env_layers(
+            instance_env_vars=instance_overlay,
+            project_env_vars=project_env_overlay,
+        )
 
         for node in pipeline.nodes:
             agent, version = agent_lookup[node.agent_id]
+            resolved_backend = resolve_backend_profile(
+                backend_profiles=backend_profiles,
+                node_id=node.id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                agent_role=agent.role,
+                base_runtime_id=version.runtime_id,
+                base_runtime_config=version.runtime_config,
+                env_layers=backend_profile_env_layers,
+            )
+            try:
+                ensure_runtime_allowed(
+                    resolved_backend.runtime_id,
+                    is_admin=self.actor_is_admin,
+                    allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
+                )
+            except RuntimePolicyError as exc:
+                self._record_runtime_policy_denial(
+                    run_id=run_id,
+                    runtime_id=resolved_backend.runtime_id,
+                    reason=str(exc),
+                    surface="runner.build_graph",
+                )
+                raise RunnerError("Runtime policy denied for pipeline node") from exc
             ctx = NodeContext(
                 run_id=run_id,
                 node_id=node.id,
@@ -413,12 +450,14 @@ class PipelineRunner:
                 agent_version=version,
                 registry=self.registry,
                 session=self.session,
+                runtime_id=resolved_backend.runtime_id,
+                runtime_config=resolved_backend.runtime_config,
                 runtime_overrides=(node.overrides.runtime_config if node.overrides else None),
                 timeout_override_ms=(node.overrides.timeout_ms if node.overrides else None),
                 project_working_directory=(
                     project_context.working_directory if project_context else None
                 ),
-                project_env_vars=(dict(project_context.env_vars) if project_context else None),
+                project_env_vars=project_env_overlay,
                 instance_env_vars=dict(instance_overlay),
             )
             builder.add_node(node.id, make_node_fn(ctx))  # type: ignore[call-overload]
@@ -516,6 +555,7 @@ class PipelineRunner:
 
     def _enforce_runtime_policy(
         self,
+        run_id: str,
         agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
     ) -> None:
         """Defensive runtime gate for background/resume execution."""
@@ -527,7 +567,37 @@ class PipelineRunner:
                     allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
                 )
             except RuntimePolicyError as exc:
-                raise RunnerError(str(exc)) from exc
+                self._record_runtime_policy_denial(
+                    run_id=run_id,
+                    runtime_id=version.runtime_id,
+                    reason=str(exc),
+                    surface="runner.agent_preflight",
+                )
+                raise RunnerError("Runtime policy denied for pipeline run") from exc
+
+    def _record_runtime_policy_denial(
+        self,
+        *,
+        run_id: str,
+        runtime_id: str,
+        reason: str,
+        surface: str,
+    ) -> None:
+        run = self.session.get(RunORM, run_id)
+        try:
+            record_audit_event(
+                self.session,
+                user_id=(run.user_id if run is not None else None),
+                event_type="runtime_policy.denied",
+                event_data={
+                    "surface": surface,
+                    "run_id": run_id,
+                    "runtime_id": runtime_id,
+                    "reason": reason,
+                },
+            )
+        except Exception:
+            logger.exception("audit-log write failed for runtime policy denial on run %s", run_id)
 
     # -----------------------------------------------------------------------
     # ORM helpers

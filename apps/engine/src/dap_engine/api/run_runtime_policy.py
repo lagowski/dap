@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from dap_engine.execution.backend_profiles import resolve_backend_profile
 from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineVersionORM
 from dap_engine.runtime_policy import runtime_policy_error
 
@@ -50,9 +51,28 @@ def pipeline_runtime_policy_error(
         )
         .where(AgentORM.id.in_(agent_ids))
     ).all()
-    for _agent, version in rows:
+    rows_by_agent_id = {agent.id: (agent, version) for agent, version in rows}
+
+    for node in pipeline_version.nodes:
+        agent_id = node.get("agent_id")
+        if not isinstance(agent_id, str):
+            continue
+        pair = rows_by_agent_id.get(agent_id)
+        if pair is None:
+            continue
+        agent, version = pair
+        node_id = node.get("id")
+        resolved = resolve_backend_profile(
+            backend_profiles=pipeline_version.backend_profiles,
+            node_id=node_id if isinstance(node_id, str) else "",
+            agent_id=agent.id,
+            agent_name=agent.name,
+            agent_role=agent.role,
+            base_runtime_id=version.runtime_id,
+            base_runtime_config=version.runtime_config,
+        )
         denial = runtime_policy_error(
-            version.runtime_id,
+            resolved.runtime_id,
             is_admin=is_admin,
             allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
         )
