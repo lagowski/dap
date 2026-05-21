@@ -35,23 +35,44 @@ def _create_bash_agent(client: TestClient) -> str:
     return str(response.json()["id"])
 
 
-def _create_pipeline(client: TestClient, agent_id: str) -> str:
+def _create_api_agent(client: TestClient) -> str:
+    payload = {
+        **_bash_agent_payload(),
+        "name": "API Probe",
+        "runtime_id": "api-call",
+        "runtime_config": {"provider": "anthropic", "model_id": "claude-haiku-4-5"},
+    }
+    response = client.post("/agents", json=payload)
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
+def _create_pipeline(
+    client: TestClient,
+    agent_id: str,
+    *,
+    backend_profiles: dict[str, object] | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "name": "Bash Policy Pipeline",
+        "description": "",
+        "schema_version": "langgraph/1.0",
+        "state_schema_ref": "PipelineState.v1",
+        "entry_point": "n1",
+        "nodes": [{"id": "n1", "agent_id": agent_id, "position": {"x": 0, "y": 0}}],
+        "edges": [{"id": "e1", "source": "n1", "target": "__end__"}],
+        "defaults": {
+            "max_attempts": 3,
+            "budget_limit_usd": 5.0,
+            "approval_required_nodes": [],
+        },
+    }
+    if backend_profiles is not None:
+        payload["backend_profiles"] = backend_profiles
+
     response = client.post(
         "/pipelines",
-        json={
-            "name": "Bash Policy Pipeline",
-            "description": "",
-            "schema_version": "langgraph/1.0",
-            "state_schema_ref": "PipelineState.v1",
-            "entry_point": "n1",
-            "nodes": [{"id": "n1", "agent_id": agent_id, "position": {"x": 0, "y": 0}}],
-            "edges": [{"id": "e1", "source": "n1", "target": "__end__"}],
-            "defaults": {
-                "max_attempts": 3,
-                "budget_limit_usd": 5.0,
-                "approval_required_nodes": [],
-            },
-        },
+        json=payload,
     )
     assert response.status_code == 201, response.text
     return str(response.json()["id"])
@@ -116,6 +137,79 @@ def test_non_admin_run_rejects_bash_pipeline_by_default(
     with _client_with_config(engine_config_factory()) as client:
         agent_id = _create_bash_agent(client)
         pipeline_id = _create_pipeline(client, agent_id)
+
+        response = client.post("/runs", json={"pipeline_id": pipeline_id, "initial_state": {}})
+
+    assert response.status_code == 403
+    assert "bash runtime is disabled for non-admin users" in response.text
+    payloads = _runtime_policy_audit_payloads(client)
+    assert payloads == [
+        {
+            "surface": "runs.trigger",
+            "pipeline_id": pipeline_id,
+            "pipeline_version": 1,
+            "reason": (
+                "bash runtime is disabled for non-admin users. "
+                "Set DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1 to opt in."
+            ),
+        }
+    ]
+
+
+def test_non_admin_run_rejects_backend_profile_bash_runtime_by_default(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> None:
+    with _client_with_config(engine_config_factory()) as client:
+        agent_id = _create_api_agent(client)
+        pipeline_id = _create_pipeline(
+            client,
+            agent_id,
+            backend_profiles={
+                "available": {
+                    "dangerous": {
+                        "runtime_id": "bash",
+                        "runtime_config": {"command": "echo should-not-run"},
+                    }
+                },
+                "agent_assignments": {"default_profile": "dangerous", "overrides": {}},
+            },
+        )
+
+        response = client.post("/runs", json={"pipeline_id": pipeline_id, "initial_state": {}})
+
+    assert response.status_code == 403
+    assert "bash runtime is disabled for non-admin users" in response.text
+    payloads = _runtime_policy_audit_payloads(client)
+    assert payloads == [
+        {
+            "surface": "runs.trigger",
+            "pipeline_id": pipeline_id,
+            "pipeline_version": 1,
+            "reason": (
+                "bash runtime is disabled for non-admin users. "
+                "Set DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1 to opt in."
+            ),
+        }
+    ]
+
+
+def test_non_admin_run_rejects_bash_agent_with_config_only_backend_profile(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> None:
+    with _client_with_config(engine_config_factory()) as client:
+        agent_id = _create_bash_agent(client)
+        pipeline_id = _create_pipeline(
+            client,
+            agent_id,
+            backend_profiles={
+                "available": {
+                    "config-only": {
+                        "runtime_config": {"command": "echo still-should-not-run"},
+                    }
+                },
+                "agent_assignments": {"default_profile": "config-only", "overrides": {}},
+            },
+        )
 
         response = client.post("/runs", json={"pipeline_id": pipeline_id, "initial_state": {}})
 
