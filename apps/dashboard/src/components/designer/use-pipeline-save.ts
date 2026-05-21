@@ -37,6 +37,7 @@ import {
   STATE_SCHEMA_REF,
   type PipelineFormPayload,
 } from "./types";
+import type { EdgeWaypoints } from "./reactflow-adapters";
 
 const AUTOSAVE_LAYOUT_DEBOUNCE_MS = 500;
 
@@ -50,12 +51,14 @@ interface BuildPipelinePayloadParams {
   designerEdges: PipelineEdge[];
   initialPipeline: Pipeline | null;
   viewport?: Viewport | null;
+  edgeWaypoints?: EdgeWaypoints;
 }
 
 interface BuildLayoutUiMetadataParams {
   designerNodes: PipelineNode[];
   existingUiMetadata?: Record<string, unknown> | null;
   viewport?: Viewport | null;
+  edgeWaypoints?: EdgeWaypoints;
 }
 
 function existingMetadata(pipeline: Pipeline | null): Record<string, unknown> {
@@ -79,6 +82,7 @@ export function buildLayoutUiMetadata({
   designerNodes,
   existingUiMetadata = {},
   viewport,
+  edgeWaypoints,
 }: BuildLayoutUiMetadataParams): Record<string, unknown> {
   const nodePositions: Record<string, { x: number; y: number }> = {};
   for (const n of designerNodes) {
@@ -89,6 +93,7 @@ export function buildLayoutUiMetadata({
     ...(existingUiMetadata ?? {}),
     node_positions: nodePositions,
     ...(isValidViewport(viewport) ? { viewport } : {}),
+    ...(edgeWaypoints ? { edge_waypoints: edgeWaypoints } : {}),
   };
 }
 
@@ -100,6 +105,7 @@ export function buildPipelinePayload({
   designerEdges,
   initialPipeline,
   viewport,
+  edgeWaypoints,
 }: BuildPipelinePayloadParams): PipelineFormPayload {
   return {
     name,
@@ -114,6 +120,7 @@ export function buildPipelinePayload({
       designerNodes,
       existingUiMetadata: existingMetadata(initialPipeline),
       viewport,
+      edgeWaypoints,
     }),
   };
 }
@@ -139,6 +146,7 @@ export function usePipelineSave({
   designerEdges,
   initialPipeline,
   viewport,
+  edgeWaypoints,
 }: UsePipelineSaveParams): UsePipelineSaveResult {
   const router = useRouter();
   const validate = useValidatePipeline();
@@ -156,8 +164,18 @@ export function usePipelineSave({
         designerEdges,
         initialPipeline,
         viewport,
+        edgeWaypoints,
       }),
-    [name, description, entryPoint, designerNodes, designerEdges, initialPipeline, viewport],
+    [
+      name,
+      description,
+      entryPoint,
+      designerNodes,
+      designerEdges,
+      initialPipeline,
+      viewport,
+      edgeWaypoints,
+    ],
   );
 
   const handleValidate = useCallback(async () => {
@@ -215,6 +233,7 @@ interface UseAutoSaveLayoutParams {
   designerNodes: PipelineNode[];
   existingUiMetadata?: Record<string, unknown> | null;
   viewport?: Viewport | null;
+  edgeWaypoints?: EdgeWaypoints;
 }
 
 interface UseAutoSaveLayoutResult {
@@ -228,16 +247,24 @@ export function useAutoSaveLayout({
   designerNodes,
   existingUiMetadata,
   viewport,
+  edgeWaypoints,
 }: UseAutoSaveLayoutParams): UseAutoSaveLayoutResult {
   const { mutateAsync, error } = useUpdatePipelineUiMetadata();
   const [status, setStatus] = useState<AutoSaveLayoutStatus>("idle");
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [currentError, setCurrentError] = useState<unknown>(null);
   const lastSnapshotRef = useRef<string | null>(null);
   const requestSeqRef = useRef(0);
 
   const uiMetadata = useMemo(
-    () => buildLayoutUiMetadata({ designerNodes, existingUiMetadata, viewport }),
-    [designerNodes, existingUiMetadata, viewport],
+    () =>
+      buildLayoutUiMetadata({
+        designerNodes,
+        existingUiMetadata,
+        viewport,
+        edgeWaypoints,
+      }),
+    [designerNodes, existingUiMetadata, viewport, edgeWaypoints],
   );
 
   useEffect(() => {
@@ -254,15 +281,18 @@ export function useAutoSaveLayout({
       const requestSeq = requestSeqRef.current + 1;
       requestSeqRef.current = requestSeq;
       setStatus("saving");
+      setCurrentError(null);
       mutateAsync({ id: pipelineId, payload: { ui_metadata: uiMetadata } })
         .then(() => {
           if (requestSeq !== requestSeqRef.current) return;
           lastSnapshotRef.current = snapshot;
           setSavedAt(new Date());
+          setCurrentError(null);
           setStatus("saved");
         })
-        .catch(() => {
+        .catch((nextError: unknown) => {
           if (requestSeq !== requestSeqRef.current) return;
+          setCurrentError(nextError);
           setStatus("error");
         });
     }, AUTOSAVE_LAYOUT_DEBOUNCE_MS);
@@ -270,5 +300,5 @@ export function useAutoSaveLayout({
     return () => window.clearTimeout(timeout);
   }, [pipelineId, uiMetadata, mutateAsync]);
 
-  return { status, savedAt, error };
+  return { status, savedAt, error: currentError ?? error };
 }

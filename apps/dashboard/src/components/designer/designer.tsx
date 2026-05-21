@@ -34,6 +34,7 @@ import {
   type Connection,
   type Edge,
   type EdgeChange,
+  type EdgeTypes,
   type Node,
   type NodeChange,
   type OnConnect,
@@ -41,6 +42,7 @@ import {
   type OnMoveEnd,
   type OnNodesChange,
   type Viewport,
+  type XYPosition,
 } from "@xyflow/react";
 
 import { useAgentsList } from "@/hooks/api";
@@ -52,10 +54,16 @@ import type {
 
 import { AgentPalette } from "./agent-palette";
 import { Inspector } from "./inspector";
-import { toReactFlowEdge, toReactFlowNode } from "./reactflow-adapters";
+import {
+  parseEdgeWaypoints,
+  toReactFlowEdge,
+  toReactFlowNode,
+  type EdgeWaypoints,
+} from "./reactflow-adapters";
 import { DesignerToolbar } from "./toolbar";
 import { usePipelineProjections } from "./use-pipeline-projections";
 import { useAutoSaveLayout, usePipelineSave } from "./use-pipeline-save";
+import { WaypointEdge } from "./waypoint-edge";
 
 interface PipelineDesignerProps {
   /** The persisted pipeline being edited; ``null`` for a fresh pipeline. */
@@ -71,6 +79,7 @@ interface PipelineDesignerProps {
 }
 
 const NEW_NODE_OFFSET = 80;
+const EDGE_TYPES: EdgeTypes = { waypoint: WaypointEdge };
 
 function parseSavedViewport(uiMetadata: Record<string, unknown> | undefined): Viewport | null {
   const viewport = uiMetadata?.viewport;
@@ -120,6 +129,7 @@ export function PipelineDesigner({
   const [description, setDescription] = useState(seed?.description ?? "");
   const [entryPoint, setEntryPoint] = useState(seed?.entry_point ?? "");
   const savedViewport = parseSavedViewport(seed?.ui_metadata);
+  const savedEdgeWaypoints = parseEdgeWaypoints(seed?.ui_metadata);
   const [viewport, setViewport] = useState<Viewport | null>(savedViewport);
 
   const [nodes, setNodes] = useState<Node[]>(() => {
@@ -135,7 +145,9 @@ export function PipelineDesigner({
     });
   });
   const [edges, setEdges] = useState<Edge[]>(() =>
-    (seed?.edges ?? []).map(toReactFlowEdge),
+    (seed?.edges ?? []).map((edge) =>
+      toReactFlowEdge(edge, savedEdgeWaypoints[edge.id] ?? []),
+    ),
   );
 
   // Designer-domain edge metadata that React Flow doesn't know about.
@@ -168,7 +180,9 @@ export function PipelineDesigner({
   }, []);
   const onConnect: OnConnect = useCallback((params: Connection) => {
     const edgeId = `e_${Math.random().toString(36).slice(2, 8)}`;
-    setEdges((eds) => addEdge({ ...params, id: edgeId }, eds));
+    setEdges((eds) =>
+      addEdge({ ...params, id: edgeId, type: "waypoint", data: { waypoints: [] } }, eds),
+    );
     setEdgeMeta((meta) => ({ ...meta, [edgeId]: { condition: null, label: null } }));
   }, []);
 
@@ -257,8 +271,57 @@ export function PipelineDesigner({
     [],
   );
 
+  const handleUpdateEdgeWaypoints = useCallback(
+    (edgeId: string, waypoints: XYPosition[]) => {
+      setEdges((eds) =>
+        eds.map((edge) =>
+          edge.id === edgeId
+            ? {
+                ...edge,
+                type: "waypoint",
+                data: { ...(edge.data as object | undefined), waypoints },
+              }
+            : edge,
+        ),
+      );
+    },
+    [],
+  );
+
   const { designerNodes, designerEdges, annotatedEdges, selectionDetail } =
     usePipelineProjections({ nodes, edges, edgeMeta, agents, selection });
+  const renderedEdges = useMemo<Edge[]>(
+    () =>
+      annotatedEdges.map((edge) => ({
+        ...edge,
+        type: "waypoint",
+        data: {
+          ...(edge.data as object | undefined),
+          onWaypointsChange: handleUpdateEdgeWaypoints,
+        },
+      })),
+    [annotatedEdges, handleUpdateEdgeWaypoints],
+  );
+  const edgeWaypoints = useMemo<EdgeWaypoints>(() => {
+    const out: EdgeWaypoints = {};
+    for (const edge of edges) {
+      const waypoints = (edge.data as { waypoints?: unknown } | undefined)?.waypoints;
+      if (!Array.isArray(waypoints)) continue;
+      const valid = waypoints.filter(
+        (point): point is XYPosition =>
+          point != null &&
+          typeof point === "object" &&
+          typeof (point as Partial<XYPosition>).x === "number" &&
+          typeof (point as Partial<XYPosition>).y === "number" &&
+          Number.isFinite((point as Partial<XYPosition>).x) &&
+          Number.isFinite((point as Partial<XYPosition>).y),
+      );
+      if (valid.length > 0) {
+        out[edge.id] = valid.map((point) => ({ x: point.x, y: point.y }));
+      }
+    }
+    return out;
+  }, [edges]);
 
   const save = usePipelineSave({
     name,
@@ -268,12 +331,14 @@ export function PipelineDesigner({
     designerEdges,
     initialPipeline,
     viewport,
+    edgeWaypoints,
   });
   const layoutSave = useAutoSaveLayout({
     pipelineId: initialPipeline?.id ?? null,
     designerNodes,
     existingUiMetadata: initialPipeline?.ui_metadata ?? null,
     viewport,
+    edgeWaypoints,
   });
 
   return (
@@ -302,7 +367,8 @@ export function PipelineDesigner({
         <div className="flex-1 bg-muted/30">
           <ReactFlow
             nodes={nodes}
-            edges={annotatedEdges}
+            edges={renderedEdges}
+            edgeTypes={EDGE_TYPES}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

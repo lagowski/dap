@@ -90,4 +90,29 @@ describe("buildPipelinePayload", () => {
       n2: { x: 30, y: 40 },
     });
   });
+
+  it("writes current edge waypoints when provided", () => {
+    const payload = buildPipelinePayload({
+      name: "Pipeline",
+      description: "Updated",
+      entryPoint: "n1",
+      designerNodes: nodes,
+      designerEdges: edges,
+      initialPipeline,
+      viewport: { x: 1, y: 2, zoom: 1.25 },
+      edgeWaypoints: {
+        e1: [
+          { x: 100, y: 120 },
+          { x: 200, y: 220 },
+        ],
+      },
+    });
+
+    expect(payload.ui_metadata?.edge_waypoints).toEqual({
+      e1: [
+        { x: 100, y: 120 },
+        { x: 200, y: 220 },
+      ],
+    });
+  });
 });

@@ -231,17 +231,26 @@ function LayoutSaveStatus({
 }) {
   if (status === "idle") return null;
   if (status === "saving") {
-    return <span className="text-xs text-muted-foreground">Saving layout...</span>;
+    return (
+      <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
+        Saving layout...
+      </span>
+    );
   }
   if (status === "error") {
     return (
-      <span className="text-xs text-destructive" title={error ? formatApiError(error) : undefined}>
+      <span
+        className="text-xs text-destructive"
+        title={error ? formatApiError(error) : undefined}
+        role="status"
+        aria-live="polite"
+      >
         Layout save failed
       </span>
     );
   }
   return (
-    <span className="text-xs text-muted-foreground">
+    <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
       Saved {savedAt ? savedAt.toLocaleTimeString() : ""}
     </span>
   );
