@@ -25,6 +25,7 @@ import {
   useUpdatePipelineUiMetadata,
   useValidatePipeline,
 } from "@/hooks/api";
+import { formatApiError } from "@/lib/api/client";
 import type {
   Pipeline,
   PipelineEdge,
@@ -239,7 +240,7 @@ interface UseAutoSaveLayoutParams {
 interface UseAutoSaveLayoutResult {
   status: AutoSaveLayoutStatus;
   savedAt: Date | null;
-  error: unknown;
+  error: string | null;
 }
 
 export function useAutoSaveLayout({
@@ -252,7 +253,7 @@ export function useAutoSaveLayout({
   const { mutateAsync } = useUpdatePipelineUiMetadata();
   const [status, setStatus] = useState<AutoSaveLayoutStatus>("idle");
   const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [currentError, setCurrentError] = useState<unknown>(null);
+  const [currentError, setCurrentError] = useState<string | null>(null);
   const lastSnapshotRef = useRef<string | null>(null);
   const requestSeqRef = useRef(0);
 
@@ -292,7 +293,7 @@ export function useAutoSaveLayout({
         })
         .catch((nextError: unknown) => {
           if (requestSeq !== requestSeqRef.current) return;
-          setCurrentError(nextError);
+          setCurrentError(formatApiError(nextError));
           setStatus("error");
         });
     }, AUTOSAVE_LAYOUT_DEBOUNCE_MS);

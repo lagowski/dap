@@ -81,6 +81,15 @@ interface PipelineDesignerProps {
 const NEW_NODE_OFFSET = 80;
 const EDGE_TYPES: EdgeTypes = { waypoint: WaypointEdge };
 
+type DesignerEdgeData = {
+  waypoints?: unknown;
+  onWaypointsChange?: (edgeId: string, waypoints: XYPosition[]) => void;
+};
+
+function designerEdgeData(data: unknown): DesignerEdgeData {
+  return data != null && typeof data === "object" ? (data as DesignerEdgeData) : {};
+}
+
 function parseSavedViewport(uiMetadata: Record<string, unknown> | undefined): Viewport | null {
   const viewport = uiMetadata?.viewport;
   if (!viewport || typeof viewport !== "object") return null;
@@ -279,7 +288,7 @@ export function PipelineDesigner({
             ? {
                 ...edge,
                 type: "waypoint",
-                data: { ...(edge.data as object | undefined), waypoints },
+                data: { ...designerEdgeData(edge.data), waypoints },
               }
             : edge,
         ),
@@ -296,9 +305,7 @@ export function PipelineDesigner({
         ...edge,
         type: "waypoint",
         data: {
-          ...(edge.data && typeof edge.data === "object"
-            ? (edge.data as Record<string, unknown>)
-            : {}),
+          ...designerEdgeData(edge.data),
           onWaypointsChange: handleUpdateEdgeWaypoints,
         },
       })),
@@ -307,7 +314,7 @@ export function PipelineDesigner({
   const edgeWaypoints = useMemo<EdgeWaypoints>(() => {
     const out: EdgeWaypoints = {};
     for (const edge of edges) {
-      const waypoints = (edge.data as { waypoints?: unknown } | undefined)?.waypoints;
+      const waypoints = designerEdgeData(edge.data).waypoints;
       if (!Array.isArray(waypoints)) continue;
       const valid = waypoints.filter(
         (point): point is XYPosition =>
