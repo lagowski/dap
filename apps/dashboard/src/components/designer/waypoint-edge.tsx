@@ -21,6 +21,25 @@ export function waypointPath(points: XYPosition[]): string {
   return rest.reduce((path, point) => `${path} L ${point.x},${point.y}`, `M ${first.x},${first.y}`);
 }
 
+export function nudgeWaypoint(
+  point: XYPosition,
+  key: string,
+  step = 12,
+): XYPosition {
+  switch (key) {
+    case "ArrowUp":
+      return { ...point, y: point.y - step };
+    case "ArrowDown":
+      return { ...point, y: point.y + step };
+    case "ArrowLeft":
+      return { ...point, x: point.x - step };
+    case "ArrowRight":
+      return { ...point, x: point.x + step };
+    default:
+      return point;
+  }
+}
+
 function midpoint(points: XYPosition[]): XYPosition {
   const index = Math.floor((points.length - 1) / 2);
   const start = points[index];
@@ -63,10 +82,37 @@ export function WaypointEdge({
     updateWaypoints([...waypoints, point]);
   };
 
+  const addWaypointFromKeyboard = (event: React.KeyboardEvent<SVGPathElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateWaypoints([...waypoints, midpoint(pathPoints)]);
+  };
+
   const removeWaypoint = (event: React.MouseEvent<SVGCircleElement>, index: number) => {
     event.preventDefault();
     event.stopPropagation();
     updateWaypoints(waypoints.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const editWaypointFromKeyboard = (
+    event: React.KeyboardEvent<SVGCircleElement>,
+    index: number,
+  ) => {
+    if (event.key === "Enter" || event.key === " " || event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      event.stopPropagation();
+      updateWaypoints(waypoints.filter((_, itemIndex) => itemIndex !== index));
+      return;
+    }
+    if (!event.key.startsWith("Arrow")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateWaypoints(
+      waypoints.map((point, itemIndex) =>
+        itemIndex === index ? nudgeWaypoint(point, event.key, event.shiftKey ? 3 : 12) : point,
+      ),
+    );
   };
 
   const startDrag = (event: React.PointerEvent<SVGCircleElement>, index: number) => {
@@ -97,6 +143,10 @@ export function WaypointEdge({
         strokeWidth={18}
         className="react-flow__edge-interaction"
         onDoubleClick={addWaypoint}
+        onKeyDown={addWaypointFromKeyboard}
+        tabIndex={0}
+        role="button"
+        aria-label="Add edge waypoint"
       >
         {edgeData.tooltip ? <title>{edgeData.tooltip}</title> : null}
       </path>
@@ -110,6 +160,10 @@ export function WaypointEdge({
           strokeWidth={2}
           onPointerDown={(event) => startDrag(event, index)}
           onDoubleClick={(event) => removeWaypoint(event, index)}
+          onKeyDown={(event) => editWaypointFromKeyboard(event, index)}
+          tabIndex={0}
+          role="button"
+          aria-label={`Edit waypoint ${index + 1}`}
         />
       ))}
       {label ? (
