@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from dap_engine.execution.run_orchestrator import _gate_payload_from_interrupt
 from dap_engine.execution.runner import RunnerInterrupt
 
