@@ -47,6 +47,7 @@ UNIT_FILES = frozenset(
         "test_codex_adapter.py",
         "test_conditions.py",
         "test_db_url_helpers.py",
+        "test_gate_payload_warnings.py",
         "test_gemini_cli_adapter.py",
         "test_http_adapter.py",
         "test_instance_env_vars_merge.py",
