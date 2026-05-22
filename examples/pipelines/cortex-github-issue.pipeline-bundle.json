@@ -1,6 +1,6 @@
 {
   "schema_version": "pipeline-export/1",
-  "_comment": "Cortex 13-agent GitHub Issue Pipeline expressed as a DAP bundle.\n\nARCHITECTURE\n  Phase 1 (enrichment): mockup → specify → cicd → dispatcher → finalize\n  [human gate]\n  Phase 2 (execution):  coder → designer → documenter\n  [human gate]\n  Phase 3 (merge):      code_reviewer → tester → pr_creator → reviewer\n  [human gate]\n  pr_merger\n\nSTATE CONTRACT\n  Cortex-specific fields (issue_url, repo, issue_number, run_id, …)\n  live in PipelineState.extensions so the generic schema is not polluted.\n  Each node reads extensions via the cortex.state_adapter module.\n\nDEPENDENCIES\n  dap-cortex package must be installed in the DAP engine venv:\n    pip install dap-cortex  (or: uv add dap-cortex)\n  Source: https://github.com/Dixter999/cortex-project\n  Environment variables required (same as standalone cortex run):\n    CORTEX_GH_TOKEN_READ, CORTEX_GH_TOKEN_ISSUES, CORTEX_GH_TOKEN_CODE,\n    CORTEX_GH_TOKEN_MERGE, CORTEX_DATABASE_URL",
+  "_comment": "Cortex 14-agent GitHub Issue Pipeline expressed as a DAP bundle.\n\nARCHITECTURE\n  Phase 1 (enrichment): mockup → specify → cicd → dispatcher → finalize\n    finalize READY    → phase1_gate (auto-approvable) → coder\n    finalize NEEDS_WORK → needs_work_gate (human-only) → specify (retry)\n  Phase 2 (execution):  coder → designer → documenter\n  [human gate]\n  Phase 3 (merge):      code_reviewer → tester → pr_creator → reviewer\n  [human gate]\n  pr_merger\n\nSTATE CONTRACT\n  Cortex-specific fields (issue_url, repo, issue_number, run_id, …)\n  live in PipelineState.extensions so the generic schema is not polluted.\n  Each node reads extensions via the cortex.state_adapter module.\n\nDEPENDENCIES\n  dap-cortex package must be installed in the DAP engine venv:\n    pip install dap-cortex  (or: uv add dap-cortex)\n  Source: https://github.com/Dixter999/cortex-project\n  Environment variables required (same as standalone cortex run):\n    CORTEX_GH_TOKEN_READ, CORTEX_GH_TOKEN_ISSUES, CORTEX_GH_TOKEN_CODE,\n    CORTEX_GH_TOKEN_MERGE, CORTEX_DATABASE_URL",
   "pipeline": {
     "name": "Cortex GitHub Issue Pipeline",
     "description": "13-agent pipeline: GitHub issue → Phase 1 enrichment → Phase 2 coding → Phase 3 PR merge. Port of the standalone Cortex pipeline to a DAP bundle.",
@@ -46,6 +46,14 @@
         "position": {
           "x": 880,
           "y": 0
+        }
+      },
+      {
+        "id": "needs_work_gate",
+        "agent_id": "cx_human_gate",
+        "position": {
+          "x": 1100,
+          "y": 160
         }
       },
       {
@@ -164,9 +172,34 @@
         "target": "finalize"
       },
       {
-        "id": "e06",
+        "id": "e06a",
         "source": "finalize",
-        "target": "phase1_gate"
+        "target": "phase1_gate",
+        "label": "READY",
+        "condition": {
+          "type": "comparison",
+          "field": "extensions.issue_ready",
+          "operator": "==",
+          "value": true
+        }
+      },
+      {
+        "id": "e06b",
+        "source": "finalize",
+        "target": "needs_work_gate",
+        "label": "NEEDS_WORK",
+        "condition": {
+          "type": "comparison",
+          "field": "extensions.issue_ready",
+          "operator": "!=",
+          "value": true
+        }
+      },
+      {
+        "id": "e_nwg",
+        "source": "needs_work_gate",
+        "target": "specify",
+        "label": "retry"
       },
       {
         "id": "e07",
@@ -228,6 +261,7 @@
       "max_attempts": 3,
       "budget_limit_usd": 5.0,
       "approval_required_nodes": [
+        "needs_work_gate",
         "phase1_gate",
         "phase2_gate",
         "phase3_gate"
