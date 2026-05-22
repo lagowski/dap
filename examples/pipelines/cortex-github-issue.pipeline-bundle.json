@@ -292,7 +292,14 @@
         "callable_path": "cortex.nodes.finalize:run"
       },
       "input_schema": [],
-      "output_schema": [],
+      "output_schema": [
+        {
+          "key": "finalize_warnings",
+          "type": "array",
+          "description": "Non-blocking warnings surfaced by finalize (cosmetic spec issues that do not block execution)",
+          "required": false
+        }
+      ],
       "timeout_ms": 180000,
       "prompt_template": "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>"
     },

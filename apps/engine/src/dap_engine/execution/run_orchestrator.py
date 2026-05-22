@@ -147,6 +147,10 @@ def _gate_payload_from_interrupt(interrupt: RunnerInterrupt) -> dict[str, Any] |
     # Carry description/spec if present — useful for Reject feedback UX.
     if spec := extensions.get("spec"):
         payload["spec"] = spec
+    # Surface finalize warnings so the dashboard can show non-blocking
+    # issues without querying the checkpoint store (#583).
+    if finalize_warnings := extensions.get("finalize_warnings"):
+        payload["finalize_warnings"] = finalize_warnings
     return payload
 
 
