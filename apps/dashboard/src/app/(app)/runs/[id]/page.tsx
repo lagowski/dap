@@ -16,6 +16,7 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RunStatusBadge } from "@/components/status-badge";
+import { NodeTimeline } from "@/components/node-timeline";
 import { PipelineGraph } from "@/components/pipeline-graph";
 import { NodeDetailPanel } from "@/components/node-detail-panel";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
@@ -94,6 +95,14 @@ export default function RunDetailPage({
 
       {run.final_status === "running" && (
         <RunningBanner currentNode={run.current_node} nodeStatuses={run.node_statuses} />
+      )}
+
+      {Object.keys(run.node_statuses).length > 0 && (
+        <NodeTimeline
+          nodeStatuses={run.node_statuses}
+          currentNode={run.current_node}
+          runId={run.id}
+        />
       )}
 
       {pipeline ? (

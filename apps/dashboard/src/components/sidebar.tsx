@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { ProjectPicker } from "@/components/project-picker";
 import { UserMenu } from "@/components/user-menu";
-import { useCurrentUser } from "@/hooks/api";
+import { useCurrentUser, useRunsList } from "@/hooks/api";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -37,6 +37,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const currentUser = useCurrentUser();
   const isAdmin = currentUser.data?.is_superuser === true;
+  const { data: runsData } = useRunsList();
+  const pausedCount = runsData?.items.filter((r) => r.final_status === "paused").length ?? 0;
   return (
     <aside className="w-56 shrink-0 border-r bg-background flex flex-col">
       <div className="p-4 border-b flex items-center gap-2">
@@ -60,6 +62,11 @@ export function Sidebar() {
             >
               <Icon className="h-4 w-4" />
               {label}
+              {label === "Runs" && pausedCount > 0 && (
+                <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
+                  {pausedCount}
+                </span>
+              )}
             </Link>
           );
         })}
