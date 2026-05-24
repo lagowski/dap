@@ -37,12 +37,29 @@ from dap_engine.persistence.models import PipelineORM, PipelineVersionORM, RunOR
 logger = logging.getLogger("dap.engine.execution.orchestrator")
 
 
+def _auto_approve_node_aliases(node_id: str) -> frozenset[str]:
+    """Return accepted aliases for a configured auto-approve gate name.
+
+    Cortex-facing project payloads historically used ``gate-phase1`` while
+    the bundled pipeline node IDs use ``phase1_gate``. Accept both forms so
+    existing projects keep working and direct pipeline node IDs still match.
+    """
+    aliases = {node_id}
+    if node_id.startswith("gate-") and len(node_id) > len("gate-"):
+        aliases.add(f"{node_id.removeprefix('gate-')}_gate")
+    if node_id.endswith("_gate") and len(node_id) > len("_gate"):
+        aliases.add(f"gate-{node_id.removesuffix('_gate')}")
+    return frozenset(aliases)
+
+
 def _auto_approve_nodes_for_run(session: Session, run_id: str) -> frozenset[str]:
-    """Return the auto_approve_nodes list from the run's persisted initial_state.
+    """Return accepted auto_approve_nodes names from the run's initial_state.
 
     Reads ``initial_state.extensions.auto_approve_nodes`` from the DB row so
     the check works for both initial and resumed executions (the list is
-    always stored in the original initial_state at trigger time).
+    always stored in the original initial_state at trigger time). The returned
+    set includes compatibility aliases such as ``gate-phase1`` ↔
+    ``phase1_gate`` (#587).
     """
     run_orm = session.get(RunORM, run_id)
     if run_orm is None:
@@ -51,7 +68,11 @@ def _auto_approve_nodes_for_run(session: Session, run_id: str) -> frozenset[str]
     nodes = extensions.get("auto_approve_nodes")
     if not isinstance(nodes, list):
         return frozenset()
-    return frozenset(n for n in nodes if isinstance(n, str))
+    aliases: set[str] = set()
+    for node in nodes:
+        if isinstance(node, str):
+            aliases.update(_auto_approve_node_aliases(node))
+    return frozenset(aliases)
 
 
 def _gate_node_from_interrupt(
