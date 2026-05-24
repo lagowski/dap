@@ -596,7 +596,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     auth_async_engine, async_session_factory, oauth_state_secret = _setup_auth(cfg)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: PLR0915
         # Determine dialect from DAP_DATABASE_URL or fall back to SQLite path.
         db_url = cfg.database_url
         dialect = detect_dialect(db_url) if db_url else "sqlite"
