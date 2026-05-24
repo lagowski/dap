@@ -658,7 +658,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
             app.state.checkpointer = checkpointer
             # Expose the underlying pool (if any) for the /health endpoint
             # to read pool stats without opening a fresh connection (#580).
-            app.state.checkpointer_pool = getattr(checkpointer, "pool", None)  # type: ignore[attr-defined]
+            app.state.checkpointer_pool = getattr(checkpointer, "pool", None)
             app.state.async_session_factory = async_session_factory
             app.state.auth_async_engine = auth_async_engine
 
