@@ -31,6 +31,22 @@ def _is_db_reachable(engine: Engine | None) -> bool:
         return False
 
 
+def _pool_stats(request: Request) -> dict[str, Any] | None:
+    """Read pool stats from the checkpointer pool (non-blocking).
+
+    Returns None when there is no pool (SQLite backend) so the caller
+    can fall back to the SELECT 1 probe.
+    """
+    pool = getattr(request.app.state, "checkpointer_pool", None)
+    if pool is None:
+        return None
+    try:
+        return pool.get_stats()  # type: ignore[no-any-return]
+    except Exception as e:
+        logger.debug("/health pool stats failed: %s", e)
+        return None
+
+
 @router.get("/health")
 def health(request: Request) -> dict[str, Any]:
     """Public health probe.
@@ -39,9 +55,37 @@ def health(request: Request) -> dict[str, Any]:
     blocking call, so declaring this as ``def`` (not ``async def``)
     lets FastAPI run it in its threadpool. A slow DB probe under load
     can't tie up the event loop. (#391 review)
+
+    When a PostgreSQL pool is available, pool stats are surfaced and
+    ``db_reachable`` is derived from pool health rather than a fresh
+    SELECT 1 probe that would mask stale-pool issues (#580).
     """
     dialect: str = getattr(request.app.state, "db_dialect", "sqlite")
     engine: Engine | None = getattr(request.app.state, "db_engine", None)
+
+    stats = _pool_stats(request)
+    if stats is not None:
+        pool_size = stats.get("pool_size", 0)
+        pool_available = stats.get("pool_available", 0)
+        # Pool is reachable if it has any connections that aren't all stale.
+        # A pool with size > 0 and available > 0 means healthy connections exist.
+        # When pool_size == 0, the pool hasn't opened yet — fall back to probe.
+        if pool_size > 0:
+            db_reachable = pool_available > 0
+        else:
+            db_reachable = _is_db_reachable(engine)
+        return {
+            "status": "ok",
+            "service": "dap-engine",
+            "version": request.app.version,
+            "db_dialect": dialect,
+            "db_reachable": db_reachable,
+            "pool_size": pool_size,
+            "pool_available": pool_available,
+            "pool_exhausted": stats.get("requests_waiting", 0) > 0,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
     return {
         "status": "ok",
         "service": "dap-engine",
