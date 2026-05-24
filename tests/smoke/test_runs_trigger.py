@@ -555,3 +555,64 @@ def test_caller_initial_state_overrides_project_defaults(
     fetched = client.get(f"/runs/{run_id}").json()
     assert fetched["initial_state"]["repo"] == "explicit-repo"
     assert fetched["initial_state"]["branch"] == "feature"
+
+
+def test_project_default_branch_injected_into_extensions(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """Project default_branch is injected into extensions.branch so cortex
+    git-branch node uses it as the PR base without manual trigger config."""
+    client, _registry, _stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(
+        client,
+        repo_url="https://example.com/proj.git",
+        default_branch="develop",
+    )
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    fetched = client.get(f"/runs/{run_id}").json()
+    extensions = fetched["initial_state"].get("extensions") or {}
+    assert extensions.get("branch") == "develop"
+
+
+def test_caller_extensions_branch_overrides_project_default_branch(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """Caller can override extensions.branch; project default_branch is the fallback."""
+    client, _registry, _stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(
+        client,
+        repo_url="https://example.com/proj.git",
+        default_branch="develop",
+    )
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {"extensions": {"branch": "hotfix"}},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    fetched = client.get(f"/runs/{run_id}").json()
+    extensions = fetched["initial_state"].get("extensions") or {}
+    assert extensions.get("branch") == "hotfix"
