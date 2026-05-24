@@ -87,19 +87,24 @@ def _create_pipeline(
     *,
     num_nodes: int = 3,
     gate_nodes: list[str] | None = None,
+    node_ids: list[str] | None = None,
 ) -> str:
     """Create a linear N-node pipeline with the given approval gates."""
+    if node_ids is None:
+        node_ids = [f"n{i + 1}" for i in range(num_nodes)]
+    else:
+        num_nodes = len(node_ids)
     if gate_nodes is None:
         gate_nodes = ["n2"]
     nodes = [
-        {"id": f"n{i + 1}", "agent_id": agent_id, "position": {"x": i * 100, "y": 0}}
-        for i in range(num_nodes)
+        {"id": node_id, "agent_id": agent_id, "position": {"x": i * 100, "y": 0}}
+        for i, node_id in enumerate(node_ids)
     ]
     edges = [
-        {"id": f"e{i + 1}", "source": f"n{i + 1}", "target": f"n{i + 2}"}
+        {"id": f"e{i + 1}", "source": node_ids[i], "target": node_ids[i + 1]}
         for i in range(num_nodes - 1)
     ]
-    edges.append({"id": "e_end", "source": f"n{num_nodes}", "target": "__end__"})
+    edges.append({"id": "e_end", "source": node_ids[-1], "target": "__end__"})
     resp = client.post(
         "/pipelines",
         json={
@@ -107,7 +112,7 @@ def _create_pipeline(
             "description": "",
             "schema_version": "langgraph/1.0",
             "state_schema_ref": "PipelineState.v1",
-            "entry_point": "n1",
+            "entry_point": node_ids[0],
             "nodes": nodes,
             "edges": edges,
             "defaults": {
@@ -166,6 +171,36 @@ def test_listed_gate_auto_approved_run_completes(
     )
     assert final["final_status"] == "success", (
         f"listed gate should be auto-approved; got {final['final_status']}"
+    )
+
+
+def test_gate_dash_alias_auto_approves_matching_underscore_gate(
+    ctx: tuple[TestClient, _StubAdapter],
+) -> None:
+    """``gate-phase1`` in project config auto-approves pipeline node ``phase1_gate``."""
+    client, _ = ctx
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(
+        client,
+        agent_id,
+        node_ids=["n1", "phase1_gate", "n3"],
+        gate_nodes=["phase1_gate"],
+    )
+    project_id = _create_project(client, pipeline_id, auto_approve_nodes=["gate-phase1"])
+
+    resp = client.post(
+        "/runs",
+        json={"pipeline_id": pipeline_id, "project_id": project_id},
+    )
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["id"]
+
+    final = wait_for_status(
+        client, run_id, {"success", "failed", "aborted"}, timeout_s=POLL_TIMEOUT_S
+    )
+    assert final["final_status"] == "success", (
+        "gate-phase1 should match and auto-approve phase1_gate, "
+        f"got {final['final_status']}"
     )
 
 
