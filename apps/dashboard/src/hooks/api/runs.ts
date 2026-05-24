@@ -30,9 +30,15 @@ export function useRunsList(
     queryFn: () => api.listRuns(filters),
     enabled: options?.enabled ?? true,
     refetchInterval: (query) => {
-      // Stop polling when there are no running runs
+      // Keep polling while any run is running or paused (paused runs
+      // need live updates for gate approval detection).
       const data = query.state.data;
-      if (data && !data.items.some((r) => r.final_status === "running")) {
+      if (
+        data &&
+        !data.items.some(
+          (r) => r.final_status === "running" || r.final_status === "paused",
+        )
+      ) {
         return false;
       }
       return RUNS_LIST_REFETCH_MS;
