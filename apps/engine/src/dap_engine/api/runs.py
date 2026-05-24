@@ -165,6 +165,9 @@ async def trigger_run(
         if project.repo_url:
             project_defaults["repo"] = project.repo_url
         project_defaults["branch"] = project.default_branch
+        # Inject into extensions so cortex git-branch node uses it as the PR
+        # base branch without requiring callers to repeat it on every trigger.
+        project_extensions["branch"] = project.default_branch
         if project.auto_approve_nodes:
             project_extensions["auto_approve_nodes"] = project.auto_approve_nodes
 

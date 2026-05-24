@@ -70,10 +70,7 @@ def health(request: Request) -> dict[str, Any]:
         # Pool is reachable if it has any connections that aren't all stale.
         # A pool with size > 0 and available > 0 means healthy connections exist.
         # When pool_size == 0, the pool hasn't opened yet — fall back to probe.
-        if pool_size > 0:
-            db_reachable = pool_available > 0
-        else:
-            db_reachable = _is_db_reachable(engine)
+        db_reachable = pool_available > 0 if pool_size > 0 else _is_db_reachable(engine)
         return {
             "status": "ok",
             "service": "dap-engine",
