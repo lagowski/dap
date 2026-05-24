@@ -199,8 +199,7 @@ def test_gate_dash_alias_auto_approves_matching_underscore_gate(
         client, run_id, {"success", "failed", "aborted"}, timeout_s=POLL_TIMEOUT_S
     )
     assert final["final_status"] == "success", (
-        "gate-phase1 should match and auto-approve phase1_gate, "
-        f"got {final['final_status']}"
+        f"gate-phase1 should match and auto-approve phase1_gate, got {final['final_status']}"
     )
 
 
