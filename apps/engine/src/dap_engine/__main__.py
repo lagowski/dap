@@ -29,6 +29,7 @@ def main() -> None:
         # PG checkpointer pool sizing — only used when DAP_DATABASE_URL is set.
         pg_pool_min_size=int(os.environ.get("DAP_PG_POOL_MIN_SIZE", "4")),
         pg_pool_max_size=int(os.environ.get("DAP_PG_POOL_MAX_SIZE", "10")),
+        pg_pool_reconnect_timeout=float(os.environ.get("DAP_PG_POOL_RECONNECT_TIMEOUT", "300")),
         # Comma-separated CORS allow-list — None falls back to the local-dev
         # default in EngineConfig (#259).
         cors_origins=parse_cors_origins(os.environ.get("DAP_CORS_ORIGINS")),

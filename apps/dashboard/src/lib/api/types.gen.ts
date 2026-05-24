@@ -416,6 +416,10 @@ export interface paths {
          *     blocking call, so declaring this as ``def`` (not ``async def``)
          *     lets FastAPI run it in its threadpool. A slow DB probe under load
          *     can't tie up the event loop. (#391 review)
+         *
+         *     When a PostgreSQL pool is available, pool stats are surfaced and
+         *     ``db_reachable`` is derived from pool health rather than a fresh
+         *     SELECT 1 probe that would mask stale-pool issues (#580).
          */
         get: operations["health_health_get"];
         put?: never;

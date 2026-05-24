@@ -56,6 +56,7 @@ async def _pg_pooled_checkpointer(
     *,
     min_size: int,
     max_size: int,
+    reconnect_timeout: float = 300.0,
 ) -> AsyncIterator[AsyncPostgresSaver]:
     """Yield an AsyncPostgresSaver backed by a psycopg AsyncConnectionPool.
 
@@ -88,6 +89,7 @@ async def _pg_pooled_checkpointer(
         # checkpoint write arrives, causing PoolTimeout (#238).  Set to 1 h
         # so connections survive the full pipeline (~40 min).
         max_idle=3600.0,
+        reconnect_timeout=reconnect_timeout,
         kwargs={
             "autocommit": True,
             "prepare_threshold": 0,
@@ -206,6 +208,10 @@ class DatabaseConfig:
     # after a long idle Phase 1.
     pg_pool_min_size: int = 4
     pg_pool_max_size: int = 10
+    # Seconds the pool retries connecting after a server-side drop (#580).
+    # Without this the pool discards stale connections but does not retry
+    # within the same request — the run fails instantly.
+    pg_pool_reconnect_timeout: float = 300.0
 
 
 @dataclass
@@ -350,6 +356,7 @@ _FLAT_TO_NESTED: dict[str, tuple[str, str]] = {
     "database_url": ("db", "database_url"),
     "pg_pool_min_size": ("db", "pg_pool_min_size"),
     "pg_pool_max_size": ("db", "pg_pool_max_size"),
+    "pg_pool_reconnect_timeout": ("db", "pg_pool_reconnect_timeout"),
     # ServerConfig
     "host": ("server", "host"),
     "port": ("server", "port"),
@@ -409,6 +416,7 @@ class EngineConfigKwargs(TypedDict, total=False):
     database_url: NotRequired[str | None]
     pg_pool_min_size: NotRequired[int]
     pg_pool_max_size: NotRequired[int]
+    pg_pool_reconnect_timeout: NotRequired[float]
     host: NotRequired[str]
     port: NotRequired[int]
     cors_origins: NotRequired[list[str] | None]
@@ -610,6 +618,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
                 pg_conn_string(db_url),
                 min_size=cfg.pg_pool_min_size,
                 max_size=cfg.pg_pool_max_size,
+                reconnect_timeout=cfg.pg_pool_reconnect_timeout,
             )
             db_label = db_url.split("@", 1)[-1] if "@" in db_url else db_url
         else:
@@ -647,6 +656,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
             app.state.runtime_registry = registry
             app.state.run_registry = run_registry
             app.state.checkpointer = checkpointer
+            # Expose the underlying pool (if any) for the /health endpoint
+            # to read pool stats without opening a fresh connection (#580).
+            app.state.checkpointer_pool = getattr(checkpointer, "pool", None)  # type: ignore[attr-defined]
             app.state.async_session_factory = async_session_factory
             app.state.auth_async_engine = auth_async_engine
 

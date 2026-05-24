@@ -1,10 +1,10 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Play, RotateCcw } from "lucide-react";
-import { usePipelinesList, useProject, useProjectsList, useRunsList } from "@/hooks/api";
+import { useApproveGate, usePipelinesList, useProject, useProjectsList, useRunsList } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
 import { RunStatusBadge } from "@/components/status-badge";
 import {
@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast";
 import type { FinalStatus, Run } from "@/lib/api/types";
 
 const RUN_ID_PREFIX_LENGTH = 8;
@@ -121,6 +122,27 @@ function RunsPageContent() {
     { enabled: isHydrated },
   );
   const { hasPipelines } = useHasPipelines();
+  const approveGate = useApproveGate();
+  const toast = useToast();
+  const seenPausedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!data) return;
+    for (const run of data.items) {
+      if (
+        run.final_status === "paused" &&
+        run.paused_at_node &&
+        !seenPausedRef.current.has(run.id)
+      ) {
+        seenPausedRef.current.add(run.id);
+        toast({
+          title: `Run ${run.id.slice(0, RUN_ID_PREFIX_LENGTH)} paused`,
+          description: `Waiting at ${run.paused_at_node} — review and approve`,
+          variant: "warning",
+        });
+      }
+    }
+  }, [data, toast]);
 
   return (
     <div className="p-6 space-y-4">
@@ -338,6 +360,16 @@ function RunsPageContent() {
                       : "Ad-hoc"
                   }
                   pipelineName={pipelineById.get(run.pipeline_id)?.name}
+                  onApprove={
+                    run.final_status === "paused" && run.paused_at_node
+                      ? () =>
+                          approveGate.mutate({
+                            runId: run.id,
+                            nodeId: run.paused_at_node!,
+                          })
+                      : undefined
+                  }
+                  approving={approveGate.isPending}
                 />
               ))}
             </tbody>
@@ -352,10 +384,14 @@ function RunRow({
   run,
   projectName,
   pipelineName,
+  onApprove,
+  approving,
 }: {
   run: Run;
   projectName: string;
   pipelineName?: string;
+  onApprove?: () => void;
+  approving?: boolean;
 }) {
   const duration =
     run.ended_at != null
@@ -380,7 +416,13 @@ function RunRow({
         <span className="ml-1 text-foreground">v{run.pipeline_version}</span>
       </td>
       <td className="px-4 py-3">
-        <RunStatusBadge status={run.final_status} />
+        <RunStatusBadge
+          status={run.final_status}
+          currentNode={run.current_node}
+          pausedAtNode={run.paused_at_node}
+          onApprove={onApprove}
+          approving={approving}
+        />
       </td>
       <td className="px-4 py-3 text-muted-foreground text-xs">
         <span suppressHydrationWarning><span suppressHydrationWarning>{new Date(run.started_at).toLocaleString()}</span></span>
