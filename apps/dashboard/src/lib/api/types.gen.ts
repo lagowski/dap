@@ -1502,6 +1502,8 @@ export interface components {
          *     ``limit``).
          */
         AdminUserList: {
+            /** Has More */
+            has_more: boolean;
             /** Items */
             items: components["schemas"]["AdminUserRead"][];
             /** Limit */

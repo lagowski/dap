@@ -314,6 +314,10 @@ def test_list_projects_paginates(client: TestClient) -> None:
     assert page["limit"] == 2
     assert page["total"] == 5
     assert len(page["items"]) == 2
+    assert page["has_more"] is True
+
+    full_page = client.get("/projects?limit=50&offset=0").json()
+    assert full_page["has_more"] is False
 
 
 def test_list_projects_validation(client: TestClient) -> None:

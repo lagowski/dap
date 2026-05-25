@@ -62,6 +62,7 @@ class AdminUserList(BaseModel):
     total: int
     offset: int
     limit: int
+    has_more: bool
 
 
 @router.get(
@@ -124,4 +125,5 @@ async def list_users(
         total=total,
         offset=offset,
         limit=limit,
+        has_more=offset + limit < total,
     )
