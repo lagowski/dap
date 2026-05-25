@@ -319,6 +319,7 @@ class PaginatedAgents(BaseModel):
     total: int
     offset: int
     limit: int
+    has_more: bool
 
 
 class PaginatedPipelines(BaseModel):
@@ -326,6 +327,7 @@ class PaginatedPipelines(BaseModel):
     total: int
     offset: int
     limit: int
+    has_more: bool
 
 
 class PaginatedRuns(BaseModel):
@@ -333,3 +335,4 @@ class PaginatedRuns(BaseModel):
     total: int
     offset: int
     limit: int
+    has_more: bool

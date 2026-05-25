@@ -188,6 +188,10 @@ def test_list_pagination_and_role_filter(client: TestClient) -> None:
     assert paginated["limit"] == 2
     assert len(paginated["items"]) == 2
     assert paginated["total"] == 5
+    assert paginated["has_more"] is True
+
+    full_listing = client.get("/agents?limit=50&offset=0").json()
+    assert full_listing["has_more"] is False
 
 
 def test_pagination_validation(client: TestClient) -> None:

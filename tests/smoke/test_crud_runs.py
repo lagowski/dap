@@ -157,6 +157,7 @@ def test_list_runs_empty(client_and_factory: tuple[TestClient, sessionmaker[Sess
     body = response.json()
     assert body["total"] == 0
     assert body["items"] == []
+    assert body["has_more"] is False
 
 
 def test_list_runs_seeded(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -> None:
@@ -167,12 +168,15 @@ def test_list_runs_seeded(client_and_factory: tuple[TestClient, sessionmaker[Ses
 
     listing = client.get("/runs").json()
     assert listing["total"] == 3
+    assert listing["has_more"] is False
 
     successful = client.get("/runs?final_status=success").json()
     assert successful["total"] == 1
+    assert successful["has_more"] is False
 
     by_pipeline = client.get("/runs?pipeline_id=other-pipe").json()
     assert by_pipeline["total"] == 1
+    assert by_pipeline["has_more"] is False
 
 
 def test_list_runs_filters_status_date_and_project(

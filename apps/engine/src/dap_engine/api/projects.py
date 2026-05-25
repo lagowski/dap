@@ -132,6 +132,7 @@ def list_projects(
         "total": total,
         "offset": offset,
         "limit": limit,
+        "has_more": offset + limit < total,
     }
 
 
