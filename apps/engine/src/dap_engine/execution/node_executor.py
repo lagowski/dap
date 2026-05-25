@@ -105,41 +105,46 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
         # 1. Render prompt — scoped to declared inputs when the agent
         # version carries a contract (v0.5+); legacy dict-shaped or
         # missing schemas pass through with full state visibility.
-        raw_input_schema = ctx.agent_version.input_schema
-        input_schema = list(raw_input_schema) if isinstance(raw_input_schema, list) else None
-        try:
-            build_result = build_prompt(
-                ctx.agent_version.prompt_template,
-                state.model_dump(),
-                input_schema=input_schema,
-                # Auto-inject agent identity (#113) so templates can use
-                # ``{{ role }}`` without forcing every agent to declare
-                # ``role`` as an input. ``PipelineState`` doesn't carry
-                # it; ``role`` lives on the parent ``AgentORM`` (not
-                # the version row, which is per-revision data).
-                agent_metadata={"role": ctx.agent.role},
-            )
-        except PromptBuildError as exc:
-            return _record_failure(
-                ctx=ctx,
-                started_at=started_at,
-                execution_id=execution_id,
-                prompt_xml="",
-                error=f"Prompt build failed: {exc}",
-                state=state,
-            )
+        # python-func callables receive state directly via runtime_config;
+        # they have no prompt template, so skip XML build/validation entirely.
+        if ctx.runtime_id == "python-func":
+            prompt_xml = ""
+        else:
+            raw_input_schema = ctx.agent_version.input_schema
+            input_schema = list(raw_input_schema) if isinstance(raw_input_schema, list) else None
+            try:
+                build_result = build_prompt(
+                    ctx.agent_version.prompt_template,
+                    state.model_dump(),
+                    input_schema=input_schema,
+                    # Auto-inject agent identity (#113) so templates can use
+                    # ``{{ role }}`` without forcing every agent to declare
+                    # ``role`` as an input. ``PipelineState`` doesn't carry
+                    # it; ``role`` lives on the parent ``AgentORM`` (not
+                    # the version row, which is per-revision data).
+                    agent_metadata={"role": ctx.agent.role},
+                )
+            except PromptBuildError as exc:
+                return _record_failure(
+                    ctx=ctx,
+                    started_at=started_at,
+                    execution_id=execution_id,
+                    prompt_xml="",
+                    error=f"Prompt build failed: {exc}",
+                    state=state,
+                )
 
-        if not build_result.valid:
-            return _record_failure(
-                ctx=ctx,
-                started_at=started_at,
-                execution_id=execution_id,
-                prompt_xml=build_result.xml,
-                error=f"Invalid prompt XML: {'; '.join(build_result.errors)}",
-                state=state,
-            )
+            if not build_result.valid:
+                return _record_failure(
+                    ctx=ctx,
+                    started_at=started_at,
+                    execution_id=execution_id,
+                    prompt_xml=build_result.xml,
+                    error=f"Invalid prompt XML: {'; '.join(build_result.errors)}",
+                    state=state,
+                )
 
-        prompt_xml = build_result.xml
+            prompt_xml = build_result.xml
 
         # 2. Build RuntimeTask. ``working_directory`` defaults to the
         # project's ``working_directory`` when bound (#65), falling back
