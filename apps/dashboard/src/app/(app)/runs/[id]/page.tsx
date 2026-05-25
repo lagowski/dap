@@ -7,6 +7,7 @@ import {
   useAbortRun,
   useAgentsList,
   useApproveGate,
+  useGateCountdown,
   usePauseRun,
   useResumeRun,
   useRun,
@@ -250,6 +251,7 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
   const approve = useApproveGate();
   const abort = useAbortRun();
   const confirmDestructive = useConfirmDestructive();
+  const countdown = useGateCountdown(run.gate_expires_at);
 
   const gateNode = run.paused_at_node!;
   // Show Approve whenever paused_at_node is set — the backend already
@@ -296,6 +298,11 @@ function GatePanel({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) {
             <p className="text-xs text-muted-foreground font-mono mt-0.5">
               gate: {gateNode}
             </p>
+            {countdown.label && (
+              <p className={`text-xs mt-0.5 font-medium${countdown.isUrgent ? " text-red-600 dark:text-red-400" : " text-amber-700 dark:text-amber-400"}`}>
+                expires in {countdown.label}
+              </p>
+            )}
           </div>
           <div className="flex gap-2">
             {showApprove && (

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from dap_runtimes import RuntimeRegistry
@@ -92,6 +93,12 @@ def _gate_node_from_interrupt(
 
 
 _TERMINAL_FINAL_STATUSES: frozenset[str] = frozenset({"success", "failed", "aborted"})
+
+
+def _gate_expires_at(version_orm: PipelineVersionORM) -> datetime:
+    """Return the gate approval deadline based on pipeline defaults (#582)."""
+    defaults = PipelineDefaults.model_validate(version_orm.defaults)
+    return datetime.now(tz=UTC) + timedelta(seconds=defaults.gate_timeout_seconds)
 
 
 def _resolve_terminal_status(
@@ -233,6 +240,7 @@ async def execute_run_background(  # noqa: PLR0915
                     run_id,
                     paused_at_node=paused_at_node,
                     gate_payload=_gate_payload_from_interrupt(interrupt),
+                    gate_expires_at=_gate_expires_at(version_orm),
                 )
                 bg_session.commit()
                 # Auto-resume if this gate is in the run's auto_approve_nodes (#477).
@@ -369,6 +377,7 @@ async def execute_rewind_background(
                     run_id,
                     paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
                     gate_payload=_gate_payload_from_interrupt(interrupt),
+                    gate_expires_at=_gate_expires_at(version_orm),
                 )
                 bg_session.commit()
                 return

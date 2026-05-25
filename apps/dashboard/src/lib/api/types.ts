@@ -445,6 +445,12 @@ export interface Run {
    * restart; `null` for runs that finished normally.
    */
   failure_reason: string | null;
+  /**
+   * Gate approval deadline (#582). ISO-8601 UTC string set when the run
+   * pauses at a gate node. `null` for runs that predate this field or
+   * use the noop gate path (auto-approved gates clear it).
+   */
+  gate_expires_at: string | null;
   started_at: string;
   ended_at: string | null;
   tokens_used: number;

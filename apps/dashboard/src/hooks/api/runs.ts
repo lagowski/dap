@@ -6,6 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import * as api from "@/lib/api/client";
 import type { RunCreateRequest } from "@/lib/api/types";
 import { queryKeys } from "./query-keys";
@@ -145,6 +146,31 @@ export function usePipelineVersions(
     queryFn: id ? () => api.listPipelineVersions(id) : skipToken,
     enabled,
   });
+}
+
+/** Returns formatted time remaining until `expiresAt` and whether it's urgent (< 5 min). */
+export function useGateCountdown(expiresAt: string | null | undefined): {
+  label: string | null;
+  isUrgent: boolean;
+} {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const id = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(id);
+  }, [expiresAt]);
+
+  if (!expiresAt) return { label: null, isUrgent: false };
+
+  const remaining = new Date(expiresAt).getTime() - now;
+  if (remaining <= 0) return { label: "expired", isUrgent: true };
+
+  const totalMins = Math.floor(remaining / 60_000);
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  const label = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+  return { label, isUrgent: totalMins < 5 };
 }
 
 export function useTriggerRun() {

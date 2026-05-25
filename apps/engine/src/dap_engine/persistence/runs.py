@@ -82,6 +82,7 @@ def _run_from_orm(
         ),
         final_status=run.final_status,  # type: ignore[arg-type]
         failure_reason=run.failure_reason,
+        gate_expires_at=run.gate_expires_at,
         started_at=run.started_at,
         ended_at=run.ended_at,
         tokens_used=run.tokens_used,
@@ -389,6 +390,7 @@ def pause_run(
     *,
     paused_at_node: str | None = None,
     gate_payload: dict[str, Any] | None = None,
+    gate_expires_at: datetime | None = None,
 ) -> None:
     """Mark a run as paused without setting ended_at (resumable).
 
@@ -398,6 +400,10 @@ def pause_run(
 
     ``gate_payload`` stores task assignments and other gate context so the
     dashboard can render them without querying the checkpoint store (#364).
+
+    ``gate_expires_at`` is the deadline for approval (#582). After this
+    timestamp, ``mark_expired_gate_runs_as_failed`` will fail the run with
+    failure_reason="gate approval timed out".
 
     Idempotent and race-safe (#257), same atomic-UPDATE pattern as
     ``finalize_run``. A late pause attempt on an already-terminal run
@@ -414,6 +420,8 @@ def pause_run(
         values["paused_at_node"] = paused_at_node
     if gate_payload is not None:
         values["gate_payload"] = gate_payload
+    if gate_expires_at is not None:
+        values["gate_expires_at"] = gate_expires_at
     stmt = (
         update(RunORM)
         .where(
@@ -504,6 +512,35 @@ def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
         run.final_status = "failed"
         run.ended_at = now
         run.failure_reason = reason
+        count += 1
+    session.flush()
+    return count
+
+
+def mark_expired_gate_runs_as_failed(session: Session) -> int:
+    """Fail paused runs whose gate approval deadline has passed (#582).
+
+    Selects runs with ``final_status='paused'`` and ``gate_expires_at < now``.
+    Sets ``final_status='failed'``, ``ended_at=now``, and
+    ``failure_reason='gate approval timed out'``.  Returns the count updated.
+
+    Called on engine startup alongside ``mark_stale_running_runs_as_failed``
+    and can be called periodically by a background task in future iterations.
+    Runs with ``gate_expires_at IS NULL`` are not touched (legacy or noop gate).
+    """
+    now = _now()
+    runs = session.scalars(
+        select(RunORM).where(
+            RunORM.final_status == "paused",
+            RunORM.gate_expires_at.is_not(None),
+            RunORM.gate_expires_at < now,
+        ),
+    ).all()
+    count = 0
+    for run in runs:
+        run.final_status = "failed"
+        run.ended_at = now
+        run.failure_reason = "gate approval timed out"
         count += 1
     session.flush()
     return count
