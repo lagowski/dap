@@ -45,6 +45,9 @@ class Run(BaseModel):
     # when ``mark_stale_running_runs_as_failed`` finalises orphan runs on
     # engine restart; otherwise ``None``.
     failure_reason: str | None = None
+    # Deadline for gate approval (#582). Set when the run pauses at a gate;
+    # None for runs that predate this feature or use the noop gate path.
+    gate_expires_at: datetime | None = None
     started_at: datetime
     ended_at: datetime | None = None
 

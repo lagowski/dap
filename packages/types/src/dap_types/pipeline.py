@@ -67,6 +67,15 @@ class PipelineDefaults(BaseModel):
     max_attempts: int = 3
     budget_limit_usd: float = 5.0
     approval_required_nodes: list[str] = Field(default_factory=list)
+    gate_timeout_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "Seconds a gate waits for human approval before the run is "
+            "marked failed with failure_reason='gate approval timed out'. "
+            "Defaults to 1 hour. Set per-pipeline in defaults.gate_timeout_seconds."
+        ),
+    )
     requires_terminal_final_status: bool = Field(
         default=False,
         description=(

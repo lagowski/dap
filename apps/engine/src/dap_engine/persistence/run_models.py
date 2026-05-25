@@ -57,6 +57,11 @@ class RunORM(Base):
     # for runs that finished cleanly or were aborted/paused via a normal
     # operator action.
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # Gate approval deadline (#582). Set when the run pauses at a gate node.
+    # NULL for runs that predate this column or use the noop gate path.
+    gate_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

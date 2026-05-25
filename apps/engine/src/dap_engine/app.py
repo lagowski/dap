@@ -632,15 +632,18 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         registry = create_default_registry()
         run_registry = RunRegistry()
 
-        # Recover stale runs left by previous crashes
+        # Recover stale runs left by previous crashes and expired gate pauses (#582)
         with session_factory() as cleanup_session:
             stale_count = repo.mark_stale_running_runs_as_failed(
                 cleanup_session,
                 reason="engine restarted before run completed",
             )
+            expired_count = repo.mark_expired_gate_runs_as_failed(cleanup_session)
             cleanup_session.commit()
         if stale_count > 0:
             logger.warning("marked %d stale running run(s) as failed", stale_count)
+        if expired_count > 0:
+            logger.warning("marked %d expired gate run(s) as failed", expired_count)
 
         async with AsyncExitStack() as stack:
             checkpointer = await stack.enter_async_context(checkpointer_ctx)

@@ -95,6 +95,7 @@ function RunRow({
           status={run.final_status}
           currentNode={run.current_node}
           pausedAtNode={run.paused_at_node}
+          gateExpiresAt={run.gate_expires_at}
           onApprove={onApprove}
           approving={approving}
         />
