@@ -110,6 +110,8 @@ def _create_pre_v03_database(db_path: Path) -> None:
             initial_state={},
             final_status="succeeded",
             started_at=now,
+            created_at=now,
+            updated_at=now,
         )
         session.add_all([project, pipeline, agent, run])
         session.commit()

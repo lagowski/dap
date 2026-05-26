@@ -54,6 +54,9 @@ class Run(BaseModel):
     tokens_used: int = 0
     cost_usd: float = 0.0
 
+    created_at: datetime
+    updated_at: datetime
+
 
 class NodeExecutionLog(BaseModel):
     """Log wykonania pojedynczego node'a w runie."""

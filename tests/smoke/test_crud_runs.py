@@ -67,6 +67,8 @@ def _seed_run(session_factory: sessionmaker[Session], **overrides: Any) -> str:
             ended_at=None,
             tokens_used=0,
             cost_usd=0.0,
+            created_at=started_at,
+            updated_at=started_at,
         )
         snapshot = StateSnapshotORM(
             id=str(uuid.uuid4()),
@@ -169,6 +171,12 @@ def test_list_runs_seeded(client_and_factory: tuple[TestClient, sessionmaker[Ses
     listing = client.get("/runs").json()
     assert listing["total"] == 3
     assert listing["has_more"] is False
+    item = listing["items"][0]
+    assert "created_at" in item
+    assert "updated_at" in item
+    from datetime import datetime as _dt
+    _dt.fromisoformat(item["created_at"])
+    _dt.fromisoformat(item["updated_at"])
 
     successful = client.get("/runs?final_status=success").json()
     assert successful["total"] == 1
@@ -253,6 +261,11 @@ def test_get_run(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -
     body = response.json()
     assert body["id"] == run_id
     assert body["pipeline_id"] == "pipe-1"
+    assert "created_at" in body
+    assert "updated_at" in body
+    from datetime import datetime as _dt
+    _dt.fromisoformat(body["created_at"])
+    _dt.fromisoformat(body["updated_at"])
 
 
 def test_get_run_node_statuses_from_logs(

@@ -87,6 +87,8 @@ def _run_from_orm(
         ended_at=run.ended_at,
         tokens_used=run.tokens_used,
         cost_usd=run.cost_usd,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
     )
 
 
@@ -285,6 +287,8 @@ def create_run(
         ended_at=None,
         tokens_used=0,
         cost_usd=0.0,
+        created_at=now,
+        updated_at=now,
     )
     session.add(run)
     session.flush()
