@@ -2989,6 +2989,16 @@ export interface components {
              * @enum {string}
              */
             trigger_source: "dashboard" | "cli" | "api";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * RunCreateRequest
