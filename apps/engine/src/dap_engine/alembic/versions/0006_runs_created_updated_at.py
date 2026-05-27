@@ -1,7 +1,7 @@
 """runs.created_at / runs.updated_at columns — time-based sorting (#606).
 
 Revision ID: 0006_runs_created_updated_at
-Revises: e626b70eb11c
+Revises: 0005_runs_gate_expires_at
 Create Date: 2026-05-26
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0006_runs_created_updated_at"
-down_revision: str | None = "e626b70eb11c"
+down_revision: str | None = "0005_runs_gate_expires_at"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 

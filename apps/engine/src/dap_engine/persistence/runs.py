@@ -574,3 +574,29 @@ def get_run_node_log(
     if log is None:
         raise NotFoundError(f"Node log not found: {run_id}/{node_id}")
     return _node_log_from_orm(log)
+
+
+def list_run_node_logs(
+    session: Session,
+    run_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[NodeExecutionLog]:
+    """Return all node execution logs for a run ordered by started_at.
+
+    Non-admins only see logs for their own runs (anti-enumeration: a
+    cross-user lookup is indistinguishable from "not found").
+    Returns an empty list when the run has no logs yet (e.g. pre-execution).
+    """
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
+        raise NotFoundError(f"Run not found: {run_id}")
+    logs = session.scalars(
+        select(NodeExecutionLogORM)
+        .where(NodeExecutionLogORM.run_id == run_id)
+        .order_by(NodeExecutionLogORM.started_at)
+    ).all()
+    return [_node_log_from_orm(log) for log in logs]

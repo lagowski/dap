@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, Circle, Loader2, XCircle, MinusCircle } from "lucide-react";
-import { useRunStateHistory } from "@/hooks/api";
+import { useRunNodeLogs } from "@/hooks/api";
 import { formatDuration } from "@/lib/utils";
 import type { NodeStatus } from "@/lib/api/types";
 
@@ -30,61 +30,86 @@ export function NodeTimeline({
   currentNode: string | null;
   runId: string;
 }) {
-  const { data: history } = useRunStateHistory(runId);
+  const { data: nodeLogs } = useRunNodeLogs(runId);
   const entries = Object.entries(nodeStatuses);
 
   if (entries.length === 0) return null;
 
-  // Derive per-node elapsed time from state history snapshots.
-  // Each snapshot marks when a node was entered; duration is the gap
-  // between consecutive snapshots (or now for the currently running node).
-  const elapsed = new Map<string, number>();
-  if (history && history.length > 0) {
-    const sorted = [...history].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-    );
-    for (let i = 0; i < sorted.length; i++) {
-      const snap = sorted[i];
-      const start = new Date(snap.timestamp).getTime();
-      const end =
-        i + 1 < sorted.length
-          ? new Date(sorted[i + 1].timestamp).getTime()
-          : Date.now();
-      const status = nodeStatuses[snap.node_id];
-      if (status === "success" || status === "failed" || status === "running") {
-        elapsed.set(snap.node_id, end - start);
-      }
+  // Build a per-node timing map from execution logs.
+  // Execution logs have accurate started_at / ended_at / duration_ms written
+  // atomically per node, so they are immune to the DB-drop bug that caused
+  // state-history snapshots to produce inflated durations (#609):
+  //
+  //   Old approach (state history): last snapshot used Date.now() as end time.
+  //   When pr_creator/pr_merger snapshots were missing (DB hiccup), finalize
+  //   appeared last → its elapsed grew unbounded → showed "20m 0s".
+  //
+  //   New approach (execution logs): duration_ms is committed together with the
+  //   log row in the same transaction. If the row exists, the value is real.
+  //   If the row is missing (DB dropped before commit), we show no timing for
+  //   that node rather than an inflated one.
+  const logByNode = new Map<
+    string,
+    { started_at: string; ended_at: string | null; duration_ms: number }
+  >();
+  if (nodeLogs) {
+    for (const log of nodeLogs) {
+      logByNode.set(log.node_id, {
+        started_at: log.started_at,
+        ended_at: log.ended_at ?? null,
+        duration_ms: log.duration_ms,
+      });
     }
   }
 
+  const getElapsed = (nodeId: string, status: NodeStatus): number | null => {
+    const log = logByNode.get(nodeId);
+    if (!log) return null;
+    // Prefer pre-computed duration_ms (always accurate).
+    if (log.duration_ms > 0) return log.duration_ms;
+    // Fallback: compute from timestamps (covers edge case where duration_ms=0
+    // but ended_at is set, e.g. very fast nodes rounded to 0 ms).
+    if (log.ended_at) {
+      return new Date(log.ended_at).getTime() - new Date(log.started_at).getTime();
+    }
+    // Node is still running — show live elapsed from started_at.
+    if (status === "running") {
+      return Date.now() - new Date(log.started_at).getTime();
+    }
+    return null;
+  };
+
   return (
     <ol className="space-y-0" role="list" aria-label="Node timeline">
-      {entries.map(([nodeId, status], idx) => (
-        <li key={nodeId} className="flex items-stretch gap-3">
-          <div className="flex flex-col items-center">
-            <div className="py-1">{STATUS_ICON[status]}</div>
-            {idx < entries.length - 1 && (
-              <div
-                className={`flex-1 w-px border-l-2 ${STATUS_BORDER[status]}`}
-              />
-            )}
-          </div>
-          <div className="flex items-center gap-3 pb-3 pt-1 min-w-0">
-            <span
-              className={`font-mono text-sm ${
-                nodeId === currentNode ? "font-semibold text-foreground" : "text-muted-foreground"
-              }`}
-            >
-              {nodeId}
-            </span>
-            {elapsed.has(nodeId) && (
-              <span className="text-xs text-muted-foreground tabular-nums" suppressHydrationWarning>
-                {formatDuration(elapsed.get(nodeId)!)}
+      {entries.map(([nodeId, status], idx) => {
+        const elapsed = getElapsed(nodeId, status);
+        return (
+          <li key={nodeId} className="flex items-stretch gap-3">
+            <div className="flex flex-col items-center">
+              <div className="py-1">{STATUS_ICON[status]}</div>
+              {idx < entries.length - 1 && (
+                <div
+                  className={`flex-1 w-px border-l-2 ${STATUS_BORDER[status]}`}
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-3 pb-3 pt-1 min-w-0">
+              <span
+                className={`font-mono text-sm ${
+                  nodeId === currentNode ? "font-semibold text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                {nodeId}
               </span>
-            )}
-          </div>
-        </li>
-      ))}
+              {elapsed != null && (
+                <span className="text-xs text-muted-foreground tabular-nums" suppressHydrationWarning>
+                  {formatDuration(elapsed)}
+                </span>
+              )}
+            </div>
+          </li>
+        );
+      })}
     </ol>
   );
 }

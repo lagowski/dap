@@ -465,6 +465,169 @@ def test_state_history(client_and_factory: tuple[TestClient, sessionmaker[Sessio
     assert history[0]["run_id"] == run_id
 
 
+def test_list_run_node_logs_returns_seeded_log(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """GET /runs/{id}/nodes returns all node execution logs ordered by started_at."""
+    client, factory = client_and_factory
+    run_id = _seed_run(factory)  # seeds one log: node_id="select_task"
+
+    response = client.get(f"/runs/{run_id}/nodes")
+    assert response.status_code == 200
+    logs = response.json()
+    assert isinstance(logs, list)
+    assert len(logs) == 1
+    assert logs[0]["node_id"] == "select_task"
+    assert logs[0]["agent_id"] == "agent-1"
+    assert logs[0]["status"] == "success"
+    assert logs[0]["tokens_used"] == 120
+
+
+def test_list_run_node_logs_returns_empty_before_execution(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """GET /runs/{id}/nodes returns [] when the run has no logs yet."""
+    client, factory = client_and_factory
+    run_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    initial_state: dict[str, Any] = {
+        "run_id": run_id,
+        "repo": "r/r",
+        "branch": "main",
+        "commit_sha": None,
+        "available_issues": [],
+        "selected_issue_ids": [],
+        "tests_generated": False,
+        "test_files": [],
+        "test_generation_errors": [],
+        "max_attempts": 3,
+        "attempt": 0,
+        "tests_passed": False,
+        "last_test_output": "",
+        "modified_files": [],
+        "implementation_notes": None,
+        "verification_status": "pending",
+        "verification_reason": None,
+        "final_status": "running",
+        "extensions": {},
+    }
+    with factory() as session:
+        session.add(
+            RunORM(
+                id=run_id,
+                pipeline_id="pipe-1",
+                pipeline_version=1,
+                trigger_source="cli",
+                initial_state=initial_state,
+                current_node=None,
+                node_statuses={},
+                final_status="running",
+                started_at=now,
+                ended_at=None,
+                tokens_used=0,
+                cost_usd=0.0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/runs/{run_id}/nodes")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_run_node_logs_ordered_by_started_at(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """GET /runs/{id}/nodes returns logs in started_at ascending order."""
+    client, factory = client_and_factory
+    run_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    initial_state: dict[str, Any] = {
+        "run_id": run_id,
+        "repo": "r/r",
+        "branch": "main",
+        "commit_sha": None,
+        "available_issues": [],
+        "selected_issue_ids": [],
+        "tests_generated": False,
+        "test_files": [],
+        "test_generation_errors": [],
+        "max_attempts": 3,
+        "attempt": 0,
+        "tests_passed": False,
+        "last_test_output": "",
+        "modified_files": [],
+        "implementation_notes": None,
+        "verification_status": "pending",
+        "verification_reason": None,
+        "final_status": "success",
+        "extensions": {},
+    }
+
+    def _make_log(node_id: str, offset_ms: int) -> NodeExecutionLogORM:
+        from datetime import timedelta
+
+        t = now + timedelta(milliseconds=offset_ms)
+        return NodeExecutionLogORM(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            node_id=node_id,
+            agent_id="agent-1",
+            runtime_id="python-func",
+            started_at=t,
+            ended_at=t,
+            prompt_xml="",
+            stdout="",
+            stderr="",
+            output_json=None,
+            tokens_used=0,
+            cost_usd=0.0,
+            duration_ms=10,
+            status="success",
+            error_message=None,
+        )
+
+    with factory() as session:
+        session.add(
+            RunORM(
+                id=run_id,
+                pipeline_id="pipe-1",
+                pipeline_version=1,
+                trigger_source="cli",
+                initial_state=initial_state,
+                current_node=None,
+                node_statuses={},
+                final_status="success",
+                started_at=now,
+                ended_at=now,
+                tokens_used=0,
+                cost_usd=0.0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(_make_log("node-a", 0))
+        session.add(_make_log("node-b", 100))
+        session.add(_make_log("node-c", 200))
+        session.commit()
+
+    response = client.get(f"/runs/{run_id}/nodes")
+    assert response.status_code == 200
+    logs = response.json()
+    assert [log["node_id"] for log in logs] == ["node-a", "node-b", "node-c"]
+
+
+def test_list_run_node_logs_404_unknown_run(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """GET /runs/{id}/nodes returns 404 for an unknown run_id."""
+    client, _ = client_and_factory
+    response = client.get("/runs/nonexistent-run/nodes")
+    assert response.status_code == 404
+
+
 def test_get_node_log(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -> None:
     client, factory = client_and_factory
     run_id = _seed_run(factory)
