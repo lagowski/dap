@@ -5,9 +5,8 @@ import type { NodeStatus } from "@/lib/api/types";
 // Default mock — no logs (simulates a run that hasn't started yet, or DB drop).
 // Use vi.fn() so individual tests can override with mockReturnValueOnce.
 // Hoisted so vi.mock factory can close over it.
-// eslint-disable-next-line prefer-const
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let mockUseRunNodeLogs = vi.fn(() => ({ data: null as any }));
+const mockUseRunNodeLogs = vi.fn(() => ({ data: null as any }));
 vi.mock("@/hooks/api", () => ({
   useRunNodeLogs: () => mockUseRunNodeLogs(),
 }));
