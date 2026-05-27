@@ -57,8 +57,10 @@ export function WorkflowCard({
   const { data: wsStatus } = useWorkspaceStatus(project.repo_url ? project.id : null);
   const workspaceMissing = project.repo_url != null && wsStatus != null && !wsStatus.exists;
 
-  // Show issue picker for cortex-style pipelines when repo_url is set.
-  const canPickIssue = !!project.repo_url && kind === "cortex";
+  // Show issue picker for issue-based pipeline kinds when repo_url is set.
+  // Both "cortex" (legacy) and "github-issue" (current) require issue context.
+  const ISSUE_PICKER_KINDS = ["cortex", "github-issue"];
+  const canPickIssue = !!project.repo_url && ISSUE_PICKER_KINDS.includes(kind);
 
   const handleTrigger = async (
     issueNumber?: number,
