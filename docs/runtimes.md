@@ -178,3 +178,107 @@ existing tests for `bash` and `api-call` are good models:
   client for SDK) — exercise the integration, not just the type signature.
 - Assert the `structured` shape stays consistent across success, failure,
   timeout, and validation-error paths.
+
+---
+
+## Pipeline node authors: the `python-func` runtime and `final_status`
+
+> This section is for authors who write pipeline **nodes** (the Python
+> functions invoked by DAP), not authors adding a new runtime adapter.
+
+### How `python-func` nodes work
+
+The `python-func` runtime calls a Python function that has this signature:
+
+```python
+async def run(state: dict, config: dict) -> dict:
+    ...
+    return {"key": "value", ...}
+```
+
+DAP merges every key in the returned `dict` whose name matches a field in
+`PipelineState` into the live run state. Unknown keys are silently dropped
+(`extra="forbid"` is on `PipelineState`, so unrecognised fields never
+corrupt state — they just don't survive the merge).
+
+The `stdout` column in `node_execution_logs` stores `json.dumps(result)`
+(minus the `__audit` key). This is useful for debugging: query
+`node_execution_logs` filtered by `run_id` and `agent_id` to inspect what
+a node returned.
+
+### The `final_status` contract
+
+`PipelineState.final_status` starts every run as `"running"`. What happens
+at the end of the run depends on whether the pipeline opts in to
+**terminal-status enforcement**:
+
+| Pipeline setting | Residual `"running"` at end of run | Meaning |
+|---|---|---|
+| `requires_terminal_final_status = False` (default) | silently coerced to `"success"` | "no node raised = pipeline succeeded" — safe for simple pipelines that don't manage status explicitly |
+| `requires_terminal_final_status = True` | treated as **`"failed"`** with an operator-visible reason | any node that can end the run *must* set `final_status` explicitly |
+
+**Rule**: if your pipeline sets `requires_terminal_final_status = true`,
+every node that can be the **last node in the graph** (i.e. routes to
+`END`) must return `{"final_status": "success"}` on the happy path — or
+`{"final_status": "failed"}` when it decides the run did not succeed.
+
+```python
+# ✅ correct — node that ends the pipeline
+async def run(state: dict, config: dict) -> dict:
+    # ... do the work ...
+    return {
+        "merged": True,
+        "final_status": "success",   # ← required when requires_terminal=True
+    }
+
+# ❌ wrong — run will be marked failed even though the merge succeeded
+async def run(state: dict, config: dict) -> dict:
+    return {
+        "merged": True,
+        # final_status left as "running" → orchestrator sees no terminal
+        # status → marks the run failed
+    }
+```
+
+If a node is not the last node (it has a successor in the graph), omitting
+`final_status` is fine — the orchestrator only checks the value after
+*all* nodes have finished.
+
+### When to enable `requires_terminal_final_status`
+
+Enable it when your pipeline contains nodes that **decide** the outcome —
+for example a merge node that may refuse to merge, or a verification node
+that can declare failure. Leaving it `false` is fine for simple linear
+pipelines where "ran without raising" reliably means "succeeded".
+
+The flag is set in the pipeline's `defaults` block:
+
+```json
+{
+  "defaults": {
+    "requires_terminal_final_status": true,
+    "gate_timeout_seconds": 3600
+  }
+}
+```
+
+### Debugging `final_status: failed` on an otherwise-green run
+
+If every node shows `success` in the dashboard but the run's
+`final_status` is `failed` with a reason like *"pipeline completed with
+non-terminal final_status 'running'"*, the cause is always the same: the
+last node in the graph did not return `{"final_status": "success"}`.
+
+Check the `node_execution_logs` row for the terminal node:
+
+```sql
+SELECT agent_id, stdout
+FROM node_execution_logs
+WHERE run_id = '<your-run-id>'
+ORDER BY started_at DESC
+LIMIT 5;
+```
+
+`stdout` is `json.dumps(result)` — look for `"final_status"` in it. If
+it's absent or still `"running"`, add the explicit return value to that
+node.
