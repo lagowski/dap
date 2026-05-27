@@ -51,6 +51,7 @@ export function WorkflowCard({
   const boundPipeline = pipelines.find((p) => p.id === boundId);
   const [showIssuePicker, setShowIssuePicker] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
+  const [skipCopilot, setSkipCopilot] = useState(false);
   const [repoUrlError, setRepoUrlError] = useState<string | null>(null);
 
   // Workspace must exist before triggering cortex (#371).
@@ -98,6 +99,7 @@ export function WorkflowCard({
             issue_title: issueTitle ?? "",
             issue_body: (issueBody ?? "").slice(0, 1000),
             workspace_path: project.working_directory ?? "",
+            ...(skipCopilot ? { skip_copilot_review: true } : {}),
           },
         };
       }
@@ -139,25 +141,46 @@ export function WorkflowCard({
       </div>
 
       {isAdmin ? (
-        <label className="flex items-start gap-2 rounded-md border px-2 py-2 text-xs">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 accent-primary"
-            checked={autoApprove}
-            aria-describedby={`workflow-${kind}-auto-approve-description`}
-            onChange={(event) => setAutoApprove(event.target.checked)}
-            disabled={!boundId || trigger.isPending || isUpdating}
-          />
-          <span>
-            <span className="font-medium">Skip approval gates for next trigger</span>
-            <span
-              id={`workflow-${kind}-auto-approve-description`}
-              className="block text-muted-foreground"
-            >
-              Run-level override; project gate settings stay unchanged.
+        <div className="space-y-1.5">
+          <label className="flex items-start gap-2 rounded-md border px-2 py-2 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-primary"
+              checked={autoApprove}
+              aria-describedby={`workflow-${kind}-auto-approve-description`}
+              onChange={(event) => setAutoApprove(event.target.checked)}
+              disabled={!boundId || trigger.isPending || isUpdating}
+            />
+            <span>
+              <span className="font-medium">Skip approval gates for next trigger</span>
+              <span
+                id={`workflow-${kind}-auto-approve-description`}
+                className="block text-muted-foreground"
+              >
+                Run-level override; project gate settings stay unchanged.
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+          <label className="flex items-start gap-2 rounded-md border px-2 py-2 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-primary"
+              checked={skipCopilot}
+              aria-describedby={`workflow-${kind}-skip-copilot-description`}
+              onChange={(event) => setSkipCopilot(event.target.checked)}
+              disabled={!boundId || trigger.isPending || isUpdating}
+            />
+            <span>
+              <span className="font-medium">Skip Copilot reviewer</span>
+              <span
+                id={`workflow-${kind}-skip-copilot-description`}
+                className="block text-muted-foreground"
+              >
+                Bypass the GitHub Copilot review step (sets skip_copilot_review).
+              </span>
+            </span>
+          </label>
+        </div>
       ) : null}
 
       <div className="flex items-center gap-2 flex-wrap">
