@@ -28,6 +28,7 @@ export {
   useResumeRun,
   useRun,
   useRunNodeLog,
+  useRunNodeLogs,
   useRunsList,
   useRunStateHistory,
   useTriggerRun,

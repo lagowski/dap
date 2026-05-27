@@ -2,9 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { NodeStatus } from "@/lib/api/types";
 
-// Mock the API hook — we don't need real state history for unit tests.
+// Default mock — no logs (simulates a run that hasn't started yet, or DB drop).
+// Use vi.fn() so individual tests can override with mockReturnValueOnce.
+// Hoisted so vi.mock factory can close over it.
+// eslint-disable-next-line prefer-const
+let mockUseRunNodeLogs = vi.fn(() => ({ data: null as any }));
 vi.mock("@/hooks/api", () => ({
-  useRunStateHistory: () => ({ data: null }),
+  useRunNodeLogs: () => mockUseRunNodeLogs(),
 }));
 
 // Mock lucide-react icons to simple spans for testing.
@@ -102,5 +106,71 @@ describe("NodeTimeline", () => {
     expect(screen.getAllByTestId("icon-check")).toHaveLength(1);
     expect(screen.getAllByTestId("icon-x")).toHaveLength(1);
     expect(screen.getAllByTestId("icon-minus")).toHaveLength(1);
+  });
+
+  it("shows accurate duration from execution log duration_ms", () => {
+    mockUseRunNodeLogs.mockReturnValueOnce({
+      data: [
+        {
+          node_id: "finalize",
+          started_at: "2026-05-27T13:48:13Z",
+          ended_at: "2026-05-27T13:48:23Z",
+          duration_ms: 10_000,
+          status: "success",
+        },
+        {
+          node_id: "pr_creator",
+          started_at: "2026-05-27T13:48:23Z",
+          ended_at: "2026-05-27T13:48:45Z",
+          duration_ms: 22_000,
+          status: "success",
+        },
+      ],
+    });
+
+    const statuses: Record<string, NodeStatus> = {
+      finalize: "success",
+      pr_creator: "success",
+    };
+    render(
+      <NodeTimeline nodeStatuses={statuses} currentNode={null} runId="r1" />,
+    );
+    // finalize: 10.0s, pr_creator: 22.0s (formatDuration uses toFixed(1))
+    expect(screen.getByText("10.0s")).toBeInTheDocument();
+    expect(screen.getByText("22.0s")).toBeInTheDocument();
+  });
+
+  it("does not show timing for nodes missing an execution log (DB-drop scenario)", () => {
+    // Simulate: finalize log committed, pr_creator log never committed (DB drop).
+    // The critical bug: without this fix the old code used Date.now() for the last
+    // snapshot, producing a 20-minute finalize duration.
+    mockUseRunNodeLogs.mockReturnValueOnce({
+      data: [
+        {
+          node_id: "finalize",
+          started_at: "2026-05-27T13:48:13Z",
+          ended_at: "2026-05-27T13:48:23Z",
+          duration_ms: 10_000,
+          status: "success",
+        },
+        // pr_creator log missing — DB dropped before it could commit
+      ],
+    });
+
+    const statuses: Record<string, NodeStatus> = {
+      finalize: "success",
+      pr_creator: "success", // ran but no log written
+    };
+    render(
+      <NodeTimeline nodeStatuses={statuses} currentNode={null} runId="r1" />,
+    );
+    expect(screen.getByText("finalize")).toBeInTheDocument();
+    expect(screen.getByText("pr_creator")).toBeInTheDocument();
+    // finalize shows its real 10.0s duration from the log
+    expect(screen.getByText("10.0s")).toBeInTheDocument();
+    // No inflated time displayed — certainly no "20m"
+    expect(screen.queryByText(/20m/)).not.toBeInTheDocument();
+    // pr_creator has no log — no timing rendered for it
+    // (Absence of a second duration string — only "10s" should appear)
   });
 });

@@ -204,6 +204,10 @@ export async function getRunStateHistory(id: string): Promise<StateSnapshot[]> {
   return request<StateSnapshot[]>(`/runs/${encodeURIComponent(id)}/state/history`);
 }
 
+export async function getRunNodeLogs(runId: string): Promise<NodeExecutionLog[]> {
+  return request<NodeExecutionLog[]>(`/runs/${encodeURIComponent(runId)}/nodes`);
+}
+
 export async function getRunNodeLog(
   runId: string,
   nodeId: string,

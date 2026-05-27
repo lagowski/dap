@@ -11,6 +11,7 @@ export const queryKeys = {
   run: (id: string) => ["runs", id] as const,
   runState: (id: string) => ["runs", id, "state"] as const,
   runHistory: (id: string) => ["runs", id, "history"] as const,
+  runNodeLogs: (runId: string) => ["runs", runId, "nodes"] as const,
   runNodeLog: (runId: string, nodeId: string) =>
     ["runs", runId, "nodes", nodeId] as const,
   agents: ["agents"] as const,

@@ -70,6 +70,14 @@ export function useRunStateHistory(id: string | null) {
   });
 }
 
+export function useRunNodeLogs(runId: string | null) {
+  return useQuery({
+    queryKey: runId ? queryKeys.runNodeLogs(runId) : ["runs", "noop", "nodes"],
+    queryFn: runId ? () => api.getRunNodeLogs(runId) : skipToken,
+    enabled: runId != null,
+  });
+}
+
 export function useRunNodeLog(runId: string | null, nodeId: string | null) {
   return useQuery({
     queryKey:

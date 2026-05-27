@@ -24,6 +24,7 @@ def register_run_read_routes(router: APIRouter) -> None:
     router.get("/{run_id}/state/history", response_model=list[StateSnapshot])(
         list_run_state_history
     )
+    router.get("/{run_id}/nodes", response_model=list[NodeExecutionLog])(list_run_node_logs)
     router.get("/{run_id}/nodes/{node_id}", response_model=NodeExecutionLog)(get_run_node_log)
 
 
@@ -120,6 +121,19 @@ def list_run_state_history(
 ) -> list[StateSnapshot]:
     try:
         return repo.list_run_state_history(
+            session, run_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+def list_run_node_logs(
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> list[NodeExecutionLog]:
+    try:
+        return repo.list_run_node_logs(
             session, run_id, actor_id=user.id, is_admin=user.is_superuser
         )
     except repo.NotFoundError as exc:
