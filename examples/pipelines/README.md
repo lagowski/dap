@@ -108,3 +108,34 @@ issue title, the rest as the body, and pipe:
 TITLE="<copy from H1>"
 gh issue create --title "$TITLE" --body-file <(echo "$BODY")
 ```
+
+### `ops-pipeline`
+
+Four-node pipeline for **command-execution issues** — issues that require
+running shell commands on a remote host (benchmarks, migrations, service
+restarts) instead of producing a code change.
+
+```
+__start__ → trigger → specify → executor → done → __end__
+```
+
+| Node | Role | What it does |
+|---|---|---|
+| `trigger` | `post_check` | Validates `extensions.execution_target` is present |
+| `specify` | `task_selector` | Validates commands list and produces a human-readable run-plan |
+| `executor` | `post_check` | Runs commands on the target host via the Cortex executor node (Dixter999/cortex-project#446) |
+| `done` | `post_check` | Posts results back to the GitHub issue via `gh issue comment` |
+
+**Extension keys** (passed in `initial_state.extensions` at trigger time):
+
+| Key | Type | Required |
+|---|---|---|
+| `execution_target` | `string` | yes |
+| `execution_commands` | `list[string]` | yes |
+| `execution_env` | `dict[string, string]` | no — pass `GITHUB_ISSUE_URL` here for automatic write-back |
+
+**Note:** This bundle lives in its own subdirectory (`examples/ops-pipeline/`)
+rather than the flat `examples/pipelines/` convention used by the other bundles.
+See [`examples/ops-pipeline/README.md`](../ops-pipeline/README.md) for the full
+node table, trigger payload example, GitHub write-back ownership statement, and
+Cortex executor prerequisites.
