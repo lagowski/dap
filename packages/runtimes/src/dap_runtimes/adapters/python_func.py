@@ -41,17 +41,52 @@ import contextlib
 import importlib
 import json
 import logging
+import os
 import platform
 import time
+from collections.abc import Iterator
 from typing import Any
 
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 
+from dap_runtimes.adapters._subprocess_env import compute_env_overlay
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.python_func")
 
 MS_PER_SECOND: int = 1000
+
+# python-func callables run IN the engine process and read configuration
+# from ``os.environ`` (e.g. cortex resolves GitHub tokens via pydantic
+# settings). To honour the #65/#388 env-layering contract for in-process
+# nodes we patch ``os.environ`` with the instance/project/runtime overlay
+# around the callable. ``os.environ`` is process-global, so concurrent runs
+# (which may carry DIFFERENT project tokens) must not interleave their
+# patches — this lock serialises overlay-bearing python-func execution.
+# Nodes with no overlay skip the lock entirely and keep full concurrency.
+_ENV_OVERLAY_LOCK = asyncio.Lock()
+
+
+@contextlib.contextmanager
+def _patched_environ(overlay: dict[str, str]) -> Iterator[None]:
+    """Apply *overlay* to ``os.environ``, restoring prior values on exit.
+
+    Keys absent before are removed afterwards; pre-existing keys are
+    restored to their original value. Restoration runs in ``finally`` so a
+    raising / timing-out callable never leaks the overlay into the engine env.
+    """
+    saved: dict[str, str | None] = {}
+    try:
+        for key, value in overlay.items():
+            saved[key] = os.environ.get(key)
+            os.environ[key] = value
+        yield
+    finally:
+        for key, old in saved.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
 
 
 class PythonFuncAdapter(BaseAdapter):
@@ -137,23 +172,43 @@ class PythonFuncAdapter(BaseAdapter):
         if pass_context and task.context is not None:
             state["context"] = task.context.model_dump()
 
+        # Env-layering contract (#65/#388) for in-process nodes: instance <
+        # project < per-agent runtime_config.env. Validate before timing so a
+        # malformed override fails the same way the subprocess adapters do.
+        env_overlay, overlay_error = compute_env_overlay(
+            task.project_env_vars,
+            config,
+            instance_env_vars=task.instance_env_vars,
+        )
+        if overlay_error is not None:
+            return _failed(f"python-func: {overlay_error}", duration_ms=0)
+
         start = time.monotonic()
         # timeout_ms=None means no timeout (run until completion).
         timeout_seconds = (
             max(task.timeout_ms, 1) / MS_PER_SECOND if task.timeout_ms is not None else None
         )
 
-        try:
+        async def _invoke() -> Any:
             if asyncio.iscoroutinefunction(func):
                 awaitable: Any = func(state, config)
             else:
                 loop = asyncio.get_running_loop()
                 awaitable = loop.run_in_executor(None, func, state, config)
-
             if timeout_seconds is not None:
-                result: Any = await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+                return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+            return await awaitable
+
+        try:
+            if env_overlay:
+                # Hold the lock across the whole callable: the overlay lives in
+                # the process-global os.environ, so concurrent overlay-bearing
+                # nodes must not interleave (correctness over throughput).
+                async with _ENV_OVERLAY_LOCK:
+                    with _patched_environ(env_overlay):
+                        result: Any = await _invoke()
             else:
-                result = await awaitable
+                result = await _invoke()
 
         except TimeoutError:
             return _failed(
