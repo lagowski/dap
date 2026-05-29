@@ -583,6 +583,7 @@ async def test_instance_env_var_visible_to_callable(
         )
     )
     assert result.success, result.errors
+    assert result.structured is not None
     assert result.structured["state_delta"]["seen"] == "merge-token"
 
 
@@ -599,6 +600,7 @@ async def test_project_env_overrides_instance_for_callable(
         )
     )
     assert result.success, result.errors
+    assert result.structured is not None
     assert result.structured["state_delta"]["seen"] == "from-project"
 
 
@@ -615,6 +617,7 @@ async def test_runtime_env_overrides_project_for_callable(
         )
     )
     assert result.success, result.errors
+    assert result.structured is not None
     assert result.structured["state_delta"]["seen"] == "from-agent"
 
 
@@ -638,6 +641,7 @@ async def test_sync_callable_also_sees_overlay(
         )
     )
     assert result.success, result.errors
+    assert result.structured is not None
     assert result.structured["state_delta"]["seen"] == "code-token"
 
 
@@ -654,6 +658,7 @@ async def test_os_environ_restored_after_execution(
         _env_task(callable_path=path, instance_env_vars={"DAP_OVERLAY_NEWKEY": "transient"})
     )
     assert result.success, result.errors
+    assert result.structured is not None
     assert result.structured["state_delta"]["seen"] == "transient"
     assert "DAP_OVERLAY_NEWKEY" not in os.environ
 
@@ -672,6 +677,7 @@ async def test_os_environ_preexisting_value_restored(
         _env_task(callable_path=path, instance_env_vars={"GH_TOKEN": "overlay-value"})
     )
     assert result.success, result.errors
+    assert result.structured is not None
     assert result.structured["state_delta"]["seen"] == "overlay-value"
     assert os.environ["GH_TOKEN"] == "engine-default"
 
@@ -703,6 +709,7 @@ async def test_empty_overlay_leaves_environ_untouched(
     path = _install(monkeypatch, "_dap_env_empty_mod", _probe("DAP_AMBIENT_ONLY"))
     result = await adapter.execute(_env_task(callable_path=path))
     assert result.success, result.errors
+    assert result.structured is not None
     assert result.structured["state_delta"]["seen"] == "ambient"
 
 
