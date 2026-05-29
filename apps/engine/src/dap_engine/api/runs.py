@@ -173,6 +173,14 @@ async def trigger_run(
 
     # Merge extensions: project-level < caller's extensions (caller wins).
     caller_extensions: dict[str, Any] = payload.initial_state.get("extensions") or {}
+    # Guard: execution_commands must be a list when supplied (#611).
+    if "execution_commands" in caller_extensions and not isinstance(
+        caller_extensions["execution_commands"], list
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="extensions.execution_commands must be a list of strings",
+        )
     merged_extensions = {**project_extensions, **caller_extensions}
 
     caller_state = dict(payload.initial_state)
