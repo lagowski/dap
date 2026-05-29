@@ -101,8 +101,37 @@ def load_cortex_bundle() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _client(engine_url: str) -> httpx.Client:
-    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0)
+def _resolve_auth_token(token: str | None) -> str:
+    """Resolve the engine bearer token: explicit arg wins, else ``DAP_AUTH_TOKEN``.
+
+    Returns ``""`` when neither is set (or only whitespace) — the engine's
+    ``/health`` is public, but every other endpoint 401s, so a missing token
+    surfaces as a clear 401 the caller already handles.
+    """
+    return (token or os.environ.get("DAP_AUTH_TOKEN") or "").strip()
+
+
+def _client(engine_url: str, token: str | None = None) -> httpx.Client:
+    """HTTP client for the engine, carrying ``Authorization: Bearer`` when a
+    token is available. The engine accepts a JWT or an opaque ``dap_*`` API
+    token (``/auth/api-tokens``); the CLI forwards whatever is configured via
+    ``--token`` / ``DAP_AUTH_TOKEN``."""
+    resolved = _resolve_auth_token(token)
+    headers = {"Authorization": f"Bearer {resolved}"} if resolved else {}
+    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0, headers=headers)
+
+
+def _export_token_to_env(token: str | None) -> None:
+    """Propagate an explicit ``--token`` into ``DAP_AUTH_TOKEN``.
+
+    The many internal helpers build their own ``_client(engine_url)`` and
+    resolve the token from the env, so a token passed only as a flag is
+    exported here once at the entrypoint. No-op for empty/whitespace tokens
+    (and a no-op overwrite when the value already came from the env var).
+    """
+    t = (token or "").strip()
+    if t:
+        os.environ["DAP_AUTH_TOKEN"] = t
 
 
 def check_engine(engine_url: str) -> None:
@@ -541,8 +570,10 @@ def cortex_run(
     no_interactive: bool,
     watch: bool,
     workspace: str | None,
+    token: str | None = None,
 ) -> None:
     """Implement `dap project run cortex <issue-url>`."""
+    _export_token_to_env(token)
     # Parse URL
     try:
         repo, issue_number = parse_issue_url(issue_url)
@@ -599,8 +630,9 @@ def cortex_run(
     )
 
 
-def cortex_approve(run_id: str, engine_url: str) -> None:
+def cortex_approve(run_id: str, engine_url: str, token: str | None = None) -> None:
     """Implement `dap project approve cortex <run-id>`."""
+    _export_token_to_env(token)
     run = _get_run(engine_url, run_id)
     status = run.get("final_status")
     if status != "paused":
@@ -618,8 +650,9 @@ def cortex_approve(run_id: str, engine_url: str) -> None:
     console.print(f"[green]✓ Approved — run {run_id[:8]} resuming[/green]")
 
 
-def cortex_reject(run_id: str, reason: str, engine_url: str) -> None:
+def cortex_reject(run_id: str, reason: str, engine_url: str, token: str | None = None) -> None:
     """Implement `dap project reject cortex <run-id> [reason]`."""
+    _export_token_to_env(token)
     run = _get_run(engine_url, run_id)
     status = run.get("final_status")
     if status != "paused":
@@ -662,8 +695,11 @@ def _json_default(obj: object) -> str:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def cortex_state(run_id: str, engine_url: str, fmt: str = "table") -> None:
+def cortex_state(
+    run_id: str, engine_url: str, fmt: str = "table", token: str | None = None
+) -> None:
     """Implement `dap project state cortex <run-id>`."""
+    _export_token_to_env(token)
     try:
         run = _get_run(engine_url, run_id)
     except httpx.HTTPStatusError as exc:
