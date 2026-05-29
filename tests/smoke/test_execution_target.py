@@ -150,9 +150,7 @@ def test_execution_target_keys_survive_round_trip(
     # Also verify they appear in the state snapshot history
     history = client.get(f"/runs/{run_id}/state/history").json()
     assert len(history) >= 1
-    first_snapshot_extensions: dict[str, Any] = (
-        history[0].get("state", {}).get("extensions") or {}
-    )
+    first_snapshot_extensions: dict[str, Any] = history[0].get("state", {}).get("extensions") or {}
     assert first_snapshot_extensions["execution_target"] == "dixter-pc"
 
 
