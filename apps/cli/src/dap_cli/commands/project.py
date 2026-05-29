@@ -21,6 +21,17 @@ project_app = typer.Typer(
 
 _ENGINE_DEFAULT = f"http://localhost:{DEFAULT_ENGINE_PORT}"
 
+# Reused across every sub-command — the engine requires a bearer token
+# (JWT or opaque ``dap_*`` API token) on all endpoints except ``/health``.
+_TokenOption = Annotated[
+    str | None,
+    typer.Option(
+        "--token",
+        help="DAP engine API token (or set DAP_AUTH_TOKEN)",
+        envvar="DAP_AUTH_TOKEN",
+    ),
+]
+
 
 @project_app.command("run")
 def cmd_run(
@@ -42,6 +53,7 @@ def cmd_run(
         str | None,
         typer.Option("--workspace", help="Local workspace path for the pipeline"),
     ] = None,
+    token: _TokenOption = None,
 ) -> None:
     """Trigger a pipeline run for a GitHub issue.
 
@@ -58,6 +70,7 @@ def cmd_run(
         no_interactive=no_interactive,
         watch=watch,
         workspace=workspace,
+        token=token,
     )
 
 
@@ -69,6 +82,7 @@ def cmd_approve(
         str,
         typer.Option("--engine", help="DAP engine base URL", envvar="DAP_ENGINE_URL"),
     ] = _ENGINE_DEFAULT,
+    token: _TokenOption = None,
 ) -> None:
     """Approve the current gate for a paused run.
 
@@ -79,7 +93,7 @@ def cmd_approve(
     if pipeline != "cortex":
         typer.echo(f"Unknown pipeline type: {pipeline!r}. Supported: cortex", err=True)
         raise typer.Exit(1)
-    _cortex.cortex_approve(run_id=run_id, engine_url=engine)
+    _cortex.cortex_approve(run_id=run_id, engine_url=engine, token=token)
 
 
 @project_app.command("reject")
@@ -91,6 +105,7 @@ def cmd_reject(
         str,
         typer.Option("--engine", help="DAP engine base URL", envvar="DAP_ENGINE_URL"),
     ] = _ENGINE_DEFAULT,
+    token: _TokenOption = None,
 ) -> None:
     """Reject (abort) the current gate for a paused run.
 
@@ -101,7 +116,7 @@ def cmd_reject(
     if pipeline != "cortex":
         typer.echo(f"Unknown pipeline type: {pipeline!r}. Supported: cortex", err=True)
         raise typer.Exit(1)
-    _cortex.cortex_reject(run_id=run_id, reason=reason, engine_url=engine)
+    _cortex.cortex_reject(run_id=run_id, reason=reason, engine_url=engine, token=token)
 
 
 @project_app.command("state")
@@ -120,6 +135,7 @@ def cmd_state(
             click_type=__import__("click").Choice(["table", "json"], case_sensitive=False),
         ),
     ] = "table",
+    token: _TokenOption = None,
 ) -> None:
     """Show current state of a pipeline run.
 
@@ -131,4 +147,4 @@ def cmd_state(
     if pipeline != "cortex":
         typer.echo(f"Unknown pipeline type: {pipeline!r}. Supported: cortex", err=True)
         raise typer.Exit(1)
-    _cortex.cortex_state(run_id=run_id, engine_url=engine, fmt=fmt)
+    _cortex.cortex_state(run_id=run_id, engine_url=engine, fmt=fmt, token=token)

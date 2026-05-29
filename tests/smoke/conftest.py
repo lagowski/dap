@@ -44,6 +44,7 @@ UNIT_FILES = frozenset(
         "test_agent_schema_validation.py",
         "test_api_call_adapter.py",
         "test_claude_code_adapter.py",
+        "test_cli_cortex_auth.py",
         "test_codex_adapter.py",
         "test_conditions.py",
         "test_db_url_helpers.py",
