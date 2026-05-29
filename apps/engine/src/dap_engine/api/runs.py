@@ -58,6 +58,20 @@ logger = logging.getLogger("dap.engine.api.runs")
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
+def _reject_non_list_execution_commands(extensions: dict[str, Any]) -> None:
+    """Reject a non-list ``execution_commands`` extension with 422 (#611).
+
+    The Cortex executor node expects an ordered ``list[str]`` of commands;
+    a bare string would silently run as a single command, so we fail loud.
+    """
+    cmds = extensions.get("execution_commands")
+    if cmds is not None and not isinstance(cmds, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="extensions.execution_commands must be a list of strings",
+        )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Run)
 async def trigger_run(
     payload: RunCreateRequest,
@@ -174,13 +188,7 @@ async def trigger_run(
     # Merge extensions: project-level < caller's extensions (caller wins).
     caller_extensions: dict[str, Any] = payload.initial_state.get("extensions") or {}
     # Guard: execution_commands must be a list when supplied (#611).
-    if "execution_commands" in caller_extensions and not isinstance(
-        caller_extensions["execution_commands"], list
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="extensions.execution_commands must be a list of strings",
-        )
+    _reject_non_list_execution_commands(caller_extensions)
     merged_extensions = {**project_extensions, **caller_extensions}
 
     caller_state = dict(payload.initial_state)
