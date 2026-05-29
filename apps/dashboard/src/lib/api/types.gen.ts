@@ -991,6 +991,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Run Node Logs */
+        get: operations["list_run_node_logs_runs__run_id__nodes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}/nodes/{node_id}": {
         parameters: {
             query?: never;
@@ -2429,6 +2446,12 @@ export interface components {
              */
             budget_limit_usd: number;
             /**
+             * Gate Timeout Seconds
+             * @description Seconds a gate waits for human approval before the run is marked failed with failure_reason='gate approval timed out'. Defaults to 1 hour. Set per-pipeline in defaults.gate_timeout_seconds.
+             * @default 3600
+             */
+            gate_timeout_seconds: number;
+            /**
              * Max Attempts
              * @default 3
              */
@@ -2943,6 +2966,11 @@ export interface components {
              * @default 0
              */
             cost_usd: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Current Node */
             current_node?: string | null;
             /** Ended At */
@@ -2955,6 +2983,8 @@ export interface components {
              * @enum {string}
              */
             final_status: "running" | "success" | "failed" | "aborted" | "paused";
+            /** Gate Expires At */
+            gate_expires_at?: string | null;
             /** Gate Payload */
             gate_payload?: {
                 [key: string]: unknown;
@@ -2989,11 +3019,6 @@ export interface components {
              * @enum {string}
              */
             trigger_source: "dashboard" | "cli" | "api";
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /**
              * Updated At
              * Format: date-time
@@ -4912,6 +4937,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_run_node_logs_runs__run_id__nodes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeExecutionLog"][];
                 };
             };
             /** @description Validation Error */

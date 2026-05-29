@@ -175,6 +175,7 @@ def test_list_runs_seeded(client_and_factory: tuple[TestClient, sessionmaker[Ses
     assert "created_at" in item
     assert "updated_at" in item
     from datetime import datetime as _dt
+
     _dt.fromisoformat(item["created_at"])
     _dt.fromisoformat(item["updated_at"])
 
@@ -264,6 +265,7 @@ def test_get_run(client_and_factory: tuple[TestClient, sessionmaker[Session]]) -
     assert "created_at" in body
     assert "updated_at" in body
     from datetime import datetime as _dt
+
     _dt.fromisoformat(body["created_at"])
     _dt.fromisoformat(body["updated_at"])
 
