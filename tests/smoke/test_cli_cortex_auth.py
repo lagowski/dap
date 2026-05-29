@@ -11,13 +11,15 @@ token argument > ``DAP_AUTH_TOKEN`` env > no header.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from dap_cli.commands import cortex
 
 
-def _auth(client) -> str | None:
+def _auth(client: httpx.Client) -> str | None:
     # httpx normalises header names to lower-case; missing → None.
-    return client.headers.get("authorization")
+    value: str | None = client.headers.get("authorization")
+    return value
 
 
 def test_client_attaches_bearer_from_token_arg() -> None:
