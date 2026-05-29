@@ -519,3 +519,200 @@ def test_registered_in_default_registry() -> None:
     assert registry.has("python-func")
     adapter = registry.get("python-func")
     assert adapter.id == "python-func"
+
+
+# ---------------------------------------------------------------------------
+# env overlay (#65/#388 follow-up) — in-process callables must see the
+# instance / project / runtime_config.env layers in os.environ, and the
+# adapter must restore os.environ exactly afterwards (no leakage across runs).
+# ---------------------------------------------------------------------------
+
+
+def _env_task(
+    *,
+    callable_path: str,
+    instance_env_vars: dict[str, str] | None = None,
+    project_env_vars: dict[str, str] | None = None,
+    runtime_env: dict[str, Any] | None = None,
+    timeout_ms: int | None = 5000,
+) -> RuntimeTask:
+    config: dict[str, Any] = {"callable_path": callable_path}
+    if runtime_env is not None:
+        config["env"] = runtime_env
+    return RuntimeTask(
+        execution_id="exec-env-test",
+        prompt_xml="<p/>",
+        working_directory="/tmp",
+        timeout_ms=timeout_ms,
+        runtime_config=config,
+        instance_env_vars=instance_env_vars or {},
+        project_env_vars=project_env_vars or {},
+    )
+
+
+def _install(monkeypatch: pytest.MonkeyPatch, name: str, func: Any) -> str:
+    import sys
+    import types
+
+    mod = types.ModuleType(name)
+    mod.run = func  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, name, mod)
+    return f"{name}:run"
+
+
+def _probe(key: str) -> Any:
+    """Build a callable that returns the live os.environ value for *key*."""
+
+    def run(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        import os
+
+        return {"seen": os.environ.get(key, "__UNSET__")}
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_instance_env_var_visible_to_callable(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_inst_mod", _probe("CORTEX_GH_TOKEN_MERGE"))
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            instance_env_vars={"CORTEX_GH_TOKEN_MERGE": "merge-token"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured["state_delta"]["seen"] == "merge-token"
+
+
+@pytest.mark.asyncio
+async def test_project_env_overrides_instance_for_callable(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_proj_mod", _probe("GH_TOKEN"))
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            instance_env_vars={"GH_TOKEN": "from-instance"},
+            project_env_vars={"GH_TOKEN": "from-project"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured["state_delta"]["seen"] == "from-project"
+
+
+@pytest.mark.asyncio
+async def test_runtime_env_overrides_project_for_callable(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_rt_mod", _probe("GH_TOKEN"))
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            project_env_vars={"GH_TOKEN": "from-project"},
+            runtime_env={"GH_TOKEN": "from-agent"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured["state_delta"]["seen"] == "from-agent"
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_also_sees_overlay(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sync callables run in run_in_executor (a thread) — os.environ is
+    process-global so the overlay must be visible there too."""
+
+    def run(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        import os
+
+        return {"seen": os.environ.get("CORTEX_GH_TOKEN_CODE", "__UNSET__")}
+
+    path = _install(monkeypatch, "_dap_env_sync_mod", run)
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            instance_env_vars={"CORTEX_GH_TOKEN_CODE": "code-token"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured["state_delta"]["seen"] == "code-token"
+
+
+@pytest.mark.asyncio
+async def test_os_environ_restored_after_execution(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key that did not exist before must be gone afterwards."""
+    import os
+
+    assert "DAP_OVERLAY_NEWKEY" not in os.environ
+    path = _install(monkeypatch, "_dap_env_restore_mod", _probe("DAP_OVERLAY_NEWKEY"))
+    result = await adapter.execute(
+        _env_task(callable_path=path, instance_env_vars={"DAP_OVERLAY_NEWKEY": "transient"})
+    )
+    assert result.success, result.errors
+    assert result.structured["state_delta"]["seen"] == "transient"
+    assert "DAP_OVERLAY_NEWKEY" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_os_environ_preexisting_value_restored(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing key is temporarily overridden, then restored to its
+    original value — no permanent mutation of the engine process env."""
+    import os
+
+    monkeypatch.setenv("GH_TOKEN", "engine-default")
+    path = _install(monkeypatch, "_dap_env_pre_mod", _probe("GH_TOKEN"))
+    result = await adapter.execute(
+        _env_task(callable_path=path, instance_env_vars={"GH_TOKEN": "overlay-value"})
+    )
+    assert result.success, result.errors
+    assert result.structured["state_delta"]["seen"] == "overlay-value"
+    assert os.environ["GH_TOKEN"] == "engine-default"
+
+
+@pytest.mark.asyncio
+async def test_os_environ_restored_even_when_callable_raises(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    def run(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    assert "DAP_OVERLAY_RAISEKEY" not in os.environ
+    path = _install(monkeypatch, "_dap_env_raise_mod", run)
+    result = await adapter.execute(
+        _env_task(callable_path=path, instance_env_vars={"DAP_OVERLAY_RAISEKEY": "x"})
+    )
+    assert result.success is False
+    assert "DAP_OVERLAY_RAISEKEY" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_empty_overlay_leaves_environ_untouched(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No overlay → no patching; a probe sees whatever the ambient env holds."""
+    monkeypatch.setenv("DAP_AMBIENT_ONLY", "ambient")
+    path = _install(monkeypatch, "_dap_env_empty_mod", _probe("DAP_AMBIENT_ONLY"))
+    result = await adapter.execute(_env_task(callable_path=path))
+    assert result.success, result.errors
+    assert result.structured["state_delta"]["seen"] == "ambient"
+
+
+@pytest.mark.asyncio
+async def test_malformed_runtime_env_returns_failed(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_bad_mod", _probe("X"))
+    result = await adapter.execute(
+        _env_task(callable_path=path, runtime_env="not-a-dict")  # type: ignore[arg-type]
+    )
+    assert result.success is False
+    assert any("dict[str, str]" in err for err in result.errors)
