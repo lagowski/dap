@@ -769,4 +769,49 @@ project/
 - Test in KIND before production
 - Use namespaces for isolation
 - Enable resource limits
-- Implement health checks
+- Implement health checks<!--
+  DRAFT — appendix to be appended to /home/dixter/Projects/dap/CLAUDE.md
+  Generated 2026-06-01. Review and merge into CLAUDE.md when approved, then delete this file.
+  Contains ZERO secrets — all real credentials stay in the LAGOVALUT vault on the operator's OneDrive.
+-->
+
+---
+
+## 📒 Operator Context (Authorized Contributors Only)
+
+This repo runs in production against a private infrastructure that is **NOT** described in this CLAUDE.md or anywhere else in the repo, and intentionally so. The full operational context — credentials, host addresses, cred-rotation procedures, review-gate engine specs, run brief, and machine restart procedures — lives in a private Obsidian vault.
+
+**If you have authorized access to that vault:**
+
+- **Vault index:** `~/OneDrive/LAGOVALUT/dap/00_START_HERE.md` (Windows: `C:\Users\<you>\OneDrive\LAGOVALUT\dap\00_START_HERE.md` ; WSL: `/mnt/c/Users/<you>/OneDrive/LAGOVALUT/dap/00_START_HERE.md`).
+- Read it once before doing anything destructive in this repo or against the production infra.
+- The vault contains the canonical reading order, the architecture diagram, and the first-run quick-start.
+
+**If you don't have vault access, the following are the only authorized actions on this repo:**
+
+- Read code, run tests locally, open PRs, comment on issues.
+- **Do not** push to `main` / `develop`, do not run `cortex` commands, do not trigger DAP engine runs against production projects, do not modify `instance_env_vars`, do not touch the PostgreSQL pod referenced below.
+
+### Canonical infrastructure facts (NOT secrets — safe to keep in-repo)
+
+| Fact | Value | Note |
+|---|---|---|
+| Execution host | `dixter-pc` — 192.168.1.100, SSH port 2222 | Self-hosted runner for the AI-review gate also lives here. |
+| DAP engine | `http://dixter-pc:7333` | systemd user unit `dap-engine`. |
+| DAP dashboard | `http://dixter-pc:3000` (typically accessed as `http://localhost:3001` via SSH `LocalForward`) | systemd user unit `dap-dashboard`. |
+| Postgres pod | `database/postgres-7b8d57c965-gvfld` on the k3s node 10.0.0.5 | `pgvector/pgvector:pg16`. Bound 20Gi PVC `postgres-data`. Started 2026-02-28. **Canonical persistent store — never recreate.** |
+| Postgres NodePort | `10.0.0.5:30432` → the pod above | All DAP-related databases live here. |
+| Review gate check name | `copilot-review` | Required by branch protection on `develop`/`main` for the speacher repo. Stable across engine swaps (Copilot → Gemini → Claude → Codex). |
+
+### The four secrets-handling rules
+
+1. **No credentials in this repo.** Connection strings, PATs, passwords, Fernet keys, and OAuth tokens never appear in code, commits, comments, issues, PR bodies, or any file tracked by git. They live in the vault and (encrypted) in the `instance_env_vars` table on the canonical Postgres pod.
+2. **No credentials in LLM prompts.** Any Claude / Codex / Gemini call that originates inside this repo MUST NOT include real tokens or passwords in its prompt. The bridge wrappers (`claude-bridge`, `codex-bridge`) strip provider env vars from the child process specifically to prevent silent flips to metered APIs.
+3. **Three role-separated GitHub identities.** Production runs require four `CORTEX_GH_TOKEN_<ROLE>` variables resolving to three accounts (read=Dixter999, issues=Dixter999, code=rafeekpro, merge=rlagowski). These live in `instance_env_vars` once globally — never duplicated per-project. The single `GH_TOKEN` you see on a project record is the *git-push identity* for that repo only.
+4. **The pod is the source of truth.** If state appears inconsistent (missing project, stale env var, wrong password hash), the fix is always a targeted update inside the existing pod — never a new pod, never a new PVC, never an alternative deployment.
+
+### Boundary
+
+Anything beyond the table and four rules above — actual host credentials, the API token, the password hash, the Fernet key, the per-account PAT values, the codex-bridge runner setup steps — is in the vault and stays there. If you find yourself wanting to write any of those values into this repo, stop and re-read rule 1.
+
+<!-- end appendix -->
