@@ -67,6 +67,24 @@ class AgentRuntimePayload(BaseModel):
     budget_limit_usd: float | None = None
     timeout_ms: int = Field(default=60_000, gt=0)
 
+    @field_validator("timeout_ms", mode="before")
+    @classmethod
+    def _accept_null_timeout_ms(cls, value: Any) -> Any:
+        """Accept legacy agent payloads that explicitly send ``timeout_ms: null``.
+
+        Cortex bundle export pre-2026-06 emits ``timeout_ms: null`` when no
+        per-agent override is set. The strict ``int`` constraint rejected those
+        bundles at import time (HTTP 422). Normalize ``None`` to the default
+        60_000 ms before type/constraint validation runs so downstream code
+        keeps the ``int`` contract unchanged.
+
+        Tracked at rafeekpro/dap#635 (second class — first class was edge
+        condition shape, fixed in ``packages/types/src/dap_types/pipeline.py``).
+        """
+        if value is None:
+            return 60_000
+        return value
+
     @field_validator("input_schema", "output_schema", mode="before")
     @classmethod
     def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
