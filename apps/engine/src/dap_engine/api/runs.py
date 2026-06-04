@@ -86,7 +86,8 @@ def _reject_non_list_execution_commands(extensions: dict[str, Any]) -> None:
 # ever needed; until then this stays hardcoded and tracked in code review.
 _SELF_FIX_DANGEROUS_PROJECT_IDS: frozenset[str] = frozenset(
     {
-        "45e8d707-c42e-4683-8f06-50b683f748cc",  # the dap project (was rafeekpro/dap, now lagowski/dap)
+        # the dap project (was rafeekpro/dap, now lagowski/dap)
+        "45e8d707-c42e-4683-8f06-50b683f748cc",
     }
 )
 
