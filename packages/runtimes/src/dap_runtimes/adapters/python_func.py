@@ -37,6 +37,7 @@ network confinement. The Python package must be installed in the engine's venv.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import importlib
 import json
@@ -65,6 +66,34 @@ MS_PER_SECOND: int = 1000
 # patches — this lock serialises overlay-bearing python-func execution.
 # Nodes with no overlay skip the lock entirely and keep full concurrency.
 _ENV_OVERLAY_LOCK = asyncio.Lock()
+
+
+# Dedicated thread pool for sync ``python-func`` callables (#621).
+#
+# Previously, sync callables ran via ``loop.run_in_executor(None, ...)``,
+# which routes work through asyncio's *default* executor. FastAPI also
+# routes its sync ``def`` route handlers (including ``/health``) through
+# that same default executor. When a long-running in-process node held a
+# default-executor slot for minutes, ``/health`` queued behind it and
+# external probes (k8s liveness/readiness, monitors, dashboards) saw the
+# engine as down even though the DB was healthy. The cfd#134 run
+# ``67771e2e-...`` reproduced this with a ~196s ``coder`` node holding
+# ``/health`` unresponsive for the full duration.
+#
+# This pool is python-func-only — sync node callables run here, sync
+# FastAPI handlers continue to use the default pool. They never compete.
+#
+# Worker count: configurable via ``DAP_PYTHON_FUNC_MAX_WORKERS``
+# (default 10). 10 is enough for typical cortex parallelism (5-8
+# concurrent nodes) without sprawling thread counts. Operators on
+# higher-throughput hosts can raise it; on memory-constrained pods
+# they can lower it. Setting it to 1 falls back to fully-serialised
+# behaviour, useful for deterministic debugging.
+_PYTHON_FUNC_MAX_WORKERS = max(1, int(os.environ.get("DAP_PYTHON_FUNC_MAX_WORKERS", "10")))
+_NODE_EXECUTOR: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_PYTHON_FUNC_MAX_WORKERS,
+    thread_name_prefix="dap-python-func",
+)
 
 
 @contextlib.contextmanager
@@ -193,8 +222,11 @@ class PythonFuncAdapter(BaseAdapter):
             if asyncio.iscoroutinefunction(func):
                 awaitable: Any = func(state, config)
             else:
+                # Use the python-func-dedicated executor (#621) so a
+                # long sync node doesn't starve FastAPI's default pool
+                # and queue ``/health`` behind it.
                 loop = asyncio.get_running_loop()
-                awaitable = loop.run_in_executor(None, func, state, config)
+                awaitable = loop.run_in_executor(_NODE_EXECUTOR, func, state, config)
             if timeout_seconds is not None:
                 return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
             return await awaitable

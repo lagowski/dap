@@ -723,3 +723,65 @@ async def test_malformed_runtime_env_returns_failed(
     )
     assert result.success is False
     assert any("dict[str, str]" in err for err in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# Dedicated thread pool (#621) — sync nodes must NOT run on asyncio's default
+# executor (which FastAPI also uses for sync ``def`` route handlers).
+# ---------------------------------------------------------------------------
+
+
+def test_dedicated_executor_is_module_level() -> None:
+    """The module exposes a dedicated ``_NODE_EXECUTOR`` (#621).
+
+    Sync python-func callables are dispatched there instead of the
+    default ``loop.run_in_executor(None, ...)`` so they don't share
+    a worker pool with FastAPI's ``def`` route handlers. A long
+    sync node previously queued ``/health`` behind it for minutes
+    when both contended for the default pool.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dap_runtimes.adapters.python_func import _NODE_EXECUTOR
+
+    assert isinstance(_NODE_EXECUTOR, ThreadPoolExecutor)
+    # max_workers comes from DAP_PYTHON_FUNC_MAX_WORKERS or defaults to 10.
+    assert _NODE_EXECUTOR._max_workers >= 1
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_runs_in_dedicated_executor(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sync ``def`` callable executes inside the python-func executor's
+    worker thread, not the default asyncio executor.
+
+    The thread name prefix ``dap-python-func`` lets us cheaply verify the
+    dispatch without mocking asyncio internals. This is the regression
+    guard for #621 — if a future refactor reverts to
+    ``loop.run_in_executor(None, ...)``, this test fails by reading a
+    thread name like ``ThreadPoolExecutor-0_0`` instead of
+    ``dap-python-func_0``.
+    """
+    import sys
+    import threading
+    import types
+
+    def _record_thread_name(state: dict[str, Any], _config: dict[str, Any]) -> dict[str, Any]:
+        return {"thread_name": threading.current_thread().name}
+
+    # Register a fake module directly in ``sys.modules`` so the adapter's
+    # ``importlib.import_module`` call finds it without needing to monkeypatch
+    # importlib itself (which would recurse on the fallback path).
+    fake_mod = types.ModuleType("_dap_thread_probe_mod")
+    fake_mod._dap_thread_probe = _record_thread_name  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_thread_probe_mod", fake_mod)
+
+    result = await adapter.execute(_task(callable_path="_dap_thread_probe_mod:_dap_thread_probe"))
+    assert result.success, result.errors
+    assert result.structured is not None
+    name = result.structured["state_delta"]["thread_name"]
+    assert name.startswith("dap-python-func"), (
+        f"sync python-func ran on the WRONG executor — thread name was {name!r}; "
+        f"expected the dedicated pool prefix 'dap-python-func' (#621)."
+    )
