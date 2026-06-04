@@ -27,10 +27,10 @@ the engine.
                             │ delegates per-node execution to
                             ▼
                 ┌──────────────────────┐
-                │  Runtime adapters    │   api-call (Anthropic SDK),
-                │  (RuntimeAdapter     │   bash (subprocess), and stubs
-                │   Protocol)          │   for claude-code, gemini, codex,
-                └──────────────────────┘   aider, http
+                │  Runtime adapters    │   api-call (6 providers), bash,
+                │  (RuntimeAdapter     │   claude-code, gemini-cli, codex,
+                │   Protocol)          │   python-func, http (aider: stub)
+                └──────────────────────┘
 ```
 
 ### `apps/engine` — orchestrator

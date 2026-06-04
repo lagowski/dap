@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Live run progress (#581, #592)** — the run view now streams
+  per-node execution state while a pipeline runs: the currently
+  executing node (with a spinner), a status timeline, the active
+  phase, and the gate status. The `Run` model exposes
+  `current_node`, `paused_at_node`, `node_statuses`, and a
+  `gate_payload` (task assignments, spec, `finalize_warnings`) so
+  the dashboard renders progress and inline gate approval by
+  polling `GET /runs/{id}` instead of querying the checkpoint store.
+- **Finalize → gate routing (#584, #585, #586)** — finalize nodes
+  that signal "READY" route to an auto-approvable gate; "NEEDS_WORK"
+  routes to a gate added to `approval_required_nodes`, forcing human
+  review. Gate payloads now carry `finalize_warnings` (non-blocking
+  spec issues) so the UI can show them without a checkpoint lookup.
+- **Backend profiles (#574, #575, #576)** — pipeline bundles can
+  declare named backend profiles (env-var / CLI-tool requirements)
+  and assign agents to them. `POST /pipelines/import/inspect-backends`
+  previews profile availability (non-secret) before import; the
+  engine resolves the active profile per agent at run time and
+  injects its runtime config into the executor.
+- **Designer autosave + edge waypoints (#578, #579)** —
+  `PATCH /pipelines/{id}/ui-metadata` debounce-saves canvas layout
+  (node positions, pan/zoom) without creating a new version; React
+  Flow edges persist control points so operators can route edges
+  around nodes for readability.
+- **Terminal CLI workflow (`dap project`)** — `dap project
+  run/approve/reject/state` drives a pipeline end-to-end from the
+  shell against the engine REST API (currently the `cortex` GitHub
+  issue-resolution pipeline, imported from the external `dap-cortex`
+  package). Supports `--watch`, `--no-interactive`, and table/JSON
+  state output.
 - **Opt-in terminal-status enforcement (#381)** — new
   ``PipelineDefaults.requires_terminal_final_status`` flag (default
   ``false``). When a pipeline opts in, the orchestrator treats a run
@@ -56,7 +86,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operators choosing between "pay per token" vs "reuse my
   Claude Code Pro subscription" deployments.
 
+### Fixed
+- **Stale pool connections after DB reconnect (#580)** — runs no
+  longer fail instantly when the SQLAlchemy pool holds a connection
+  the database has since dropped; dead connections are recycled
+  before use.
+- **Run base branch (#593)** — triggering a run with a `project_id`
+  now injects the project's `default_branch` into
+  `extensions.branch`, so git-aware nodes (e.g. a PR merger) use the
+  correct base without the caller repeating it on every trigger.
+- **Auto-approve node aliases** — auto-approve now matches gate
+  nodes referenced by alias, not just their canonical id.
+
 ### Changed
+- **Engine internals refactored for ownership boundaries (#556–#568,
+  #572, #573)** — the persistence layer (agent / auth / pipeline /
+  project / run / settings ORM models) and the run API routes (read,
+  batch, intervention, lifecycle) were split into focused modules;
+  dashboard API hooks and client facades were likewise separated.
+  Behaviour-preserving; documented in `docs/architecture.md`.
+- **Release tooling (#569)** — release adds cross-package version /
+  compatibility checks (`scripts/check-release-metadata.py`) so a
+  tag can't ship mismatched workspace versions.
+- **CI path-aware skips (#570, #571)** — workflows skip jobs whose
+  paths weren't touched, failing open if classification is
+  inconclusive.
 - **Package READMEs rewritten in English** (`packages/types/`,
   `packages/prompt-dsl/`, `packages/runtimes/`, `apps/cli/`,
   `apps/engine/`). These READMEs feed PyPI's "long
