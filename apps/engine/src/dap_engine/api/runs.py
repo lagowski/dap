@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from dap_engine.app import EngineConfig
 
 from dap_runtimes import RuntimeRegistry
-from dap_types import PipelineState, Run
+from dap_types import PipelineState, Project, Run
 from fastapi import APIRouter, Depends, HTTPException, status
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
@@ -51,7 +51,7 @@ from dap_engine.execution import (
     execute_run_background,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineVersionORM, ProjectORM, UserORM
+from dap_engine.persistence.models import PipelineVersionORM, UserORM
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -96,7 +96,7 @@ def _resolve_active_project(
     session: Session,
     project_id: str | None,
     user: UserORM,
-) -> ProjectORM | None:
+) -> Project | None:
     """Resolve and validate the project bound to a run trigger.
 
     Returns ``None`` when no project is bound. Otherwise loads the project,
@@ -128,7 +128,7 @@ def _resolve_active_project(
     return project
 
 
-def _enforce_self_fix_dangerous_denylist(project: ProjectORM, project_id: str) -> None:
+def _enforce_self_fix_dangerous_denylist(project: Project, project_id: str) -> None:
     """Raise 403 if ``project`` is on the self-fix-dangerous denylist.
 
     Extracted from ``trigger_run`` to keep that function under the
