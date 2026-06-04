@@ -353,7 +353,7 @@ def test_stale_running_runs_marked_failed_on_startup() -> None:
 
 
 def test_post_runs_self_fix_dangerous_project_returns_403(
-    client: TestClient,
+    authed_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Dispatching against a project on the self-fix-dangerous denylist returns 403.
@@ -369,9 +369,9 @@ def test_post_runs_self_fix_dangerous_project_returns_403(
     the constant's hardcoded entry; the TEST verifies the *mechanism* works
     for any UUID added to the set.
     """
-    agent_id = _create_agent(client)
-    pipeline_id = _create_pipeline(client, agent_id)
-    project_response = client.post(
+    agent_id = _create_agent(authed_client)
+    pipeline_id = _create_pipeline(authed_client, agent_id)
+    project_response = authed_client.post(
         "/projects",
         json=_project_payload(pipelines={"develop": pipeline_id}),
     )
@@ -384,7 +384,7 @@ def test_post_runs_self_fix_dangerous_project_returns_403(
         frozenset({project_id}),
     )
 
-    response = client.post(
+    response = authed_client.post(
         "/runs",
         json={
             "pipeline_id": pipeline_id,
