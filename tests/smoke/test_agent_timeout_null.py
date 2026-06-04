@@ -1,4 +1,5 @@
 """Tests for #635 second-class fix — timeout_ms: null backward-compat."""
+
 from dap_engine.contracts import AgentNamedPayload
 
 
