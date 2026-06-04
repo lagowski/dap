@@ -50,6 +50,28 @@ class SlowStubAdapter:
         )
 
 
+def _project_payload(*, name: str = "lifecycle-test-project", **overrides: Any) -> dict[str, Any]:
+    """Build a minimal POST /projects payload.
+
+    Mirrors the helper of the same name in ``test_ownership_projects.py``;
+    duplicated here to avoid cross-test-file import coupling (importing
+    private helpers from sibling test modules is a code smell). Move to
+    a shared ``tests/smoke/_helpers.py`` if a third test file needs the
+    same shape.
+    """
+    payload: dict[str, Any] = {
+        "name": name,
+        "description": "",
+        "working_directory": None,
+        "repo_url": None,
+        "default_branch": "main",
+        "pipelines": {},
+        "env_vars": {},
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _create_agent(client: TestClient, runtime_id: str = "slow-stub") -> str:
     response = client.post(
         "/agents",

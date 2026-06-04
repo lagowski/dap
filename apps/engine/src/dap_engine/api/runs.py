@@ -51,7 +51,7 @@ from dap_engine.execution import (
     execute_run_background,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineVersionORM, UserORM
+from dap_engine.persistence.models import PipelineVersionORM, ProjectORM, UserORM
 
 logger = logging.getLogger("dap.engine.api.runs")
 
@@ -87,6 +87,67 @@ def _reject_non_list_execution_commands(extensions: dict[str, Any]) -> None:
 _SELF_FIX_DANGEROUS_PROJECT_IDS: frozenset[str] = frozenset({
     "45e8d707-c42e-4683-8f06-50b683f748cc",  # the dap project (was rafeekpro/dap, now lagowski/dap)
 })
+
+
+def _resolve_active_project(
+    session: Session,
+    project_id: str | None,
+    user: UserORM,
+) -> ProjectORM | None:
+    """Resolve and validate the project bound to a run trigger.
+
+    Returns ``None`` when no project is bound. Otherwise loads the project,
+    surfaces a 422 if it doesn't exist or is archived, and runs the
+    self-fix-dangerous denylist check (403).
+
+    Extracted from ``trigger_run`` so that function stays under the
+    ``PLR0915`` statement-count cap. The semantics are unchanged from
+    the inline version: each path raises ``HTTPException`` with the
+    same status codes and detail shapes.
+    """
+    if project_id is None:
+        return None
+    try:
+        project = repo.get_project(
+            session, project_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    if project.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Project is archived: {project_id}",
+        )
+    _enforce_self_fix_dangerous_denylist(project, project_id)
+    return project
+
+
+def _enforce_self_fix_dangerous_denylist(project: ProjectORM, project_id: str) -> None:
+    """Raise 403 if ``project`` is on the self-fix-dangerous denylist.
+
+    Extracted from ``trigger_run`` to keep that function under the
+    ``PLR0915`` statement-count cap. The denial returns 403 (auth-class,
+    "forbidden by policy") rather than 422 (request-shape) because the
+    request itself is well-formed — the dispatch is forbidden by the
+    operator denylist, not by a malformed payload.
+    """
+    if str(project.id) in _SELF_FIX_DANGEROUS_PROJECT_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "dispatch_denied_self_fix_dangerous",
+                "message": (
+                    "Cortex dispatch against this project is forbidden — "
+                    "running pytest fixtures here wipes app DB "
+                    "(2026-06-01 incident). Run cortex against a "
+                    "different project."
+                ),
+                "project_id": str(project_id),
+            },
+        )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Run)
@@ -128,40 +189,9 @@ async def trigger_run(
     # When a project is bound, it must exist (and be owned by the caller)
     # and be active. Archived projects fail loudly here so users notice
     # instead of getting a half-stamped run that the dashboard can't
-    # group cleanly.
-    project = None
-    if payload.project_id is not None:
-        try:
-            project = repo.get_project(
-                session, payload.project_id, actor_id=user.id, is_admin=user.is_superuser
-            )
-        except repo.NotFoundError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=str(exc),
-            ) from exc
-        if project.archived_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Project is archived: {payload.project_id}",
-            )
-        # Self-fix-known-dangerous denylist check — see SELF_FIX_DANGEROUS_PROJECT_IDS
-        # at the top of this file. Returns 403 (auth-class) not 422 (request-shape)
-        # because the request is well-formed; the dispatch is forbidden by policy.
-        if str(project.id) in _SELF_FIX_DANGEROUS_PROJECT_IDS:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "dispatch_denied_self_fix_dangerous",
-                    "message": (
-                        "Cortex dispatch against this project is forbidden — "
-                        "running pytest fixtures here wipes app DB "
-                        "(2026-06-01 incident). Run cortex against a "
-                        "different project."
-                    ),
-                    "project_id": str(payload.project_id),
-                },
-            )
+    # group cleanly. Self-fix-dangerous denylist (#641) is enforced
+    # inside the helper, so the trigger surface stays uniform.
+    project = _resolve_active_project(session, payload.project_id, user)
 
     # ``is not None`` rather than ``or`` — the latter coerces ``0`` to
     # the current version, but ``0`` is a malformed user-supplied
