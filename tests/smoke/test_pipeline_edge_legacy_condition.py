@@ -1,4 +1,5 @@
 """Tests for #635 — backward-compat normalizer for cortex legacy edge-condition shape."""
+
 from dap_types.pipeline import (
     ComparisonCondition,
     LogicalCondition,

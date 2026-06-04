@@ -83,8 +83,7 @@ def _normalize_legacy_condition(value: Any) -> Any:
         if isinstance(nested, list):
             return {
                 "type": compound_type,
-                "children": [base_comparison]
-                + [_normalize_legacy_condition(c) for c in nested],
+                "children": [base_comparison] + [_normalize_legacy_condition(c) for c in nested],
             }
 
     # No compound — just a comparison.
