@@ -112,7 +112,15 @@ def _create_pipeline(client: TestClient) -> str:
                 {"id": "e1", "source": "__start__", "target": "n1"},
                 {"id": "e2", "source": "n1", "target": "__end__"},
             ],
-            "defaults": {"max_attempts": 3, "budget_limit_usd": 5.0, "approval_required_nodes": []},
+            "defaults": {
+                "max_attempts": 3,
+                "budget_limit_usd": 5.0,
+                "approval_required_nodes": [],
+                # This suite verifies batch-trigger fan-out, not terminal-status
+                # enforcement (#628). Opt out so a residual ``running`` keeps the
+                # legacy "no node raised = success" semantics these tests rely on.
+                "requires_terminal_final_status": False,
+            },
         },
     )
     assert pipe_resp.status_code == 201, pipe_resp.text

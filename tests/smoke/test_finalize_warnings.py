@@ -91,7 +91,14 @@ def _create_single_node_pipeline(client: TestClient) -> str:
             "edges": [
                 {"id": "e1", "source": "finalize", "target": "__end__"},
             ],
-            "defaults": {"max_attempts": 1, "budget_limit_usd": 1.0},
+            "defaults": {
+                "max_attempts": 1,
+                "budget_limit_usd": 1.0,
+                # This suite verifies finalize-warning routing, not terminal-status
+                # enforcement (#628). Opt out so a residual ``running`` keeps the
+                # legacy "no node raised = success" semantics these tests rely on.
+                "requires_terminal_final_status": False,
+            },
         },
     )
     assert resp.status_code == 201, resp.text

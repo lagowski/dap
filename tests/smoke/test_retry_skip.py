@@ -121,6 +121,10 @@ def _create_pipeline(client: TestClient, agent_id: str, num_nodes: int = 2) -> s
                 "max_attempts": 3,
                 "budget_limit_usd": 5.0,
                 "approval_required_nodes": [],
+                # This suite verifies retry/skip behavior, not terminal-status
+                # enforcement (#628). Opt out so a residual ``running`` keeps the
+                # legacy "no node raised = success" semantics these tests rely on.
+                "requires_terminal_final_status": False,
             },
         },
     )
