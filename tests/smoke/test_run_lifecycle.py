@@ -50,6 +50,28 @@ class SlowStubAdapter:
         )
 
 
+def _project_payload(*, name: str = "lifecycle-test-project", **overrides: Any) -> dict[str, Any]:
+    """Build a minimal POST /projects payload.
+
+    Mirrors the helper of the same name in ``test_ownership_projects.py``;
+    duplicated here to avoid cross-test-file import coupling (importing
+    private helpers from sibling test modules is a code smell). Move to
+    a shared ``tests/smoke/_helpers.py`` if a third test file needs the
+    same shape.
+    """
+    payload: dict[str, Any] = {
+        "name": name,
+        "description": "",
+        "working_directory": None,
+        "repo_url": None,
+        "default_branch": "main",
+        "pipelines": {},
+        "env_vars": {},
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _create_agent(client: TestClient, runtime_id: str = "slow-stub") -> str:
     response = client.post(
         "/agents",
@@ -328,3 +350,51 @@ def test_stale_running_runs_marked_failed_on_startup() -> None:
         run = client2.get("/runs/stale-run-id").json()
         assert run["final_status"] == "failed"
         assert run["ended_at"] is not None
+
+
+def test_post_runs_self_fix_dangerous_project_returns_403(
+    authed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dispatching against a project on the self-fix-dangerous denylist returns 403.
+
+    Background: the 2026-06-01 incident reproduced a destructive failure mode where
+    dispatching cortex against the DAP project itself ran pytest fixtures that
+    wiped the entire app DB. The fix is a server-side dispatch-deny on a small
+    set of UUIDs declared as ``_SELF_FIX_DANGEROUS_PROJECT_IDS`` in ``api/runs.py``.
+
+    This test uses monkeypatch to add the test-created project's UUID to that
+    set so the assertion doesn't depend on the production UUID being in the
+    test DB (which it isn't and shouldn't be). The PRODUCTION protection is
+    the constant's hardcoded entry; the TEST verifies the *mechanism* works
+    for any UUID added to the set.
+    """
+    agent_id = _create_agent(authed_client)
+    pipeline_id = _create_pipeline(authed_client, agent_id)
+    project_response = authed_client.post(
+        "/projects",
+        json=_project_payload(pipelines={"develop": pipeline_id}),
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    # Make this project "dangerous" for the duration of this test.
+    monkeypatch.setattr(
+        "dap_engine.api.runs._SELF_FIX_DANGEROUS_PROJECT_IDS",
+        frozenset({project_id}),
+    )
+
+    response = authed_client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 403, f"expected 403, got {response.status_code}: {response.text}"
+    detail = response.json()["detail"]
+    assert isinstance(detail, dict), f"detail should be structured: {detail!r}"
+    assert detail["code"] == "dispatch_denied_self_fix_dangerous"
+    assert detail["project_id"] == project_id
+    assert "2026-06-01" in detail["message"]

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from dap_engine.app import EngineConfig
 
 from dap_runtimes import RuntimeRegistry
-from dap_types import PipelineState, Run
+from dap_types import PipelineState, Project, Run
 from fastapi import APIRouter, Depends, HTTPException, status
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
@@ -72,6 +73,108 @@ def _reject_non_list_execution_commands(extensions: dict[str, Any]) -> None:
         )
 
 
+# Self-fix-known-dangerous denylist — hardcoded UUID of the dap project itself.
+# Dispatching cortex against the DAP repo runs pytest fixtures that wipe the
+# entire app DB (users, projects, instance_env_vars, runs). The 2026-06-01
+# incident reproduced this and blew away production state. UUID-pinned
+# (not URL-pinned) so it survives repo transfers like the 2026-06-03
+# rafeekpro/dap → lagowski/dap rename.
+#
+# SECURITY CRITICAL — adding ANY new entry to this set requires explicit
+# security review, not just normal code review. Each entry represents a
+# project whose code can destroy DAP state when cortex is dispatched
+# against it. Data-driven config is a follow-up only if a 2nd entry is
+# ever needed; until then this stays hardcoded and tracked in code review.
+_SELF_FIX_DANGEROUS_PROJECT_IDS: frozenset[str] = frozenset(
+    {
+        # the dap project (was rafeekpro/dap, now lagowski/dap)
+        "45e8d707-c42e-4683-8f06-50b683f748cc",
+    }
+)
+
+
+def _resolve_active_project(
+    session: Session,
+    project_id: str | None,
+    user: UserORM,
+) -> Project | None:
+    """Resolve and load-side-validate the project bound to a run trigger.
+
+    Returns ``None`` when no project is bound. Otherwise loads the project
+    and surfaces a 422 if it doesn't exist or is archived. Policy denials
+    (e.g. self-fix-dangerous denylist) are NOT enforced here — call
+    :func:`_enforce_self_fix_dangerous_denylist` separately at the
+    trigger surface so the audit-log call gets the full trigger context
+    (``pipeline_id``, ``user_id``).
+
+    Extracted from ``trigger_run`` so that function stays under the
+    ``PLR0915`` statement-count cap.
+    """
+    if project_id is None:
+        return None
+    try:
+        project = repo.get_project(
+            session, project_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    if project.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Project is archived: {project_id}",
+        )
+    return project
+
+
+def _enforce_self_fix_dangerous_denylist(
+    session: Session,
+    project: Project,
+    project_id: str,
+    pipeline_id: str,
+    user_id: uuid.UUID,
+) -> None:
+    """Raise 403 if ``project`` is on the self-fix-dangerous denylist.
+
+    Emits an ``dispatch_policy.denied`` audit event before raising so the
+    forbidden attempt is durable in the audit log, parallel to how the
+    runtime-policy denial path captures its denials at ``runs.trigger``.
+
+    The denial returns 403 (auth-class, "forbidden by policy") rather
+    than 422 (request-shape) because the request itself is well-formed
+    — the dispatch is forbidden by the operator denylist, not by a
+    malformed payload.
+    """
+    if str(project.id) in _SELF_FIX_DANGEROUS_PROJECT_IDS:
+        record_audit_event(
+            session,
+            user_id=user_id,
+            event_type="dispatch_policy.denied",
+            event_data={
+                "surface": "runs.trigger",
+                "reason": "self_fix_dangerous",
+                "project_id": project_id,
+                "pipeline_id": pipeline_id,
+            },
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "dispatch_denied_self_fix_dangerous",
+                "message": (
+                    "Cortex dispatch against this project is forbidden — "
+                    "running pytest fixtures here wipes app DB "
+                    "(2026-06-01 incident). Run cortex against a "
+                    "different project."
+                ),
+                "project_id": str(project_id),
+            },
+        )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Run)
 async def trigger_run(
     payload: RunCreateRequest,
@@ -111,23 +214,14 @@ async def trigger_run(
     # When a project is bound, it must exist (and be owned by the caller)
     # and be active. Archived projects fail loudly here so users notice
     # instead of getting a half-stamped run that the dashboard can't
-    # group cleanly.
-    project = None
-    if payload.project_id is not None:
-        try:
-            project = repo.get_project(
-                session, payload.project_id, actor_id=user.id, is_admin=user.is_superuser
-            )
-        except repo.NotFoundError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=str(exc),
-            ) from exc
-        if project.archived_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Project is archived: {payload.project_id}",
-            )
+    # group cleanly. Policy denials (self-fix-dangerous, #641) run
+    # *after* resolution so the audit-log call has the full trigger
+    # context (``pipeline_id``, ``user_id``) — see the helper docstring.
+    project = _resolve_active_project(session, payload.project_id, user)
+    if project is not None and payload.project_id is not None:
+        _enforce_self_fix_dangerous_denylist(
+            session, project, payload.project_id, payload.pipeline_id, user.id
+        )
 
     # ``is not None`` rather than ``or`` — the latter coerces ``0`` to
     # the current version, but ``0`` is a malformed user-supplied
