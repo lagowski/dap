@@ -37,7 +37,7 @@ The data lives in `./.dap/` next to your shell's CWD.
 
 ### 2. Docker — recommended for shared / production deployments
 
-Multi-platform image at `ghcr.io/rafeekpro/dap:<version>` (`linux/amd64`
+Multi-platform image at `ghcr.io/lagowski/dap:<version>` (`linux/amd64`
 + `linux/arm64`). Pinned `0.3.0` tag for stability; `latest` follows
 the most recent stable release (no pre-releases).
 
@@ -49,7 +49,7 @@ Two flavours:
 docker run --rm \
     -e DAP_AUTH_JWT_SECRET=$(openssl rand -hex 32) \
     -p 3000:3000 -p 7333:7333 \
-    ghcr.io/rafeekpro/dap:0.3.0
+    ghcr.io/lagowski/dap:0.3.0
 ```
 
 The container listens on `:3000` (dashboard) and `:7333` (engine).
@@ -85,7 +85,7 @@ commented out — uncomment when you have more than one user.
 Existing dev workflow, unchanged by v0.3:
 
 ```bash
-git clone https://github.com/rafeekpro/dap.git
+git clone https://github.com/lagowski/dap.git
 cd dap
 ./scripts/setup            # uv sync + pnpm install
 ./scripts/dev              # engine + dashboard in parallel, hot reload
@@ -117,7 +117,7 @@ hardening exercise.
 - [ ] **Switch to Postgres** via `DAP_DATABASE_URL` for >1 active user.
       SQLite is fine for a single operator; concurrent writes beyond
       that benefit from real row locking.
-- [ ] **Pin the image tag.** Use `ghcr.io/rafeekpro/dap:0.3.0`, not
+- [ ] **Pin the image tag.** Use `ghcr.io/lagowski/dap:0.3.0`, not
       `latest`. A pin lets you upgrade on your schedule.
 - [ ] **Put DAP behind a reverse proxy** (Traefik, Caddy, nginx) that
       terminates TLS. The container speaks plain HTTP on `3000`
@@ -189,4 +189,4 @@ via the admin UI if needed.
 - **All user accounts + roles**: `/admin/users`.
 - **API tokens (admin-wide view)**: `/admin/api-tokens`.
 - **Instance settings (read-only)**: `/admin/settings`.
-- **Release notes**: <https://github.com/rafeekpro/dap/releases>.
+- **Release notes**: <https://github.com/lagowski/dap/releases>.

@@ -358,7 +358,7 @@ In rough order of impact:
       `api_token.created`, unexpected `user.password_reset`.
 - [ ] Backup automation for the DB (SQLite: `.backup`; Postgres:
       `pg_dump` cron). Test restore quarterly.
-- [ ] Pin the Docker image tag (`ghcr.io/rafeekpro/dap:0.3.0`,
+- [ ] Pin the Docker image tag (`ghcr.io/lagowski/dap:0.3.0`,
       not `latest`) so upgrades are intentional.
 
 ## See also
@@ -372,5 +372,5 @@ In rough order of impact:
 ## Reporting
 
 Found a vulnerability? Please file a **GitHub Security Advisory**
-on `rafeekpro/dap` (not a public issue) so we can triage and
+on `lagowski/dap` (not a public issue) so we can triage and
 ship a fix before the details land in the open tracker.

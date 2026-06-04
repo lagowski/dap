@@ -78,7 +78,7 @@ class AgentRuntimePayload(BaseModel):
         60_000 ms before type/constraint validation runs so downstream code
         keeps the ``int`` contract unchanged.
 
-        Tracked at rafeekpro/dap#635 (second class — first class was edge
+        Tracked at lagowski/dap#635 (second class — first class was edge
         condition shape, fixed in ``packages/types/src/dap_types/pipeline.py``).
         """
         if value is None:

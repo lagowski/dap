@@ -65,7 +65,7 @@ for all five after v0.3.0):
    (Direct URL shape: `https://pypi.org/manage/project/<package>/settings/publishing/`,
    exact path subject to PyPI's UI evolution.)
 3. Add a new trusted publisher (GitHub provider). Fill in:
-   - **Owner**: `rafeekpro` (this repo's GitHub org/user).
+   - **Owner**: `lagowski` (this repo's GitHub org/user).
    - **Repository name**: `dap`.
    - **Workflow name**: `release.yml`.
    - **Environment name**: `pypi`.

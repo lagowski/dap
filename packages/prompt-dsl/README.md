@@ -1,7 +1,7 @@
 # dap-prompt-dsl
 
 Deterministic prompt compiler for the
-[DAP](https://github.com/rafeekpro/dap) (Deterministic Agent Pipeline)
+[DAP](https://github.com/lagowski/dap) (Deterministic Agent Pipeline)
 ecosystem. Takes a Jinja2 template plus a JSON context and emits a
 validated XML prompt — the wire format every DAP agent uses to talk
 to its runtime adapter.
@@ -109,10 +109,10 @@ LLM — defence in depth.
 
 ## See also
 
-- [DAP project README](https://github.com/rafeekpro/dap) — full architecture.
-- [`docs/architecture.md`](https://github.com/rafeekpro/dap/blob/main/docs/architecture.md) — where `build_prompt` sits in the LangGraph state machine.
-- [`packages/runtimes`](https://github.com/rafeekpro/dap/tree/main/packages/runtimes) — consumers of the compiled prompt XML.
+- [DAP project README](https://github.com/lagowski/dap) — full architecture.
+- [`docs/architecture.md`](https://github.com/lagowski/dap/blob/main/docs/architecture.md) — where `build_prompt` sits in the LangGraph state machine.
+- [`packages/runtimes`](https://github.com/lagowski/dap/tree/main/packages/runtimes) — consumers of the compiled prompt XML.
 
 ## License
 
-See the [main repository](https://github.com/rafeekpro/dap) for licensing details.
+See the [main repository](https://github.com/lagowski/dap) for licensing details.

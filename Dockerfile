@@ -205,8 +205,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 
 LABEL org.opencontainers.image.title="DAP" \
       org.opencontainers.image.description="Deterministic Agent Pipeline — engine + dashboard, all-in-one" \
-      org.opencontainers.image.source="https://github.com/rafeekpro/dap" \
+      org.opencontainers.image.source="https://github.com/lagowski/dap" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="rafeekpro"
+      org.opencontainers.image.vendor="lagowski"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

@@ -28,7 +28,7 @@ import { CodeBlock } from "./shared";
  */
 const DOCS_BASE_URL =
   process.env.NEXT_PUBLIC_DAP_DOCS_URL ??
-  "https://github.com/rafeekpro/dap/blob/develop";
+  "https://github.com/lagowski/dap/blob/develop";
 
 const ENV_SNIPPET = `# 1. Put keys in .env.local (gitignored — see .env.example for the full list)
 cat > .env.local <<'EOF'

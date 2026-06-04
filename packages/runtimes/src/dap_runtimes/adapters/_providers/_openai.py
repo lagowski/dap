@@ -49,7 +49,7 @@ OPENROUTER_ENV_VAR: Final = "OPENROUTER_API_KEY"
 # in the OpenRouter dashboard's traffic log. The URL is a stable
 # pointer; ``X-Title`` is a free-form short identifier.
 OPENROUTER_HEADERS: Final[dict[str, str]] = {
-    "HTTP-Referer": "https://github.com/rafeekpro/dap",
+    "HTTP-Referer": "https://github.com/lagowski/dap",
     "X-Title": "DAP",
 }
 
