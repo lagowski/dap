@@ -168,15 +168,29 @@ class PipelineDefaults(BaseModel):
         ),
     )
     requires_terminal_final_status: bool = Field(
-        default=False,
+        default=True,
         description=(
             "When true, the orchestrator treats a run that finishes with "
-            "``final_status='running'`` as a failed run (#381). Cortex-style "
-            "pipelines, where the last node decides success/failure "
-            "explicitly (e.g. pr-merger refuses to merge), should opt in. "
-            "Generic pipelines that don't manage state-level final_status "
-            "leave this off and rely on the 'no node raised' = 'success' "
-            "default."
+            "``final_status='running'`` as a failed run with a structured "
+            "failure_reason. A residual ``running`` at termination means "
+            "no node ever set a terminal status — typically because graph "
+            "routing bypassed the intended success-terminal (#628 for the "
+            "cortex github-issue case where phase-1 with zero tasks "
+            "short-circuits the rest of the pipeline).\n\n"
+            "Default flipped from ``False`` to ``True`` in 2026-06 (#628). "
+            "The historical ``False`` default silently coerced residual "
+            "``running`` to ``success``, which made phase-only-1 cortex "
+            "exits indistinguishable from real successful runs on the "
+            "dashboard. The new default is the architecturally correct "
+            "contract: every pipeline must reach a terminal status. "
+            "Generic pipelines that legitimately rely on 'all nodes ran "
+            "without raising = success' must now set this to ``False`` "
+            "explicitly OR set ``state.final_status='success'`` in their "
+            "final node (the recommended path).\n\n"
+            "Existing pipelines in the database are unaffected — their "
+            "``defaults`` JSON was frozen at import time under the old "
+            "default. Only pipelines created or re-imported AFTER this "
+            "change pick up the new default."
         ),
     )
 
