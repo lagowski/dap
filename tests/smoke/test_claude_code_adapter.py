@@ -45,6 +45,7 @@ def _task(
     timeout_ms: int = 60_000,
     env: dict[str, str] | None = None,
     project_env_vars: dict[str, str] | None = None,
+    use_subscription: Any = None,
 ) -> RuntimeTask:
     runtime_config: dict[str, Any] = {"model_id": model_id}
     if binary_path is not None:
@@ -53,6 +54,8 @@ def _task(
         runtime_config["extra_args"] = extra_args
     if env is not None:
         runtime_config["env"] = env
+    if use_subscription is not None:
+        runtime_config["use_subscription"] = use_subscription
     return RuntimeTask(
         execution_id="exec-1",
         prompt_xml="<agent_prompt><role>impl</role><task>do it</task></agent_prompt>",
@@ -372,6 +375,103 @@ async def test_missing_usage_falls_back_to_zero(with_api_key: None) -> None:
     assert result.success is True
     assert result.tokens_used == 0
     assert result.cost_usd is None
+
+
+# ---------------------------------------------------------------------------
+# Subscription mode (#625) — opt-in, drops --print, skips cost/token telemetry
+# ---------------------------------------------------------------------------
+
+
+async def test_default_config_uses_print_and_meters(with_api_key: None) -> None:
+    """Default (use_subscription unset) → --print present, cost/tokens populated."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=_success_payload(text="metered"))
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        result = await adapter.execute(_task())
+
+    argv = create_mock.call_args.args
+    assert "--print" in argv
+    assert result.success is True
+    assert result.tokens_used == 300  # 100 input + 200 output
+    assert result.cost_usd == pytest.approx(0.0125)
+
+
+async def test_subscription_mode_omits_print(with_api_key: None) -> None:
+    """use_subscription=True → CLI argv must NOT contain --print."""
+    adapter = ClaudeCodeAdapter()
+    # Subscription mode produces no stream-json result event; plain text on stdout.
+    proc = build_subprocess_mock(stdout=b"done working\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        result = await adapter.execute(_task(use_subscription=True))
+
+    argv = create_mock.call_args.args
+    assert "--print" not in argv
+    assert result.success is True
+
+
+async def test_subscription_mode_uses_skip_permissions(with_api_key: None) -> None:
+    """Subscription mode must pass --dangerously-skip-permissions so the
+    non-interactive CLI never blocks on a permission prompt."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=b"done\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        await adapter.execute(_task(use_subscription=True))
+
+    argv = create_mock.call_args.args
+    assert "--dangerously-skip-permissions" in argv
+    assert "--model" in argv
+    assert "claude-opus-4-7" in argv
+
+
+async def test_subscription_mode_skips_cost_and_tokens(with_api_key: None) -> None:
+    """Subscription mode is not metered per-call → cost_usd None, tokens 0."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=b"agent finished the task\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task(use_subscription=True))
+
+    assert result.success is True
+    assert result.output == "agent finished the task\n"
+    assert result.cost_usd is None
+    assert result.tokens_used == 0
+    assert result.structured is not None
+    assert result.structured["provider"] == "claude-code"
+    assert result.structured["subscription"] is True
+
+
+async def test_subscription_mode_passes_prompt_via_stdin(with_api_key: None) -> None:
+    """Even without --print the prompt is fed via stdin so the CLI terminates."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=b"ok\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        await adapter.execute(_task(use_subscription=True))
+
+    call_kwargs = proc.communicate.call_args.kwargs
+    assert call_kwargs["input"].decode("utf-8").startswith("<agent_prompt>")
+
+
+async def test_subscription_must_be_bool(with_api_key: None) -> None:
+    """``use_subscription`` must be a boolean — anything else fails validation."""
+    adapter = ClaudeCodeAdapter()
+    with patch(_WHICH_PATH, return_value="/usr/local/bin/claude"):
+        result = await adapter.execute(_task(use_subscription="yes"))
+    assert result.success is False
+    assert any("use_subscription" in e for e in result.errors)
 
 
 # ---------------------------------------------------------------------------
