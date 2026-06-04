@@ -26,7 +26,9 @@ def test_strict_comparison_passes_through_unchanged() -> None:
 
 
 def test_legacy_comparison_eq_shape_is_normalized() -> None:
-    """Cortex bundle shape: {field, op, value} with op='eq' should become {type, field, operator='==', value}."""
+    """Cortex bundle shape: {field, op, value} with op='eq' should become
+    {type, field, operator='==', value}.
+    """
     edge = PipelineEdge(
         id="e1",
         source="a",
@@ -112,7 +114,9 @@ def test_none_condition_passes_through() -> None:
 
 
 def test_legacy_three_way_nested_and_chains_correctly() -> None:
-    """Deeply-nested cortex shape: outer + nested + nested-inside-nested all become LogicalConditions."""
+    """Deeply-nested cortex shape: outer + nested + nested-inside-nested
+    all become LogicalConditions.
+    """
     edge = PipelineEdge(
         id="e1",
         source="a",

@@ -35,7 +35,8 @@ def _normalize_legacy_condition(value: Any) -> Any:
 
     Cortex's legacy shape (shipped via cortex bundles pre-2026-06 schema migration):
       Comparison: {"field": ..., "op": ..., "value": ...}
-      Logical:    {"field": ..., "op": ..., "value": ..., "and": {"field": ..., "op": ..., "value": ...}}
+      Logical:    {"field": ..., "op": ..., "value": ...,
+                   "and": {"field": ..., "op": ..., "value": ...}}
                   (the outer keys are the first conjunct; the nested "and" or "or" is the second)
 
     This normalizer detects the legacy shape (presence of "op" key without "type" key)
@@ -146,7 +147,10 @@ class PipelineEdge(BaseModel):
     @field_validator("condition", mode="before")
     @classmethod
     def _accept_legacy_condition_shape(cls, v: Any) -> Any:
-        """Accept cortex's legacy edge-condition format. See _normalize_legacy_condition docstring."""
+        """Accept cortex's legacy edge-condition format.
+
+        See ``_normalize_legacy_condition`` docstring for the shape mapping.
+        """
         return _normalize_legacy_condition(v)
 
 
