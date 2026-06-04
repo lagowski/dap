@@ -4,10 +4,12 @@ import { Circle } from "lucide-react";
 import { useHealth } from "@/hooks/api";
 import { cn } from "@/lib/utils";
 
-// Three states the operator cares about:
+// Four states the operator cares about (#622 — split engine-busy from db-down):
 //   green  — DB reachable, dialect is postgresql
 //   amber  — DB reachable, dialect is sqlite (single-user / local default)
-//   red    — /health failed or db_reachable=false
+//   amber  — engine /health hung or returned an error (busy worker, network,
+//            startup) — DB status is genuinely unknown, do NOT claim DB is down
+//   red    — engine responded AND explicitly reported db_reachable=false
 type Tone = "green" | "amber" | "red";
 
 const STYLES: Record<Tone, string> = {
@@ -27,6 +29,15 @@ const DOT: Record<Tone, string> = {
  * state. Used on the login + signup pages so a new operator can
  * distinguish "wrong credentials" from "the engine can't reach its
  * database". Endpoint: GET /health → { db_dialect, db_reachable }.
+ *
+ * #622 — when ``health.isError`` (typically a /health timeout or 5xx
+ * during a busy in-process node — see #621 single-worker blocking),
+ * we explicitly show "Engine busy or unavailable" in amber rather
+ * than misreporting it as a red "Database unreachable". An operator
+ * panicking at a fake DB failure and restarting Postgres is the
+ * exact harm we're trying to prevent. Red is reserved for the case
+ * where /health responded *successfully* and the engine explicitly
+ * told us its DB connection failed.
  */
 export function DbStatusPill() {
   const health = useHealth();
@@ -36,7 +47,13 @@ export function DbStatusPill() {
   if (health.isPending) {
     tone = "amber";
     label = "Checking database…";
-  } else if (health.isError || !health.data?.db_reachable) {
+  } else if (health.isError) {
+    // /health itself failed — engine busy / unreachable / hung. We
+    // genuinely do NOT know the DB status. Don't lie that DB is down.
+    tone = "amber";
+    label = "Engine busy or unavailable";
+  } else if (!health.data?.db_reachable) {
+    // Engine responded AND explicitly says DB is unreachable.
     tone = "red";
     label = "Database unreachable";
   } else if (health.data.db_dialect === "postgresql") {
