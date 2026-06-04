@@ -72,6 +72,23 @@ def _reject_non_list_execution_commands(extensions: dict[str, Any]) -> None:
         )
 
 
+# Self-fix-known-dangerous denylist — hardcoded UUID of the dap project itself.
+# Dispatching cortex against the DAP repo runs pytest fixtures that wipe the
+# entire app DB (users, projects, instance_env_vars, runs). The 2026-06-01
+# incident reproduced this and blew away production state. UUID-pinned
+# (not URL-pinned) so it survives repo transfers like the 2026-06-03
+# rafeekpro/dap → lagowski/dap rename.
+#
+# SECURITY CRITICAL — adding ANY new entry to this set requires explicit
+# security review, not just normal code review. Each entry represents a
+# project whose code can destroy DAP state when cortex is dispatched
+# against it. Data-driven config is a follow-up only if a 2nd entry is
+# ever needed; until then this stays hardcoded and tracked in code review.
+_SELF_FIX_DANGEROUS_PROJECT_IDS: frozenset[str] = frozenset({
+    "45e8d707-c42e-4683-8f06-50b683f748cc",  # the dap project (was rafeekpro/dap, now lagowski/dap)
+})
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Run)
 async def trigger_run(
     payload: RunCreateRequest,
@@ -127,6 +144,23 @@ async def trigger_run(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Project is archived: {payload.project_id}",
+            )
+        # Self-fix-known-dangerous denylist check — see SELF_FIX_DANGEROUS_PROJECT_IDS
+        # at the top of this file. Returns 403 (auth-class) not 422 (request-shape)
+        # because the request is well-formed; the dispatch is forbidden by policy.
+        if str(project.id) in _SELF_FIX_DANGEROUS_PROJECT_IDS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "dispatch_denied_self_fix_dangerous",
+                    "message": (
+                        "Cortex dispatch against this project is forbidden — "
+                        "running pytest fixtures here wipes app DB "
+                        "(2026-06-01 incident). Run cortex against a "
+                        "different project."
+                    ),
+                    "project_id": str(payload.project_id),
+                },
             )
 
     # ``is not None`` rather than ``or`` — the latter coerces ``0`` to
