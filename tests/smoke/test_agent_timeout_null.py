@@ -1,4 +1,14 @@
-"""Tests for #635 second-class fix — timeout_ms: null backward-compat."""
+"""Tests for #635 second-class fix — timeout_ms: null backward-compat.
+
+The ``timeout_ms`` field is declared ``int`` (not ``int | None``), but a
+``mode="before"`` validator on the contracts side rewrites ``None`` to
+the default 60_000 ms so legacy cortex bundle exports keep working.
+mypy doesn't follow that runtime coercion, so feeding the literal
+``timeout_ms=None`` is a type error even though it's the whole point
+of this test. File-wide disable rather than per-call ignore.
+"""
+
+# mypy: disable-error-code="arg-type"
 
 from dap_engine.contracts import AgentNamedPayload
 

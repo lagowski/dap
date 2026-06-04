@@ -1,4 +1,15 @@
-"""Tests for #635 — backward-compat normalizer for cortex legacy edge-condition shape."""
+"""Tests for #635 — backward-compat normalizer for cortex legacy edge-condition shape.
+
+Every test in this module intentionally feeds a raw ``dict[str, object]``
+to ``PipelineEdge(condition=...)`` so the Pydantic ``mode="before"``
+validator (``_accept_legacy_condition_shape``) can rewrite the legacy
+cortex bundle shape into the strict discriminated union. The strict
+parameter type would reject those dicts at the *type* level even though
+the validator accepts them at runtime — disable that single mypy code
+file-wide rather than peppering every test with an inline ignore.
+"""
+
+# mypy: disable-error-code="arg-type"
 
 from dap_types.pipeline import (
     ComparisonCondition,
