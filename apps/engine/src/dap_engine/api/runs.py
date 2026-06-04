@@ -84,9 +84,11 @@ def _reject_non_list_execution_commands(extensions: dict[str, Any]) -> None:
 # project whose code can destroy DAP state when cortex is dispatched
 # against it. Data-driven config is a follow-up only if a 2nd entry is
 # ever needed; until then this stays hardcoded and tracked in code review.
-_SELF_FIX_DANGEROUS_PROJECT_IDS: frozenset[str] = frozenset({
-    "45e8d707-c42e-4683-8f06-50b683f748cc",  # the dap project (was rafeekpro/dap, now lagowski/dap)
-})
+_SELF_FIX_DANGEROUS_PROJECT_IDS: frozenset[str] = frozenset(
+    {
+        "45e8d707-c42e-4683-8f06-50b683f748cc",  # the dap project (was rafeekpro/dap, now lagowski/dap)
+    }
+)
 
 
 def _resolve_active_project(

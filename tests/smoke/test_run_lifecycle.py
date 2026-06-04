@@ -392,12 +392,9 @@ def test_post_runs_self_fix_dangerous_project_returns_403(
             "initial_state": {},
         },
     )
-    assert response.status_code == 403, (
-        f"expected 403, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code == 403, f"expected 403, got {response.status_code}: {response.text}"
     detail = response.json()["detail"]
     assert isinstance(detail, dict), f"detail should be structured: {detail!r}"
     assert detail["code"] == "dispatch_denied_self_fix_dangerous"
     assert detail["project_id"] == project_id
     assert "2026-06-01" in detail["message"]
-
