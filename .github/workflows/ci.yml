@@ -101,6 +101,15 @@ jobs:
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
         run: uv python install
 
+      # Guard against source/lock drift (#645): dependabot's uv group can bump
+      # uv.lock without widening the source pyproject.toml constraints (or vice
+      # versa). `uv lock --check` fails if uv.lock is not consistent with every
+      # pyproject.toml, so the mismatch surfaces here instead of silently
+      # reverting on the next fresh `uv lock`.
+      - name: Lockfile drift guard (uv lock --check)
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
+        run: uv lock --check
+
       - name: Install workspace (frozen)
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
         run: uv sync --all-packages --frozen
