@@ -26,6 +26,13 @@ dependencies = [
     # the OAuth sub-PR. Explicit pin so `--frozen` installs catch
     # breaking minor bumps in pre-commit hooks.
     "fastapi-users[sqlalchemy,oauth]>=15.0.5",
+    # PyJWT — transitive of fastapi-users, but constrained explicitly to
+    # >=2.13.0 to pull in the 2026-06 security patches that close
+    # PYSEC-2026-175/-177/-178/-179 (4 CVEs in 2.12.1). Without this
+    # constraint, uv resolves fastapi-users' looser bound to 2.12.1 and
+    # the pip-audit CI gate fails. The ``[crypto]`` extra matches the
+    # transitive resolution shape so the install surface isn't widened.
+    "pyjwt[crypto]>=2.13.0",
     # At-rest encryption for instance env-var values (#388). Already
     # pulled transitively by fastapi-users, but declared explicitly so
     # the dependency is visible to anyone auditing what we encrypt
