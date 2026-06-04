@@ -361,7 +361,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "google-genai", specifier = ">=1.33.0,<2.0" },
+    { name = "google-genai", specifier = ">=2.7.0,<3.0" },
     { name = "httpx", specifier = ">=0.27.0,<1.0" },
     { name = "pydantic", specifier = ">=2.9.0,<3.0" },
 ]
@@ -485,6 +485,7 @@ dependencies = [
     { name = "packaging" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -503,8 +504,9 @@ requires-dist = [
     { name = "langgraph-checkpoint-postgres", specifier = ">=2.0" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.0" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.4" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.9.2" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
     { name = "sqlalchemy", specifier = ">=2.0.36" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
@@ -571,18 +573,18 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'api-call'", specifier = ">=0.40.0" },
     { name = "anyio", specifier = ">=4.6.0" },
     { name = "dap-schemas", editable = "packages/types" },
-    { name = "google-genai", marker = "extra == 'all'", specifier = ">=0.3.0" },
-    { name = "google-genai", marker = "extra == 'api-call'", specifier = ">=0.3.0" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=0.3.0" },
+    { name = "google-genai", marker = "extra == 'all'", specifier = ">=2.7.0" },
+    { name = "google-genai", marker = "extra == 'api-call'", specifier = ">=2.7.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.7.0" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27.2" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27.2" },
     { name = "jinja2", marker = "extra == 'all'", specifier = ">=3.1.4" },
     { name = "jinja2", marker = "extra == 'http'", specifier = ">=3.1.4" },
     { name = "jsonpath-ng", marker = "extra == 'all'", specifier = ">=1.6.1" },
     { name = "jsonpath-ng", marker = "extra == 'http'", specifier = ">=1.6.1" },
-    { name = "openai", marker = "extra == 'all'", specifier = ">=2.38.0" },
-    { name = "openai", marker = "extra == 'api-call'", specifier = ">=2.38.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.38.0" },
+    { name = "openai", marker = "extra == 'all'", specifier = ">=1.55.0" },
+    { name = "openai", marker = "extra == 'api-call'", specifier = ">=1.55.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.55.0" },
 ]
 provides-extras = ["anthropic", "openai", "google", "api-call", "http", "all"]
 
@@ -760,7 +762,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "1.75.0"
+version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -774,9 +776,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/59/3ed61240ef20b3ae6ed54e82c6f8b6d1f194947bc6679679dd6cdb037594/google_genai-1.75.0.tar.gz", hash = "sha256:56bac3991b311c93f980c0a2abcd287b672146905df1fbd71c92ed633d5a07cf", size = 539039, upload-time = "2026-05-04T22:48:54.857Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/52/0244e310812f3063d09d60b30ae29ab7df9343bd005744cd5eeaa6ba39b4/google_genai-2.8.0.tar.gz", hash = "sha256:37a9b3cb127d763e7f4ca47452ae3562c87728773bd1b149f7b559c239da2bc1", size = 564955, upload-time = "2026-06-03T22:55:38.397Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/b6/552d40e96da22921eb1fead7c14b00b5b5473a20e45959488660fab35ee2/google_genai-1.75.0-py3-none-any.whl", hash = "sha256:8dc4c096e7d6288c3087f6893f582fe52468932464781edb8193bd92b9fefb2c", size = 793726, upload-time = "2026-05-04T22:48:53.033Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/de/747ad1aa49e902da9a4699081c282a1ed8ceed3b4d295fd99a6d286e09e4/google_genai-2.8.0-py3-none-any.whl", hash = "sha256:4da0a223a100f4b37f609a68b835e3326ab0fa313314dc0fd9d34e76ee293844", size = 832497, upload-time = "2026-06-03T22:55:36.598Z" },
 ]
 
 [[package]]
@@ -1788,11 +1790,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.12.1"
+version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c2/27/a3b6e5bf6ff856d2509292e95c8f57f0df7017cf5394921fc4e4ef40308a/pyjwt-2.12.1.tar.gz", hash = "sha256:c74a7a2adf861c04d002db713dd85f84beb242228e671280bf709d765b03672b", size = 102564, upload-time = "2026-03-13T19:27:37.25Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/81/58d0ac84e1ef3a3843791d6954d94c0b33d526c75eeb1efbce9d0a4c4077/pyjwt-2.13.0.tar.gz", hash = "sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423", size = 107515, upload-time = "2026-05-21T19:54:36.618Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/7a/8dd906bd22e79e47397a61742927f6747fe93242ef86645ee9092e610244/pyjwt-2.12.1-py3-none-any.whl", hash = "sha256:28ca37c070cad8ba8cd9790cd940535d40274d22f80ab87f3ac6a713e6e8454c", size = 29726, upload-time = "2026-03-13T19:27:35.677Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl", hash = "sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728", size = 31274, upload-time = "2026-05-21T19:54:35.362Z" },
 ]
 
 [package.optional-dependencies]

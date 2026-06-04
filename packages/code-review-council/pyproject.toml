@@ -8,7 +8,12 @@ license = { text = "TBD" }
 dependencies = [
     # Google Gen AI SDK — for GeminiProvider. Current/non-deprecated;
     # ``google-generativeai`` (the older package) is end-of-life.
-    "google-genai>=1.33.0,<2.0",
+    # Upper bound bumped to <3.0 in 2026-06 to match the ``uv.lock``
+    # metadata that PR #632 already wrote (dependabot bumped the lockfile
+    # without updating this source constraint, creating a drift that any
+    # fresh ``uv lock`` would silently revert). See follow-up tracking
+    # issue for the dependabot misconfiguration root cause.
+    "google-genai>=2.7.0,<3.0",
     # OpenAI-compatible HTTP client for OpenRouterProvider. ``httpx``
     # rather than the ``openai`` SDK because we only need raw chat-
     # completions + JSON-object response_format, and a one-file httpx
