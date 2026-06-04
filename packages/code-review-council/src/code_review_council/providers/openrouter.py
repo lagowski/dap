@@ -42,7 +42,7 @@ DEFAULT_TIMEOUT_S = 120.0
 # OpenRouter recommends sending these so they can attribute traffic
 # and surface helpful errors. Not required but considered polite.
 APP_TITLE = "DAP Code Review Council"
-APP_URL = "https://github.com/rafeekpro/dap"
+APP_URL = "https://github.com/lagowski/dap"
 
 
 class OpenRouterProvider:

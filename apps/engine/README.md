@@ -1,6 +1,6 @@
 # dap-engine
 
-The execution engine for [DAP](https://github.com/rafeekpro/dap)
+The execution engine for [DAP](https://github.com/lagowski/dap)
 (Deterministic Agent Pipeline). FastAPI service that owns the
 canonical state of agents, pipelines, runs, projects, and users;
 drives execution via a LangGraph state machine; and dispatches
@@ -37,7 +37,7 @@ DAP_DATABASE_URL=postgresql+asyncpg://user:pass@localhost/dap dap-engine
 ```
 
 The full env-var surface is enumerated in
-[`.env.example`](https://github.com/rafeekpro/dap/blob/main/.env.example)
+[`.env.example`](https://github.com/lagowski/dap/blob/main/.env.example)
 at the repo root. The big ones:
 
 | Variable | Required in prod? | Purpose |
@@ -118,12 +118,12 @@ miss it, run `dap init --force --admin-email=legacy-admin@local
 
 ## See also
 
-- [DAP project README](https://github.com/rafeekpro/dap) — architecture + first pipeline.
-- [`docs/architecture.md`](https://github.com/rafeekpro/dap/blob/main/docs/architecture.md) — state machine, Run lifecycle, LangGraph checkpoint model.
-- [`docs/auth.md`](https://github.com/rafeekpro/dap/blob/main/docs/auth.md) — credential mechanisms (password, OAuth, API tokens).
-- [`docs/admin-guide.md`](https://github.com/rafeekpro/dap/blob/main/docs/admin-guide.md) — `/admin/*` operator manual.
-- [`docs/security.md`](https://github.com/rafeekpro/dap/blob/main/docs/security.md) — threat model, secrets handling, hardening checklist.
+- [DAP project README](https://github.com/lagowski/dap) — architecture + first pipeline.
+- [`docs/architecture.md`](https://github.com/lagowski/dap/blob/main/docs/architecture.md) — state machine, Run lifecycle, LangGraph checkpoint model.
+- [`docs/auth.md`](https://github.com/lagowski/dap/blob/main/docs/auth.md) — credential mechanisms (password, OAuth, API tokens).
+- [`docs/admin-guide.md`](https://github.com/lagowski/dap/blob/main/docs/admin-guide.md) — `/admin/*` operator manual.
+- [`docs/security.md`](https://github.com/lagowski/dap/blob/main/docs/security.md) — threat model, secrets handling, hardening checklist.
 
 ## License
 
-See the [main repository](https://github.com/rafeekpro/dap) for licensing details.
+See the [main repository](https://github.com/lagowski/dap) for licensing details.

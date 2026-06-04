@@ -39,7 +39,7 @@ curl http://localhost:7333/health
 
 ## What this runs
 
-- **DAP container** (`ghcr.io/rafeekpro/dap:latest`):
+- **DAP container** (`ghcr.io/lagowski/dap:latest`):
   - Engine on `:7333`
   - Dashboard on `:3000`
   - SQLite database in the `dap-data` volume (`/data/state.db`).

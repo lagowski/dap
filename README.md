@@ -1,6 +1,6 @@
 # DAP — Deterministic Agent Pipeline
 
-[![CI](https://github.com/rafeekpro/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rafeekpro/dap/actions/workflows/ci.yml)
+[![CI](https://github.com/lagowski/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/lagowski/dap/actions/workflows/ci.yml)
 
 DAP is a self-hostable, multi-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control. Anti-emergent by design: the state machine, not the model, decides what runs next.
 
@@ -9,7 +9,7 @@ DAP is a self-hostable, multi-user system for building and executing **determini
 Three supported install paths, in order of complexity:
 
 1. **PyPI** — `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`. Single-machine. The wheel ships with the bundled Next.js dashboard; `dap start` spawns the dashboard alongside the engine when `node` is on `PATH`, and runs engine-only otherwise (the CLI prints a hint).
-2. **Docker** — `ghcr.io/rafeekpro/dap:0.3.0` for shared / production deployments. See [`examples/standalone/`](examples/standalone/) for a working compose file with SQLite (default) or Postgres.
+2. **Docker** — `ghcr.io/lagowski/dap:0.3.0` for shared / production deployments. See [`examples/standalone/`](examples/standalone/) for a working compose file with SQLite (default) or Postgres.
 3. **Source** — for contributors. The `scripts/setup` + `scripts/dev` flow below.
 
 **First time installing?** → [**docs/quick-start.md**](docs/quick-start.md) walks you through the three paths with a 3-question decision tree and copy-pasteable commands.
@@ -42,7 +42,7 @@ Scripts that hit `localhost:7333` unauthenticated need an API token now (`/admin
 ## Install (from source)
 
 ```bash
-git clone https://github.com/rafeekpro/dap && cd dap
+git clone https://github.com/lagowski/dap && cd dap
 ./scripts/setup
 ```
 

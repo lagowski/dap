@@ -116,8 +116,8 @@ Postgres later by uncommenting the sidecar in the compose file.
 ```bash
 # 1. Grab the compose example from the repo (or clone).
 mkdir -p /opt/dap && cd /opt/dap
-curl -O https://raw.githubusercontent.com/rafeekpro/dap/main/examples/standalone/docker-compose.yml
-curl -O https://raw.githubusercontent.com/rafeekpro/dap/main/examples/standalone/.env.example
+curl -O https://raw.githubusercontent.com/lagowski/dap/main/examples/standalone/docker-compose.yml
+curl -O https://raw.githubusercontent.com/lagowski/dap/main/examples/standalone/.env.example
 
 # 2. Configure secrets.
 cp .env.example .env
@@ -128,7 +128,7 @@ cp .env.example .env
 nano .env
 
 # 3. Start.
-docker compose pull        # fetches ghcr.io/rafeekpro/dap:$DAP_IMAGE_TAG
+docker compose pull        # fetches ghcr.io/lagowski/dap:$DAP_IMAGE_TAG
 docker compose up -d
 
 # 4. Bootstrap the admin (idempotent — re-run with --force later
@@ -196,7 +196,7 @@ recovery, automated upgrades.
                    │ HTTP :3000
                    ▼
         ┌──────────────────┐
-        │ DAP container    │  ghcr.io/rafeekpro/dap:<version>
+        │ DAP container    │  ghcr.io/lagowski/dap:<version>
         │  - Engine :7333  │  (engine + dashboard, monolith)
         │  - Dashboard:3000│
         └────────┬─────────┘
@@ -342,7 +342,7 @@ token.
 
 ### The fork in the road for Docker users
 
-The default Docker image (`ghcr.io/rafeekpro/dap:0.3.0`) ships with
+The default Docker image (`ghcr.io/lagowski/dap:0.3.0`) ships with
 **Python + Node + the bundled dashboard** — NOT with the LLM
 CLIs. If you want `claude-code` / `gemini-cli` / `codex` /
 `aider` to work from a Dockerised DAP, you have three options:
@@ -357,7 +357,7 @@ as env vars to the container.
 # docker-compose.yml
 services:
   dap:
-    image: ghcr.io/rafeekpro/dap:0.3.0
+    image: ghcr.io/lagowski/dap:0.3.0
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -387,7 +387,7 @@ subscription, or `aider` for repo-scoped edits):
 
 ```dockerfile
 # Dockerfile.dap-with-clis
-FROM ghcr.io/rafeekpro/dap:0.3.0
+FROM ghcr.io/lagowski/dap:0.3.0
 
 USER root
 RUN npm install -g @anthropic-ai/claude-code @google-ai/gemini-cli \

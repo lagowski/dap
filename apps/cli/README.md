@@ -1,6 +1,6 @@
 # dap-cli
 
-The command-line launcher for [DAP](https://github.com/rafeekpro/dap)
+The command-line launcher for [DAP](https://github.com/lagowski/dap)
 (Deterministic Agent Pipeline). Installs as a single binary that
 spawns both the engine and the Next.js dashboard, with all five
 first-party packages (`dap-engine`, `dap-schemas`, `dap-runtimes`,
@@ -129,7 +129,7 @@ dap start
 dap stop
 ```
 
-See [`docs/quick-start.md`](https://github.com/rafeekpro/dap/blob/main/docs/quick-start.md)
+See [`docs/quick-start.md`](https://github.com/lagowski/dap/blob/main/docs/quick-start.md)
 for the full decision tree (laptop vs VPS, SQLite vs Postgres,
 Docker vs no-Docker) and the per-path walkthroughs.
 
@@ -139,7 +139,7 @@ If you're developing DAP itself or want to run against an
 unreleased commit:
 
 ```bash
-git clone https://github.com/rafeekpro/dap.git
+git clone https://github.com/lagowski/dap.git
 cd dap
 ./scripts/setup
 ./scripts/dev
@@ -156,11 +156,11 @@ terminal with hot reload on both sides.
 
 ## See also
 
-- [DAP project README](https://github.com/rafeekpro/dap) — architecture overview.
-- [`docs/quick-start.md`](https://github.com/rafeekpro/dap/blob/main/docs/quick-start.md) — install + first-pipeline tutorial.
-- [`docs/self-hosting.md`](https://github.com/rafeekpro/dap/blob/main/docs/self-hosting.md) — production deployment + reverse-proxy hardening.
-- [`docs/admin-guide.md`](https://github.com/rafeekpro/dap/blob/main/docs/admin-guide.md) — operator manual for `/admin/*`.
+- [DAP project README](https://github.com/lagowski/dap) — architecture overview.
+- [`docs/quick-start.md`](https://github.com/lagowski/dap/blob/main/docs/quick-start.md) — install + first-pipeline tutorial.
+- [`docs/self-hosting.md`](https://github.com/lagowski/dap/blob/main/docs/self-hosting.md) — production deployment + reverse-proxy hardening.
+- [`docs/admin-guide.md`](https://github.com/lagowski/dap/blob/main/docs/admin-guide.md) — operator manual for `/admin/*`.
 
 ## License
 
-See the [main repository](https://github.com/rafeekpro/dap) for licensing details.
+See the [main repository](https://github.com/lagowski/dap) for licensing details.

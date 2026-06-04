@@ -1,6 +1,6 @@
 # dap-schemas
 
-Shared Pydantic v2 schemas for the [DAP](https://github.com/rafeekpro/dap)
+Shared Pydantic v2 schemas for the [DAP](https://github.com/lagowski/dap)
 (Deterministic Agent Pipeline) ecosystem. This package defines the data
 contract every other first-party package uses to exchange agents,
 pipelines, runs, and runtime tasks.
@@ -80,13 +80,13 @@ offending field.
 - Pydantic 2.9+
 - Semantic versioning. Breaking schema changes bump the major version
   and ship a migration in
-  [`apps/engine/src/dap_engine/persistence/migrations.py`](https://github.com/rafeekpro/dap/blob/main/apps/engine/src/dap_engine/persistence/migrations.py).
+  [`apps/engine/src/dap_engine/persistence/migrations.py`](https://github.com/lagowski/dap/blob/main/apps/engine/src/dap_engine/persistence/migrations.py).
 
 ## See also
 
-- [DAP project README](https://github.com/rafeekpro/dap) — architecture overview and quick-start.
-- [`docs/architecture.md`](https://github.com/rafeekpro/dap/blob/main/docs/architecture.md) — full schema relationships and the LangGraph state machine that consumes them.
+- [DAP project README](https://github.com/lagowski/dap) — architecture overview and quick-start.
+- [`docs/architecture.md`](https://github.com/lagowski/dap/blob/main/docs/architecture.md) — full schema relationships and the LangGraph state machine that consumes them.
 
 ## License
 
-See the [main repository](https://github.com/rafeekpro/dap) for licensing details.
+See the [main repository](https://github.com/lagowski/dap) for licensing details.

@@ -1,6 +1,6 @@
 # dap-runtimes
 
-Runtime adapters for [DAP](https://github.com/rafeekpro/dap). Every
+Runtime adapters for [DAP](https://github.com/lagowski/dap). Every
 agent in a pipeline picks one runtime; `create_default_registry()`
 ships eight adapters (seven implemented + one stub). Each adapter
 delegates the actual work to a specific executor (LLM SDK, agentic
@@ -235,7 +235,7 @@ API key: `ANTHROPIC_API_KEY` in the engine's env — the Claude Code
 CLI reads it itself; the adapter doesn't inject. Alternative: a
 `claude auth login` OAuth session at `$HOME/.claude/` (e.g. for Pro
 or Max plans). Bind-mount that dir into Docker if the engine runs
-in a container — see [`docs/quick-start.md`](https://github.com/rafeekpro/dap/blob/main/docs/quick-start.md#runtime-adapters--how-dap-talks-to-llms).
+in a container — see [`docs/quick-start.md`](https://github.com/lagowski/dap/blob/main/docs/quick-start.md#runtime-adapters--how-dap-talks-to-llms).
 
 Process lifecycle is identical to `bash`: POSIX session group +
 `asyncio.shield(wait)` cleanup + `CancelledError` handling. Engine
@@ -430,11 +430,11 @@ before this runtime can safely accept untrusted agent definitions.
 
 ## See also
 
-- [DAP project README](https://github.com/rafeekpro/dap) — full architecture.
-- [`docs/runtimes.md`](https://github.com/rafeekpro/dap/blob/main/docs/runtimes.md) — design notes on adding a new adapter.
-- [`docs/providers.md`](https://github.com/rafeekpro/dap/blob/main/docs/providers.md) — per-provider setup recipes.
-- [`docs/quick-start.md`](https://github.com/rafeekpro/dap/blob/main/docs/quick-start.md#runtime-adapters--how-dap-talks-to-llms) — choosing between `api-call` and CLI runtimes per deployment shape.
+- [DAP project README](https://github.com/lagowski/dap) — full architecture.
+- [`docs/runtimes.md`](https://github.com/lagowski/dap/blob/main/docs/runtimes.md) — design notes on adding a new adapter.
+- [`docs/providers.md`](https://github.com/lagowski/dap/blob/main/docs/providers.md) — per-provider setup recipes.
+- [`docs/quick-start.md`](https://github.com/lagowski/dap/blob/main/docs/quick-start.md#runtime-adapters--how-dap-talks-to-llms) — choosing between `api-call` and CLI runtimes per deployment shape.
 
 ## License
 
-See the [main repository](https://github.com/rafeekpro/dap) for licensing details.
+See the [main repository](https://github.com/lagowski/dap) for licensing details.
