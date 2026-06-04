@@ -38,6 +38,23 @@ from dap_runtimes.adapters._cli_base import (
     _BaseCliAdapter,
 )
 
+# Marker keys placed on the decoded payload when stream-json yields no
+# ``result`` event. ``--print`` mode treats this as a parse failure;
+# subscription mode (#625) reads the raw stdout as the agent output.
+_NO_RESULT_KEY: Final = "_no_result"
+_RAW_STDOUT_KEY: Final = "_raw_stdout"
+
+
+def _use_subscription(config: dict[str, Any]) -> bool:
+    """Whether the run opts into subscription (non-``--print``) mode (#625).
+
+    Defaults to ``False`` (the metered ``--print`` path) so existing
+    behaviour is unchanged unless ``runtime_config.use_subscription`` is
+    explicitly ``True``. Validation in ``_validate_config`` guarantees the
+    value is a real ``bool`` by the time this runs.
+    """
+    return config.get("use_subscription") is True
+
 
 class ClaudeCodeAdapter(_BaseCliAdapter):
     """Runs the Claude Code CLI in print mode + JSON output, captures structured result."""
@@ -63,6 +80,13 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
         if binary_path is not None and not isinstance(binary_path, str):
             return "runtime_config.binary_path must be a string"
 
+        # ``use_subscription`` is optional and defaults to False. When set
+        # it must be a real boolean — a stray "true"/1 would silently take
+        # the wrong branch, so reject anything else up front. (#625)
+        use_subscription = config.get("use_subscription")
+        if use_subscription is not None and not isinstance(use_subscription, bool):
+            return "runtime_config.use_subscription must be a boolean"
+
         return None
 
     def _build_argv(
@@ -71,6 +95,24 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
         config: dict[str, Any],
         extra_args: list[str],
     ) -> list[str]:
+        if _use_subscription(config):
+            # Subscription (Pro/Max) mode (#625): after 2026-06-15 Anthropic
+            # moves ``--print`` programmatic usage onto a metered $200/month
+            # Agent SDK credit. Dropping ``--print`` keeps runs on the
+            # unmetered subscription pool instead. The prompt is still piped
+            # via stdin (see ``_BaseCliAdapter._run_subprocess``) and stdin is
+            # closed after the write, so the otherwise-interactive CLI reads
+            # the prompt and exits rather than blocking for input.
+            # ``--dangerously-skip-permissions`` auto-approves tool use so the
+            # run never stalls on a permission prompt — matching the manual
+            # ``echo prompt | claude --dangerously-skip-permissions`` pattern.
+            return [
+                binary,
+                "--dangerously-skip-permissions",
+                "--model",
+                config["model_id"],
+                *extra_args,
+            ]
         return [
             binary,
             "--print",
@@ -90,9 +132,13 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
         lines are skipped so stray malformed lines from tool output don't
         abort the parse.
 
-        Raises ``json.JSONDecodeError`` (with a descriptive message) when
-        no result event is found — the base class maps this to a failed
-        RuntimeResult.
+        When no result event is found, returns a marker payload
+        (``{_NO_RESULT_KEY: True, ...}``) rather than raising. ``--print``
+        mode treats that as a failure (the structured response is missing);
+        subscription mode (#625) expects it — without ``--print`` the CLI
+        emits plain text, not stream-json — and reads the raw stdout as the
+        agent output. The decode hook has no access to ``runtime_config``,
+        so the print-vs-subscription decision lives in ``_parse_payload``.
         """
         result_event: dict[str, Any] | None = None
         for line in stdout.splitlines():
@@ -106,7 +152,7 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
             if isinstance(event, dict) and event.get("type") == "result":
                 result_event = event
         if result_event is None:
-            raise json.JSONDecodeError("No result event found in stream-json output", stdout, 0)
+            return {_NO_RESULT_KEY: True, _RAW_STDOUT_KEY: stdout}
         return result_event
 
     def _parse_payload(
@@ -115,6 +161,19 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
         config: dict[str, Any],
         outcome: SubprocessOutcome,
     ) -> RuntimeResult:
+        if _use_subscription(config):
+            return self._parse_subscription(payload, config, outcome)
+
+        if payload.get(_NO_RESULT_KEY):
+            return self._failed(
+                "Could not parse Claude CLI output as JSON: "
+                "No result event found in stream-json output",
+                duration_ms=outcome.duration_ms,
+                model_id=config["model_id"],
+                exit_code=outcome.exit_code,
+                stderr=outcome.stderr,
+            )
+
         if payload.get("is_error") is True:
             return self._failed(
                 f"Claude CLI reported an error: {payload.get('result') or 'unknown'}",
@@ -173,6 +232,44 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
                     "cache_creation_input_tokens": cache_creation,
                     "cache_read_input_tokens": cache_read,
                 },
+                "exit_code": outcome.exit_code,
+                "timed_out": False,
+            },
+        )
+
+    def _parse_subscription(
+        self,
+        payload: dict[str, Any],
+        config: dict[str, Any],
+        outcome: SubprocessOutcome,
+    ) -> RuntimeResult:
+        """Build a result for subscription (non-``--print``) mode (#625).
+
+        Without ``--print`` the CLI emits plain text rather than
+        stream-json, so there is no token usage or cost to extract — the
+        run is billed against the flat-rate Pro/Max subscription, not
+        metered per call. The agent output is the raw stdout. ``cost_usd``
+        is ``None`` and ``tokens_used`` is left unset (0) to signal "not
+        metered" rather than "zero cost".
+        """
+        # If a result event *did* appear (e.g. a future CLI build still
+        # emits one without ``--print``), prefer its ``result`` text;
+        # otherwise fall back to the raw stdout captured at decode time.
+        if payload.get(_NO_RESULT_KEY):
+            output_text = payload.get(_RAW_STDOUT_KEY) or ""
+        else:
+            output_text = payload.get("result") or ""
+
+        return RuntimeResult(
+            success=True,
+            output=output_text,
+            cost_usd=None,  # subscription mode is not metered per-call
+            duration_ms=outcome.duration_ms,
+            errors=[],
+            structured={
+                "provider": "claude-code",
+                "model": config["model_id"],
+                "subscription": True,
                 "exit_code": outcome.exit_code,
                 "timed_out": False,
             },

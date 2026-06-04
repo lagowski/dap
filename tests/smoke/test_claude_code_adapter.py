@@ -445,7 +445,8 @@ async def test_subscription_mode_skips_cost_and_tokens(with_api_key: None) -> No
     assert result.success is True
     assert result.output == "agent finished the task\n"
     assert result.cost_usd is None
-    assert result.tokens_used == 0
+    # tokens unset (None), not 0 — "not metered" rather than "zero usage".
+    assert result.tokens_used is None
     assert result.structured is not None
     assert result.structured["provider"] == "claude-code"
     assert result.structured["subscription"] is True
