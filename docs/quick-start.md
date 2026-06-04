@@ -319,11 +319,11 @@ in [`self-hosting.md`](self-hosting.md#troubleshooting).
 ## Runtime adapters — how DAP talks to LLMs
 
 After install, every agent needs to know **which LLM to call** and
-**how to authenticate**. DAP ships 7 runtime adapters; you pick one
+**how to authenticate**. DAP ships 8 runtime adapters; you pick one
 per agent in `runtime_config`. The choice has big consequences for
 deployment, especially in Docker.
 
-### The 7 runtimes
+### The 8 runtimes
 
 | Runtime | What it does | Needs binary on PATH? | Auth |
 |---|---|---|---|
@@ -331,8 +331,9 @@ deployment, especially in Docker.
 | `claude-code` | `subprocess` to `claude` CLI | ✅ Yes | `~/.claude/` OAuth state OR `ANTHROPIC_API_KEY` |
 | `gemini-cli` | `subprocess` to `gemini` CLI | ✅ Yes | `~/.config/google-generative-ai/` OAuth OR `GEMINI_API_KEY` |
 | `codex` | `subprocess` to `codex` CLI | ✅ Yes | `~/.codex/` OAuth OR `OPENAI_API_KEY` |
-| `aider` | `subprocess` to `aider` CLI | ✅ Yes | provider's API key env var |
+| `aider` | `subprocess` to `aider` CLI (stub — lands later) | ✅ Yes | provider's API key env var |
 | `bash` | Arbitrary shell command | system `bash` | n/a (whatever the script needs) |
+| `python-func` | In-process Python callable | ❌ No | n/a (runs in the engine process) |
 | `http` | Generic HTTP request | ❌ No | Whatever the endpoint wants |
 
 CLI runtimes (`claude-code`, `gemini-cli`, `codex`, `aider`) let you

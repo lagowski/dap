@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rafeekpro/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rafeekpro/dap/actions/workflows/ci.yml)
 
-DAP is a self-hostable, multi-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control. Anti-emergent by design: the state machine, not the model, decides what runs next.
+DAP is a self-hostable, multi-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM / OpenRouter SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, an in-process Python function, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control, live per-node progress, and human approval gates. Anti-emergent by design: the state machine, not the model, decides what runs next.
 
 ## Install paths
 
@@ -98,7 +98,7 @@ Prerequisites for running this specific bundle: `gh auth login` on the host, `GL
 
 Each agent has:
 
-- A **runtime** (`api-call` for SDK calls, `claude-code` / `gemini-cli` / `codex` / `aider` for agentic CLIs, `bash` for shell, `http` for arbitrary REST).
+- A **runtime** (`api-call` for SDK calls, `claude-code` / `gemini-cli` / `codex` / `aider` for agentic CLIs, `bash` for shell, `python-func` for an in-process Python callable, `http` for arbitrary REST).
 - A **prompt template** (Jinja → XML, validated against `PipelineState`).
 - An **`input_schema`** / **`output_schema`** declaring which `PipelineState` fields the agent reads and writes.
 - A **role** (`task_selector`, `prompt_builder`, `test_author`, `implementer`, `verifier`, `post_check`, or any custom string).
@@ -134,10 +134,14 @@ Every save bumps the agent's version. `/agents/<id>/versions` lists all of them;
 
 ### Run a pipeline
 
-From `/pipelines`, **Run** opens a dialog where you can fill optional `initial_state` JSON, then triggers the run and redirects to `/runs/<id>`. The run page shows each node's status as it executes, plus controls:
+From `/pipelines`, **Run** opens a dialog where you can fill optional `initial_state` JSON, then triggers the run and redirects to `/runs/<id>`. The run page streams **live progress** — the currently executing node (with a spinner), per-node status timeline, and the active phase — by polling `GET /runs/<id>`. Controls:
 
 - **Pause / Resume / Abort** mid-run.
 - On a stopped (failed / paused / aborted) run: click any node and pick **Retry** (re-execute) or **Skip** (mark done, advance state machine).
+
+### Approval gates
+
+Pipelines can mark nodes as requiring human approval (`defaults.approval_required_nodes`). When the run reaches such a node it pauses and surfaces a **gate payload** inline — task assignments, the spec, and any non-blocking `finalize_warnings` — so you can **Approve** or **Reject** without digging through logs. Finalize nodes that emit a "READY" signal route to an auto-approvable gate; "NEEDS_WORK" routes to a gate that forces human review. Pipelines that opt in via `defaults.requires_terminal_final_status` are marked failed (not silently successful) if they finish without reaching a terminal state.
 
 ### Logs
 
@@ -169,10 +173,11 @@ The engine reads provider keys from process env (or `.env.local` via `scripts/de
 | OpenAI | `OPENAI_API_KEY` | `api-call` (provider=`openai`), `codex` CLI |
 | Google Gemini | `GEMINI_API_KEY` | `api-call` (provider=`gemini`), `gemini-cli` CLI |
 | Z.AI GLM | `GLM_API_KEY` | `api-call` (provider=`glm`) — first-class OpenAI-compatible |
+| OpenRouter | `OPENROUTER_API_KEY` | `api-call` (provider=`openrouter`) — multi-model gateway, slash-namespaced model ids |
 
 CLI runtimes (`claude-code`, `gemini-cli`) also accept their own OAuth login (`claude code` → `Pro`/`Max` plan, `gemini auth login` → Advanced) instead of an API key.
 
-For custom OpenAI-compatible providers (Together, OpenRouter, internal proxies, Ollama): the agent's `runtime_config` declares `api_key_env`; export whatever env var name it uses. See [`docs/providers.md`](docs/providers.md) for the full provider matrix and per-provider recipes.
+For any other OpenAI-compatible provider (Together, internal proxies, Ollama): use `api-call` with `provider=openai-compat` and declare `api_key_env` + `base_url` in the agent's `runtime_config`; export whatever env var name it uses. See [`docs/providers.md`](docs/providers.md) for the full provider matrix and per-provider recipes.
 
 The `bash` runtime needs no provider key but **runs commands with the engine's privileges** — see the security note in [`packages/runtimes/README.md`](packages/runtimes/README.md).
 
@@ -203,14 +208,15 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 ```
 apps/
   engine/      FastAPI + LangGraph + SQLAlchemy — runs pipelines, exposes REST
-  dashboard/   Next.js 15 + React Flow + TanStack Query — visual editor + run viewer
-  cli/         Typer-based dap CLI (init, start, stop, status)
+  dashboard/   Next.js 15 + React 19 + React Flow + TanStack Query — visual editor + run viewer
+  cli/         Typer-based dap CLI (init, start, stop, status, project run/approve/reject/state)
 packages/
-  types/       Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
-  runtimes/    Runtime adapter implementations
-  prompt-dsl/  Jinja2 → XML prompt compiler with sandboxing + schema validation
+  types/                Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
+  runtimes/             Runtime adapter implementations (8 adapters, 6 api-call providers)
+  prompt-dsl/           Jinja2 → XML prompt compiler with sandboxing + schema validation
+  code-review-council/  Multi-agent PR reviewer (security/correctness/db/perf/frontend + arbiter); powers the gemini-review CI check
 examples/
-  pipelines/   Importable .pipeline-bundle.json examples
+  pipelines/   Importable .pipeline-bundle.json examples (github-issue-triage, team-collaboration, cortex-github-issue)
 scripts/
   setup        First-run installer (pre-flight, .env, deps, hooks)
   dev          Day-to-day launcher (engine + dashboard + log multiplexing)
@@ -230,6 +236,7 @@ uv run ruff format apps packages          # format
 uv run mypy apps packages tests           # type-check
 uv run dap-engine                         # serve engine on :7333
 uv run dap --help                         # CLI
+uv run dap project run cortex <issue-url> # drive a pipeline from the terminal (run/approve/reject/state)
 
 # Dashboard (run from apps/dashboard)
 pnpm dev                                  # next dev
@@ -248,4 +255,4 @@ pnpm lint                                 # eslint
 
 ## Status
 
-Backend (engine, runtimes, prompt-dsl) and the dashboard MVP are functional. See open issues and the `v0.1` milestone on GitHub for what's next.
+v0.3.0 is the current release: multi-user auth (email+password, GitHub/Google OAuth, API tokens), the engine + 8 runtime adapters + prompt-dsl, the Next.js dashboard with the React Flow designer, live run progress, and human approval gates are all functional. See open issues and the GitHub milestones for what's next.

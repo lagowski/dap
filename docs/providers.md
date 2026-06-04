@@ -22,7 +22,7 @@ expensive CLI does the actual coding.
 | Provider | API runtime | CLI runtime | Cost tracking |
 | --- | --- | --- | --- |
 | Anthropic | `api-call` (`provider="anthropic"`) | `claude-code` | Full (Claude 4.x + cache) |
-| OpenAI | `api-call` (`provider="openai"`) | `codex` (stub) | Full (gpt-5, o-series) |
+| OpenAI | `api-call` (`provider="openai"`) | `codex` | Full (gpt-5, o-series) |
 | Google | `api-call` (`provider="gemini"`) | `gemini-cli` | Full (Gemini 2.x/3.x) |
 | GLM (z.ai) | `api-call` (`provider="glm"`, first-class — see #115) | — | None (3rd-party) |
 | OpenRouter | `api-call` (`provider="openrouter"`, first-class — see #449) | — | None (3rd-party; per-model variable) |
@@ -91,7 +91,9 @@ API mode `runtime_config`:
 }
 ```
 
-CLI mode: `codex` adapter is a stub. Use API mode until #53 lands.
+CLI mode: the `codex` adapter is implemented — it shells out to the
+`codex` CLI (needs the binary on PATH; `~/.codex/` OAuth or
+`OPENAI_API_KEY`). Use API mode if you'd rather not install the CLI.
 
 ### Google (Gemini)
 

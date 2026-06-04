@@ -2,9 +2,9 @@
 
 A runtime adapter is what actually executes a node. The pipeline runner
 hands it a `RuntimeTask` (rendered XML prompt + working directory + timeout
-+ runtime config) and expects a `RuntimeResult` back. DAP ships with five
-fully implemented adapters (`api-call`, `bash`, `claude-code`, `gemini-cli`,
-`http`) plus stubs (`codex`, `aider`) that follow the same shape.
++ runtime config) and expects a `RuntimeResult` back. DAP ships with eight
+adapters that follow the same shape: `api-call`, `bash`, `claude-code`,
+`gemini-cli`, `codex`, `aider`, `python-func`, and `http`.
 
 > Looking to **use** an existing provider (Claude / Gemini / GLM / Ollama
 > / …)? See [`providers.md`](providers.md) — that's the operator-facing
