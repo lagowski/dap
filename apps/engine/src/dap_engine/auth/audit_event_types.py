@@ -98,6 +98,12 @@ AuditEventType = Literal[
     # Security policy denials that block execution before a run or dry-run
     # can invoke a runtime.
     "runtime_policy.denied",
+    # Dispatch-time denials enforced *before* runtime policy — typically
+    # operator-side hard denylists (e.g. self-fix-dangerous project UUIDs).
+    # ``event_data`` carries ``reason`` (e.g. ``"self_fix_dangerous"``),
+    # ``project_id``, and ``pipeline_id``. See #641 for the originating
+    # incident (2026-06-01 DAP DB wipe via cortex dispatch).
+    "dispatch_policy.denied",
     # ------------------------------------------------------------------
     # Settings (instance env vars — #388). The ``settings.env_var.*``
     # triple is the one place we use a three-segment name; the extra

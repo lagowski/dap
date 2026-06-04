@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -97,16 +98,17 @@ def _resolve_active_project(
     project_id: str | None,
     user: UserORM,
 ) -> Project | None:
-    """Resolve and validate the project bound to a run trigger.
+    """Resolve and load-side-validate the project bound to a run trigger.
 
-    Returns ``None`` when no project is bound. Otherwise loads the project,
-    surfaces a 422 if it doesn't exist or is archived, and runs the
-    self-fix-dangerous denylist check (403).
+    Returns ``None`` when no project is bound. Otherwise loads the project
+    and surfaces a 422 if it doesn't exist or is archived. Policy denials
+    (e.g. self-fix-dangerous denylist) are NOT enforced here — call
+    :func:`_enforce_self_fix_dangerous_denylist` separately at the
+    trigger surface so the audit-log call gets the full trigger context
+    (``pipeline_id``, ``user_id``).
 
     Extracted from ``trigger_run`` so that function stays under the
-    ``PLR0915`` statement-count cap. The semantics are unchanged from
-    the inline version: each path raises ``HTTPException`` with the
-    same status codes and detail shapes.
+    ``PLR0915`` statement-count cap.
     """
     if project_id is None:
         return None
@@ -124,20 +126,40 @@ def _resolve_active_project(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Project is archived: {project_id}",
         )
-    _enforce_self_fix_dangerous_denylist(project, project_id)
     return project
 
 
-def _enforce_self_fix_dangerous_denylist(project: Project, project_id: str) -> None:
+def _enforce_self_fix_dangerous_denylist(
+    session: Session,
+    project: Project,
+    project_id: str,
+    pipeline_id: str,
+    user_id: uuid.UUID,
+) -> None:
     """Raise 403 if ``project`` is on the self-fix-dangerous denylist.
 
-    Extracted from ``trigger_run`` to keep that function under the
-    ``PLR0915`` statement-count cap. The denial returns 403 (auth-class,
-    "forbidden by policy") rather than 422 (request-shape) because the
-    request itself is well-formed — the dispatch is forbidden by the
-    operator denylist, not by a malformed payload.
+    Emits an ``dispatch_policy.denied`` audit event before raising so the
+    forbidden attempt is durable in the audit log, parallel to how the
+    runtime-policy denial path captures its denials at ``runs.trigger``.
+
+    The denial returns 403 (auth-class, "forbidden by policy") rather
+    than 422 (request-shape) because the request itself is well-formed
+    — the dispatch is forbidden by the operator denylist, not by a
+    malformed payload.
     """
     if str(project.id) in _SELF_FIX_DANGEROUS_PROJECT_IDS:
+        record_audit_event(
+            session,
+            user_id=user_id,
+            event_type="dispatch_policy.denied",
+            event_data={
+                "surface": "runs.trigger",
+                "reason": "self_fix_dangerous",
+                "project_id": project_id,
+                "pipeline_id": pipeline_id,
+            },
+        )
+        session.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -192,9 +214,14 @@ async def trigger_run(
     # When a project is bound, it must exist (and be owned by the caller)
     # and be active. Archived projects fail loudly here so users notice
     # instead of getting a half-stamped run that the dashboard can't
-    # group cleanly. Self-fix-dangerous denylist (#641) is enforced
-    # inside the helper, so the trigger surface stays uniform.
+    # group cleanly. Policy denials (self-fix-dangerous, #641) run
+    # *after* resolution so the audit-log call has the full trigger
+    # context (``pipeline_id``, ``user_id``) — see the helper docstring.
     project = _resolve_active_project(session, payload.project_id, user)
+    if project is not None and payload.project_id is not None:
+        _enforce_self_fix_dangerous_denylist(
+            session, project, payload.project_id, payload.pipeline_id, user.id
+        )
 
     # ``is not None`` rather than ``or`` — the latter coerces ``0`` to
     # the current version, but ``0`` is a malformed user-supplied
