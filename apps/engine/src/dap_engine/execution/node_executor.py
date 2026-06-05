@@ -16,18 +16,22 @@ merge them.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
-from dap_types import PipelineState, RuntimeResult, RuntimeTask
+from dap_types import OutputCallback, PipelineState, RuntimeResult, RuntimeTask
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from dap_engine.execution.output_parser import parse_node_output
+from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
@@ -38,6 +42,12 @@ from dap_engine.persistence.models import (
 logger = logging.getLogger("dap.engine.execution")
 
 NodeFn = Callable[[PipelineState], Coroutine[Any, Any, dict[str, Any]]]
+
+# How often the node's streamed stdout buffer is drained to
+# ``node_output_chunks`` while the adapter runs (#662 Phase 3b-2b). Each
+# flush coalesces the buffered output into a single chunk row, so a chatty
+# node writes ~2 rows/sec rather than one per stdout read.
+_OUTPUT_FLUSH_INTERVAL_S = 0.5
 
 
 class NodeContext:
@@ -90,6 +100,76 @@ class NodeContext:
     @property
     def timeout_ms(self) -> int:
         return self.timeout_override_ms or self.agent_version.timeout_ms
+
+
+@contextlib.asynccontextmanager
+async def _stream_node_output(ctx: NodeContext, execution_id: str) -> AsyncIterator[OutputCallback]:
+    """Yield an ``on_output`` sink that streams adapter stdout into
+    ``node_output_chunks`` (#662 Phase 3b-2b).
+
+    ``on_output`` is sync and runs on the event loop, so it only appends to an
+    in-memory buffer; a concurrent flush task drains the buffer to the DB in a
+    worker thread (``run_in_threadpool``) on a short-lived session — never
+    blocking the loop and never touching the node's own transaction on
+    ``ctx.session`` (#162). The buffer is coalesced into one chunk row per
+    flush (~2 rows/sec for a chatty node), and a final flush on exit persists
+    trailing output even when the adapter raised or timed out. Adapters that
+    don't stream (api-call / python-func / bash) never call the sink, so every
+    flush is a no-op.
+    """
+    output_buffer: list[str] = []
+    flush_signal = asyncio.Event()
+    bind = ctx.session.get_bind()
+
+    def _on_output(text: str) -> None:
+        # Called synchronously by the adapter on this event-loop thread (never
+        # from a worker thread), so the unlocked append is safe. Wake the flush
+        # task so the first output bytes are persisted with ~no latency.
+        output_buffer.append(text)
+        flush_signal.set()
+
+    def _write_chunk(text: str) -> None:
+        try:
+            with Session(bind=bind) as chunk_session:
+                repo.append_output_chunk(
+                    chunk_session,
+                    run_id=ctx.run_id,
+                    node_id=ctx.node_id,
+                    content=text,
+                    execution_id=execution_id,
+                )
+                chunk_session.commit()
+        except Exception:
+            # A transient chunk-write failure must never fail the node — the
+            # node's own execution log is the source of truth.
+            logger.warning("failed to persist output chunk for node %s", ctx.node_id, exc_info=True)
+
+    async def _flush() -> None:
+        if not output_buffer:
+            return
+        # _on_output only runs on this event-loop thread, so the join+clear is
+        # atomic with respect to appends — no fragment is lost across the drain.
+        pending = "".join(output_buffer)
+        output_buffer.clear()
+        await run_in_threadpool(_write_chunk, pending)
+
+    async def _flush_loop() -> None:
+        # Flush as soon as output arrives (near-zero first-byte latency), with a
+        # periodic tick as a fallback that also coalesces a burst of writes.
+        while True:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(flush_signal.wait(), timeout=_OUTPUT_FLUSH_INTERVAL_S)
+            flush_signal.clear()
+            await _flush()
+
+    flush_task = asyncio.create_task(_flush_loop())
+    try:
+        yield _on_output
+    finally:
+        flush_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await flush_task
+        await _flush()  # drain trailing output even on adapter error/timeout
 
 
 def make_node_fn(ctx: NodeContext) -> NodeFn:
@@ -164,9 +244,11 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             project_env_vars=ctx.project_env_vars,
         )
 
-        # 3. Call adapter
+        # 3. Call adapter — stream its stdout into node_output_chunks so the
+        #    SSE endpoint can emit live ``node_log`` events (#662 Phase 3b-2b).
         adapter = ctx.registry.get(ctx.runtime_id)
-        result: RuntimeResult = await adapter.execute(task)
+        async with _stream_node_output(ctx, execution_id) as on_output:
+            result: RuntimeResult = await adapter.execute(task, on_output=on_output)
         ended_at = datetime.now(UTC)
 
         if not result.success:
