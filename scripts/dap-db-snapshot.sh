@@ -177,6 +177,41 @@ resolve_database_url() {
     echo "$raw"
 }
 
+# Split a postgresql:// URL into (password, password-less-url) on stdout
+# as ``<password><TAB><url-without-password>``. Used to keep the password
+# out of pg_dump / psql command lines — exposing the DB password in
+# ``ps -ef`` / ``/proc/*/cmdline`` to any local user is a real leak on
+# multi-user hosts, even when the operator is the only intentional
+# user (#658 review — HIGH security finding).
+#
+# Returns the original URL with empty password field when no password
+# is present (e.g., ``postgresql://user@host/db``).
+split_db_password() {
+    local url="$1"
+    # Parse via Python — bash regex for URL credentials is fragile and
+    # we already require Python via uv elsewhere in the toolchain.
+    python3 - "$url" <<'PY'
+import sys
+from urllib.parse import urlsplit, urlunsplit, quote
+
+url = sys.argv[1]
+parts = urlsplit(url)
+password = parts.password or ""
+
+# Reconstruct netloc without the password.
+user_part = quote(parts.username, safe="") if parts.username else ""
+host_part = parts.hostname or ""
+if parts.port:
+    host_part = f"{host_part}:{parts.port}"
+netloc = f"{user_part}@{host_part}" if user_part else host_part
+
+cleaned = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+# Tab-separated so the bash caller can split cleanly regardless of
+# special characters in the password.
+sys.stdout.write(f"{password}\t{cleaned}\n")
+PY
+}
+
 # Parse a major version number from ``pg_dump --version`` or ``pg_restore --version``
 # output. Returns just the integer (e.g. ``16`` from ``pg_dump (PostgreSQL) 16.14``).
 parse_tool_major() {
@@ -192,6 +227,8 @@ detect_server_major() {
     local url="$1"
     local server_version_num=""
 
+    # PGPASSWORD comes in via the caller's environment so the URL we pass
+    # to psql here can be the password-less form (#658 security fix).
     if command -v psql >/dev/null 2>&1; then
         server_version_num="$(psql "$url" -tAc "SHOW server_version_num" 2>/dev/null || true)"
     fi
@@ -201,15 +238,26 @@ detect_server_major() {
             err "host psql is unavailable and --no-docker forbids the Docker fallback. Install postgresql-client or rerun without --no-docker."
         fi
         command -v docker >/dev/null 2>&1 || err "host psql is unavailable AND docker is not installed. Install one of them: postgresql-client (for host psql) or docker.io (for fallback)."
-        server_version_num="$(docker run --rm --network host "${DOCKER_IMAGE}" \
+        server_version_num="$(docker run --rm --network host \
+            -e PGPASSWORD="${PGPASSWORD:-}" \
+            "${DOCKER_IMAGE}" \
             psql "$url" -tAc "SHOW server_version_num" 2>/dev/null || true)"
     fi
 
     [[ -n "$server_version_num" ]] || err "Could not detect server version. Check DAP_DATABASE_URL and network reachability to the Postgres host."
 
-    # server_version_num format: 180003 for 18.x, 160014 for 16.x.
-    # Major is the first 1-2 digits.
-    if [[ "${server_version_num:0:2}" =~ ^[0-9]+$ ]] && [[ "${server_version_num:0:2}" -ge 10 ]]; then
+    # server_version_num format:
+    # - PG >= 10: 6 digits, e.g. 180003 for 18.x, 160014 for 16.x.
+    #   Major is the first two digits.
+    # - PG < 10:  5 digits, e.g.  90624 for 9.6.x.
+    #   Major is the first digit.
+    #
+    # Discriminate by total length, NOT by first-two-digit value:
+    # the prior heuristic ``${num:0:2} >= 10`` mishandled 9.6 (90624)
+    # because "90" >= 10 and returned 90 instead of 9 (#658 review —
+    # MEDIUM correctness finding). PG < 10 is deep legacy but worth
+    # not silently breaking on if someone ever points the script at one.
+    if [[ "${#server_version_num}" -ge 6 ]]; then
         echo "${server_version_num:0:2}"
     else
         echo "${server_version_num:0:1}"
@@ -296,9 +344,19 @@ action_snapshot() {
     local database_url
     database_url="$(resolve_database_url)"
 
+    # Split password out of the URL so it never appears in command-line
+    # arguments visible to ``ps -ef`` / ``/proc/*/cmdline`` (#658 review
+    # — HIGH security finding). PGPASSWORD is the standard env-var
+    # channel for libpq-based tools, recognised by both pg_dump and
+    # psql regardless of host vs docker runner.
+    local split_output password safe_url
+    split_output="$(split_db_password "$database_url")"
+    password="${split_output%$'\t'*}"
+    safe_url="${split_output#*$'\t'}"
+
     log "Detecting server version..."
     local server_major
-    server_major="$(detect_server_major "$database_url")"
+    server_major="$(PGPASSWORD="$password" detect_server_major "$safe_url")"
     log "Server major: ${server_major}"
 
     local runner
@@ -307,8 +365,12 @@ action_snapshot() {
 
     mkdir -p "$SNAPSHOT_DIR"
 
+    # Timestamp includes PID ($$) so two instances of the script running
+    # concurrently (cron overlap, operator races) write to distinct files
+    # instead of one silently clobbering the other (#658 review — LOW
+    # correctness finding).
     local timestamp
-    timestamp="$(date -u +"%Y-%m-%dT%H-%M-%SZ")"
+    timestamp="$(date -u +"%Y-%m-%dT%H-%M-%SZ")-pid${$}"
     local out_file="${SNAPSHOT_DIR}/dap-db-${timestamp}.dump"
 
     log "Snapshotting to ${out_file}"
@@ -319,23 +381,27 @@ action_snapshot() {
     # --no-privileges         don't write ACLs
     # --quote-all-identifiers defensive against pg version skew
     if [[ "$runner" == "host" ]]; then
-        if ! pg_dump \
+        if ! PGPASSWORD="$password" pg_dump \
             --format=custom \
             --no-owner \
             --no-privileges \
             --quote-all-identifiers \
             --file="${out_file}" \
-            "${database_url}"
+            "${safe_url}"
         then
             rm -f "${out_file}"
             err "pg_dump failed — snapshot NOT written."
         fi
     else
         # Docker path: mount the snapshot dir, write to /dumps inside.
+        # Pass PGPASSWORD via ``-e`` rather than embedding in the URL so
+        # ``docker inspect`` / a process listing inside the container
+        # never see the password as an argv. The safe URL is the same
+        # password-less URL the host path uses.
         local docker_out_path="/dumps/dap-db-${timestamp}.dump"
         if ! docker run --rm --network host \
             -v "${SNAPSHOT_DIR}:/dumps" \
-            -e DB_URL="${database_url}" \
+            -e PGPASSWORD="$password" \
             "${DOCKER_IMAGE}" \
             pg_dump \
                 --format=custom \
@@ -343,7 +409,7 @@ action_snapshot() {
                 --no-privileges \
                 --quote-all-identifiers \
                 --file="${docker_out_path}" \
-                "${database_url}"
+                "${safe_url}"
         then
             rm -f "${out_file}"
             err "pg_dump (via docker ${DOCKER_IMAGE}) failed — snapshot NOT written."
@@ -356,7 +422,7 @@ action_snapshot() {
     # content before declaring success.
     if [[ ! -s "${out_file}" ]]; then
         rm -f "${out_file}"
-        err "pg_dump produced an empty file (exit 0 but no data). Likely DB_URL is malformed and pg_dump fell back to a local socket. Check resolved URL: ${database_url}"
+        err "pg_dump produced an empty file (exit 0 but no data). Likely DAP_DATABASE_URL is malformed and pg_dump fell back to a local socket. Re-check the URL value in .env.local (the resolved URL is intentionally NOT logged here so passwords don't leak to the operator's terminal scrollback)."
     fi
 
     local size
@@ -368,18 +434,32 @@ action_snapshot() {
     # path. Failure here doesn't roll back the snapshot — it just warns
     # the operator that the file may not be readable without the right
     # pg_restore version.
+    #
+    # Pipefail caveat (#658 review — LOW): with ``set -o pipefail``, a
+    # ``pg_restore --list ... | head -3`` pipeline raises SIGPIPE on the
+    # producer when ``head`` exits early, which trips ``pipefail`` even
+    # though the archive is fine. Run ``pg_restore`` standalone first,
+    # capture its real exit code, then ``head`` the output separately.
     local restore_runner
     restore_runner="$(choose_pg_restore_runner "$server_major")"
     case "$restore_runner" in
         host)
-            log "Verifying with: pg_restore --list ${out_file} | head"
-            pg_restore --list "${out_file}" | head -3 || log "WARN: pg_restore --list failed; archive may need a different pg_restore version to read."
+            log "Verifying with: pg_restore --list ${out_file} | head -3"
+            local verify_output
+            if verify_output="$(pg_restore --list "${out_file}" 2>&1)"; then
+                echo "$verify_output" | head -3
+            else
+                log "WARN: pg_restore --list failed; archive may need a different pg_restore version to read."
+            fi
             ;;
         docker)
-            log "Verifying with: docker run --rm ${DOCKER_IMAGE} pg_restore --list /dumps/dap-db-${timestamp}.dump | head"
-            docker run --rm -v "${SNAPSHOT_DIR}:/dumps" "${DOCKER_IMAGE}" \
-                pg_restore --list "/dumps/dap-db-${timestamp}.dump" | head -3 || \
+            log "Verifying with: docker run --rm ${DOCKER_IMAGE} pg_restore --list /dumps/dap-db-${timestamp}.dump | head -3"
+            local verify_output
+            if verify_output="$(docker run --rm -v "${SNAPSHOT_DIR}:/dumps" "${DOCKER_IMAGE}" pg_restore --list "/dumps/dap-db-${timestamp}.dump" 2>&1)"; then
+                echo "$verify_output" | head -3
+            else
                 log "WARN: docker pg_restore --list failed; archive may be corrupt."
+            fi
             ;;
         skip)
             log "WARN: skipping post-snapshot verify — neither host pg_restore (compatible) nor docker available. The dump file exists at ${out_file} but has not been structurally validated."
