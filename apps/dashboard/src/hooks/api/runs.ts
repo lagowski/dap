@@ -47,12 +47,16 @@ export function useRunsList(
   });
 }
 
-export function useRun(id: string | null) {
+export function useRun(id: string | null, opts?: { live?: boolean }) {
   return useQuery({
     queryKey: id ? queryKeys.run(id) : ["runs", "noop"],
     queryFn: id ? () => api.getRun(id) : skipToken,
     enabled: id != null,
     refetchInterval: (query) => {
+      // The user can turn off live auto-refresh (#662 Phase 2). When
+      // ``live`` is explicitly false we never poll, regardless of run
+      // status; the page exposes a manual Refresh button instead.
+      if (opts?.live === false) return false;
       const data = query.state.data;
       // Keep polling while running OR paused (paused needs to pick up
       // gate_payload as soon as the interrupt fires).
