@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from dap_cli.__main__ import app
 from dap_cli.commands.cortex import (
+    _approve_gate,
     _sync_workspace,
     cortex_approve,
     cortex_reject,
@@ -320,6 +321,32 @@ class TestCortexApprove:
         ):
             cortex_approve("run-abc", "http://localhost:7333")
         mock_approve.assert_called_once_with("http://localhost:7333", "run-abc", "gate-phase1")
+
+
+class TestApproveGate:
+    def test_prints_confirmation_after_approval(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """_approve_gate gives the operator a clear "registered" signal (#623).
+
+        The engine now returns 202 Accepted and resumes in the background, so
+        the CLI must confirm the approval landed instead of leaving the operator
+        guessing whether the POST registered.
+        """
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value.post.return_value = mock_resp
+
+        with patch("dap_cli.commands.cortex._client", return_value=mock_client):
+            _approve_gate("http://localhost:7333", "run-abcdef12345", "gate-phase1")
+
+        mock_client.__enter__.return_value.post.assert_called_once_with(
+            "/runs/run-abcdef12345/nodes/gate-phase1/approve"
+        )
+        mock_resp.raise_for_status.assert_called_once()
+        out = capsys.readouterr().out
+        assert "Approval registered" in out
+        assert "run-abcd" in out  # truncated run id (first 8 chars)
+        assert "background" in out
 
 
 class TestCortexReject:
