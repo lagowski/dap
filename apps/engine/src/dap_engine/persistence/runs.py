@@ -17,6 +17,7 @@ ownership boundary is established by the API route, which gates
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
@@ -38,6 +39,8 @@ from dap_engine.persistence.models import (
     RunORM,
     StateSnapshotORM,
 )
+
+logger = logging.getLogger("dap.engine.persistence.runs")
 
 
 def _ownership_filter(
@@ -184,6 +187,35 @@ def get_run(
     run = session.get(RunORM, run_id)
     if run is None:
         raise NotFoundError(f"Run not found: {run_id}")
+    # Defensive guard against the cross-run data bleed reported in #636
+    # (2026-06-02): a GET /runs/{114_id} returned data from a different
+    # run row (#104's ``ended_at`` / ``final_status`` / ``node_statuses``).
+    # Root cause wasn't identified during the read-only investigation —
+    # none of caching / session re-use / async-race in the candidate
+    # list matched the code shape. If SQLAlchemy ever returns a row
+    # whose PK doesn't match the requested id (identity-map quirk,
+    # connection-pool state leak, response-lifecycle mutation, etc.),
+    # refuse to leak cross-run data and surface the bug with full
+    # context so we can finally diagnose the actual mechanism.
+    if run.id != run_id:
+        logger.error(
+            "#636 cross-run data leak detected — refusing to return wrong row. "
+            "requested_id=%s returned_id=%s returned_user_id=%s "
+            "actor_id=%s is_admin=%s session_id=%s "
+            "identity_map_size=%s",
+            run_id,
+            run.id,
+            run.user_id,
+            actor_id,
+            is_admin,
+            id(session),
+            len(session.identity_map),
+        )
+        raise RuntimeError(
+            f"#636 cross-run leak: requested {run_id}, got {run.id}. "
+            "Logged at dap.engine.persistence.runs ERROR level — please "
+            "paste the journald entry into the issue."
+        )
     if not is_admin and run.user_id != actor_id:
         # Anti-enumeration: cross-user lookup looks indistinguishable
         # from "doesn't exist".
