@@ -25,6 +25,7 @@ from typing import Any
 
 import httpx
 from rich.console import Console
+from rich.live import Live
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 console = Console()
@@ -43,6 +44,54 @@ _STATUS_STYLE: dict[str, str] = {
     "failed": "red",
     "aborted": "red",
 }
+
+# Per-node-status glyph + rich style for the live progress checklist (#662).
+# NodeStatus is Literal["pending","running","success","failed","skipped"].
+_NODE_GLYPH: dict[str, tuple[str, str]] = {
+    "success": ("✓", "green"),
+    "running": ("▶", "cyan"),
+    "pending": ("·", "dim"),
+    "failed": ("✗", "red"),
+    "skipped": ("↷", "yellow"),
+}
+# Glyph used for any status not in _NODE_GLYPH — resilient to engine changes.
+_NODE_GLYPH_UNKNOWN: tuple[str, str] = ("•", "white")
+
+
+def _format_elapsed(elapsed_s: float) -> str:
+    """Format seconds as ``Hh Mm Ss`` (hours dropped when zero)."""
+    total = int(elapsed_s)
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    return f"{minutes}m {seconds}s"
+
+
+def _format_progress(run: dict[str, Any], elapsed_s: float) -> str:
+    """Render a live per-node progress view as rich-console markup (#662 Phase 1).
+
+    Builds a header line (current node, or the run's ``final_status`` when no
+    node is active) plus a per-node checklist with status glyphs, in the
+    insertion order of ``node_statuses`` (≈ execution order). Resilient to a
+    missing/empty ``node_statuses`` and unknown status values.
+    """
+    current_node = run.get("current_node")
+    final_status = run.get("final_status", "running")
+    elapsed = _format_elapsed(elapsed_s)
+
+    if current_node:
+        header = f"[bold cyan]▶ {current_node}[/bold cyan]  [dim]({elapsed})[/dim]"
+    else:
+        style = _STATUS_STYLE.get(final_status, "white")
+        header = f"[{style}]{final_status.upper()}[/{style}]  [dim]({elapsed})[/dim]"
+
+    lines = [header]
+    node_statuses = run.get("node_statuses") or {}
+    for node_id, status in node_statuses.items():
+        glyph, style = _NODE_GLYPH.get(status, _NODE_GLYPH_UNKNOWN)
+        lines.append(f"  [{style}]{glyph}[/{style}] {node_id}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -386,11 +435,42 @@ def _poll_until_settled(
     engine_url: str,
     run_id: str,
     label: str,
+    show_progress: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     """Poll GET /runs/{run_id} until status is terminal or paused.
 
-    Returns (final_status, last_run_dict).
+    Returns (final_status, last_run_dict). When ``show_progress`` is True a
+    live per-node progress view (header + per-node checklist + elapsed) is
+    rendered from ``current_node``/``node_statuses`` (#662 Phase 1); otherwise
+    a bare run-level spinner is shown.
     """
+    if not show_progress:
+        return _poll_until_settled_spinner(engine_url, run_id, label)
+
+    start = time.monotonic()
+    last_status = "running"
+    last_run: dict[str, Any] = {}
+    with Live(label, console=console, transient=True, refresh_per_second=4) as live:
+        while True:
+            time.sleep(POLL_INTERVAL_SECONDS)
+            try:
+                last_run = _get_run(engine_url, run_id)
+            except httpx.HTTPError as exc:
+                console.print(f"[red]✗ Could not fetch run status: {exc}[/red]")
+                raise SystemExit(1) from exc
+            last_status = last_run.get("final_status", "running")
+            live.update(_format_progress(last_run, time.monotonic() - start))
+            if last_status in ("success", "failed", "aborted", "paused"):
+                break
+    return last_status, last_run
+
+
+def _poll_until_settled_spinner(
+    engine_url: str,
+    run_id: str,
+    label: str,
+) -> tuple[str, dict[str, Any]]:
+    """Bare run-level spinner poll loop (the ``--no-progress`` path)."""
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -458,13 +538,16 @@ def poll_and_handle(
     run_id: str,
     no_interactive: bool,
     watch_only: bool,
+    show_progress: bool = True,
 ) -> None:
     """Poll run status and handle gates until completion or failure."""
     start_time = time.monotonic()
     last_status = "running"
 
     while True:
-        last_status, last_run = _poll_until_settled(engine_url, run_id, "Running pipeline...")
+        last_status, last_run = _poll_until_settled(
+            engine_url, run_id, "Running pipeline...", show_progress=show_progress
+        )
         if last_status != "paused":
             break
         should_continue = _handle_gate(engine_url, run_id, last_run, watch_only, no_interactive)
@@ -571,6 +654,7 @@ def cortex_run(
     watch: bool,
     workspace: str | None,
     token: str | None = None,
+    show_progress: bool = True,
 ) -> None:
     """Implement `dap project run cortex <issue-url>`."""
     _export_token_to_env(token)
@@ -627,6 +711,7 @@ def cortex_run(
         run_id=run_id,
         no_interactive=no_interactive,
         watch_only=watch,
+        show_progress=show_progress,
     )
 
 

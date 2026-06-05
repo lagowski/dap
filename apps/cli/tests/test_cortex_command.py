@@ -394,8 +394,10 @@ class TestFormatProgress:
         # Every node id rendered.
         for node_id in run["node_statuses"]:
             assert node_id in out
-        # Insertion / execution order is preserved.
-        positions = [out.index(node_id) for node_id in run["node_statuses"]]
+        # Insertion / execution order is preserved in the checklist body
+        # (everything after the header line).
+        checklist = out.split("\n", 1)[1]
+        positions = [checklist.index(node_id) for node_id in run["node_statuses"]]
         assert positions == sorted(positions)
 
     def test_empty_node_statuses_header_only(self) -> None:
@@ -439,8 +441,16 @@ class TestFormatProgress:
 class TestPollUntilSettledProgress:
     def test_progress_view_preserves_control_flow(self) -> None:
         runs = [
-            {"final_status": "running", "current_node": "coder", "node_statuses": {"coder": "running"}},
-            {"final_status": "success", "current_node": None, "node_statuses": {"coder": "success"}},
+            {
+                "final_status": "running",
+                "current_node": "coder",
+                "node_statuses": {"coder": "running"},
+            },
+            {
+                "final_status": "success",
+                "current_node": None,
+                "node_statuses": {"coder": "success"},
+            },
         ]
         with (
             patch("dap_cli.commands.cortex._get_run", side_effect=runs),
@@ -454,8 +464,16 @@ class TestPollUntilSettledProgress:
 
     def test_no_progress_path_still_settles(self) -> None:
         runs = [
-            {"final_status": "running", "current_node": "coder", "node_statuses": {"coder": "running"}},
-            {"final_status": "success", "current_node": None, "node_statuses": {"coder": "success"}},
+            {
+                "final_status": "running",
+                "current_node": "coder",
+                "node_statuses": {"coder": "running"},
+            },
+            {
+                "final_status": "success",
+                "current_node": None,
+                "node_statuses": {"coder": "success"},
+            },
         ]
         with (
             patch("dap_cli.commands.cortex._get_run", side_effect=runs),
