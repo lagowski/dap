@@ -1049,6 +1049,10 @@ export interface paths {
          *
          *     Status codes:
          *
+         *     * **202** — approval accepted; the run resumes in the background (poll
+         *       ``GET /runs/{id}`` for progress). The endpoint records the gate decision,
+         *       dispatches the resume as a background task, and returns immediately
+         *       without awaiting the next phase (#623).
          *     * **404** — run not found, pipeline version vanished, or ``node_id`` does
          *       not exist in the pipeline version that produced this run.
          *     * **409** — run is not paused, run already has an active background task,
@@ -5030,7 +5034,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

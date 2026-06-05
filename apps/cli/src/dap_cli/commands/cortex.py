@@ -378,6 +378,9 @@ def _approve_gate(engine_url: str, run_id: str, node_id: str) -> None:
     with _client(engine_url) as client:
         resp = client.post(f"/runs/{run_id}/nodes/{node_id}/approve")
         resp.raise_for_status()
+    console.print(
+        f"[green]✓ Approval registered for {run_id[:8]} — run resuming in background[/green]"
+    )
 
 
 def _reject_gate(engine_url: str, run_id: str, node_id: str, reason: str) -> None:

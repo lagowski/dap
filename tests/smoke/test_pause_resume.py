@@ -366,9 +366,39 @@ def test_approve_gate_node_succeeds(
     run_id = _trigger_and_wait_paused(client, pipeline_id)
 
     response = client.post(f"/runs/{run_id}/nodes/n2/approve")
-    assert response.status_code == 200
+    # 202 Accepted: approval recorded, run resumes in the background (#623).
+    assert response.status_code == 202
     assert response.json()["final_status"] == "running"
 
+    completed = _wait_for_status(client, run_id, {"success", "failed"})
+    assert completed["final_status"] == "success"
+
+
+def test_approve_returns_202_and_resumes_in_background(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Locks in the non-blocking approve contract (#623).
+
+    The approve endpoint records the gate decision, dispatches the resume as a
+    background task, and returns **202 Accepted** immediately without awaiting
+    the next phase. We assert the status code and that the returned ``Run`` body
+    is already transitioning to ``running`` — the prompt return is implicit in
+    the synchronous TestClient call completing while the run still advances to
+    ``success`` in the background (mirrors test_approve_gate_node_succeeds).
+    """
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    response = client.post(f"/runs/{run_id}/nodes/n2/approve")
+    assert response.status_code == 202
+    body = response.json()
+    # Response body is the Run, already claimed paused → running.
+    assert body["id"] == run_id
+    assert body["final_status"] == "running"
+
+    # The resume runs in the background and advances the run to completion.
     completed = _wait_for_status(client, run_id, {"success", "failed"})
     assert completed["final_status"] == "success"
 
@@ -388,7 +418,7 @@ def test_approve_after_first_succeeds_returns_409(
     run_id = _trigger_and_wait_paused(client, pipeline_id)
 
     first = client.post(f"/runs/{run_id}/nodes/n2/approve")
-    assert first.status_code == 200
+    assert first.status_code == 202
 
     second = client.post(f"/runs/{run_id}/nodes/n2/approve")
     assert second.status_code == 409
@@ -421,7 +451,7 @@ def test_approve_on_completed_run_returns_409(
 def test_concurrent_approve_only_one_wins(
     pause_client: tuple[TestClient, CountingSlowAdapter],
 ) -> None:
-    """Two concurrent /approve calls on the same gate: exactly one 200, one 409 (#186).
+    """Two concurrent /approve calls on the same gate: exactly one 202, one 409 (#186).
 
     Sister of test_concurrent_resume_only_one_wins — same TOCTOU class but on
     the gate-validating endpoint specifically. Forbidden outcome is a 500
@@ -439,8 +469,8 @@ def test_concurrent_approve_only_one_wins(
         responses = [f.result() for f in concurrent.futures.as_completed(futures)]
 
     statuses = sorted(r.status_code for r in responses)
-    assert statuses == [200, 409], (
-        f"Expected exactly one 200 and one 409 from concurrent /approve, got {statuses}"
+    assert statuses == [202, 409], (
+        f"Expected exactly one 202 and one 409 from concurrent /approve, got {statuses}"
     )
 
     loser = next(r for r in responses if r.status_code == 409)
