@@ -121,11 +121,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
-          author=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
-          is_bot=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.is_bot')
+          # Use the REST PR endpoint, not `gh pr view` (which queries the
+          # GraphQL API and returns HTTP 401 on this runner even though the
+          # REST `gh api` calls in the steps above succeed with the same
+          # GITHUB_TOKEN). REST exposes `.user.type == "Bot"` instead of
+          # GraphQL's `.author.is_bot`.
+          author=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.user.login')
+          user_type=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.user.type')
           # Bot authors get an auto-pass — Gemini doesn't add value on
           # dependabot bumps and we'd burn quota for nothing.
-          if [[ "$is_bot" == "true" ]] || [[ "$author" == *"[bot]"* ]] || [[ "$author" == app/dependabot ]] || [[ "$author" == "dependabot" ]] || [[ "$author" == "renovate"* ]]; then
+          if [[ "$user_type" == "Bot" ]] || [[ "$author" == *"[bot]"* ]] || [[ "$author" == app/dependabot ]] || [[ "$author" == "dependabot" ]] || [[ "$author" == "renovate"* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Bot author '$author' — auto-passing gate without invoking Gemini."
           else
@@ -139,7 +144,7 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           SKIP_REASON: ${{ steps.low-risk.outputs.reason || 'Bot author — review skipped' }}
         run: |
-          head_sha=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq '.headRefOid')
+          head_sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha')
           gh api "repos/$GITHUB_REPOSITORY/check-runs" \
             -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -190,7 +195,7 @@ jobs:
           set -e
 
           if [[ "$status" -eq 124 ]]; then
-            head_sha=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq '.headRefOid')
+            head_sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha')
             gh api "repos/$GITHUB_REPOSITORY/check-runs" \
               -X POST \
               -H "Accept: application/vnd.github+json" \
