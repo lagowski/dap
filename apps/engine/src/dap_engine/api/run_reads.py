@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -9,10 +10,17 @@ from dap_types import NodeExecutionLog, PipelineState, Run, StateSnapshot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from dap_engine.api.deps import get_session
+from dap_engine.api.deps import get_run_registry, get_session
 from dap_engine.auth.users import current_active_user
+from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
+
+logger = logging.getLogger("dap.engine.api.run_reads")
+
+# Terminal final_status values — a run in one of these has, by definition,
+# finished executing and should have no active task in the run registry.
+_TERMINAL_STATUSES = frozenset({"success", "failed", "aborted"})
 
 
 def register_run_read_routes(router: APIRouter) -> None:
@@ -96,11 +104,27 @@ def get_run(
     run_id: str,
     session: Session = Depends(get_session),
     user: UserORM = Depends(current_active_user),
+    run_registry: RunRegistry = Depends(get_run_registry),
 ) -> Run:
     try:
-        return repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
+        run = repo.get_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    # Observability tripwire (#636): a run served in a terminal state must
+    # not still have a live task in the registry. If it does, we are looking
+    # at cross-run state bleed — log the impossible condition so the next
+    # occurrence reveals the mechanism. Log-only: the response is unchanged.
+    if run.final_status in _TERMINAL_STATUSES and run_registry.is_running(run_id):
+        logger.warning(
+            "run %s served terminal state %r (ended_at=%s) while its task is still "
+            "active in the run registry — possible cross-run state bleed (#636)",
+            run_id,
+            run.final_status,
+            run.ended_at,
+        )
+
+    return run
 
 
 def get_run_state(
