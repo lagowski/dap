@@ -807,3 +807,89 @@ def test_node_log_extra_data_round_trip(
     assert returned["extra_data"] == audit_payload
     assert returned["extra_data"]["github_user"] == "Dixter999"
     assert returned["extra_data"]["section"] == "mockup"
+
+
+# ---------------------------------------------------------------------- #
+# #636 defensive guard — cross-run data leak
+# ---------------------------------------------------------------------- #
+
+
+def test_get_run_defensive_guard_against_cross_run_data_leak(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``repo.get_run`` raises ``RuntimeError`` when SQLAlchemy somehow returns
+    a row whose primary key doesn't match the requested run_id (#636).
+
+    This is the defensive guard for the cross-run ``ended_at`` bleed reported
+    in 2026-06-02: a ``GET /runs/{114_id}`` request returned ``ended_at`` /
+    ``final_status`` / ``node_statuses`` from a *different* run (#104) while
+    #114 was still mid-pipeline. Root cause was not identified during the
+    read-only investigation; the guard converts the silent cross-run leak
+    into a visible 500 with structured logging, so the next reproduction
+    yields a clean evidence trail (session id, identity map size, both ids)
+    we can act on.
+
+    The bug is rare and reproduction-resistant by design — this test
+    simulates the wrong-row scenario by patching ``Session.get`` to return
+    a ``RunORM`` whose ``.id`` doesn't match the requested ``run_id``.
+    """
+    from dap_engine.persistence import runs as runs_repo
+    from sqlalchemy.orm import Session as SQLAlchemySession
+
+    _client, factory = client_and_factory
+
+    # Seed two distinct runs so we can build the "wrong row" scenario.
+    real_run_id = _seed_run(factory)
+    impostor_run_id = _seed_run(factory)
+    assert real_run_id != impostor_run_id
+
+    # Patch Session.get so it returns the impostor row no matter what was
+    # asked for — the exact shape the #636 bug would surface if SQLAlchemy
+    # returned the wrong RunORM under load.
+    original_get = SQLAlchemySession.get
+
+    def _wrong_row_get(self: SQLAlchemySession, entity: Any, ident: Any, **kw: Any) -> Any:
+        # Honour the contract for everything except RunORM lookups in this
+        # test — we only want to wedge ``repo.get_run`` into the defensive
+        # path, not break unrelated session.get calls.
+        if entity is RunORM and ident == real_run_id:
+            return original_get(self, entity, impostor_run_id, **kw)
+        return original_get(self, entity, ident, **kw)
+
+    monkeypatch.setattr(SQLAlchemySession, "get", _wrong_row_get)
+
+    with (
+        factory() as session,
+        pytest.raises(RuntimeError, match=r"#636 cross-run leak"),
+    ):
+        runs_repo.get_run(
+            session,
+            real_run_id,
+            actor_id=uuid.uuid4(),  # admin path — ownership check is bypassed
+            is_admin=True,
+        )
+
+
+def test_get_run_happy_path_round_trip(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """The defensive guard from #636 does NOT break the normal read path.
+
+    Quick regression smoke — under normal conditions ``repo.get_run`` returns
+    the expected Run object with matching id. Belt-and-braces against an
+    over-zealous assertion that might accidentally reject valid lookups.
+    """
+    from dap_engine.persistence import runs as runs_repo
+
+    _client, factory = client_and_factory
+    run_id = _seed_run(factory)
+
+    with factory() as session:
+        result = runs_repo.get_run(
+            session,
+            run_id,
+            actor_id=uuid.uuid4(),
+            is_admin=True,
+        )
+        assert result.id == run_id
