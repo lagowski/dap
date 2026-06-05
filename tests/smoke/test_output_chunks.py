@@ -142,12 +142,8 @@ def test_append_output_chunk_ids_are_monotonic(
     _seed_run(session_factory, run_id=run_id)
 
     with session_factory() as session:
-        first = repo.append_output_chunk(
-            session, run_id=run_id, node_id="implement", content="a"
-        )
-        second = repo.append_output_chunk(
-            session, run_id=run_id, node_id="implement", content="b"
-        )
+        first = repo.append_output_chunk(session, run_id=run_id, node_id="implement", content="a")
+        second = repo.append_output_chunk(session, run_id=run_id, node_id="implement", content="b")
         session.commit()
 
     assert second.id > first.id
@@ -161,9 +157,7 @@ def test_list_output_chunks_since_returns_only_newer_in_order(
 
     with session_factory() as session:
         ids = [
-            repo.append_output_chunk(
-                session, run_id=run_id, node_id="implement", content=str(i)
-            ).id
+            repo.append_output_chunk(session, run_id=run_id, node_id="implement", content=str(i)).id
             for i in range(5)
         ]
         session.commit()
@@ -184,9 +178,7 @@ def test_list_output_chunks_since_zero_returns_all(
 
     with session_factory() as session:
         for i in range(3):
-            repo.append_output_chunk(
-                session, run_id=run_id, node_id="implement", content=str(i)
-            )
+            repo.append_output_chunk(session, run_id=run_id, node_id="implement", content=str(i))
         session.commit()
 
     with session_factory() as session:
@@ -202,9 +194,7 @@ def test_list_output_chunks_since_respects_limit(
 
     with session_factory() as session:
         for i in range(10):
-            repo.append_output_chunk(
-                session, run_id=run_id, node_id="implement", content=str(i)
-            )
+            repo.append_output_chunk(session, run_id=run_id, node_id="implement", content=str(i))
         session.commit()
 
     with session_factory() as session:
@@ -248,9 +238,7 @@ def test_latest_output_chunk_id_returns_max(
     with session_factory() as session:
         last = 0
         for i in range(4):
-            last = repo.append_output_chunk(
-                session, run_id=run_id, node_id="n", content=str(i)
-            ).id
+            last = repo.append_output_chunk(session, run_id=run_id, node_id="n", content=str(i)).id
         session.commit()
     with session_factory() as session:
         assert repo.latest_output_chunk_id(session, run_id) == last

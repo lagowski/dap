@@ -305,9 +305,7 @@ async def stream_run_events(
         # Connect cursor: a connecting client streams only chunks produced
         # *after* connect, so seed from the current max chunk id. The
         # snapshot above carries current state; the byte log is not replayed.
-        last_chunk_id = await run_in_threadpool(
-            _read_latest_chunk_id, session_factory, run_id
-        )
+        last_chunk_id = await run_in_threadpool(_read_latest_chunk_id, session_factory, run_id)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
