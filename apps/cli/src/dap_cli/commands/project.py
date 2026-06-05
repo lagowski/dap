@@ -53,6 +53,13 @@ def cmd_run(
         str | None,
         typer.Option("--workspace", help="Local workspace path for the pipeline"),
     ] = None,
+    progress: Annotated[
+        bool,
+        typer.Option(
+            "--progress/--no-progress",
+            help="Show live per-node progress during the run",
+        ),
+    ] = True,
     token: _TokenOption = None,
 ) -> None:
     """Trigger a pipeline run for a GitHub issue.
@@ -71,6 +78,7 @@ def cmd_run(
         watch=watch,
         workspace=workspace,
         token=token,
+        show_progress=progress,
     )
 
 

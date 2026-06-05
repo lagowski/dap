@@ -106,10 +106,10 @@ def _is_e2e(path: str) -> bool:
 
 
 def _is_gemini_review(path: str) -> bool:
-    return (
-        path in {".github/workflows/gemini-review.yml", ".github/scripts/gemini_review.py"}
-        or _is_ci_policy(path)
-    )
+    return path in {
+        ".github/workflows/gemini-review.yml",
+        ".github/scripts/gemini_review.py",
+    } or _is_ci_policy(path)
 
 
 def _emit(outputs: dict[str, str]) -> None:
