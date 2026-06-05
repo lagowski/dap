@@ -991,6 +991,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Run Events
+         * @description Stream run-execution events as Server-Sent Events.
+         *
+         *     See the module docstring for the full event schema. The first read is
+         *     performed *before* the stream opens so a missing / unauthorized run
+         *     yields a clean ``404`` rather than an empty ``200`` stream.
+         */
+        get: operations["stream_run_events_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}/nodes": {
         parameters: {
             query?: never;
@@ -4945,6 +4969,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_run_events_runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
