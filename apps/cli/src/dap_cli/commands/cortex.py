@@ -87,7 +87,11 @@ def _format_progress(run: dict[str, Any], elapsed_s: float) -> str:
         header = f"[{style}]{final_status.upper()}[/{style}]  [dim]({elapsed})[/dim]"
 
     lines = [header]
-    node_statuses = run.get("node_statuses") or {}
+    # Defensive: the API contract is dict-or-absent, but guard against any
+    # non-dict (e.g. a list) so a malformed response can't crash the poll loop.
+    node_statuses = run.get("node_statuses")
+    if not isinstance(node_statuses, dict):
+        node_statuses = {}
     for node_id, status in node_statuses.items():
         glyph, style = _NODE_GLYPH.get(status, _NODE_GLYPH_UNKNOWN)
         lines.append(f"  [{style}]{glyph}[/{style}] {node_id}")
@@ -453,12 +457,17 @@ def _poll_until_settled(
     start = time.monotonic()
     last_status = "running"
     last_run: dict[str, Any] = {}
-    with Live(label, console=console, transient=True, refresh_per_second=4) as live:
+    # Seed the first frame with the progress renderable (not the bare label
+    # string) so the view is consistent from the very first refresh.
+    initial = _format_progress({"final_status": "running"}, 0.0)
+    with Live(initial, console=console, transient=True, refresh_per_second=4) as live:
         while True:
             time.sleep(POLL_INTERVAL_SECONDS)
             try:
                 last_run = _get_run(engine_url, run_id)
-            except httpx.HTTPError as exc:
+            # httpx.HTTPError covers network/status failures; ValueError covers
+            # a malformed (non-JSON) engine response from resp.json().
+            except (httpx.HTTPError, ValueError) as exc:
                 console.print(f"[red]✗ Could not fetch run status: {exc}[/red]")
                 raise SystemExit(1) from exc
             last_status = last_run.get("final_status", "running")

@@ -437,6 +437,18 @@ class TestFormatProgress:
         out = _format_progress(run, 5.0)
         assert "coder" in out
 
+    def test_non_dict_node_statuses_does_not_crash(self) -> None:
+        # A malformed engine response (e.g. a list instead of a dict) must not
+        # crash the poll loop — node_statuses is coerced to empty (#662 review).
+        for bad in ([], None, "oops", 0):
+            run = {
+                "final_status": "running",
+                "current_node": "coder",
+                "node_statuses": bad,
+            }
+            out = _format_progress(run, 5.0)
+            assert "coder" in out  # header still renders, no AttributeError
+
     def test_no_current_node_falls_back_to_final_status(self) -> None:
         run = {
             "final_status": "success",
