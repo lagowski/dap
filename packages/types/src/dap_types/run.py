@@ -98,3 +98,26 @@ class NodeExecutionLog(BaseModel):
             "``None`` for CLI/LLM adapter nodes that do not produce audit data."
         ),
     )
+
+
+class NodeOutputChunk(BaseModel):
+    """One incremental chunk of a node's output stream (#662, Phase 3b).
+
+    Adapters append a row per stdout/stderr flush while a node runs; the
+    SSE ``/runs/{id}/events`` endpoint pages new chunks (``id > cursor``)
+    and emits each as a ``node_log`` event. ``id`` is an autoincrement
+    integer that doubles as the **monotonic cursor** the stream resumes
+    from — it strictly increases over the life of a run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    run_id: str
+    node_id: str
+    # The ``node_execution_logs.id`` this output belongs to, when known.
+    # Nullable: adapters may stream output before the log row is written.
+    execution_id: str | None = None
+    stream: str = "stdout"
+    content: str
+    created_at: datetime

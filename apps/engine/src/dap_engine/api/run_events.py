@@ -27,13 +27,18 @@ Events:
   ``success|failed|skipped``: ``{run_id, node_id, status, duration_ms,
   tokens_used, cost_usd, ended_at}`` (metrics from the node log if
   available; zeroed / ``None`` when the log row isn't written yet).
+* ``node_log`` — emitted for each incremental output chunk a node
+  produces (#662, Phase 3b): ``{run_id, node_id, seq, content, stream}``
+  where ``seq`` is the chunk's monotonic id and ``stream`` is
+  ``stdout``/``stderr``. A connecting client receives only chunks
+  produced *after* connect — the stream does **not** replay the full
+  stdout history (the ``snapshot`` reflects current state, not the byte
+  log). On the terminal tick, all remaining chunks are drained *before*
+  ``run_finished`` so trailing output is never dropped. Until Phase 3b-2
+  wires adapters to append chunks, real runs emit no ``node_log`` events.
 * ``run_finished`` — emitted once when the run reaches a terminal
   ``final_status`` (``success|failed|aborted``); the stream then closes:
   ``{run_id, final_status, ended_at}``.
-
-Reserved for Phase 3b: ``node_log`` (incremental stdout). It is *not*
-emitted here; the schema deliberately leaves room for it on the same
-stream.
 
 Non-blocking guarantees (respects #621/#650/#636):
 
@@ -56,7 +61,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 import anyio
-from dap_types import NodeExecutionLog, Run
+from dap_types import NodeExecutionLog, NodeOutputChunk, Run
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
@@ -242,6 +247,41 @@ def _read_snapshot(
         return _snapshot_from_run(run, node_logs)
 
 
+def _node_log_event(chunk: NodeOutputChunk) -> _Event:
+    """Build a ``node_log`` SSE event from an output chunk.
+
+    ``seq`` is the chunk's monotonic id — the cursor the stream advances on.
+    """
+    return (
+        "node_log",
+        {
+            "run_id": chunk.run_id,
+            "node_id": chunk.node_id,
+            "seq": chunk.id,
+            "content": chunk.content,
+            "stream": chunk.stream,
+        },
+    )
+
+
+def _read_latest_chunk_id(session_factory: sessionmaker[Session], run_id: str) -> int:
+    """Read the current max output-chunk id in a fresh session (run in threadpool).
+
+    Used once at connect to seed the cursor so the client streams only
+    chunks produced *after* connect (no replay of history).
+    """
+    with session_factory() as session:
+        return repo.latest_output_chunk_id(session, run_id)
+
+
+def _read_chunks_since(
+    session_factory: sessionmaker[Session], run_id: str, *, after_id: int
+) -> list[NodeOutputChunk]:
+    """Read output chunks with ``id > after_id`` in a fresh session (threadpool)."""
+    with session_factory() as session:
+        return repo.list_output_chunks_since(session, run_id, after_id=after_id)
+
+
 async def stream_run_events(
     run_id: str,
     request: Request,
@@ -262,10 +302,15 @@ async def stream_run_events(
             actor_id=user.id,
             is_admin=user.is_superuser,
         )
+        # Connect cursor: a connecting client streams only chunks produced
+        # *after* connect, so seed from the current max chunk id. The
+        # snapshot above carries current state; the byte log is not replayed.
+        last_chunk_id = await run_in_threadpool(_read_latest_chunk_id, session_factory, run_id)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     async def gen() -> AsyncIterator[str]:
+        nonlocal last_chunk_id
         prev: RunSnapshot | None = None
         cur: RunSnapshot | None = first
         elapsed_since_keepalive = 0.0
@@ -277,6 +322,17 @@ async def stream_run_events(
             if cur is None:
                 # Re-read failed transiently (e.g. run deleted) — close.
                 return
+
+            # Drain any new output chunks BEFORE the snapshot diff so that
+            # on a terminal tick trailing output is flushed ahead of the
+            # ``run_finished`` frame (which closes the stream).
+            chunks = await run_in_threadpool(
+                _read_chunks_since, session_factory, run_id, after_id=last_chunk_id
+            )
+            for chunk in chunks:
+                event_name, data = _node_log_event(chunk)
+                yield _sse(event_name, data)
+                last_chunk_id = chunk.id
 
             for event_name, data in _diff_events(prev, cur):
                 yield _sse(event_name, data)
