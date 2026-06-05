@@ -248,10 +248,22 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
         Without ``--print`` the CLI emits plain text rather than
         stream-json, so there is no token usage or cost to extract — the
         run is billed against the flat-rate Pro/Max subscription, not
-        metered per call. The agent output is the raw stdout. ``cost_usd``
-        is ``None`` and ``tokens_used`` is left unset (0) to signal "not
-        metered" rather than "zero cost".
+        metered per call. The agent output is the raw stdout. Both
+        ``cost_usd`` and ``tokens_used`` are explicitly ``None`` to signal
+        "not metered" rather than "zero cost / zero usage".
         """
+        # Defensive precondition: ``_validate_config`` requires ``model_id``
+        # to be a non-empty string regardless of subscription mode, so by
+        # the time we get here it MUST be present. Asserting it makes the
+        # invariant visible at the call site and converts a would-be
+        # ``KeyError`` later (line ``"model": config["model_id"]``) into
+        # an immediate assertion failure if a future refactor ever weakens
+        # ``_validate_config``. Belt and suspenders for #625.
+        assert config.get("model_id"), (
+            "_parse_subscription invoked without model_id — "
+            "_validate_config must have changed; restore the model_id check."
+        )
+
         # If a result event *did* appear (e.g. a future CLI build still
         # emits one without ``--print``), prefer its ``result`` text;
         # otherwise fall back to the raw stdout captured at decode time.
@@ -263,7 +275,10 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
         return RuntimeResult(
             success=True,
             output=output_text,
-            cost_usd=None,  # subscription mode is not metered per-call
+            # Subscription mode is not metered (#625) — both tokens and cost
+            # are ``None`` to signal "no measurement", distinct from "0".
+            tokens_used=None,
+            cost_usd=None,
             duration_ms=outcome.duration_ms,
             errors=[],
             structured={
