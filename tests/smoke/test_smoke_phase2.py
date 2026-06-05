@@ -415,7 +415,7 @@ def test_phase2_gate_pauses_via_interrupt_before(
 
     # Approve the gate
     approve_resp = client.post(f"/runs/{run_id}/nodes/gate-phase2/approve")
-    assert approve_resp.status_code == 200
+    assert approve_resp.status_code == 202  # accepted; resumes in background (#623)
     assert approve_resp.json()["final_status"] == "running"
 
     # Run completes after approval
