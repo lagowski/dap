@@ -24,7 +24,6 @@ from typing import Any
 
 import pytest
 from dap_engine.api.run_events import (
-    RunSnapshot,
     _diff_events,
     _snapshot_from_run,
     _sse,
@@ -341,9 +340,7 @@ def test_diff_node_finished_without_log_falls_back_gracefully() -> None:
 
 def test_diff_terminal_transition_emits_run_finished_last() -> None:
     ended = datetime(2026, 6, 5, 12, 9, tzinfo=UTC)
-    prev = _snapshot_from_run(
-        _make_run(final_status="running", node_statuses={"n": "running"}), []
-    )
+    prev = _snapshot_from_run(_make_run(final_status="running", node_statuses={"n": "running"}), [])
     cur = _snapshot_from_run(
         _make_run(
             final_status="success",
@@ -523,18 +520,18 @@ def test_stream_other_users_run_returns_404(
     client_and_factory: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     client, factory = client_and_factory
-    # Seed a run owned by a *specific* user (not the admin), then request it
-    # as a second non-admin user → anti-enumeration 404.
+    # Register a second (non-admin) user and assign the seeded run to the
+    # *admin* user. The second user must not be able to see it →
+    # anti-enumeration 404. (Assigning a real user id keeps the FK valid.)
+    other_token = register_and_login(client, "other@local.dev")
     run_id = _seed_terminal_run(factory)
-    # Demote the run owner to a different user id so the requester (a fresh
-    # non-admin) cannot see it.
     with factory() as session:
+        admin = session.query(UserORM).filter_by(email="test@local.dev").one()
         run = session.get(RunORM, run_id)
         assert run is not None
-        run.user_id = uuid.uuid4()
+        run.user_id = admin.id
         session.commit()
 
-    other_token = register_and_login(client, "other@local.dev")
     response = client.get(
         f"/runs/{run_id}/events",
         headers={"Authorization": f"Bearer {other_token}"},
