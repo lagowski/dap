@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from dap_cli.__main__ import app
 from dap_cli.commands.cortex import (
+    _format_progress,
+    _poll_until_settled,
     _sync_workspace,
     cortex_approve,
     cortex_reject,
@@ -359,3 +361,108 @@ class TestCortexState:
         with patch("dap_cli.commands.cortex._get_run", return_value=run_data):
             # Should not raise
             cortex_state("run-abc-def-ghi", "http://localhost:7333")
+
+
+# ---------------------------------------------------------------------------
+# Live per-node progress formatter (#662 Phase 1)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatProgress:
+    def test_renders_current_node_checklist_and_elapsed(self) -> None:
+        run = {
+            "final_status": "running",
+            "current_node": "coder",
+            "node_statuses": {
+                "task_selector": "success",
+                "prompt_builder": "success",
+                "coder": "running",
+                "verifier": "pending",
+                "pr_merger": "pending",
+            },
+        }
+        out = _format_progress(run, 252.0)
+
+        # Header mentions the current node.
+        assert "coder" in out
+        # Elapsed formatted as minutes/seconds (252s -> 4m 12s).
+        assert "4m" in out
+        # Per-status glyphs present.
+        assert "✓" in out  # success glyph for done nodes
+        assert "▶" in out  # running glyph for coder
+        assert "·" in out  # pending glyph for the rest
+        # Every node id rendered.
+        for node_id in run["node_statuses"]:
+            assert node_id in out
+        # Insertion / execution order is preserved.
+        positions = [out.index(node_id) for node_id in run["node_statuses"]]
+        assert positions == sorted(positions)
+
+    def test_empty_node_statuses_header_only(self) -> None:
+        run = {
+            "final_status": "running",
+            "current_node": "coder",
+            "node_statuses": {},
+        }
+        # Must not crash and should still render the header node.
+        out = _format_progress(run, 5.0)
+        assert "coder" in out
+
+    def test_no_current_node_falls_back_to_final_status(self) -> None:
+        run = {
+            "final_status": "success",
+            "current_node": None,
+            "node_statuses": {"task_selector": "success"},
+        }
+        out = _format_progress(run, 3661.0)
+        # Falls back to final_status when no current node.
+        assert "success" in out.lower() or "SUCCESS" in out
+        # 3661s -> 1h 1m 1s — hours component shown.
+        assert "1h" in out
+
+    def test_unknown_status_uses_neutral_glyph(self) -> None:
+        run = {
+            "final_status": "running",
+            "current_node": "mystery",
+            "node_statuses": {"mystery": "warp-speed"},
+        }
+        # Unknown status must not crash and the node id still appears.
+        out = _format_progress(run, 1.0)
+        assert "mystery" in out
+
+
+# ---------------------------------------------------------------------------
+# Poll loop with live progress view (#662 Phase 1)
+# ---------------------------------------------------------------------------
+
+
+class TestPollUntilSettledProgress:
+    def test_progress_view_preserves_control_flow(self) -> None:
+        runs = [
+            {"final_status": "running", "current_node": "coder", "node_statuses": {"coder": "running"}},
+            {"final_status": "success", "current_node": None, "node_statuses": {"coder": "success"}},
+        ]
+        with (
+            patch("dap_cli.commands.cortex._get_run", side_effect=runs),
+            patch("dap_cli.commands.cortex.time.sleep", return_value=None),
+        ):
+            status, last_run = _poll_until_settled(
+                "http://localhost:7333", "run-abc", "Running pipeline...", show_progress=True
+            )
+        assert status == "success"
+        assert last_run["final_status"] == "success"
+
+    def test_no_progress_path_still_settles(self) -> None:
+        runs = [
+            {"final_status": "running", "current_node": "coder", "node_statuses": {"coder": "running"}},
+            {"final_status": "success", "current_node": None, "node_statuses": {"coder": "success"}},
+        ]
+        with (
+            patch("dap_cli.commands.cortex._get_run", side_effect=runs),
+            patch("dap_cli.commands.cortex.time.sleep", return_value=None),
+        ):
+            status, last_run = _poll_until_settled(
+                "http://localhost:7333", "run-abc", "Running pipeline...", show_progress=False
+            )
+        assert status == "success"
+        assert last_run["final_status"] == "success"
