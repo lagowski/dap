@@ -73,8 +73,11 @@ interface RunStatusData {
 function parseFrame<T>(raw: string): T | null {
   try {
     return JSON.parse(raw) as T;
-  } catch {
-    return null;
+  } catch (e) {
+    // JSON.parse throws SyntaxError on a malformed frame — tolerate those.
+    // Anything else is an unexpected bug we shouldn't silently swallow.
+    if (e instanceof SyntaxError) return null;
+    throw e;
   }
 }
 
@@ -109,10 +112,11 @@ export function useRunEvents(
 
     const onSnapshotOrStatus = (ev: MessageEvent) => {
       const data = parseFrame<RunStatusData>(ev.data);
-      if (data && typeof data.current_node === "string") {
-        setCurrentNode(data.current_node);
-      } else if (data && data.current_node === null) {
-        setCurrentNode(null);
+      if (!data) return;
+      // Only update when current_node is present in the frame: a string sets
+      // it, an explicit null clears it, and a missing key is left untouched.
+      if ("current_node" in data) {
+        setCurrentNode(typeof data.current_node === "string" ? data.current_node : null);
       }
     };
 

@@ -96,6 +96,12 @@ export function LiveOutputPanel({ runId, enabled }: LiveOutputPanelProps) {
         <div
           ref={scrollRef}
           onScroll={onScroll}
+          // role=log + aria-live so screen readers announce new streamed
+          // output; tabIndex makes the scroll region keyboard-focusable.
+          role="log"
+          aria-live="polite"
+          aria-label="Live node output"
+          tabIndex={0}
           className="max-h-80 overflow-auto border-t bg-muted/40 px-4 py-3 font-mono text-xs leading-relaxed"
         >
           {text ? (
