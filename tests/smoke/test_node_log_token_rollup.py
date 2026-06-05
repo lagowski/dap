@@ -89,7 +89,7 @@ def _seed_run(session: Session) -> str:
             UserORM(
                 id=_OWNER_ID,
                 email="rollup-test@local.dev",
-                hashed_password="x" * 64,
+                hashed_password="not-a-real-hash-placeholder",
                 is_active=False,
                 is_superuser=False,
                 is_verified=False,
@@ -306,3 +306,102 @@ def test_run_rollup_sums_audit_tokens(factory: sessionmaker[Session]) -> None:
         assert run is not None
         assert run.tokens_used == 1234
         assert run.cost_usd == pytest.approx(0.56)
+
+
+def test_uncoercible_tokens_used_logs_warning_and_zeroes(
+    factory: sessionmaker[Session], caplog: pytest.LogCaptureFixture
+) -> None:
+    """A present-but-uncoercible ``tokens_used`` zeroes the column AND warns."""
+    registry = RuntimeRegistry()
+    with factory() as session:
+        agent, version = _seed_agent(session)
+        run_id = _seed_run(session)
+        result = RuntimeResult(
+            success=True,
+            output="ok",
+            tokens_used=None,
+            cost_usd=None,
+            structured={"audit": {"tokens_used": "many"}},
+        )
+        with caplog.at_level("WARNING", logger="dap.engine.execution"):
+            log_id = _save_log(
+                session=session,
+                run_id=run_id,
+                agent=agent,
+                version=version,
+                registry=registry,
+                node_id="n1",
+                result=result,
+            )
+
+    assert any("uncoercible" in rec.message for rec in caplog.records)
+    with factory() as session:
+        log = session.get(NodeExecutionLogORM, log_id)
+        assert log is not None
+        assert log.tokens_used == 0
+
+
+def test_uncoercible_cost_usd_logs_warning_and_zeroes(
+    factory: sessionmaker[Session], caplog: pytest.LogCaptureFixture
+) -> None:
+    """A present-but-uncoercible ``cost_usd`` zeroes the column AND warns."""
+    registry = RuntimeRegistry()
+    with factory() as session:
+        agent, version = _seed_agent(session)
+        run_id = _seed_run(session)
+        result = RuntimeResult(
+            success=True,
+            output="ok",
+            tokens_used=None,
+            cost_usd=None,
+            structured={"audit": {"cost_usd": "free"}},
+        )
+        with caplog.at_level("WARNING", logger="dap.engine.execution"):
+            log_id = _save_log(
+                session=session,
+                run_id=run_id,
+                agent=agent,
+                version=version,
+                registry=registry,
+                node_id="n1",
+                result=result,
+            )
+
+    assert any("uncoercible" in rec.message for rec in caplog.records)
+    with factory() as session:
+        log = session.get(NodeExecutionLogORM, log_id)
+        assert log is not None
+        assert log.cost_usd == 0.0
+
+
+def test_input_tokens_with_none_output_is_valid_no_warning(
+    factory: sessionmaker[Session], caplog: pytest.LogCaptureFixture
+) -> None:
+    """One side present, the other ``None`` is valid data — summed, no warning."""
+    registry = RuntimeRegistry()
+    with factory() as session:
+        agent, version = _seed_agent(session)
+        run_id = _seed_run(session)
+        result = RuntimeResult(
+            success=True,
+            output="ok",
+            tokens_used=None,
+            cost_usd=None,
+            structured={"audit": {"input_tokens": 500, "output_tokens": None}},
+        )
+        with caplog.at_level("WARNING", logger="dap.engine.execution"):
+            log_id = _save_log(
+                session=session,
+                run_id=run_id,
+                agent=agent,
+                version=version,
+                registry=registry,
+                node_id="n1",
+                result=result,
+            )
+
+    assert not any("uncoercible" in rec.message for rec in caplog.records)
+    with factory() as session:
+        log = session.get(NodeExecutionLogORM, log_id)
+        assert log is not None
+        assert log.tokens_used == 500
