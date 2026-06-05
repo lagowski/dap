@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -24,11 +26,13 @@ from typing import Any
 
 import pytest
 from dap_engine.api.run_events import (
+    POLL_INTERVAL,
     _diff_events,
     _snapshot_from_run,
     _sse,
 )
 from dap_engine.app import EngineConfig, create_app
+from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import NodeExecutionLogORM, RunORM, UserORM
 from dap_types import NodeExecutionLog, Run
 from fastapi.testclient import TestClient
@@ -549,3 +553,170 @@ def test_stream_unauthenticated_returns_401(
         headers={"Authorization": ""},
     )
     assert response.status_code == 401
+
+
+# ===========================================================================
+# Integration tests — node_log streaming (#662, Phase 3b-1)
+# ===========================================================================
+
+
+def _seed_running_run(session_factory: sessionmaker[Session]) -> str:
+    """Seed a RUNNING run with one in-flight node. Returns run_id."""
+    run_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    initial_state: dict[str, Any] = {
+        "run_id": run_id,
+        "repo": "rafeekpro/test-repo",
+        "branch": "main",
+        "commit_sha": None,
+        "available_issues": [],
+        "selected_issue_ids": [],
+        "tests_generated": False,
+        "test_files": [],
+        "test_generation_errors": [],
+        "max_attempts": 3,
+        "attempt": 0,
+        "tests_passed": False,
+        "last_test_output": "",
+        "modified_files": [],
+        "implementation_notes": None,
+        "verification_status": "pending",
+        "verification_reason": None,
+        "final_status": "running",
+        "extensions": {},
+    }
+    with session_factory() as session:
+        session.add(
+            RunORM(
+                id=run_id,
+                project_id=None,
+                pipeline_id="pipe-1",
+                pipeline_version=1,
+                trigger_source="cli",
+                initial_state=initial_state,
+                current_node="implement",
+                node_statuses={"implement": "running"},
+                final_status="running",
+                started_at=now,
+                ended_at=None,
+                tokens_used=0,
+                cost_usd=0.0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+    return run_id
+
+
+def _insert_chunk(
+    session_factory: sessionmaker[Session],
+    run_id: str,
+    *,
+    node_id: str,
+    content: str,
+) -> None:
+    with session_factory() as session:
+        repo.append_output_chunk(session, run_id=run_id, node_id=node_id, content=content)
+        session.commit()
+
+
+def _finalize(session_factory: sessionmaker[Session], run_id: str) -> None:
+    with session_factory() as session:
+        repo.finalize_run(session, run_id, final_status="success")
+        session.commit()
+
+
+def test_stream_emits_node_log_for_chunks_then_finishes(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """Chunks inserted *after* connect are streamed as node_log; flipping
+    the run terminal drains remaining chunks then closes the stream.
+
+    A background thread inserts chunks and finalises the run a beat after
+    the client connects, so the stream cannot hang.
+    """
+    client, factory = client_and_factory
+    run_id = _seed_running_run(factory)
+
+    def _drive() -> None:
+        # Give the generator a tick to read its connect cursor first.
+        time.sleep(POLL_INTERVAL * 1.5)
+        _insert_chunk(factory, run_id, node_id="implement", content="line 1\n")
+        _insert_chunk(factory, run_id, node_id="implement", content="line 2\n")
+        time.sleep(POLL_INTERVAL * 1.5)
+        # Trailing chunk inserted right before finalize — must NOT be dropped.
+        _insert_chunk(factory, run_id, node_id="implement", content="line 3\n")
+        _finalize(factory, run_id)
+
+    driver = threading.Thread(target=_drive, daemon=True)
+    driver.start()
+    try:
+        lines = _read_sse_events(client, f"/runs/{run_id}/events", max_lines=400)
+    finally:
+        driver.join(timeout=10.0)
+
+    body = "\n".join(lines)
+    assert "event: node_log" in body
+    assert "event: run_finished" in body
+
+    logs = _extract_all_event_data(lines, "node_log")
+    contents = [d["content"] for d in logs]
+    assert contents == ["line 1\n", "line 2\n", "line 3\n"]
+    for d in logs:
+        assert d["run_id"] == run_id
+        assert d["node_id"] == "implement"
+        assert d["stream"] == "stdout"
+    # seq is the monotonic chunk id and strictly increases.
+    seqs = [int(d["seq"]) for d in logs]
+    assert seqs == sorted(seqs)
+    assert len(set(seqs)) == len(seqs)
+
+    # node_log events must all precede the terminal run_finished frame.
+    last_node_log = max(i for i, line in enumerate(lines) if line == "event: node_log")
+    run_finished_idx = next(i for i, line in enumerate(lines) if line == "event: run_finished")
+    assert last_node_log < run_finished_idx
+
+
+def test_stream_does_not_replay_pre_connect_chunks(
+    client_and_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """Chunks present *before* connect are not re-emitted as node_log; only
+    a chunk inserted after connect is streamed. State is still reflected in
+    the snapshot, not replayed as logs.
+    """
+    client, factory = client_and_factory
+    run_id = _seed_running_run(factory)
+
+    # Pre-connect history — should NOT be replayed.
+    _insert_chunk(factory, run_id, node_id="implement", content="pre 1\n")
+    _insert_chunk(factory, run_id, node_id="implement", content="pre 2\n")
+
+    def _drive() -> None:
+        time.sleep(POLL_INTERVAL * 1.5)
+        _insert_chunk(factory, run_id, node_id="implement", content="post\n")
+        _finalize(factory, run_id)
+
+    driver = threading.Thread(target=_drive, daemon=True)
+    driver.start()
+    try:
+        lines = _read_sse_events(client, f"/runs/{run_id}/events", max_lines=400)
+    finally:
+        driver.join(timeout=10.0)
+
+    logs = _extract_all_event_data(lines, "node_log")
+    contents = [d["content"] for d in logs]
+    assert contents == ["post\n"], contents
+    assert "pre 1\n" not in contents
+    assert "pre 2\n" not in contents
+
+
+def _extract_all_event_data(lines: list[str], event_name: str) -> list[dict[str, Any]]:
+    """Return all JSON ``data`` payloads following ``event: <event_name>``."""
+    out: list[dict[str, Any]] = []
+    for i, line in enumerate(lines):
+        if line == f"event: {event_name}":
+            data_line = lines[i + 1]
+            assert data_line.startswith("data: ")
+            out.append(json.loads(data_line[len("data: ") :]))
+    return out
