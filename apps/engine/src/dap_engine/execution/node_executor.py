@@ -16,6 +16,8 @@ merge them.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
@@ -25,9 +27,11 @@ from typing import Any
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
 from dap_types import PipelineState, RuntimeResult, RuntimeTask
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from dap_engine.execution.output_parser import parse_node_output
+from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
@@ -38,6 +42,12 @@ from dap_engine.persistence.models import (
 logger = logging.getLogger("dap.engine.execution")
 
 NodeFn = Callable[[PipelineState], Coroutine[Any, Any, dict[str, Any]]]
+
+# How often the node's streamed stdout buffer is drained to
+# ``node_output_chunks`` while the adapter runs (#662 Phase 3b-2b). Each
+# flush coalesces the buffered output into a single chunk row, so a chatty
+# node writes ~2 rows/sec rather than one per stdout read.
+_OUTPUT_FLUSH_INTERVAL_S = 0.5
 
 
 class NodeContext:
@@ -164,9 +174,63 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             project_env_vars=ctx.project_env_vars,
         )
 
-        # 3. Call adapter
+        # 3. Call adapter — stream its stdout into node_output_chunks so the
+        #    SSE endpoint can emit live ``node_log`` events (#662 Phase 3b-2b).
         adapter = ctx.registry.get(ctx.runtime_id)
-        result: RuntimeResult = await adapter.execute(task)
+
+        # ``on_output`` is sync and runs on the event loop, so it stays cheap
+        # (append only); the DB writes happen in a worker thread on a
+        # short-lived session — never blocking the loop, never touching the
+        # node's own transaction on ctx.session (#162). Adapters that don't
+        # stream (api-call / python-func / bash) simply never call it, so the
+        # buffer stays empty and every flush is a no-op.
+        output_buffer: list[str] = []
+        bind = ctx.session.get_bind()
+
+        def _on_output(text: str) -> None:
+            output_buffer.append(text)
+
+        def _write_chunk(text: str) -> None:
+            try:
+                with Session(bind=bind) as chunk_session:
+                    repo.append_output_chunk(
+                        chunk_session,
+                        run_id=ctx.run_id,
+                        node_id=ctx.node_id,
+                        content=text,
+                        execution_id=execution_id,
+                    )
+                    chunk_session.commit()
+            except Exception:
+                # A transient chunk-write failure must never fail the node —
+                # the node's own execution log is the source of truth.
+                logger.warning(
+                    "failed to persist output chunk for node %s", ctx.node_id, exc_info=True
+                )
+
+        async def _flush_output() -> None:
+            if not output_buffer:
+                return
+            # join + clear run synchronously (no await between them) so no
+            # fragment appended by _on_output is lost across the drain.
+            pending = "".join(output_buffer)
+            output_buffer.clear()
+            await run_in_threadpool(_write_chunk, pending)
+
+        async def _flush_loop() -> None:
+            while True:
+                await asyncio.sleep(_OUTPUT_FLUSH_INTERVAL_S)
+                await _flush_output()
+
+        flush_task = asyncio.create_task(_flush_loop())
+        try:
+            result: RuntimeResult = await adapter.execute(task, on_output=_on_output)
+        finally:
+            flush_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await flush_task
+            # Final drain — persist trailing output even on adapter error/timeout.
+            await _flush_output()
         ended_at = datetime.now(UTC)
 
         if not result.success:
