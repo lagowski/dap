@@ -86,8 +86,9 @@ def app_client_factory() -> Iterator[tuple[FastAPI, TestClient, sessionmaker[Ses
     """Engine app + authenticated admin TestClient + session factory.
 
     Exposes the FastAPI ``app`` itself (unlike the conftest ``authed_client``)
-    so tests can plant a real ``asyncio.Task`` into ``app.state.run_registry``
-    to drive ``is_running`` True.
+    so tests can reach ``app.state.run_registry`` — though the ``force_running``
+    fixture drives ``is_running`` via monkeypatch rather than a real task (see
+    its docstring for why a real cross-loop task is unsafe in this harness).
     """
     tmp = tempfile.mkdtemp(prefix="dap-tripwire-")
     config = EngineConfig(
@@ -156,7 +157,9 @@ def test_tripwire_fires_for_terminal_run_with_active_task(
     assert body["final_status"] == "success"
 
     warnings = [
-        r for r in caplog.records if r.levelno == logging.WARNING and WARNING_MARKER in r.getMessage()
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and WARNING_MARKER in r.getMessage()
     ]
     assert len(warnings) == 1, f"expected one tripwire warning, got {len(warnings)}"
     assert run_id in warnings[0].getMessage()
