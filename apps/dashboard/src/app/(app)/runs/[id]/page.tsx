@@ -2,7 +2,7 @@
 
 import { use, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Loader2, Pause, Play, Square } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Pause, Play, RefreshCw, Square, Zap, ZapOff } from "lucide-react";
 import {
   useAbortRun,
   useAgentsList,
@@ -13,6 +13,7 @@ import {
   useRun,
   usePipeline,
 } from "@/hooks/api";
+import { useLiveUpdates } from "@/hooks/use-live-updates";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,7 +31,16 @@ export default function RunDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { data: run, isPending, isError, error } = useRun(id);
+  // Live auto-refresh is user-toggleable and persisted (#662 Phase 2).
+  const [live, setLive] = useLiveUpdates();
+  const {
+    data: run,
+    isPending,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useRun(id, { live });
   const { data: pipeline } = usePipeline(run?.pipeline_id ?? null);
   // Agents drive the per-edge field-flow chips on the graph (#62).
   // We don't gate the page on it — graph still renders without chips.
@@ -75,6 +85,12 @@ export default function RunDetailPage({
         <h1 className="text-2xl font-semibold font-mono">{run.id}</h1>
         <RunStatusBadge status={run.final_status} />
         <div className="ml-auto flex items-center gap-2">
+          <LiveToggle
+            live={live}
+            onToggle={setLive}
+            onRefresh={() => refetch()}
+            isFetching={isFetching}
+          />
           <RunActions run={run} pipeline={pipeline ?? null} />
         </div>
       </div>
@@ -141,6 +157,55 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="rounded border bg-background p-3">
       <div className="text-muted-foreground">{label}</div>
       <div className="font-medium font-mono">{value}</div>
+    </div>
+  );
+}
+
+export function LiveToggle({
+  live,
+  onToggle,
+  onRefresh,
+  isFetching,
+}: {
+  live: boolean;
+  onToggle: (v: boolean) => void;
+  onRefresh: () => void;
+  isFetching: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {!live && (
+        <>
+          <span className="text-xs text-muted-foreground">Live updates paused</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRefresh}
+            disabled={isFetching}
+            aria-label="Refresh run"
+          >
+            <RefreshCw
+              className={`mr-1 h-3.5 w-3.5${isFetching ? " animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        </>
+      )}
+      <Button
+        variant={live ? "outline" : "ghost"}
+        size="sm"
+        role="switch"
+        aria-checked={live}
+        aria-label="Toggle live updates"
+        onClick={() => onToggle(!live)}
+      >
+        {live ? (
+          <Zap className="mr-1 h-3.5 w-3.5 text-blue-500" />
+        ) : (
+          <ZapOff className="mr-1 h-3.5 w-3.5" />
+        )}
+        Live
+      </Button>
     </div>
   );
 }
