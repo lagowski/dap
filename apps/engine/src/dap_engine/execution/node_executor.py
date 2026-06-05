@@ -260,6 +260,49 @@ def _record_failure(
     return state_diff
 
 
+def _audit_tokens(audit: dict[str, Any] | None) -> int | None:
+    """Extract a token count from a python-func adapter's audit dict (#637).
+
+    Supports both documented shapes: a direct ``tokens_used`` (int) key, or an
+    ``input_tokens`` + ``output_tokens`` split (the per-call shape cortex
+    records) which is summed. Returns ``None`` when neither is present or the
+    values are not coercible to ``int`` — callers treat that as "no audit
+    token data" and fall back to 0.
+    """
+    if not isinstance(audit, dict):
+        return None
+    direct = audit.get("tokens_used")
+    if direct is not None:
+        try:
+            return int(direct)
+        except (TypeError, ValueError):
+            return None
+    it, ot = audit.get("input_tokens"), audit.get("output_tokens")
+    if it is None and ot is None:
+        return None
+    try:
+        return int(it or 0) + int(ot or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _audit_cost(audit: dict[str, Any] | None) -> float | None:
+    """Extract a USD cost from a python-func adapter's audit dict (#637).
+
+    Returns ``None`` when no ``cost_usd`` key is present or the value is not
+    coercible to ``float`` — callers fall back to 0.0.
+    """
+    if not isinstance(audit, dict):
+        return None
+    val = audit.get("cost_usd")
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def _save_execution_log(
     *,
     ctx: NodeContext,
@@ -269,6 +312,22 @@ def _save_execution_log(
     prompt_xml: str,
     result: RuntimeResult,
 ) -> None:
+    # ``audit`` stores domain-specific metadata produced by python-func
+    # adapters.  A python-func node signals audit data by including an
+    # ``__audit`` key in its return dict; the adapter moves that dict to
+    # ``result.structured["audit"]`` before returning.  CLI/LLM adapters
+    # never set "audit", so this is ``None`` for those runtimes.  The shape
+    # is intentionally open — see ``NodeExecutionLog.extra_data`` for
+    # documented common keys.
+    audit = result.structured.get("audit") if result.structured else None
+    # Token/cost rollup (#637): python-func adapters (cortex) leave
+    # ``result.tokens_used`` / ``result.cost_usd`` as ``None`` and carry the
+    # real per-node usage in ``audit``.  A real result field (api-call
+    # adapters) always wins; the audit dict is only a fallback when the
+    # result field is absent, so the values feeding the summed columns that
+    # ``_compute_run_totals`` aggregates are non-zero for cortex runs.
+    tokens_used = result.tokens_used if result.tokens_used is not None else _audit_tokens(audit)
+    cost_usd = result.cost_usd if result.cost_usd is not None else _audit_cost(audit)
     log = NodeExecutionLogORM(
         id=execution_id,
         run_id=ctx.run_id,
@@ -281,19 +340,12 @@ def _save_execution_log(
         stdout=result.output,
         stderr="",
         output_json=result.structured,
-        tokens_used=result.tokens_used or 0,
-        cost_usd=result.cost_usd or 0.0,
+        tokens_used=int(tokens_used) if tokens_used else 0,
+        cost_usd=float(cost_usd) if cost_usd else 0.0,
         duration_ms=result.duration_ms,
         status="success" if result.success else "failed",
         error_message="; ".join(result.errors) if result.errors else None,
-        # ``extra_data`` stores domain-specific audit metadata produced by
-        # python-func adapters.  A python-func node signals audit data by
-        # including an ``__audit`` key in its return dict; the adapter moves
-        # that dict to ``result.structured["audit"]`` before returning.
-        # CLI/LLM adapters never set "audit", so this evaluates to ``None``
-        # for those runtimes.  The shape is intentionally open — see
-        # ``NodeExecutionLog.extra_data`` for documented common keys.
-        extra_data=result.structured.get("audit") if result.structured else None,
+        extra_data=audit,
     )
     ctx.session.add(log)
 
