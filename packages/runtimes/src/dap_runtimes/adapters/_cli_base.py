@@ -36,6 +36,7 @@ calls live here after the extraction.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 import os
@@ -485,13 +486,25 @@ class _BaseCliAdapter(BaseAdapter):
         async def _read_stdout() -> bytes:
             buf = bytearray()
             assert process.stdout is not None
+            # Incremental UTF-8 decode so a multi-byte char split across two
+            # read() boundaries isn't emitted as replacement chars (#662
+            # review). The returned full stdout is still decoded as a whole
+            # from ``buf``, so the callback stream and the captured output
+            # agree.
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
             while True:
                 chunk = await process.stdout.read(_STDOUT_READ_SIZE)
                 if not chunk:
                     break
                 buf += chunk
                 if on_output is not None:
-                    self._emit_output(on_output, chunk)
+                    text = decoder.decode(chunk)
+                    if text:
+                        self._emit_output(on_output, text)
+            if on_output is not None:
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    self._emit_output(on_output, tail)
             return bytes(buf)
 
         async def _read_stderr() -> bytes:
@@ -528,14 +541,16 @@ class _BaseCliAdapter(BaseAdapter):
         )
 
     @staticmethod
-    def _emit_output(on_output: OutputCallback, chunk: bytes) -> None:
-        """Forward one decoded stdout chunk to ``on_output``, swallowing errors.
+    def _emit_output(on_output: OutputCallback, text: str) -> None:
+        """Forward one decoded stdout fragment to ``on_output``, swallowing errors.
 
-        A misbehaving sink (e.g. a DB write that transiently fails) must never
-        crash the subprocess read loop or fail the node — log and continue.
+        ``text`` is already incrementally decoded by the caller (so multi-byte
+        characters split across read boundaries stay intact). A misbehaving
+        sink (e.g. a DB write that transiently fails) must never crash the
+        subprocess read loop or fail the node — log and continue.
         """
         try:
-            on_output(chunk.decode("utf-8", errors="replace"))
+            on_output(text)
         except Exception:
             logger.warning("on_output callback raised; dropping stdout chunk", exc_info=True)
 

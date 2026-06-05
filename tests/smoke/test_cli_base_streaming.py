@@ -71,6 +71,20 @@ async def test_on_output_receives_each_chunk_in_order() -> None:
     assert outcome.exit_code == 0  # type: ignore[attr-defined]
 
 
+async def test_multibyte_char_split_across_chunks_is_not_corrupted() -> None:
+    # "café latte" — the "é" (b"\xc3\xa9") straddles the chunk boundary.
+    # Per-chunk decode would emit two U+FFFD replacement chars; the
+    # incremental decoder must reassemble it (#662 review).
+    proc = build_subprocess_mock(stdout_chunks=[b"caf\xc3", b"\xa9 latte"])
+    received: list[str] = []
+
+    outcome = await _run(proc, on_output=received.append)
+
+    assert "".join(received) == "café latte"
+    assert "�" not in "".join(received)
+    assert outcome.stdout == "café latte"  # type: ignore[attr-defined]
+
+
 async def test_on_output_does_not_affect_returned_stdout_or_stderr() -> None:
     proc = build_subprocess_mock(
         stdout_chunks=[b"part-a", b"part-b"],
