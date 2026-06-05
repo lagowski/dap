@@ -710,11 +710,12 @@ def latest_output_chunk_id(session: Session, run_id: str) -> int:
     Used by the SSE endpoint as the connect cursor so a connecting client
     streams only chunks produced *after* connect (no replay of history).
     """
-    return int(
-        session.scalar(
-            select(func.coalesce(func.max(NodeOutputChunkORM.id), 0)).where(
-                NodeOutputChunkORM.run_id == run_id
-            )
+    # coalesce(..., 0) guarantees a 0 (not NULL) for empty runs; the
+    # explicit None check only satisfies scalar()'s ``int | None`` return
+    # type and never coerces a real (falsy) value to 0.
+    result = session.scalar(
+        select(func.coalesce(func.max(NodeOutputChunkORM.id), 0)).where(
+            NodeOutputChunkORM.run_id == run_id
         )
-        or 0
     )
+    return int(result) if result is not None else 0

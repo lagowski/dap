@@ -460,13 +460,23 @@ def client_and_factory() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
         yield c, app.state.session_factory
 
 
-def _read_sse_events(client: TestClient, url: str, *, max_lines: int = 200) -> list[str]:
+def _read_sse_events(
+    client: TestClient,
+    url: str,
+    *,
+    max_lines: int = 200,
+    max_seconds: float = 20.0,
+) -> list[str]:
     """Stream the SSE body and return raw lines, bounded so we never hang.
 
-    A terminal run closes the stream immediately after ``run_finished``;
-    the ``max_lines`` cap is pure belt-and-braces.
+    A terminal run closes the stream immediately after ``run_finished``.
+    The ``max_lines`` and ``max_seconds`` caps are belt-and-braces: if the
+    run never finalises (e.g. a background-thread failure), the read fails
+    fast with a clear message instead of consuming keepalive frames up to
+    ``max_lines`` (which could take ~``max_lines * POLL_INTERVAL`` seconds).
     """
     lines: list[str] = []
+    deadline = time.monotonic() + max_seconds
     with client.stream("GET", url) as response:
         assert response.status_code == 200, response.read()
         assert response.headers["content-type"].startswith("text/event-stream")
@@ -474,6 +484,12 @@ def _read_sse_events(client: TestClient, url: str, *, max_lines: int = 200) -> l
             lines.append(line)
             if len(lines) >= max_lines:
                 break
+            if time.monotonic() > deadline:
+                raise AssertionError(
+                    f"SSE stream at {url} did not close within {max_seconds}s "
+                    f"(read {len(lines)} lines, no run_finished) — "
+                    "the run likely never reached a terminal status."
+                )
     return lines
 
 
