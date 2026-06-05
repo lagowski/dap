@@ -38,7 +38,11 @@ if TYPE_CHECKING:
 def register_run_intervention_routes(router: APIRouter) -> None:
     """Attach node-level intervention routes to the owning runs router."""
 
-    router.post("/{run_id}/nodes/{node_id}/approve", response_model=Run)(approve_gate_endpoint)
+    router.post(
+        "/{run_id}/nodes/{node_id}/approve",
+        response_model=Run,
+        status_code=status.HTTP_202_ACCEPTED,
+    )(approve_gate_endpoint)
     router.post("/{run_id}/nodes/{node_id}/retry", response_model=Run)(retry_node)
     router.post("/{run_id}/nodes/{node_id}/skip", response_model=Run)(skip_node)
 
@@ -67,6 +71,10 @@ async def approve_gate_endpoint(
 
     Status codes:
 
+    * **202** — approval accepted; the run resumes in the background (poll
+      ``GET /runs/{id}`` for progress). The endpoint records the gate decision,
+      dispatches the resume as a background task, and returns immediately
+      without awaiting the next phase (#623).
     * **404** — run not found, pipeline version vanished, or ``node_id`` does
       not exist in the pipeline version that produced this run.
     * **409** — run is not paused, run already has an active background task,
