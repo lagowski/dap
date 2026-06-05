@@ -261,13 +261,14 @@ def _record_failure(
 
 
 def _audit_tokens(audit: dict[str, Any] | None) -> int | None:
-    """Extract a token count from a python-func adapter's audit dict (#637).
+    """Extract a per-node token count from a python-func adapter's audit dict (#637).
 
     Supports both documented shapes: a direct ``tokens_used`` (int) key, or an
     ``input_tokens`` + ``output_tokens`` split (the per-call shape cortex
-    records) which is summed. Returns ``None`` when neither is present or the
-    values are not coercible to ``int`` — callers treat that as "no audit
-    token data" and fall back to 0.
+    records) which is summed (a missing side counts as 0). Returns ``None`` only
+    when none of those keys is present — callers treat that as "no audit token
+    data" and fall back to 0. A present-but-uncoercible value is logged (so
+    contract drift is visible, not silently swallowed) and treated as missing.
     """
     if not isinstance(audit, dict):
         return None
@@ -276,13 +277,22 @@ def _audit_tokens(audit: dict[str, Any] | None) -> int | None:
         try:
             return int(direct)
         except (TypeError, ValueError):
+            logger.warning(
+                "audit 'tokens_used' present but uncoercible: %r (#637 contract drift?)",
+                direct,
+            )
             return None
     it, ot = audit.get("input_tokens"), audit.get("output_tokens")
     if it is None and ot is None:
         return None
     try:
-        return int(it or 0) + int(ot or 0)
+        return (int(it) if it is not None else 0) + (int(ot) if ot is not None else 0)
     except (TypeError, ValueError):
+        logger.warning(
+            "audit input/output tokens uncoercible: input=%r output=%r (#637 contract drift?)",
+            it,
+            ot,
+        )
         return None
 
 
@@ -300,6 +310,10 @@ def _audit_cost(audit: dict[str, Any] | None) -> float | None:
     try:
         return float(val)
     except (TypeError, ValueError):
+        logger.warning(
+            "audit 'cost_usd' present but uncoercible: %r (#637 contract drift?)",
+            val,
+        )
         return None
 
 
@@ -340,8 +354,8 @@ def _save_execution_log(
         stdout=result.output,
         stderr="",
         output_json=result.structured,
-        tokens_used=int(tokens_used) if tokens_used else 0,
-        cost_usd=float(cost_usd) if cost_usd else 0.0,
+        tokens_used=int(tokens_used) if tokens_used is not None else 0,
+        cost_usd=float(cost_usd) if cost_usd is not None else 0.0,
         duration_ms=result.duration_ms,
         status="success" if result.success else "failed",
         error_message="; ".join(result.errors) if result.errors else None,
