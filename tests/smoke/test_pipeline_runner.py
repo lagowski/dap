@@ -64,6 +64,48 @@ class StubAdapter:
         return self._outputs.pop(0)
 
 
+class StreamingStubAdapter:
+    """Adapter that streams a fixed list of fragments via ``on_output`` before
+    returning, exercising the node_executor → ``node_output_chunks`` wiring
+    (#662 Phase 3b-2b).
+
+    The fragments are emitted synchronously on the event loop; the node's flush
+    task coalesces them and the guaranteed final flush on context exit persists
+    them even though ``execute`` returns instantly (no need to wait the 0.5s
+    flush interval).
+    """
+
+    def __init__(
+        self,
+        *,
+        adapter_id: str = "streaming-stub",
+        fragments: list[str] | None = None,
+        success: bool = True,
+    ) -> None:
+        self.id = adapter_id
+        self.display_name = f"Stub: {adapter_id}"
+        self.kind: RuntimeKind = "api"
+        self._fragments = fragments or []
+        self._success = success
+        self.calls: list[RuntimeTask] = []
+
+    async def healthcheck(self) -> HealthStatus:
+        return HealthStatus(available=True, version="stub")
+
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
+        self.calls.append(task)
+        if on_output is not None:
+            for fragment in self._fragments:
+                on_output(fragment)
+        if self._success:
+            return RuntimeResult(success=True, output="ok", duration_ms=1)
+        return RuntimeResult(success=False, output="", errors=["boom"], duration_ms=1)
+
+
 @pytest.fixture
 def app_session_factory() -> Iterator[tuple[TestClient, sessionmaker[Session], RuntimeRegistry]]:
     tmp = tempfile.mkdtemp(prefix="dap-runner-")
@@ -195,6 +237,13 @@ async def _run_pipeline(
             initial_state=initial_state,
         )
         initial_state = initial_state.model_copy(update={"run_id": run.id})
+        # Commit the run-creation transaction before running the pipeline so
+        # the harness mirrors production, where the run row is committed in the
+        # request session before the background session executes nodes. Without
+        # this, SQLite's single-writer lock is held by the open run-creation
+        # transaction, deadlocking the concurrent ``node_output_chunks`` writes
+        # the node streams via a separate short-lived session (#662).
+        session.commit()
 
         runner = PipelineRunner(session=session, registry=registry)
         result = await runner.run(
@@ -366,3 +415,94 @@ async def test_runner_unknown_agent_raises(
 
     with pytest.raises(RunnerError, match="unknown agent"):
         await _run_pipeline(factory, registry, pipeline, version)
+
+
+async def _seed_single_node_pipeline(
+    factory: sessionmaker[Session],
+    *,
+    runtime_id: str,
+) -> tuple[PipelineORM, PipelineVersionORM]:
+    """Seed a one-node pipeline wired to *runtime_id* and return its ORM rows."""
+    with factory() as session:
+        agent_id = _seed_agent(session, runtime_id=runtime_id)
+        return _seed_pipeline(
+            session,
+            nodes=[{"id": "n1", "agent_id": agent_id, "position": {"x": 0, "y": 0}}],
+            edges=[{"id": "e1", "source": "n1", "target": "__end__"}],
+            entry_point="n1",
+        )
+
+
+async def test_streamed_output_is_persisted_to_node_output_chunks(
+    app_session_factory: tuple[TestClient, sessionmaker[Session], RuntimeRegistry],
+) -> None:
+    """A node whose adapter calls ``on_output("foo")`` then ``on_output("bar")``
+    persists the concatenated text to ``node_output_chunks`` for that run, tagged
+    with the run/node ids and a non-null ``execution_id`` matching the node's
+    ``node_execution_logs`` row (#662 Phase 3b-2b — closes the streaming loop).
+    """
+    from dap_engine.persistence import repository as repo
+    from dap_engine.persistence.models import NodeExecutionLogORM
+
+    _client, factory, registry = app_session_factory
+
+    stub = StreamingStubAdapter(adapter_id="stream-foobar", fragments=["foo", "bar"])
+    registry.register(stub)
+
+    pipeline, version = await _seed_single_node_pipeline(factory, runtime_id="stream-foobar")
+    final_state = await _run_pipeline(factory, registry, pipeline, version)
+    run_id = final_state.run_id
+
+    with factory() as session:
+        chunks = repo.list_output_chunks_since(session, run_id, after_id=0)
+        log = session.query(NodeExecutionLogORM).filter_by(run_id=run_id, node_id="n1").one()
+
+    assert "".join(c.content for c in chunks) == "foobar"
+    assert {c.run_id for c in chunks} == {run_id}
+    assert {c.node_id for c in chunks} == {"n1"}
+    # Every chunk carries a non-null execution_id matching the node's log row.
+    assert all(c.execution_id == log.id for c in chunks)
+    assert log.id is not None
+
+
+async def test_node_without_streamed_output_writes_no_chunks(
+    app_session_factory: tuple[TestClient, sessionmaker[Session], RuntimeRegistry],
+) -> None:
+    """A node whose adapter never calls ``on_output`` produces zero
+    ``node_output_chunks`` rows — the final flush must not write a spurious
+    empty chunk (#662 Phase 3b-2b).
+    """
+    from dap_engine.persistence import repository as repo
+
+    _client, factory, registry = app_session_factory
+
+    stub = StreamingStubAdapter(adapter_id="stream-silent", fragments=[])
+    registry.register(stub)
+
+    pipeline, version = await _seed_single_node_pipeline(factory, runtime_id="stream-silent")
+    final_state = await _run_pipeline(factory, registry, pipeline, version)
+
+    with factory() as session:
+        chunks = repo.list_output_chunks_since(session, final_state.run_id, after_id=0)
+    assert chunks == []
+
+
+async def test_streamed_output_persisted_even_when_node_fails(
+    app_session_factory: tuple[TestClient, sessionmaker[Session], RuntimeRegistry],
+) -> None:
+    """Output buffered before a failing ``RuntimeResult`` is still persisted by
+    the guaranteed final flush on context exit (#662 Phase 3b-2b).
+    """
+    from dap_engine.persistence import repository as repo
+
+    _client, factory, registry = app_session_factory
+
+    stub = StreamingStubAdapter(adapter_id="stream-fail", fragments=["partial"], success=False)
+    registry.register(stub)
+
+    pipeline, version = await _seed_single_node_pipeline(factory, runtime_id="stream-fail")
+    final_state = await _run_pipeline(factory, registry, pipeline, version)
+
+    with factory() as session:
+        chunks = repo.list_output_chunks_since(session, final_state.run_id, after_id=0)
+    assert "".join(c.content for c in chunks) == "partial"
