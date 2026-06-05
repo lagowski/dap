@@ -20,6 +20,7 @@ from dap_engine.persistence.project_models import ProjectORM
 from dap_engine.persistence.run_models import (
     BatchRunORM,
     NodeExecutionLogORM,
+    NodeOutputChunkORM,
     RunORM,
     StateSnapshotORM,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "BatchRunORM",
     "InstanceEnvVarORM",
     "NodeExecutionLogORM",
+    "NodeOutputChunkORM",
     "OAuthAccountORM",
     "PipelineORM",
     "PipelineVersionORM",

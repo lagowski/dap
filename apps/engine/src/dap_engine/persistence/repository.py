@@ -62,11 +62,14 @@ from dap_engine.persistence.projects import (
     update_project,
 )
 from dap_engine.persistence.runs import (
+    append_output_chunk,
     create_run,
     finalize_run,
     get_run,
     get_run_node_log,
     get_run_state,
+    latest_output_chunk_id,
+    list_output_chunks_since,
     list_run_node_logs,
     list_run_state_history,
     list_runs,
@@ -80,6 +83,7 @@ from dap_engine.persistence.runs import (
 __all__ = [
     "NotFoundError",
     "append_batch_result",
+    "append_output_chunk",
     "archive_agent",
     "archive_pipeline",
     "archive_project",
@@ -111,6 +115,8 @@ __all__ = [
     "list_pipeline_versions",
     "list_pipelines",
     "list_projects",
+    "latest_output_chunk_id",
+    "list_output_chunks_since",
     "list_run_node_logs",
     "list_run_state_history",
     "list_runs",

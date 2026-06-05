@@ -54,7 +54,7 @@ def test_fresh_sqlite_db_gets_both_legacy_and_alembic_tables() -> None:
 
         # Alembic baseline stamped
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0006_runs_created_updated_at"
+        assert version == "0007_node_output_chunks"
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ def test_pre_alembic_dev_db_gets_baseline_stamped_without_rerunning_legacy() -> 
             version = conn.execute(
                 text("SELECT version_num FROM alembic_version"),
             ).scalar()
-            assert version == "0006_runs_created_updated_at"
+            assert version == "0007_node_output_chunks"
             # Legacy count unchanged — no double-apply.
             legacy_count = conn.execute(
                 text("SELECT COUNT(*) FROM schema_migrations"),
@@ -145,7 +145,7 @@ def test_repeated_engine_construction_is_idempotent() -> None:
             version = conn.execute(
                 text("SELECT version_num FROM alembic_version"),
             ).scalar()
-            assert version == "0006_runs_created_updated_at"
+            assert version == "0007_node_output_chunks"
     finally:
         raw.dispose()
 

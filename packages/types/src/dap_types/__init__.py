@@ -16,7 +16,7 @@ from dap_types.role_outputs import (
     resolve_output_validator,
     role_output_model,
 )
-from dap_types.run import NodeExecutionLog, NodeStatus, Run
+from dap_types.run import NodeExecutionLog, NodeOutputChunk, NodeStatus, Run
 from dap_types.runtime import (
     HealthStatus,
     RuntimeAdapter,
@@ -40,6 +40,7 @@ __all__ = [
     "HealthStatus",
     "LogicalCondition",
     "NodeExecutionLog",
+    "NodeOutputChunk",
     "NodeStatus",
     "Pipeline",
     "PipelineDefaults",

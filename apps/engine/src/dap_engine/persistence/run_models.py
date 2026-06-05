@@ -188,3 +188,36 @@ class NodeExecutionLogORM(Base):
         # started_at`` on every detail fetch — high-frequency polling (#251).
         Index("ix_node_execution_logs_run_started", "run_id", "started_at"),
     )
+
+
+class NodeOutputChunkORM(Base):
+    """Incremental chunk of a node's output stream (#662, Phase 3b).
+
+    Adapters append one row per stdout/stderr flush while a node runs
+    (Phase 3b-2); the SSE endpoint pages new rows with
+    ``WHERE run_id = ? AND id > ? ORDER BY id`` and emits each as a
+    ``node_log`` event. ``id`` is an autoincrement integer that is the
+    **monotonic cursor** the stream resumes from.
+    """
+
+    __tablename__ = "node_output_chunks"
+
+    # Autoincrement integer PK — the monotonic cursor the SSE endpoint
+    # pages on. Strictly increasing across the life of a run.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String, ForeignKey("runs.id"), nullable=False)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    # The ``node_execution_logs.id`` this output belongs to; nullable
+    # because adapters may stream output before the log row exists.
+    execution_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    stream: Mapped[str] = mapped_column(String, nullable=False, default="stdout")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    __table_args__ = (
+        # Incremental cursor read: ``WHERE run_id = ? AND id > ? ORDER BY id``.
+        # Composite folds the run filter + id-cursor walk into one index.
+        Index("ix_node_output_chunks_run_id", "run_id", "id"),
+    )

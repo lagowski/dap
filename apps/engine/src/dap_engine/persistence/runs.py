@@ -25,6 +25,7 @@ from typing import Any, Final
 
 from dap_types import (
     NodeExecutionLog,
+    NodeOutputChunk,
     PipelineState,
     Run,
     StateSnapshot,
@@ -36,6 +37,7 @@ from dap_engine.auth.audit import record_audit_event
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
 from dap_engine.persistence.models import (
     NodeExecutionLogORM,
+    NodeOutputChunkORM,
     RunORM,
     StateSnapshotORM,
 )
@@ -102,6 +104,18 @@ def _state_snapshot_from_orm(snapshot: StateSnapshotORM) -> StateSnapshot:
         node_id=snapshot.node_id,
         timestamp=snapshot.timestamp,
         state=PipelineState.model_validate(snapshot.state),
+    )
+
+
+def _output_chunk_from_orm(chunk: NodeOutputChunkORM) -> NodeOutputChunk:
+    return NodeOutputChunk(
+        id=chunk.id,
+        run_id=chunk.run_id,
+        node_id=chunk.node_id,
+        execution_id=chunk.execution_id,
+        stream=chunk.stream,
+        content=chunk.content,
+        created_at=chunk.created_at,
     )
 
 
@@ -632,3 +646,75 @@ def list_run_node_logs(
         .order_by(NodeExecutionLogORM.started_at)
     ).all()
     return [_node_log_from_orm(log) for log in logs]
+
+
+def append_output_chunk(
+    session: Session,
+    *,
+    run_id: str,
+    node_id: str,
+    content: str,
+    execution_id: str | None = None,
+    stream: str = "stdout",
+) -> NodeOutputChunk:
+    """Append one node-output chunk and return it with a populated ``id``.
+
+    Adapters call this per stdout/stderr flush (Phase 3b-2). The returned
+    chunk's ``id`` is the autoincrement monotonic cursor the SSE endpoint
+    pages on. ``session.flush()`` populates the id before mapping; the
+    caller commits.
+
+    No ownership check: this is a write primitive on the execution path,
+    same contract as ``finalize_run`` / ``create_run`` — the ownership
+    boundary is established at the API route.
+    """
+    chunk = NodeOutputChunkORM(
+        run_id=run_id,
+        node_id=node_id,
+        execution_id=execution_id,
+        stream=stream,
+        content=content,
+        created_at=_now(),
+    )
+    session.add(chunk)
+    session.flush()
+    return _output_chunk_from_orm(chunk)
+
+
+def list_output_chunks_since(
+    session: Session,
+    run_id: str,
+    *,
+    after_id: int,
+    limit: int = 500,
+) -> list[NodeOutputChunk]:
+    """Return chunks for ``run_id`` with ``id > after_id`` ascending by id.
+
+    The incremental cursor read driving the SSE ``node_log`` stream:
+    ``after_id`` is the last chunk id the client has already seen (0 to
+    start from the run's first chunk). ``limit`` bounds the page so a
+    single tick can't materialise an unbounded backlog.
+    """
+    chunks = session.scalars(
+        select(NodeOutputChunkORM)
+        .where(NodeOutputChunkORM.run_id == run_id, NodeOutputChunkORM.id > after_id)
+        .order_by(NodeOutputChunkORM.id)
+        .limit(limit)
+    ).all()
+    return [_output_chunk_from_orm(c) for c in chunks]
+
+
+def latest_output_chunk_id(session: Session, run_id: str) -> int:
+    """Return the highest chunk id for ``run_id``, or ``0`` if none exist.
+
+    Used by the SSE endpoint as the connect cursor so a connecting client
+    streams only chunks produced *after* connect (no replay of history).
+    """
+    return int(
+        session.scalar(
+            select(func.coalesce(func.max(NodeOutputChunkORM.id), 0)).where(
+                NodeOutputChunkORM.run_id == run_id
+            )
+        )
+        or 0
+    )

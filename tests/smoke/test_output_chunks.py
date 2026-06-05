@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence import repository as repo
+from dap_engine.persistence.db import create_engine_for_sqlite, make_session_factory
 from dap_engine.persistence.models import RunORM
 from dap_types import NodeOutputChunk
 from sqlalchemy.orm import Session, sessionmaker
@@ -81,12 +81,11 @@ def _seed_run(session_factory: sessionmaker[Session], *, run_id: str) -> None:
 @pytest.fixture
 def session_factory() -> Iterator[sessionmaker[Session]]:
     tmp = tempfile.mkdtemp(prefix="dap-output-chunks-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="output-chunks-secret-32-chars-pad",
-    )
-    app = create_app(config)
-    yield app.state.session_factory
+    engine = create_engine_for_sqlite(str(Path(tmp) / "state.db"))
+    try:
+        yield make_session_factory(engine)
+    finally:
+        engine.dispose()
 
 
 def test_append_output_chunk_returns_populated_id(
