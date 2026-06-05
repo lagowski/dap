@@ -8,37 +8,35 @@
  * (auto-poll on) to preserve the pre-existing behaviour for users who
  * never touch the toggle.
  *
- * SSR-safe: the initialiser and the writer both guard ``typeof
- * window`` so the hook is inert during Next.js server rendering. We
- * read synchronously in the ``useState`` initialiser (rather than in an
- * effect) — the toggle is a small, non-layout-shifting control, so a
- * one-frame flash isn't a concern the way it is for the project picker.
- *
- * Follows the localStorage pattern in ``lib/active-project.tsx``.
+ * SSR-safe / hydration-safe: the initial state is the default (``true``)
+ * so the server render and the first client render agree — no hydration
+ * mismatch. The persisted choice is then applied in an effect after
+ * mount (a one-frame "Live on" flash if the user had it off is fine for
+ * this small, non-layout-shifting control). Mirrors the effect-based
+ * localStorage pattern in ``lib/active-project.tsx``.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const STORAGE_KEY = "dap:run-live-updates";
 
-function readInitial(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === null) return true;
-    return stored !== "false";
-  } catch {
-    // Private mode / quota — fall back to the default.
-    return true;
-  }
-}
-
 export function useLiveUpdates(): [boolean, (v: boolean) => void] {
-  const [live, setLiveState] = useState<boolean>(readInitial);
+  const [live, setLiveState] = useState<boolean>(true);
+
+  // Apply the persisted preference after mount — never in the initialiser,
+  // which would diverge from the server render and warn about a hydration
+  // mismatch when the stored value is "false".
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (stored !== null) setLiveState(stored !== "false");
+    } catch {
+      // Private mode / quota — keep the default.
+    }
+  }, []);
 
   const setLive = useCallback((v: boolean) => {
     setLiveState(v);
-    if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(STORAGE_KEY, v ? "true" : "false");
     } catch {
