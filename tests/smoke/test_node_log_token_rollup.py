@@ -49,7 +49,9 @@ def factory() -> Iterator[sessionmaker[Session]]:
         yield app.state.session_factory
 
 
-def _seed_agent(session: Session, *, runtime_id: str = "python-func") -> tuple[AgentORM, AgentVersionORM]:
+def _seed_agent(
+    session: Session, *, runtime_id: str = "python-func"
+) -> tuple[AgentORM, AgentVersionORM]:
     now = datetime.now(UTC)
     agent = AgentORM(
         id=f"agent-{runtime_id}",
