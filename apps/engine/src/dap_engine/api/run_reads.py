@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_run_registry, get_session
+from dap_engine.api.run_events import stream_run_events
 from dap_engine.auth.users import current_active_user
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
@@ -34,6 +35,10 @@ def register_run_read_routes(router: APIRouter) -> None:
     )
     router.get("/{run_id}/nodes", response_model=list[NodeExecutionLog])(list_run_node_logs)
     router.get("/{run_id}/nodes/{node_id}", response_model=NodeExecutionLog)(get_run_node_log)
+    # SSE stream of run-execution events (#662, Phase 3a). No response_model:
+    # the route returns a ``StreamingResponse`` (text/event-stream), and its
+    # event schema is documented on ``stream_run_events``.
+    router.get("/{run_id}/events")(stream_run_events)
 
 
 def list_runs(
