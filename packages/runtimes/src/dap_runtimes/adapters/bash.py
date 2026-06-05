@@ -32,7 +32,7 @@ import signal
 import time
 from typing import Any, Final
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters.base import BaseAdapter
@@ -69,10 +69,19 @@ class BashAdapter(BaseAdapter):
             return HealthStatus(available=False, missing=[f"shell binary: {shell}"])
         return HealthStatus(available=True, version=shell)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    async def execute(  # noqa: PLR0911
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch dict obscures
         # the mapping (same rationale as ApiCallAdapter.execute).
+        # on_output accepted-and-ignored for now: in Phase 3b-2a (#662)
+        # incremental stdout streaming is wired only for the shared CLI
+        # subprocess base (_cli_base). Bash has its own subprocess loop and
+        # keeps the unchanged full-capture path.
+        del on_output
         config = task.runtime_config
 
         command = _resolve_command(config, task.prompt_xml)

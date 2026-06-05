@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 RuntimeKind = Literal["cli", "api", "shell", "http"]
+
+# A synchronous sink invoked with each incremental stdout chunk an adapter
+# produces while a node executes (#662, Phase 3b-2a). The adapter calls it
+# best-effort: a raising sink is logged and swallowed, never failing the run,
+# and the callback never affects the returned ``RuntimeResult.output``. Only
+# subprocess-spawning CLI adapters stream through it today; the engine wires a
+# chunk-persisting callback in Phase 3b-2b.
+OutputCallback = Callable[[str], None]
 
 
 class RuntimeContext(BaseModel):
@@ -72,4 +81,8 @@ class RuntimeAdapter(Protocol):
 
     async def healthcheck(self) -> HealthStatus: ...
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult: ...
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult: ...

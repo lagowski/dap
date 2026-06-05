@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -44,6 +45,7 @@ UNIT_FILES = frozenset(
         "test_agent_schema_validation.py",
         "test_api_call_adapter.py",
         "test_claude_code_adapter.py",
+        "test_cli_base_streaming.py",
         "test_cli_cortex_auth.py",
         "test_codex_adapter.py",
         "test_conditions.py",
@@ -198,29 +200,95 @@ def replace_adapter(registry: RuntimeRegistry, adapter: Any) -> None:
     registry._adapters[adapter.id] = adapter
 
 
+def _make_stream_reader(chunks: list[bytes], *, hang: bool = False) -> MagicMock:
+    """Build a mock asyncio.StreamReader.
+
+    ``.read(n)`` returns each queued chunk in turn (the ``n`` size hint is
+    ignored — tests control chunking explicitly), then ``b""`` at EOF, mirroring
+    a real ``StreamReader`` draining a pipe. ``.read()`` (no arg, used for
+    stderr) returns the whole remaining buffer at once. When ``hang`` is set
+    every read blocks forever, letting ``asyncio.wait_for`` fire a timeout
+    exactly as a never-ending subprocess would.
+    """
+    queue = list(chunks)
+
+    async def _read(n: int = -1) -> bytes:
+        if hang:
+            await asyncio.Event().wait()  # never returns — wait_for will cancel
+        if n < 0:
+            # stderr-style: drain everything at once.
+            data = b"".join(queue)
+            queue.clear()
+            return data
+        if not queue:
+            return b""
+        return queue.pop(0)
+
+    reader = MagicMock()
+    reader.read = AsyncMock(side_effect=_read)
+    return reader
+
+
 def build_subprocess_mock(
     *,
     stdout: bytes = b"",
+    stdout_chunks: list[bytes] | None = None,
     stderr: bytes = b"",
     returncode: int = 0,
     side_effect: Exception | None = None,
+    hang: bool = False,
     pid: int = 12345,
 ) -> MagicMock:
     """Create an asyncio.Process-shaped mock for ``create_subprocess_exec``.
 
-    Shared across CLI-tool adapter tests (claude_code, codex, gemini_cli) —
-    they all need a process whose ``communicate`` is awaitable, ``wait`` is
-    awaitable, ``kill`` is sync, and ``returncode``/``pid`` are settable.
-    The ``pid`` parameter is overridable but no current test asserts on
-    its value; the default suffices.
+    Shared across CLI-tool adapter tests (claude_code, codex, gemini_cli).
+
+    The CLI subprocess base streams stdout chunk-by-chunk via
+    ``process.stdout.read(n)`` and drains stderr via ``process.stderr.read()``
+    (#662). The mock therefore exposes async-readable ``stdout`` / ``stderr``
+    ``StreamReader`` shims plus a writable, closeable ``stdin``. ``communicate``
+    is *also* mocked because the healthcheck path (``_read_cli_version``) still
+    uses it.
+
+    Parameters:
+
+    - ``stdout`` — the full stdout as a single chunk (the common case).
+    - ``stdout_chunks`` — explicit list of byte chunks to stream in order; when
+      given it overrides ``stdout`` so a test can assert chunked delivery.
+    - ``stderr`` — the full stderr (drained in one ``read()``).
+    - ``side_effect`` — when set (typically ``TimeoutError``), the legacy
+      timeout shape: ``communicate`` raises and stdout reads hang so the
+      streaming ``wait_for`` also times out. Kept for backwards-compat with
+      the pre-streaming timeout tests.
+    - ``hang`` — make every stdout/stderr read block forever (for the streaming
+      timeout / cancellation tests).
+    - ``returncode`` / ``pid`` — settable process attributes.
     """
     process = MagicMock()
     process.returncode = returncode
     process.pid = pid
+
+    should_hang = hang or side_effect is not None
+    chunks = stdout_chunks if stdout_chunks is not None else ([stdout] if stdout else [])
+
+    process.stdout = _make_stream_reader(chunks, hang=should_hang)
+    process.stderr = _make_stream_reader([stderr] if stderr else [], hang=should_hang)
+
+    # ``stdin`` is written + closed by the base; drain() must be awaitable.
+    stdin = MagicMock()
+    stdin.write = MagicMock()
+    stdin.drain = AsyncMock(return_value=None)
+    stdin.close = MagicMock()
+    process.stdin = stdin
+
+    # Healthcheck path still calls communicate(); keep the legacy shape.
     if side_effect is not None:
         process.communicate = AsyncMock(side_effect=side_effect)
     else:
-        process.communicate = AsyncMock(return_value=(stdout, stderr))
+        full_stdout = b"".join(chunks)
+        process.communicate = AsyncMock(return_value=(full_stdout, stderr))
+
     process.wait = AsyncMock(return_value=returncode)
     process.kill = MagicMock()
+    process.terminate = MagicMock()
     return process

@@ -25,6 +25,7 @@ from dap_engine.persistence.models import (
 from dap_runtimes import RuntimeRegistry
 from dap_types import (
     HealthStatus,
+    OutputCallback,
     PipelineState,
     RuntimeKind,
     RuntimeResult,
@@ -52,7 +53,11 @@ class StubAdapter:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True, version="stub")
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.calls.append(task)
         if not self._outputs:
             return RuntimeResult(success=True, output="ok", duration_ms=1)

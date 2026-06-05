@@ -118,7 +118,13 @@ def test_settings_isolates_per_adapter_healthcheck_failures(
 ) -> None:
     """A buggy adapter shouldn't take down the rest of the settings table."""
     from dap_runtimes.adapters.base import BaseAdapter
-    from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+    from dap_types import (
+        HealthStatus,
+        OutputCallback,
+        RuntimeKind,
+        RuntimeResult,
+        RuntimeTask,
+    )
 
     class BrokenAdapter(BaseAdapter):
         id = "broken-test"
@@ -128,7 +134,11 @@ def test_settings_isolates_per_adapter_healthcheck_failures(
         async def healthcheck(self) -> HealthStatus:
             raise RuntimeError("simulated adapter failure")
 
-        async def execute(self, _task: RuntimeTask) -> RuntimeResult:
+        async def execute(
+            self,
+            _task: RuntimeTask,
+            on_output: OutputCallback | None = None,
+        ) -> RuntimeResult:
             raise NotImplementedError
 
     # Register the broken adapter alongside the defaults via the running

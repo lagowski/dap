@@ -30,7 +30,7 @@ import os
 import time
 from typing import Final
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._providers import (
     PROVIDER_REGISTRY,
@@ -85,7 +85,15 @@ class ApiCallAdapter(BaseAdapter):
             missing=missing if missing else None,
         )
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
+        # on_output ignored: api-call doesn't spawn a subprocess, so there is no
+        # incremental stdout to stream. Streaming is wired only for subprocess
+        # adapters in Phase 3b-2a (#662).
+        del on_output
         config = task.runtime_config
         provider_id = config.get("provider", DEFAULT_PROVIDER)
 
