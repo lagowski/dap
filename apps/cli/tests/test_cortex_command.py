@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -440,8 +441,9 @@ class TestFormatProgress:
     def test_non_dict_node_statuses_does_not_crash(self) -> None:
         # A malformed engine response (e.g. a list instead of a dict) must not
         # crash the poll loop — node_statuses is coerced to empty (#662 review).
-        for bad in ([], None, "oops", 0):
-            run = {
+        bad_values: list[Any] = [[], None, "oops", 0]
+        for bad in bad_values:
+            run: dict[str, Any] = {
                 "final_status": "running",
                 "current_node": "coder",
                 "node_statuses": bad,
