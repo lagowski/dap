@@ -21,9 +21,29 @@ import { RunStatusBadge } from "@/components/status-badge";
 import { NodeTimeline } from "@/components/node-timeline";
 import { PipelineGraph } from "@/components/pipeline-graph";
 import { NodeDetailPanel } from "@/components/node-detail-panel";
+import { LiveOutputPanel } from "./_components/live-output-panel";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
-import type { Agent, Pipeline, Run } from "@/lib/api/types";
+import type { Agent, FinalStatus, Pipeline, Run } from "@/lib/api/types";
+
+/**
+ * Gate for the live-output panel (#662 Phase 3c).
+ *
+ * The panel — and the SSE subscription it owns — is only meaningful for a
+ * run that is still producing output. We mount it for ``running`` /
+ * ``paused`` runs, and pass ``enabled`` so the EventSource opens only when
+ * the user also has Live updates on. Terminal runs (success/failed/aborted)
+ * never mount the panel; toggling Live off keeps it mounted but closes the
+ * stream. Exported as a pure function so the gating is unit-testable
+ * without rendering the React-19 ``use(params)`` page (see page.test.tsx).
+ */
+export function liveOutputState(
+  finalStatus: FinalStatus,
+  live: boolean,
+): { show: boolean; enabled: boolean } {
+  const nonTerminal = finalStatus === "running" || finalStatus === "paused";
+  return { show: nonTerminal, enabled: nonTerminal && live };
+}
 
 export default function RunDetailPage({
   params,
@@ -74,6 +94,8 @@ export default function RunDetailPage({
       ? new Date(run.ended_at).getTime() - new Date(run.started_at).getTime()
       : Date.now() - new Date(run.started_at).getTime();
 
+  const liveOutput = liveOutputState(run.final_status, live);
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center gap-2">
@@ -112,6 +134,17 @@ export default function RunDetailPage({
 
       {run.final_status === "running" && (
         <RunningBanner currentNode={run.current_node} nodeStatuses={run.node_statuses} />
+      )}
+
+      {/*
+        Live-output panel (#662 Phase 3c). Streams the running node's stdout
+        via SSE (EventSource → BFF proxy). Gated by the same Live toggle as
+        polling: only mounted for non-terminal runs, and the EventSource is
+        opened only when Live is on (``enabled``) — so it isn't created for
+        finished runs or when the user paused live updates.
+      */}
+      {liveOutput.show && (
+        <LiveOutputPanel runId={run.id} enabled={liveOutput.enabled} />
       )}
 
       {Object.keys(run.node_statuses).length > 0 && (
