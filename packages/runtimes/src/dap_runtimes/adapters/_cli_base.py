@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Final
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters.base import BaseAdapter
@@ -53,6 +53,11 @@ from dap_runtimes.adapters.base import BaseAdapter
 logger = logging.getLogger("dap.runtimes.cli_base")
 
 MS_PER_SECOND: Final = 1000
+
+# Chunked stdout read size (#662). A plain ``read(n)`` is deliberate: the
+# StreamReader ``readline`` path raises / deadlocks once a single line exceeds
+# its 64 KiB limit, which CLI stream-json output routinely does.
+_STDOUT_READ_SIZE: Final = 4096
 
 
 @dataclass(frozen=True)
@@ -276,7 +281,11 @@ class _BaseCliAdapter(BaseAdapter):
     # Shared execute() pipeline
     # ------------------------------------------------------------------
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    async def execute(  # noqa: PLR0911
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch obscures
         # the mapping (same rationale as ApiCallAdapter / BashAdapter).
@@ -331,6 +340,7 @@ class _BaseCliAdapter(BaseAdapter):
             env=env,
             timeout_seconds=timeout_seconds,
             binary=binary,
+            on_output=on_output,
         )
 
         # Use ``.get`` for ``model_id`` in failure paths so a misbehaving
@@ -408,8 +418,27 @@ class _BaseCliAdapter(BaseAdapter):
         env: dict[str, str],
         timeout_seconds: float,
         binary: str,
+        on_output: OutputCallback | None = None,
     ) -> SubprocessOutcome:
-        """Spawn ``argv``, pipe ``stdin``, run with timeout. Always returns an outcome."""
+        """Spawn ``argv``, pipe ``stdin``, run with timeout. Always returns an outcome.
+
+        Replaces ``process.communicate(input=stdin)`` with a manual drain so
+        stdout can be streamed incrementally to ``on_output`` (#662). Three
+        coroutines run concurrently under one ``wait_for`` budget so we keep
+        the previous timeout semantics while avoiding a pipe deadlock:
+
+        - ``_read_stdout`` chunk-reads stdout (``read(4096)`` — *not*
+          ``readline``, which deadlocks on lines past the StreamReader 64 KiB
+          limit), accumulating the full buffer AND forwarding each chunk to
+          ``on_output`` when set;
+        - ``_read_stderr`` drains stderr concurrently — a full stderr pipe
+          would deadlock a stdout-only reader;
+        - ``_feed_stdin`` writes + closes stdin concurrently.
+
+        ``on_output`` never affects the returned full stdout/stderr, and a
+        raising sink is logged and swallowed so a flaky output consumer can't
+        fail the node.
+        """
         new_session = hasattr(os, "setsid")
         start = time.monotonic()
 
@@ -440,12 +469,45 @@ class _BaseCliAdapter(BaseAdapter):
                 start_error=f"Failed to start subprocess: {exc}",
             )
 
+        async def _feed_stdin() -> None:
+            if process.stdin is None:
+                return
+            # ``communicate`` swallows broken-pipe / reset errors when the
+            # child exits before consuming all of stdin; mirror that so a
+            # fast-exiting CLI doesn't turn into a spurious failure.
+            try:
+                process.stdin.write(stdin)
+                await process.stdin.drain()
+                process.stdin.close()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+
+        async def _read_stdout() -> bytes:
+            buf = bytearray()
+            assert process.stdout is not None
+            while True:
+                chunk = await process.stdout.read(_STDOUT_READ_SIZE)
+                if not chunk:
+                    break
+                buf += chunk
+                if on_output is not None:
+                    self._emit_output(on_output, chunk)
+            return bytes(buf)
+
+        async def _read_stderr() -> bytes:
+            assert process.stderr is not None
+            return await process.stderr.read()
+
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(input=stdin),
+            stdout_bytes, stderr_bytes, _ = await asyncio.wait_for(
+                asyncio.gather(_read_stdout(), _read_stderr(), _feed_stdin()),
                 timeout=timeout_seconds,
             )
+            # gather completing means EOF on both pipes; reap to set returncode.
+            await process.wait()
         except TimeoutError:
+            # wait_for cancelled the gather; the subprocess is still alive —
+            # tear down the whole tree exactly as before.
             await _kill_process_tree(process, new_session)
             return SubprocessOutcome(
                 exit_code=-1,
@@ -464,6 +526,18 @@ class _BaseCliAdapter(BaseAdapter):
             stderr=stderr_bytes.decode("utf-8", errors="replace"),
             duration_ms=_elapsed_ms(start),
         )
+
+    @staticmethod
+    def _emit_output(on_output: OutputCallback, chunk: bytes) -> None:
+        """Forward one decoded stdout chunk to ``on_output``, swallowing errors.
+
+        A misbehaving sink (e.g. a DB write that transiently fails) must never
+        crash the subprocess read loop or fail the node — log and continue.
+        """
+        try:
+            on_output(chunk.decode("utf-8", errors="replace"))
+        except Exception:
+            logger.warning("on_output callback raised; dropping stdout chunk", exc_info=True)
 
     def _failed(
         self,

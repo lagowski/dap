@@ -16,7 +16,13 @@ from typing import Any
 import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -62,7 +68,11 @@ class _StubAdapter:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         state: dict[str, Any] = task.runtime_config.get("__pipeline_state", {})
         self.received_states.append(state)
         issue_num = _issue_number_from_task(task)

@@ -20,7 +20,13 @@ from pathlib import Path
 import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -49,7 +55,11 @@ class Phase3PythonFuncStub:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.calls.append(task.execution_id)
         return RuntimeResult(
             success=True,
@@ -79,7 +89,11 @@ class Phase3ReviewerStub:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.call_count += 1
         approved = self.decision == "APPROVE"
         return RuntimeResult(
@@ -109,7 +123,11 @@ class Phase3PrMergerStub:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         pipeline_state = task.runtime_config.get("__pipeline_state", {})
         extensions = pipeline_state.get("extensions", {})
         review_approved = extensions.get("review_approved", False)

@@ -48,7 +48,7 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._subprocess_env import compute_env_overlay
 from dap_runtimes.adapters.base import BaseAdapter
@@ -128,7 +128,15 @@ class PythonFuncAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True, version=platform.python_version())
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911,PLR0912,PLR0915
+    async def execute(  # noqa: PLR0911,PLR0912,PLR0915
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
+        # on_output ignored: python-func runs an in-process callable, not a
+        # subprocess. Streaming is wired only for subprocess adapters in
+        # Phase 3b-2a (#662).
+        del on_output
         config = task.runtime_config
 
         callable_path = config.get("callable_path")

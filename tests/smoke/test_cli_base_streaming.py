@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from dap_runtimes.adapters._cli_base import _BaseCliAdapter
 
 from .conftest import build_subprocess_mock
@@ -144,8 +143,10 @@ async def test_timeout_still_kills_and_returns_timed_out() -> None:
 
     assert outcome.timed_out is True  # type: ignore[attr-defined]
     assert outcome.stdout == ""  # type: ignore[attr-defined]
-    # The subprocess was killed (single-process path uses .kill()).
-    assert proc.kill.called or proc.terminate.called
+    # The subprocess teardown ran: _kill_process_tree awaits process.wait()
+    # after signalling (on POSIX the SIGKILL goes via os.killpg on the mock
+    # pid, which ProcessLookupError-skips, but the reap still happens).
+    assert proc.wait.called
 
 
 async def test_timeout_with_on_output_still_kills() -> None:

@@ -19,6 +19,7 @@ from dap_types.role_outputs import (
 from dap_types.run import NodeExecutionLog, NodeOutputChunk, NodeStatus, Run
 from dap_types.runtime import (
     HealthStatus,
+    OutputCallback,
     RuntimeAdapter,
     RuntimeKind,
     RuntimeResult,
@@ -42,6 +43,7 @@ __all__ = [
     "NodeExecutionLog",
     "NodeOutputChunk",
     "NodeStatus",
+    "OutputCallback",
     "Pipeline",
     "PipelineDefaults",
     "PipelineEdge",

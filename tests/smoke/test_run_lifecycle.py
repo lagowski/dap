@@ -21,7 +21,13 @@ from dap_engine.persistence.models import (
     UserORM,
 )
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -43,7 +49,11 @@ class SlowStubAdapter:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, _task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        _task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         await asyncio.sleep(self.sleep_seconds)
         return RuntimeResult(
             success=True, output="slow", duration_ms=int(self.sleep_seconds * 1000)

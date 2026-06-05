@@ -43,7 +43,7 @@ import time
 from typing import Any, Final
 
 import httpx
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 from jsonpath_ng.ext import parse as jsonpath_parse
@@ -70,9 +70,16 @@ class HttpAdapter(BaseAdapter):
         """Adapter is always available — per-agent URL + auth are checked at execute time."""
         return HealthStatus(available=True, version=f"httpx {httpx.__version__}")
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    async def execute(  # noqa: PLR0911
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message.
+        # on_output ignored: http doesn't spawn a subprocess. Streaming is wired
+        # only for subprocess adapters in Phase 3b-2a (#662).
+        del on_output
         config = task.runtime_config
 
         validation_error = _validate_config(config)

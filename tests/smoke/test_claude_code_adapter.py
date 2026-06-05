@@ -12,7 +12,7 @@ import json
 import os
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from dap_runtimes import ClaudeCodeAdapter
@@ -239,8 +239,9 @@ async def test_execute_passes_prompt_via_stdin(with_api_key: None) -> None:
     ):
         await adapter.execute(_task())
 
-    call_kwargs = proc.communicate.call_args.kwargs
-    assert call_kwargs["input"].decode("utf-8").startswith("<agent_prompt>")
+    # Prompt is now fed via the streamed stdin write (#662), not communicate().
+    sent = proc.stdin.write.call_args.args[0]
+    assert sent.decode("utf-8").startswith("<agent_prompt>")
 
 
 async def test_execute_with_extra_args(with_api_key: None) -> None:
@@ -462,8 +463,9 @@ async def test_subscription_mode_passes_prompt_via_stdin(with_api_key: None) -> 
     ):
         await adapter.execute(_task(use_subscription=True))
 
-    call_kwargs = proc.communicate.call_args.kwargs
-    assert call_kwargs["input"].decode("utf-8").startswith("<agent_prompt>")
+    # Prompt is now fed via the streamed stdin write (#662), not communicate().
+    sent = proc.stdin.write.call_args.args[0]
+    assert sent.decode("utf-8").startswith("<agent_prompt>")
 
 
 async def test_subscription_must_be_bool(with_api_key: None) -> None:
@@ -618,18 +620,10 @@ async def test_timeout_kills_long_running_command(with_api_key: None) -> None:
 async def test_cancellation_kills_subprocess(with_api_key: None) -> None:
     adapter = ClaudeCodeAdapter()
 
-    # Build a subprocess whose communicate hangs forever — we cancel
-    # the outer task to verify the adapter cleans up.
-    async def hang(*_args: Any, **_kwargs: Any) -> tuple[bytes, bytes]:
-        await asyncio.Event().wait()
-        return (b"", b"")  # unreachable; satisfies the type-checker
-
-    proc = MagicMock()
+    # Build a subprocess whose stdout read hangs forever (#662) — we cancel
+    # the outer task to verify the adapter tears the subprocess down.
+    proc = build_subprocess_mock(hang=True, pid=99999)
     proc.returncode = None
-    proc.pid = 99999
-    proc.communicate = hang
-    proc.wait = AsyncMock(return_value=-9)
-    proc.kill = MagicMock()
 
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),

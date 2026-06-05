@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters.base import BaseAdapter
 
@@ -23,7 +23,15 @@ class AiderAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=False, missing=["aider binary"])
 
-    async def execute(self, _task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        _task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
+        # on_output ignored: aider is an unimplemented stub. When implemented
+        # (F3/F9) it will route through the shared CLI subprocess base, which
+        # already streams stdout via on_output (#662).
+        del on_output
         return RuntimeResult(
             success=False,
             output="",
