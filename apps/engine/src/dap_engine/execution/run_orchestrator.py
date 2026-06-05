@@ -113,23 +113,27 @@ def _resolve_terminal_status(
     where ``failure_reason`` is non-None only on the defensive failure
     paths so the caller knows whether to persist a reason.
 
-    Behaviour (#381):
+    Behaviour (#381, default flipped 2026-06 per #628):
 
     - Explicit terminal values (``success`` / ``failed`` / ``aborted``)
       pass through unchanged. The orchestrator must never overwrite a
       deliberate node-set status.
-    - When ``requires_terminal=False`` (the default for generic
-      pipelines), a non-terminal ``final_status`` is silently coerced
-      to ``success`` — preserves the historical "no node raised" =
-      "successful run" contract for pipelines that don't manage
-      state-level ``final_status``.
-    - When ``requires_terminal=True`` (cortex bundle opts in via
-      ``PipelineDefaults.requires_terminal_final_status``), a residual
-      ``running`` means *no node ever set a terminal status* and is
-      treated as ``failed`` with an operator-readable reason. A
-      residual ``paused`` would also be a bug (a real pause raises
+    - When ``requires_terminal=True`` (now the default per #628, set
+      from ``PipelineDefaults.requires_terminal_final_status``), a
+      residual ``running`` means *no node ever set a terminal status*
+      and is treated as ``failed`` with an operator-readable reason.
+      A residual ``paused`` would also be a bug (a real pause raises
       ``RunnerInterrupt`` long before this code runs) and any other
       value is rejected on the same grounds.
+    - When ``requires_terminal=False`` (opt-out, only applies to
+      pipelines that explicitly set the flag in their imported
+      bundle defaults), a non-terminal ``final_status`` is silently
+      coerced to ``success``. This preserves the historical
+      "no node raised" = "successful run" contract for pipelines that
+      legitimately don't manage state-level ``final_status``. NB:
+      existing pipelines in the DB still have whatever ``defaults``
+      JSON they were imported with — the default change applies only
+      to NEW bundle imports going forward.
     """
     status = final_state.final_status
     if status in _TERMINAL_FINAL_STATUSES:

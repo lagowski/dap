@@ -92,6 +92,11 @@ def _create_pipeline(client: TestClient, agent_id: str) -> str:
                 "max_attempts": 3,
                 "budget_limit_usd": 5.0,
                 "approval_required_nodes": [],
+                # This suite verifies execution_target key round-tripping, not
+                # terminal-status enforcement (#628). Opt out so a residual
+                # ``running`` keeps the legacy "no node raised = success"
+                # semantics these tests rely on.
+                "requires_terminal_final_status": False,
             },
         },
     )

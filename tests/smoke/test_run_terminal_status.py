@@ -122,6 +122,34 @@ def test_resolve_terminal_status_unknown_default_coerces_to_success() -> None:
 
 
 # --------------------------------------------------------------------- #
+# Default contract — flipped 2026-06 (#628)
+# --------------------------------------------------------------------- #
+
+
+def test_pipeline_defaults_requires_terminal_final_status_default_is_true() -> None:
+    """The default value of ``requires_terminal_final_status`` is ``True``
+    as of 2026-06 (#628). Previously ``False``, which silently coerced
+    a residual ``running`` to ``success`` and made the phase-1-only
+    cortex exit indistinguishable from a real successful run on the
+    dashboard.
+
+    A change of this default IS a contract change for any new pipeline
+    bundle import — they must now reach a terminal status (typically
+    by setting ``state.final_status='success'`` in their final node)
+    or be explicitly opted out by setting the flag to ``False`` in
+    their bundle's ``defaults``.
+
+    Existing DB pipelines are unaffected because their ``defaults``
+    JSON was frozen at import time under the old default; the new
+    default only applies to bundles created or re-imported after this
+    change.
+    """
+    from dap_types import PipelineDefaults
+
+    assert PipelineDefaults().requires_terminal_final_status is True
+
+
+# --------------------------------------------------------------------- #
 # Integration-level: failure_reason persists on the Run row
 # --------------------------------------------------------------------- #
 

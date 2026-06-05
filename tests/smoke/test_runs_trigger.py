@@ -102,6 +102,11 @@ def _create_pipeline(
             "max_attempts": 3,
             "budget_limit_usd": 5.0,
             "approval_required_nodes": [],
+            # This suite verifies run trigger / backend-profile resolution, not
+            # terminal-status enforcement (#628). Opt out so a residual
+            # ``running`` keeps the legacy "no node raised = success"
+            # semantics these tests rely on.
+            "requires_terminal_final_status": False,
         },
     }
     if backend_profiles is not None:
