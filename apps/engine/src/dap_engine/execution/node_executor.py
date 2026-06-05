@@ -118,10 +118,15 @@ async def _stream_node_output(ctx: NodeContext, execution_id: str) -> AsyncItera
     flush is a no-op.
     """
     output_buffer: list[str] = []
+    flush_signal = asyncio.Event()
     bind = ctx.session.get_bind()
 
     def _on_output(text: str) -> None:
+        # Called synchronously by the adapter on this event-loop thread (never
+        # from a worker thread), so the unlocked append is safe. Wake the flush
+        # task so the first output bytes are persisted with ~no latency.
         output_buffer.append(text)
+        flush_signal.set()
 
     def _write_chunk(text: str) -> None:
         try:
@@ -142,15 +147,19 @@ async def _stream_node_output(ctx: NodeContext, execution_id: str) -> AsyncItera
     async def _flush() -> None:
         if not output_buffer:
             return
-        # join + clear run synchronously (no await between them) so no fragment
-        # appended by _on_output is lost across the drain.
+        # _on_output only runs on this event-loop thread, so the join+clear is
+        # atomic with respect to appends — no fragment is lost across the drain.
         pending = "".join(output_buffer)
         output_buffer.clear()
         await run_in_threadpool(_write_chunk, pending)
 
     async def _flush_loop() -> None:
+        # Flush as soon as output arrives (near-zero first-byte latency), with a
+        # periodic tick as a fallback that also coalesces a burst of writes.
         while True:
-            await asyncio.sleep(_OUTPUT_FLUSH_INTERVAL_S)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(flush_signal.wait(), timeout=_OUTPUT_FLUSH_INTERVAL_S)
+            flush_signal.clear()
             await _flush()
 
     flush_task = asyncio.create_task(_flush_loop())
