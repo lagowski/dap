@@ -18,7 +18,7 @@ layer.
 
 from __future__ import annotations
 
-from dap_engine.persistence._common import NotFoundError
+from dap_engine.persistence._common import ConflictError, NotFoundError
 from dap_engine.persistence.agents import (
     archive_agent,
     count_pipelines_using_agents,
@@ -65,6 +65,7 @@ from dap_engine.persistence.projects import (
 from dap_engine.persistence.runs import (
     append_output_chunk,
     create_run,
+    delete_run,
     finalize_run,
     get_run,
     get_run_node_log,
@@ -83,6 +84,7 @@ from dap_engine.persistence.runs import (
 )
 
 __all__ = [
+    "ConflictError",
     "NotFoundError",
     "append_batch_result",
     "append_output_chunk",
@@ -96,6 +98,7 @@ __all__ = [
     "create_project",
     "create_run",
     "delete_env_var_by_key",
+    "delete_run",
     "finalize_batch_run",
     "finalize_run",
     "find_env_vars_by_keys",

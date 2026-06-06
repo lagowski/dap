@@ -22,6 +22,7 @@ export { queryKeys } from "./api/query-keys";
 export {
   useAbortRun,
   useApproveGate,
+  useDeleteRun,
   useGateCountdown,
   usePauseRun,
   usePipelineVersions,

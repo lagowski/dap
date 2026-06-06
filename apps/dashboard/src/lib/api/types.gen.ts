@@ -1021,7 +1021,16 @@ export interface paths {
         get: operations["get_run_runs__run_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Run Endpoint
+         * @description Delete a run and every row that references it, children-first (#700).
+         *
+         *     Owner/admin gated (404 for non-owners — anti-enumeration). 409 if the run
+         *     is still in-flight (abort it first). Records a ``run.deleted`` audit event
+         *     in the same transaction as the cascade, so the trail commits atomically
+         *     with the deletion.
+         */
+        delete: operations["delete_run_endpoint_runs__run_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5188,6 +5197,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Run"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_run_endpoint_runs__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

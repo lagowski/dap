@@ -3,11 +3,13 @@
 import { use, useMemo, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Loader2, Pause, Play, RefreshCw, Square, Zap, ZapOff } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, CheckCircle2, Loader2, Pause, Play, RefreshCw, Square, Trash2, Zap, ZapOff } from "lucide-react";
 import {
   useAbortRun,
   useAgentsList,
   useApproveGate,
+  useDeleteRun,
   useGateCountdown,
   usePauseRun,
   useResumeRun,
@@ -115,6 +117,7 @@ export default function RunDetailPage({
             isFetching={isFetching}
           />
           <RunActions run={run} pipeline={pipeline ?? null} />
+          <DeleteRunButton run={run} />
         </div>
       </div>
 
@@ -316,6 +319,55 @@ function RunActions({ run, pipeline }: { run: Run; pipeline: Pipeline | null }) 
       >
         <Square className="mr-1 h-3.5 w-3.5" />
         Abort
+      </Button>
+    </>
+  );
+}
+
+/**
+ * Delete a terminal run and all its children (#700). Only shown for
+ * finished runs — an in-flight run must be aborted first (the engine
+ * also rejects deleting it with 409). Irreversible, so it's behind the
+ * shared destructive-confirm dialog; on success we navigate back to /runs.
+ */
+function DeleteRunButton({ run }: { run: Run }) {
+  const router = useRouter();
+  const del = useDeleteRun();
+  const confirmDestructive = useConfirmDestructive();
+
+  const status = run.final_status;
+  if (status === "running" || status === "paused") {
+    return null;
+  }
+
+  const handleDelete = async () => {
+    const ok = await confirmDestructive({
+      title: "Delete run",
+      description:
+        "Permanently delete this run and all its logs, snapshots, and output? This cannot be undone.",
+      confirmLabel: "Delete",
+    });
+    if (ok) {
+      del.mutate(run.id, { onSuccess: () => router.push("/runs") });
+    }
+  };
+
+  return (
+    <>
+      {del.error ? (
+        <span className="text-xs text-destructive" role="alert">
+          {formatApiError(del.error)}
+        </span>
+      ) : null}
+      <Button
+        variant="outline"
+        size="sm"
+        className="text-destructive hover:text-destructive"
+        disabled={del.isPending}
+        onClick={handleDelete}
+      >
+        <Trash2 className="mr-1 h-3.5 w-3.5" />
+        Delete
       </Button>
     </>
   );

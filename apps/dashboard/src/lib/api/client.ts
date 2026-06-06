@@ -232,6 +232,11 @@ export async function abortRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${encodeURIComponent(id)}/abort`, { method: "POST" });
 }
 
+/** Delete a run and all its children (cascade). Terminal runs only (#700). */
+export async function deleteRun(id: string): Promise<void> {
+  return request<void>(`/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function pauseRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${encodeURIComponent(id)}/pause`, { method: "POST" });
 }

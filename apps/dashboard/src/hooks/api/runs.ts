@@ -117,6 +117,10 @@ export function useResumeRun() {
   return useRunActionMutation(api.resumeRun);
 }
 
+export function useDeleteRun() {
+  return useRunActionMutation(api.deleteRun);
+}
+
 export function useApproveGate() {
   const qc = useQueryClient();
   return useMutation({

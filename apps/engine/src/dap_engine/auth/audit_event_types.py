@@ -95,6 +95,10 @@ AuditEventType = Literal[
     # lives in ``node_execution_logs`` (would otherwise drown the log).
     # ------------------------------------------------------------------
     "run.triggered",
+    # Run deletion (#700) — destructive, irreversible cleanup of a run and
+    # all its children (logs, snapshots, output chunks). ``event_data``
+    # carries ``run_id``.
+    "run.deleted",
     # Security policy denials that block execution before a run or dry-run
     # can invoke a runtime.
     "runtime_policy.denied",
