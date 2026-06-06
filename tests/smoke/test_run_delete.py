@@ -128,7 +128,8 @@ def _seed_run_with_children(
     session.commit()
 
 
-def _child_counts(session: Session, run_id: str) -> dict[str, int]:
+def _child_counts(session: Session, run_id: str) -> dict[str, bool]:
+    """Per child table: does *any* row still reference ``run_id``? (#700)"""
     return {
         "state_snapshots": session.scalar(
             select(StateSnapshotORM).where(StateSnapshotORM.run_id == run_id).limit(1)
