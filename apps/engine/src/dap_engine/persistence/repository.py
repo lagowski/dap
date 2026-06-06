@@ -59,6 +59,7 @@ from dap_engine.persistence.projects import (
     create_project,
     get_project,
     list_projects,
+    projects_using_pipelines,
     update_project,
 )
 from dap_engine.persistence.runs import (
@@ -124,6 +125,7 @@ __all__ = [
     "mark_stale_running_runs_as_failed",
     "pause_run",
     "pipelines_using_agent",
+    "projects_using_pipelines",
     "try_claim_resume",
     "try_claim_revive",
     "update_agent",
