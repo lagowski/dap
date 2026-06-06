@@ -8,6 +8,7 @@ explicitly out of its lane.
 """
 
 from code_review_council.agents.base import BaseAgent
+from code_review_council.agents.code_style import CodeStyleAgent
 from code_review_council.agents.correctness import CorrectnessAgent
 from code_review_council.agents.database import DatabaseAgent
 from code_review_council.agents.frontend import FrontendAgent
@@ -16,6 +17,7 @@ from code_review_council.agents.security import SecurityAgent
 
 __all__ = [
     "BaseAgent",
+    "CodeStyleAgent",
     "CorrectnessAgent",
     "DatabaseAgent",
     "FrontendAgent",

@@ -85,6 +85,26 @@ Out of scope for MVP:
   improvement is small; do this once we have 5+ agents
 - Per-agent prompt customization from disk
 
+## Opt-in: Code Style specialist (spike, #633)
+
+An experimental line-by-line **Code Style** specialist (naming clarity,
+dead/duplicated code, readability, lint smells the auto-formatter won't
+catch — all cited as file:line, held to LOW/NIT severity) is registered
+in the package but **disabled by default**. The default roster is the
+unchanged 5 specialists (Security / Correctness / Database / Performance
+/ Frontend).
+
+Enable it for evaluation by setting an env var at roster-build time:
+
+```bash
+COUNCIL_ENABLE_CODE_STYLE=1   # truthy: 1 / true / yes / on
+```
+
+When unset (or falsy), `default_agents()` returns the original roster
+byte-for-byte — merging the spike does not add a 6th reviewer to any PR.
+This is a spike pending live evaluation; do not enable it in CI until a
+maintainer has confirmed the specialist produces useful citations.
+
 ## Integration
 
 DAP's ``.github/workflows/gemini-review.yml`` uses this package via
