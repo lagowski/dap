@@ -9,6 +9,11 @@ version = "0.3.0"
 description = "Shared Pydantic schemas for DAP (Agent, Pipeline, Run, State, Runtime)"
 readme = "README.md"
 requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "Rafał Łagowski", email = "rafal@lagowski.es" },
+    { name = "Daniel Łagowski", email = "daniel@lagowski.es" },
+]
 dependencies = [
     "pydantic>=2.9.2",
 ]

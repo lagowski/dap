@@ -4,7 +4,11 @@ version = "0.3.0"
 description = "Deterministic Agent Pipeline — root workspace (meta-package, not installed)"
 readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "TBD" }
+license = { text = "MIT" }
+authors = [
+    { name = "Rafał Łagowski", email = "rafal@lagowski.es" },
+    { name = "Daniel Łagowski", email = "daniel@lagowski.es" },
+]
 
 [tool.uv.workspace]
 members = [

@@ -4,6 +4,11 @@ version = "0.3.0"
 description = "DAP engine — FastAPI + LangGraph + SQLAlchemy + SQLite / PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "Rafał Łagowski", email = "rafal@lagowski.es" },
+    { name = "Daniel Łagowski", email = "daniel@lagowski.es" },
+]
 dependencies = [
     "dap-schemas>=0.3,<0.4",
     "dap-runtimes[all]>=0.3,<0.4",
