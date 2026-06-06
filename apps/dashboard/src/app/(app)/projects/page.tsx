@@ -5,6 +5,7 @@ import { Archive, Pencil, Plus } from "lucide-react";
 import { useArchiveProject, useProjectsList } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
@@ -110,22 +111,36 @@ export default function ProjectsPage() {
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                       {project.id.slice(0, ID_PREFIX)}…
                     </td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      <Button asChild variant="outline" size="sm">
-                        <Link href={`/projects/${project.id}/edit`}>
-                          <Pencil className="h-3.5 w-3.5 mr-1" />
-                          Edit
-                        </Link>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={archive.isPending}
-                        onClick={() => handleArchive(project.id, project.name)}
-                      >
-                        <Archive className="h-3.5 w-3.5 mr-1" />
-                        Archive
-                      </Button>
+                    <td className="px-4 py-3 text-right space-x-1 whitespace-nowrap">
+                      <Tooltip label="Edit project">
+                        <Button
+                          asChild
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                        >
+                          <Link
+                            href={`/projects/${project.id}/edit`}
+                            aria-label="Edit project"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Link>
+                        </Button>
+                      </Tooltip>
+                      <Tooltip label="Archive project">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="Archive project"
+                          disabled={archive.isPending}
+                          onClick={() =>
+                            handleArchive(project.id, project.name)
+                          }
+                        >
+                          <Archive className="h-3.5 w-3.5" />
+                        </Button>
+                      </Tooltip>
                     </td>
                   </tr>
                 );

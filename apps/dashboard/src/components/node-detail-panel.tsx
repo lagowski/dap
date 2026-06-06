@@ -60,27 +60,47 @@ export function NodeDetailPanel({ runId, nodeId, onOpenChange }: NodeDetailPanel
               </Section>
             )}
 
-            <Tabs defaultValue="output">
+            {/* Structured (parsed output_json) and raw stdout are separate
+                tabs — for many nodes stdout *is* the JSON, so showing both
+                stacked in one "Output" tab looked like a duplicate. Default
+                to the readable structured view when it exists. */}
+            <Tabs
+              defaultValue={data.output_json != null ? "structured" : "stdout"}
+            >
               <TabsList className="w-full">
-                <TabsTrigger value="output" className="flex-1">Output</TabsTrigger>
-                <TabsTrigger value="prompt" className="flex-1">Prompt</TabsTrigger>
-                <TabsTrigger value="state-diff" className="flex-1">State diff</TabsTrigger>
+                {data.output_json != null && (
+                  <TabsTrigger value="structured" className="flex-1">
+                    Structured
+                  </TabsTrigger>
+                )}
+                <TabsTrigger value="stdout" className="flex-1">
+                  Std output
+                </TabsTrigger>
+                <TabsTrigger value="prompt" className="flex-1">
+                  Prompt
+                </TabsTrigger>
+                <TabsTrigger value="state-diff" className="flex-1">
+                  State diff
+                </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="output">
+              {data.output_json != null && (
+                <TabsContent value="structured">
+                  <pre className="text-xs bg-muted p-3 rounded overflow-x-auto">
+                    {JSON.stringify(data.output_json, null, 2)}
+                  </pre>
+                </TabsContent>
+              )}
+
+              <TabsContent value="stdout">
                 {data.stdout ? (
                   <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
                     {data.stdout}
                   </pre>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No stdout output.</p>
-                )}
-                {data.output_json && (
-                  <Section title="Structured output">
-                    <pre className="text-xs bg-muted p-3 rounded overflow-x-auto">
-                      {JSON.stringify(data.output_json, null, 2)}
-                    </pre>
-                  </Section>
+                  <p className="text-xs text-muted-foreground">
+                    No stdout output.
+                  </p>
                 )}
               </TabsContent>
 

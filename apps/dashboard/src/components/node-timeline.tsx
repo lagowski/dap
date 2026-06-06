@@ -25,10 +25,14 @@ export function NodeTimeline({
   nodeStatuses,
   currentNode,
   runId,
+  onSelectNode,
+  selectedNode,
 }: {
   nodeStatuses: Record<string, NodeStatus>;
   currentNode: string | null;
   runId: string;
+  onSelectNode?: (nodeId: string) => void;
+  selectedNode?: string | null;
 }) {
   const { data: nodeLogs } = useRunNodeLogs(runId);
   const entries = Object.entries(nodeStatuses);
@@ -93,7 +97,14 @@ export function NodeTimeline({
                 />
               )}
             </div>
-            <div className="flex items-center gap-3 pb-3 pt-1 min-w-0">
+            <button
+              type="button"
+              onClick={() => onSelectNode?.(nodeId)}
+              aria-label={`Inspect node ${nodeId}, status ${status}`}
+              className={`flex items-center gap-3 pb-3 pt-1 min-w-0 text-left rounded px-2 -mx-2 transition-colors ${
+                onSelectNode ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"
+              } ${nodeId === selectedNode ? "bg-muted" : ""}`}
+            >
               <span
                 className={`font-mono text-sm ${
                   nodeId === currentNode ? "font-semibold text-foreground" : "text-muted-foreground"
@@ -106,7 +117,7 @@ export function NodeTimeline({
                   {formatDuration(elapsed)}
                 </span>
               )}
-            </div>
+            </button>
           </li>
         );
       })}

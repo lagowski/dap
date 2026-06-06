@@ -14,6 +14,7 @@ import {
 import { useAgentsList, useArchiveAgent, useImportAgent } from "@/hooks/api";
 import { ApiError, formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
@@ -315,29 +316,42 @@ export default function AgentsPage() {
                               <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
                                 {agent.id.slice(0, ID_PREFIX)}…
                               </td>
-                              <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
-                                <Button asChild variant="outline" size="sm">
-                                  <Link href={`/agents/${agent.id}/edit`}>
-                                    <Pencil className="h-3.5 w-3.5 mr-1" />
-                                    Edit
-                                  </Link>
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={archive.isPending || blockArchive}
-                                  title={
+                              <td className="px-4 py-2 text-right space-x-1 whitespace-nowrap">
+                                <Tooltip label="Edit agent">
+                                  <Button
+                                    asChild
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                  >
+                                    <Link
+                                      href={`/agents/${agent.id}/edit`}
+                                      aria-label="Edit agent"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Link>
+                                  </Button>
+                                </Tooltip>
+                                <Tooltip
+                                  label={
                                     blockArchive
-                                      ? `Used by ${usage} pipeline${usage === 1 ? "" : "s"} — archive or detach those first`
-                                      : undefined
-                                  }
-                                  onClick={() =>
-                                    handleArchive(agent.id, agent.name)
+                                      ? `Used by ${usage} pipeline${usage === 1 ? "" : "s"} — detach first`
+                                      : "Archive agent"
                                   }
                                 >
-                                  <Archive className="h-3.5 w-3.5 mr-1" />
-                                  Archive
-                                </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    aria-label="Archive agent"
+                                    disabled={archive.isPending || blockArchive}
+                                    onClick={() =>
+                                      handleArchive(agent.id, agent.name)
+                                    }
+                                  >
+                                    <Archive className="h-3.5 w-3.5" />
+                                  </Button>
+                                </Tooltip>
                               </td>
                             </tr>
                           );
