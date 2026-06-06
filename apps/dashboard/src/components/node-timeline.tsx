@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, Circle, Loader2, XCircle, MinusCircle } from "lucide-react";
-import { useRunNodeLogs } from "@/hooks/api";
+import { useAgentsList, useRunNodeLogs } from "@/hooks/api";
 import { formatDuration } from "@/lib/utils";
 import type { NodeStatus } from "@/lib/api/types";
 
@@ -35,9 +35,21 @@ export function NodeTimeline({
   selectedNode?: string | null;
 }) {
   const { data: nodeLogs } = useRunNodeLogs(runId);
+  // Each node runs an agent (#707). The execution log already carries
+  // ``agent_id`` + ``runtime_id``; resolve the human-readable agent name from
+  // the (cached, shared) agents list rather than fetching per row. The name
+  // reflects the agent's *current* name — if an agent was renamed after the
+  // run, the list shows the new name; that's an accepted trade-off for not
+  // persisting agent_name on every log row.
+  const { data: agentsList } = useAgentsList();
   const entries = Object.entries(nodeStatuses);
 
   if (entries.length === 0) return null;
+
+  const agentNameById = new Map<string, string>();
+  for (const agent of agentsList?.items ?? []) {
+    agentNameById.set(agent.id, agent.name);
+  }
 
   // Build a per-node timing map from execution logs.
   // Execution logs have accurate started_at / ended_at / duration_ms written
@@ -54,7 +66,13 @@ export function NodeTimeline({
   //   that node rather than an inflated one.
   const logByNode = new Map<
     string,
-    { started_at: string; ended_at: string | null; duration_ms: number }
+    {
+      started_at: string;
+      ended_at: string | null;
+      duration_ms: number;
+      agent_id: string;
+      runtime_id: string;
+    }
   >();
   if (nodeLogs) {
     for (const log of nodeLogs) {
@@ -62,9 +80,19 @@ export function NodeTimeline({
         started_at: log.started_at,
         ended_at: log.ended_at ?? null,
         duration_ms: log.duration_ms,
+        agent_id: log.agent_id,
+        runtime_id: log.runtime_id,
       });
     }
   }
+
+  const getAgentLabel = (nodeId: string): { name: string; runtime: string } | null => {
+    const log = logByNode.get(nodeId);
+    if (!log || !log.agent_id) return null;
+    // Name from the agents list, else a short prefix of the agent id.
+    const name = agentNameById.get(log.agent_id) ?? log.agent_id.slice(0, 8);
+    return { name, runtime: log.runtime_id };
+  };
 
   const getElapsed = (nodeId: string, status: NodeStatus): number | null => {
     const log = logByNode.get(nodeId);
@@ -87,6 +115,7 @@ export function NodeTimeline({
     <ol className="space-y-0" role="list" aria-label="Node timeline">
       {entries.map(([nodeId, status], idx) => {
         const elapsed = getElapsed(nodeId, status);
+        const agent = getAgentLabel(nodeId);
         return (
           <li key={nodeId} className="flex items-stretch gap-3">
             <div className="flex flex-col items-center">
@@ -112,8 +141,16 @@ export function NodeTimeline({
               >
                 {nodeId}
               </span>
+              {agent && (
+                <span className="flex items-center gap-1.5 min-w-0 text-xs text-muted-foreground">
+                  <span className="truncate">{agent.name}</span>
+                  <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] shrink-0">
+                    {agent.runtime}
+                  </span>
+                </span>
+              )}
               {elapsed != null && (
-                <span className="text-xs text-muted-foreground tabular-nums" suppressHydrationWarning>
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0" suppressHydrationWarning>
                   {formatDuration(elapsed)}
                 </span>
               )}
