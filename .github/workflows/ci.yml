@@ -130,8 +130,20 @@ jobs:
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
         # Fast required gate: all non-integration Python tests plus
         # smoke files tagged ``unit`` by ``tests/smoke/conftest.py``.
-        # Heavier smoke tests run in the sharded job below.
-        run: uv run pytest -q -m "not integration" --ignore=tests/standalone
+        # Heavier smoke tests run in the sharded job below. The --cov flags
+        # only add coverage reporting; they do not change which tests run.
+        run: uv run pytest -q -m "not integration" --ignore=tests/standalone --cov=apps --cov=packages --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        # Informational only — never fail the required gate on a missing token
+        # or a Codecov outage (fail_ci_if_error: false).
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          flags: python
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   python-smoke:
     name: Python smoke integration (${{ matrix.shard_name }})
@@ -297,7 +309,19 @@ jobs:
 
       - name: Test
         if: needs.classify.result != 'success' || needs.classify.outputs.run_dashboard == 'true'
-        run: pnpm test
+        # --coverage only adds reporting; the same vitest suite runs.
+        run: pnpm test:coverage
+
+      - name: Upload coverage to Codecov
+        # Informational only — never fail the required gate on a missing token
+        # or a Codecov outage (fail_ci_if_error: false).
+        if: needs.classify.result != 'success' || needs.classify.outputs.run_dashboard == 'true'
+        uses: codecov/codecov-action@v5
+        with:
+          files: apps/dashboard/coverage/lcov.info
+          flags: dashboard
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: Build
         if: needs.classify.result != 'success' || needs.classify.outputs.run_dashboard == 'true'

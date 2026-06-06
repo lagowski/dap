@@ -17,6 +17,15 @@ export default defineConfig({
     // Loads @testing-library/jest-dom matchers + a global afterEach
     // that calls cleanup() so DOM state doesn't leak between tests.
     setupFiles: ["./vitest.setup.ts"],
+    coverage: {
+      // v8 provider ships via @vitest/coverage-v8 (already a devDependency).
+      provider: "v8",
+      // lcov for Codecov ingest; text for a quick CLI summary.
+      reporter: ["text", "lcov"],
+      reportsDirectory: "./coverage",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/**/*.d.ts"],
+    },
   },
   resolve: {
     alias: {

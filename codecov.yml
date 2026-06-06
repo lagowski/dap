@@ -1,0 +1,46 @@
+# Codecov configuration for lagowski/dap.
+# Coverage is INFORMATIONAL only — it never blocks PRs or the required CI gate.
+# Uploads require the CODECOV_TOKEN repo secret (see README / PR notes).
+
+coverage:
+  status:
+    project:
+      default:
+        # Report status but never fail the PR on a coverage delta.
+        informational: true
+        target: auto
+        threshold: 100%
+    patch:
+      default:
+        informational: true
+
+# Per-language flags. Each CI job uploads with its own flag so Codecov can
+# track Python and dashboard coverage independently.
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        informational: true
+      - type: patch
+        informational: true
+
+flags:
+  python:
+    paths:
+      - apps/
+      - packages/
+    carryforward: true
+  dashboard:
+    paths:
+      - apps/dashboard/
+    carryforward: true
+
+comment:
+  layout: "header, diff, flags, components"
+  behavior: default
+  require_changes: false
+
+# Don't fail the upload pipeline while the project is still onboarding Codecov.
+codecov:
+  require_ci_to_pass: false

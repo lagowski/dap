@@ -5,6 +5,8 @@
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://img.shields.io/badge/mypy-checked-blue)](https://mypy-lang.org/)
+[![codecov](https://codecov.io/gh/lagowski/dap/branch/develop/graph/badge.svg)](https://codecov.io/gh/lagowski/dap)
+[![CodeQL](https://github.com/lagowski/dap/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/lagowski/dap/actions/workflows/codeql.yml)
 
 DAP is a self-hostable, multi-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM / OpenRouter SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, an in-process Python function, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control, live per-node progress, and human approval gates. Anti-emergent by design: the state machine, not the model, decides what runs next.
 
