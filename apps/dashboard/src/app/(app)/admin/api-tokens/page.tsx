@@ -68,7 +68,7 @@ function tokenStatus(token: AdminApiToken): "revoked" | "expired" | "active" {
  * dashboard session and shows the raw ``dap_<...>`` value ONCE (the engine
  * only stores its hash). Closing or navigating away loses it for good.
  */
-function CreateTokenDialog() {
+function CreateTokenDialog({ onCreated }: { onCreated?: () => void }) {
   const create = useCreateApiToken();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -81,20 +81,29 @@ function CreateTokenDialog() {
     setExpiresDays("");
     setCreated(null);
     setCopied(false);
-    create.reset();
+    // Only clear mutation state if it actually ran — avoids needless churn
+    // on a fresh open.
+    if (create.isError || create.isSuccess) create.reset();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const raw = expiresDays.trim();
-    const days = raw === "" ? null : Number(raw);
+    const parsed = raw === "" ? null : Number(raw);
+    // Treat empty / 0 / negative / non-finite as "never expires". The HTML
+    // ``min`` only guards the stepper, not typed input, and 0 would mint a
+    // token that expires immediately.
+    const expires =
+      parsed !== null && Number.isFinite(parsed) && parsed >= 1
+        ? Math.floor(parsed)
+        : null;
     try {
       const result = await create.mutateAsync({
         name: name.trim(),
-        expires_in_days:
-          days !== null && Number.isFinite(days) ? days : null,
+        expires_in_days: expires,
       });
       setCreated(result);
+      onCreated?.();
     } catch {
       // error surfaced via create.error below
     }
@@ -111,7 +120,9 @@ function CreateTokenDialog() {
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) reset();
+        // Reset on every toggle so reopening never shows a stale token,
+        // half-filled form, or previous error.
+        reset();
       }}
     >
       <DialogTrigger asChild>
@@ -267,7 +278,7 @@ export default function AdminApiTokensPage() {
             />
             Show revoked
           </label>
-          <CreateTokenDialog />
+          <CreateTokenDialog onCreated={() => setOffset(0)} />
         </div>
       </div>
 
