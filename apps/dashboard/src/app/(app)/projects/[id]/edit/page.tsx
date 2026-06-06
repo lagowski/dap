@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -21,7 +22,7 @@ export default function EditProjectPage({
   const update = useUpdateProject();
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useMemo } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { Play } from "lucide-react";
 import { useApproveGate, usePipelinesList, useProject, useProjectsList, useRunsList } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
@@ -18,7 +19,7 @@ import { usePausedRunToasts } from "./_components/use-paused-run-toasts";
 
 export default function RunsPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<LoadingState className="p-6" />}>
       <RunsPageContent />
     </Suspense>
   );
@@ -92,7 +93,7 @@ function RunsPageContent() {
         updateQuery={filters.updateQuery}
       />
 
-      {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {isPending && <LoadingState />}
       {isError && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">

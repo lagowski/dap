@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, use } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy, Download } from "lucide-react";
@@ -43,7 +44,7 @@ export default function EditAgentPage({
   const testPanelId = useId();
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (

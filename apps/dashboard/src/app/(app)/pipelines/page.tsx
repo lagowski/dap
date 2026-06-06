@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useRef, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -240,7 +241,7 @@ export default function PipelinesPage() {
         </p>
       ) : null}
 
-      {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {isPending && <LoadingState />}
       {isError && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">

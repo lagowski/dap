@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { PipelineDesigner } from "@/components/designer/designer";
@@ -31,7 +32,7 @@ interface BackendProfileDialogState {
 export default function NewPipelinePage() {
   return (
     <Suspense
-      fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}
+      fallback={<LoadingState className="p-6" />}
     >
       <NewPipelinePageContent />
     </Suspense>

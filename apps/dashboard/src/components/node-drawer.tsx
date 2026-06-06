@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LoadingState } from "@/components/ui/spinner";
 import { useRunNodeLog } from "@/hooks/api";
 import { NodeStatusBadge } from "@/components/status-badge";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
@@ -26,7 +27,7 @@ export function NodeDrawer({ runId, nodeId, onOpenChange }: NodeDrawerProps) {
         </DialogHeader>
 
         {isPending && nodeId && (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <LoadingState />
         )}
 
         {isError && (

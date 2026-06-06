@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, GitBranch, Loader2, Pencil, RefreshCw } from "lucide-react";
@@ -28,7 +29,7 @@ export default function ProjectDetailPage({
   const confirmDestructive = useConfirmDestructive();
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (
@@ -161,7 +162,7 @@ function RecentRuns({ projectId }: { projectId: string }) {
       <CardContent className="pt-6 space-y-2">
         <h2 className="text-sm font-medium">Recent runs</h2>
         {isPending ? (
-          <p className="text-xs text-muted-foreground">Loading…</p>
+          <LoadingState className="text-xs" />
         ) : isError ? (
           <p className="text-xs text-destructive">{formatApiError(error)}</p>
         ) : runs.length === 0 ? (

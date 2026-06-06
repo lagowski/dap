@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useId, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy } from "lucide-react";
@@ -20,7 +21,7 @@ import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function NewAgentPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}>
+    <Suspense fallback={<LoadingState className="p-6" />}>
       <NewAgentPageContent />
     </Suspense>
   );
