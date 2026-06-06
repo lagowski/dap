@@ -276,11 +276,12 @@ def projects_using_pipelines(
     Ownership-agnostic by design (impact view) — the caller gates on the
     agent / pipeline first, same contract as ``pipelines_using_agent``.
 
-    The candidate rows are pre-filtered in SQL (a ``LIKE`` over the
-    serialized ``pipelines`` JSON for each wanted id) so we don't load the
-    whole projects table into memory; the exact ``pid in wanted`` check then
-    runs only over those candidates. Pipeline ids are UUIDs, so a substring
-    LIKE can't collide with an unrelated binding. ``limit`` caps the result.
+    The ``LIKE`` over the serialized ``pipelines`` JSON is a *coarse* SQL
+    candidate pre-filter — it keeps us from loading the whole projects table
+    into memory. It may over-match (a substring of one id appearing inside an
+    unrelated value); correctness is guaranteed by the exact ``pid in wanted``
+    check below, which drops any false positive before it reaches the caller.
+    ``limit`` caps the candidate set.
     """
     wanted = set(pipeline_ids)
     if not wanted:
