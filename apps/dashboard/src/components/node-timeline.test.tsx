@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { NodeStatus } from "@/lib/api/types";
 
@@ -7,8 +7,11 @@ import type { NodeStatus } from "@/lib/api/types";
 // Hoisted so vi.mock factory can close over it.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockUseRunNodeLogs = vi.fn(() => ({ data: null as any }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockUseAgentsList = vi.fn(() => ({ data: null as any }));
 vi.mock("@/hooks/api", () => ({
   useRunNodeLogs: () => mockUseRunNodeLogs(),
+  useAgentsList: () => mockUseAgentsList(),
 }));
 
 // Mock lucide-react icons to simple spans for testing.
@@ -23,11 +26,86 @@ vi.mock("lucide-react", () => ({
 import { NodeTimeline } from "./node-timeline";
 
 describe("NodeTimeline", () => {
+  // Reset the per-render queues to a no-data default before each test so the
+  // ``mockReturnValueOnce`` overrides are order-independent (the component now
+  // calls two hooks per render — useRunNodeLogs + useAgentsList).
+  beforeEach(() => {
+    mockUseRunNodeLogs.mockReset().mockReturnValue({ data: null });
+    mockUseAgentsList.mockReset().mockReturnValue({ data: null });
+  });
+
   it("renders nothing when nodeStatuses is empty", () => {
     const { container } = render(
       <NodeTimeline nodeStatuses={{}} currentNode={null} runId="r1" />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("shows the agent name and runtime for each node (#707)", () => {
+    mockUseRunNodeLogs.mockReturnValueOnce({
+      data: [
+        {
+          node_id: "mockup",
+          agent_id: "a-1",
+          runtime_id: "claude-code",
+          started_at: "2026-01-01T00:00:00Z",
+          ended_at: "2026-01-01T00:00:01Z",
+          duration_ms: 1000,
+        },
+        {
+          node_id: "finalize-write",
+          agent_id: "a-2",
+          runtime_id: "python-func",
+          started_at: "2026-01-01T00:00:02Z",
+          ended_at: "2026-01-01T00:00:03Z",
+          duration_ms: 1000,
+        },
+      ],
+    });
+    mockUseAgentsList.mockReturnValueOnce({
+      data: {
+        items: [
+          { id: "a-1", name: "TaskSelector" },
+          { id: "a-2", name: "FinalizeWriter" },
+        ],
+      },
+    });
+    const statuses: Record<string, NodeStatus> = {
+      mockup: "success",
+      "finalize-write": "success",
+    };
+    render(
+      <NodeTimeline nodeStatuses={statuses} currentNode={null} runId="r1" />,
+    );
+    expect(screen.getByText("TaskSelector")).toBeInTheDocument();
+    expect(screen.getByText("FinalizeWriter")).toBeInTheDocument();
+    // runtime shown so python-func vs LLM nodes are distinguishable at a glance.
+    expect(screen.getByText("python-func")).toBeInTheDocument();
+  });
+
+  it("falls back to a short agent id when the agent is unknown (#707)", () => {
+    mockUseRunNodeLogs.mockReturnValueOnce({
+      data: [
+        {
+          node_id: "mockup",
+          agent_id: "abcdef12-3456-7890-abcd-ef1234567890",
+          runtime_id: "bash",
+          started_at: "2026-01-01T00:00:00Z",
+          ended_at: "2026-01-01T00:00:01Z",
+          duration_ms: 1000,
+        },
+      ],
+    });
+    mockUseAgentsList.mockReturnValueOnce({ data: { items: [] } });
+    render(
+      <NodeTimeline
+        nodeStatuses={{ mockup: "success" }}
+        currentNode={null}
+        runId="r1"
+      />,
+    );
+    // Short prefix of the agent id, not the full uuid.
+    expect(screen.getByText(/abcdef12/)).toBeInTheDocument();
   });
 
   it("renders all-pending nodes", () => {
