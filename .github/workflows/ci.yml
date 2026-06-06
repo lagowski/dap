@@ -5,6 +5,7 @@ on:
     branches: [develop, main]
   push:
     branches: [develop, main]
+  workflow_dispatch:
 
 # Cancel in-progress runs for the same PR/branch when new push lands.
 concurrency:
