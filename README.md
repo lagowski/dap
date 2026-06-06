@@ -267,7 +267,7 @@ v0.3.0 is the current release: multi-user auth (email+password, GitHub/Google OA
 
 DAP is released under the [MIT License](LICENSE).
 
-Copyright © 2026 **Rafał Łagowski** &lt;rafal@lagowski.es&gt; and **Daniel Łagowski** &lt;daniel@lagowski.es&gt;.
+Copyright © 2026 **Rafał Łagowski** ([LinkedIn](https://www.linkedin.com/in/rafallagowski/)) and **Daniel Łagowski** ([LinkedIn](https://www.linkedin.com/in/daniellagowski/)).
 
 MIT is permissive — you may use, copy, modify, and distribute the software
 freely, **but the copyright and permission notice above must be retained in

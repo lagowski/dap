@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }
 authors = [
-    { name = "Rafał Łagowski", email = "rafal@lagowski.es" },
-    { name = "Daniel Łagowski", email = "daniel@lagowski.es" },
+    { name = "Rafał Łagowski" },
+    { name = "Daniel Łagowski" },
 ]
 dependencies = [
     "dap-schemas>=0.3,<0.4",
@@ -44,6 +44,13 @@ dependencies = [
     # with and which version of Fernet we rely on.
     "cryptography>=42.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lagowski/dap"
+Repository = "https://github.com/lagowski/dap"
+Issues = "https://github.com/lagowski/dap/issues"
+"Author — Rafał Łagowski" = "https://www.linkedin.com/in/rafallagowski/"
+"Author — Daniel Łagowski" = "https://www.linkedin.com/in/daniellagowski/"
 
 [project.scripts]
 dap-engine = "dap_engine.__main__:main"
