@@ -135,18 +135,16 @@ export function NodeTimeline({
               } ${nodeId === selectedNode ? "bg-muted" : ""}`}
             >
               <span
-                className={`font-mono text-sm ${
-                  nodeId === currentNode ? "font-semibold text-foreground" : "text-muted-foreground"
+                className={`font-mono text-sm shrink-0 ${
+                  nodeId === currentNode ? "font-semibold text-foreground" : "text-foreground"
                 }`}
               >
                 {nodeId}
               </span>
               {agent && (
-                <span className="flex items-center gap-1.5 min-w-0 text-xs text-muted-foreground">
-                  <span className="truncate">{agent.name}</span>
-                  <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] shrink-0">
-                    {agent.runtime}
-                  </span>
+                // Secondary to the node name: smaller, lighter, parenthesised.
+                <span className="truncate text-[11px] text-muted-foreground/60">
+                  ({agent.name} · {agent.runtime})
                 </span>
               )}
               {elapsed != null && (
