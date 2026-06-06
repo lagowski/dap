@@ -619,7 +619,13 @@ export type AuditEvent = ApiSchema<"AuditEventRead">;
 
 export interface AuditEventFilters {
   eventType?: string;
+  /** Match a whole event family by prefix (e.g. ``agent.``). */
+  eventTypePrefix?: string;
   userId?: string;
+  /** ISO 8601 — only events at or after this instant. */
+  createdFrom?: string;
+  /** ISO 8601 — only events at or before this instant. */
+  createdTo?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -3827,8 +3827,14 @@ export interface operations {
             query?: {
                 /** @description Filter to events of this exact type (e.g. ``user.logged_in``). */
                 event_type?: string | null;
+                /** @description Filter to a whole event family by prefix (e.g. ``agent.`` matches ``agent.created`` / ``agent.archived``). LIKE wildcards are escaped. */
+                event_type_prefix?: string | null;
                 /** @description Filter to events triggered by this user. */
                 user_id?: string | null;
+                /** @description Only events at or after this timestamp (ISO 8601). */
+                created_from?: string | null;
+                /** @description Only events at or before this timestamp (ISO 8601). */
+                created_to?: string | null;
                 offset?: number;
                 limit?: number;
             };
