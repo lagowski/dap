@@ -6,10 +6,13 @@ import {
   ChevronRight,
   KeyRound,
   Loader2,
+  Plus,
   Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -18,11 +21,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
   useAdminApiTokens,
   useAdminRevokeApiToken,
+  useCreateApiToken,
   useCurrentUser,
 } from "@/hooks/api";
-import { formatApiError } from "@/lib/api/client";
+import { formatApiError, type ApiTokenCreateResult } from "@/lib/api/client";
 import type { AdminApiToken } from "@/lib/api/types";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { cn } from "@/lib/utils";
@@ -47,6 +61,165 @@ function tokenStatus(token: AdminApiToken): "revoked" | "expired" | "active" {
     return "expired";
   }
   return "active";
+}
+
+/**
+ * "New token" button + dialog. Mints a token via the JWT-authenticated
+ * dashboard session and shows the raw ``dap_<...>`` value ONCE (the engine
+ * only stores its hash). Closing or navigating away loses it for good.
+ */
+function CreateTokenDialog() {
+  const create = useCreateApiToken();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [expiresDays, setExpiresDays] = useState("");
+  const [created, setCreated] = useState<ApiTokenCreateResult | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const reset = () => {
+    setName("");
+    setExpiresDays("");
+    setCreated(null);
+    setCopied(false);
+    create.reset();
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = expiresDays.trim();
+    const days = raw === "" ? null : Number(raw);
+    try {
+      const result = await create.mutateAsync({
+        name: name.trim(),
+        expires_in_days:
+          days !== null && Number.isFinite(days) ? days : null,
+      });
+      setCreated(result);
+    } catch {
+      // error surfaced via create.error below
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!created) return;
+    await navigator.clipboard.writeText(created.token);
+    setCopied(true);
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) reset();
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="sm">
+          <Plus className="h-4 w-4 mr-1" aria-hidden="true" />
+          New token
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New API token</DialogTitle>
+          <DialogDescription>
+            For the DAP CLI / scripts. The raw value is shown once — copy it
+            before closing.
+          </DialogDescription>
+        </DialogHeader>
+
+        {created ? (
+          <div className="space-y-3">
+            <p className="text-sm">
+              Token{" "}
+              <span className="font-medium">{created.name}</span> created. Copy
+              it now — it can&apos;t be shown again.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                readOnly
+                value={created.token}
+                className="font-mono text-xs"
+                onFocus={(e) => e.currentTarget.select()}
+                aria-label="New API token value"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleCopy}
+              >
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Use it as <code>DAP_AUTH_TOKEN</code> (or <code>--token</code>) for
+              the CLI.
+            </p>
+            <DialogFooter>
+              <Button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  reset();
+                }}
+              >
+                Done
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="new-token-name">Name</Label>
+              <Input
+                id="new-token-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. cortex-cli"
+                maxLength={255}
+                required
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="new-token-expiry">
+                Expires in (days) — optional
+              </Label>
+              <Input
+                id="new-token-expiry"
+                type="number"
+                min={1}
+                max={3650}
+                value={expiresDays}
+                onChange={(e) => setExpiresDays(e.target.value)}
+                placeholder="never"
+              />
+            </div>
+            {create.isError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {formatApiError(create.error)}
+              </p>
+            ) : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button
+                type="submit"
+                disabled={create.isPending || name.trim() === ""}
+              >
+                {create.isPending ? "Creating…" : "Create token"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export default function AdminApiTokensPage() {
@@ -81,18 +254,21 @@ export default function AdminApiTokensPage() {
             one leaks.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={includeRevoked}
-            onChange={(e) => {
-              setIncludeRevoked(e.target.checked);
-              setOffset(0);
-            }}
-            className="h-4 w-4"
-          />
-          Show revoked
-        </label>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={includeRevoked}
+              onChange={(e) => {
+                setIncludeRevoked(e.target.checked);
+                setOffset(0);
+              }}
+              className="h-4 w-4"
+            />
+            Show revoked
+          </label>
+          <CreateTokenDialog />
+        </div>
       </div>
 
       {revoke.isError && (
