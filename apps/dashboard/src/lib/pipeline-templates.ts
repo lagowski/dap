@@ -39,6 +39,7 @@ export type PipelineTemplateCategory =
   | "Examples"
   | "Development"
   | "Implementation"
+  | "Cortex"
   | "Custom";
 
 export interface PipelineTemplate {
@@ -239,7 +240,11 @@ export const PIPELINE_TEMPLATES: readonly PipelineTemplate[] = [
           // contract and skips this node. Templates ship a working
           // pipeline first; the user tightens contracts after.
           input_schema: [],
-          output_schema: ["tests_generated", "test_files", "test_generation_errors"],
+          output_schema: [
+            "tests_generated",
+            "test_files",
+            "test_generation_errors",
+          ],
           constraints: [],
           budget_limit_usd: null,
           timeout_ms: 60_000,
@@ -345,14 +350,501 @@ export const PIPELINE_TEMPLATES: readonly PipelineTemplate[] = [
       },
     },
   },
+  {
+    id: "cortex-github-issue",
+    name: "Cortex — GitHub issue resolution",
+    description:
+      "The Cortex issue-resolution workflow: 17 nodes / 14 python-func agents (mockup → specify → cicd → dispatcher → coder/designer/documenter → review → tests → PR → merge) with human-approval gates. Requires the dap-cortex package installed in the engine venv and the CORTEX_* env vars set — without them the imported pipeline's nodes fail at run time.",
+    category: "Cortex",
+    bundle: {
+      schema_version: "pipeline-export/1",
+      pipeline: {
+        name: "Cortex GitHub Issue Pipeline",
+        description:
+          "13-agent pipeline: GitHub issue → Phase 1 enrichment → Phase 2 coding → Phase 3 PR merge. Port of the standalone Cortex pipeline to a DAP bundle.",
+        schema_version: "langgraph/1.0",
+        state_schema_ref: "PipelineState.v1",
+        entry_point: "mockup",
+        nodes: [
+          {
+            id: "mockup",
+            agent_id: "cx_mockup",
+            position: {
+              x: 0,
+              y: 0,
+            },
+          },
+          {
+            id: "specify",
+            agent_id: "cx_specify",
+            position: {
+              x: 220,
+              y: 0,
+            },
+          },
+          {
+            id: "cicd",
+            agent_id: "cx_cicd",
+            position: {
+              x: 440,
+              y: 0,
+            },
+          },
+          {
+            id: "dispatcher",
+            agent_id: "cx_dispatcher",
+            position: {
+              x: 660,
+              y: 0,
+            },
+          },
+          {
+            id: "finalize",
+            agent_id: "cx_finalize",
+            position: {
+              x: 880,
+              y: 0,
+            },
+          },
+          {
+            id: "needs_work_gate",
+            agent_id: "cx_human_gate",
+            position: {
+              x: 1100,
+              y: 160,
+            },
+          },
+          {
+            id: "phase1_gate",
+            agent_id: "cx_human_gate",
+            position: {
+              x: 1100,
+              y: 0,
+            },
+          },
+          {
+            id: "coder",
+            agent_id: "cx_coder",
+            position: {
+              x: 1320,
+              y: 0,
+            },
+          },
+          {
+            id: "designer",
+            agent_id: "cx_designer",
+            position: {
+              x: 1540,
+              y: 0,
+            },
+          },
+          {
+            id: "documenter",
+            agent_id: "cx_documenter",
+            position: {
+              x: 1760,
+              y: 0,
+            },
+          },
+          {
+            id: "phase2_gate",
+            agent_id: "cx_human_gate",
+            position: {
+              x: 1980,
+              y: 0,
+            },
+          },
+          {
+            id: "code_reviewer",
+            agent_id: "cx_code_reviewer",
+            position: {
+              x: 2200,
+              y: 0,
+            },
+          },
+          {
+            id: "tester",
+            agent_id: "cx_tester",
+            position: {
+              x: 2420,
+              y: 0,
+            },
+          },
+          {
+            id: "pr_creator",
+            agent_id: "cx_pr_creator",
+            position: {
+              x: 2640,
+              y: 0,
+            },
+          },
+          {
+            id: "reviewer",
+            agent_id: "cx_reviewer",
+            position: {
+              x: 2860,
+              y: 0,
+            },
+          },
+          {
+            id: "phase3_gate",
+            agent_id: "cx_human_gate",
+            position: {
+              x: 3080,
+              y: 0,
+            },
+          },
+          {
+            id: "pr_merger",
+            agent_id: "cx_pr_merger",
+            position: {
+              x: 3300,
+              y: 0,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: "e01",
+            source: "__start__",
+            target: "mockup",
+          },
+          {
+            id: "e02",
+            source: "mockup",
+            target: "specify",
+          },
+          {
+            id: "e03",
+            source: "specify",
+            target: "cicd",
+          },
+          {
+            id: "e04",
+            source: "cicd",
+            target: "dispatcher",
+          },
+          {
+            id: "e05",
+            source: "dispatcher",
+            target: "finalize",
+          },
+          {
+            id: "e06a",
+            source: "finalize",
+            target: "phase1_gate",
+            label: "READY",
+            condition: {
+              type: "comparison",
+              field: "extensions.issue_ready",
+              operator: "==",
+              value: true,
+            },
+          },
+          {
+            id: "e06b",
+            source: "finalize",
+            target: "needs_work_gate",
+            label: "NEEDS_WORK",
+            condition: {
+              type: "comparison",
+              field: "extensions.issue_ready",
+              operator: "!=",
+              value: true,
+            },
+          },
+          {
+            id: "e_nwg",
+            source: "needs_work_gate",
+            target: "specify",
+            label: "retry",
+          },
+          {
+            id: "e07",
+            source: "phase1_gate",
+            target: "coder",
+          },
+          {
+            id: "e08",
+            source: "coder",
+            target: "designer",
+          },
+          {
+            id: "e09",
+            source: "designer",
+            target: "documenter",
+          },
+          {
+            id: "e10",
+            source: "documenter",
+            target: "phase2_gate",
+          },
+          {
+            id: "e11",
+            source: "phase2_gate",
+            target: "code_reviewer",
+          },
+          {
+            id: "e12",
+            source: "code_reviewer",
+            target: "tester",
+          },
+          {
+            id: "e13",
+            source: "tester",
+            target: "pr_creator",
+          },
+          {
+            id: "e14",
+            source: "pr_creator",
+            target: "reviewer",
+          },
+          {
+            id: "e15",
+            source: "reviewer",
+            target: "phase3_gate",
+          },
+          {
+            id: "e16",
+            source: "phase3_gate",
+            target: "pr_merger",
+          },
+          {
+            id: "e17",
+            source: "pr_merger",
+            target: "__end__",
+          },
+        ],
+        defaults: {
+          max_attempts: 3,
+          budget_limit_usd: 5.0,
+          approval_required_nodes: [
+            "needs_work_gate",
+            "phase1_gate",
+            "phase2_gate",
+            "phase3_gate",
+          ],
+          requires_terminal_final_status: true,
+        },
+      },
+      bundled_agents: {
+        cx_mockup: {
+          name: "Cortex Mockup",
+          role: "prompt_builder",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.mockup:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 120000,
+        },
+        cx_specify: {
+          name: "Cortex Specify",
+          role: "prompt_builder",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.specify:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 180000,
+        },
+        cx_cicd: {
+          name: "Cortex CI/CD",
+          role: "prompt_builder",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.cicd:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 120000,
+        },
+        cx_dispatcher: {
+          name: "Cortex Dispatcher",
+          role: "task_selector",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.dispatcher:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 120000,
+        },
+        cx_finalize: {
+          name: "Cortex Finalize",
+          role: "post_check",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.finalize:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: ["finalize_warnings"],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 180000,
+        },
+        cx_human_gate: {
+          name: "Human Approval Gate",
+          role: "post_check",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.dap_steps.human_gate:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 86400000,
+        },
+        cx_coder: {
+          name: "Cortex Coder",
+          role: "prompt_builder",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.coder:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 1800000,
+        },
+        cx_designer: {
+          name: "Cortex Designer",
+          role: "prompt_builder",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.designer:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 900000,
+        },
+        cx_documenter: {
+          name: "Cortex Documenter",
+          role: "prompt_builder",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.documenter:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 600000,
+        },
+        cx_code_reviewer: {
+          name: "Cortex Code Reviewer",
+          role: "post_check",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.code_reviewer:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 120000,
+        },
+        cx_tester: {
+          name: "Cortex Tester",
+          role: "post_check",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.tester:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 600000,
+        },
+        cx_pr_creator: {
+          name: "Cortex PR Creator",
+          role: "post_check",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.pr_creator:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 120000,
+        },
+        cx_reviewer: {
+          name: "Cortex Reviewer",
+          role: "post_check",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.reviewer:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 180000,
+        },
+        cx_pr_merger: {
+          name: "Cortex PR Merger",
+          role: "post_check",
+          runtime_id: "python-func",
+          runtime_config: {
+            callable_path: "cortex.nodes.pr_merger:run",
+          },
+          prompt_template:
+            "<agent_prompt><run_id>{{ run_id }}</run_id><repo>{{ repo }}</repo></agent_prompt>",
+          input_schema: [],
+          output_schema: [],
+          constraints: [],
+          budget_limit_usd: null,
+          timeout_ms: 120000,
+        },
+      },
+    },
+  },
 ] as const;
 
-export const PIPELINE_TEMPLATE_CATEGORIES: readonly PipelineTemplateCategory[] = [
-  "Examples",
-  "Development",
-  "Implementation",
-  "Custom",
-] as const;
+export const PIPELINE_TEMPLATE_CATEGORIES: readonly PipelineTemplateCategory[] =
+  ["Examples", "Development", "Implementation", "Cortex", "Custom"] as const;
 
 export function findPipelineTemplate(id: string): PipelineTemplate | undefined {
   return PIPELINE_TEMPLATES.find((t) => t.id === id);
