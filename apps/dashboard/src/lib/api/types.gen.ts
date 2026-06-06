@@ -148,6 +148,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{agent_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Usage */
+        get: operations["get_agent_usage_agents__agent_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{agent_id}/versions": {
         parameters: {
             query?: never;
@@ -1839,6 +1856,17 @@ export interface components {
             timeout_ms: number;
         };
         /**
+         * AgentUsageResponse
+         * @description Where an agent is used: the pipelines that embed it and the projects
+         *     that (via those pipelines) depend on it (#697).
+         */
+        AgentUsageResponse: {
+            /** Pipelines */
+            pipelines: components["schemas"]["_PipelineUsageRef"][];
+            /** Projects */
+            projects: components["schemas"]["_ProjectUsageRef"][];
+        };
+        /**
          * ApiTokenCreateRequest
          * @description Payload for ``POST /auth/api-tokens``.
          */
@@ -3224,6 +3252,29 @@ export interface components {
             /** Warnings */
             warnings?: string[];
         };
+        /** _PipelineUsageRef */
+        _PipelineUsageRef: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** _ProjectBindingRef */
+        _ProjectBindingRef: {
+            /** Kind */
+            kind: string;
+            /** Pipeline Id */
+            pipeline_id: string;
+        };
+        /** _ProjectUsageRef */
+        _ProjectUsageRef: {
+            /** Bindings */
+            bindings: components["schemas"]["_ProjectBindingRef"][];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -3519,6 +3570,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RenderPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_usage_agents__agent_id__usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentUsageResponse"];
                 };
             };
             /** @description Validation Error */
