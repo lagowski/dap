@@ -124,9 +124,14 @@ export function NodeDetailPanel({
                 <TabsTrigger value="stdout" className="flex-1">
                   Std output
                 </TabsTrigger>
-                <TabsTrigger value="prompt" className="flex-1">
-                  Prompt
-                </TabsTrigger>
+                {/* python-func callables have no rendered prompt by design
+                    (they receive state directly), so don't offer an empty
+                    Prompt tab for them. */}
+                {data.runtime_id !== "python-func" && (
+                  <TabsTrigger value="prompt" className="flex-1">
+                    Prompt
+                  </TabsTrigger>
+                )}
                 <TabsTrigger value="state-diff" className="flex-1">
                   State diff
                 </TabsTrigger>
@@ -152,18 +157,29 @@ export function NodeDetailPanel({
                 )}
               </TabsContent>
 
-              <TabsContent value="prompt">
-                <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
-                  {data.prompt_xml}
-                </pre>
-              </TabsContent>
+              {data.runtime_id !== "python-func" && (
+                <TabsContent value="prompt">
+                  {data.prompt_xml ? (
+                    <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
+                      {data.prompt_xml}
+                    </pre>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      No prompt recorded for this node.
+                    </p>
+                  )}
+                </TabsContent>
+              )}
 
               <TabsContent value="state-diff">
                 {after ? (
+                  // StateDiffView renders its own "No state fields changed"
+                  // empty state when the node ran but mutated nothing — which
+                  // is distinct from the "no snapshot" case below.
                   <StateDiffView before={before} after={after} />
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    No state history available for this node.
+                    No state snapshot was recorded for this node.
                   </p>
                 )}
               </TabsContent>
