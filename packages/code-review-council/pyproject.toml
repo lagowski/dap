@@ -27,6 +27,13 @@ dependencies = [
     "pydantic>=2.9.0,<3.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/lagowski/dap"
+Repository = "https://github.com/lagowski/dap"
+Issues = "https://github.com/lagowski/dap/issues"
+"Author — Rafał Łagowski" = "https://www.linkedin.com/in/rafallagowski/"
+"Author — Daniel Łagowski" = "https://www.linkedin.com/in/daniellagowski/"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

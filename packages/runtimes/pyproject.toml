@@ -22,6 +22,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.urls]
+Homepage = "https://github.com/lagowski/dap"
+Repository = "https://github.com/lagowski/dap"
+Issues = "https://github.com/lagowski/dap/issues"
+"Author — Rafał Łagowski" = "https://www.linkedin.com/in/rafallagowski/"
+"Author — Daniel Łagowski" = "https://www.linkedin.com/in/daniellagowski/"
+
 [project.optional-dependencies]
 anthropic = [
     "anthropic>=0.40.0",

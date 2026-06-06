@@ -18,6 +18,13 @@ dependencies = [
     "httpx>=0.27.2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/lagowski/dap"
+Repository = "https://github.com/lagowski/dap"
+Issues = "https://github.com/lagowski/dap/issues"
+"Author — Rafał Łagowski" = "https://www.linkedin.com/in/rafallagowski/"
+"Author — Daniel Łagowski" = "https://www.linkedin.com/in/daniellagowski/"
+
 [project.scripts]
 dap = "dap_cli.__main__:app"
 
