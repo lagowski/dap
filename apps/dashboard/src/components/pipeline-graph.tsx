@@ -49,6 +49,12 @@ const STATUS_COLORS: Record<NodeStatus, string> = {
 const EDGE_WARNING_STROKE = "#dc2626"; // red-600
 const EDGE_DEFAULT_STROKE = "#94a3b8"; // slate-400
 
+// Max pipeline nodes per row in the read-only run view before wrapping to the
+// next line (#225 follow-up). A long linear pipeline (~13 nodes) rendered as
+// one very wide row is hard to read; 6 keeps each row readable on a typical
+// screen while minimising the number of wrapped rows.
+const RUN_VIEW_MAX_PER_ROW = 6;
+
 export function PipelineGraph({
   pipeline,
   agents,
@@ -152,7 +158,9 @@ export function PipelineGraph({
       (e) => e.source && e.target && e.target !== "__end__",
     );
     if (!autoLayout) return { nodes: rawNodes, edges: validEdges };
-    return getLayoutedElements(rawNodes, validEdges);
+    return getLayoutedElements(rawNodes, validEdges, {
+      maxPerRow: RUN_VIEW_MAX_PER_ROW,
+    });
   }, [autoLayout, rawNodes, rawEdges]);
 
   return (

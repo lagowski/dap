@@ -63,4 +63,117 @@ describe("getLayoutedElements", () => {
     const wideDist = Math.abs(wide[1].position.x - wide[0].position.x);
     expect(wideDist).toBeGreaterThan(tightDist);
   });
+
+  describe("row wrapping (maxPerRow)", () => {
+    const linearChain = (n: number): { nodes: Node[]; edges: Edge[] } => {
+      const nodes = Array.from({ length: n }, (_, i) => makeNode(`n${i}`));
+      const edges = Array.from({ length: n - 1 }, (_, i) =>
+        makeEdge(`e${i}`, `n${i}`, `n${i + 1}`),
+      );
+      return { nodes, edges };
+    };
+
+    it("is backward-compatible: unset maxPerRow keeps a single row", () => {
+      const { nodes, edges } = linearChain(8);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges);
+      // Single LR row: every node shares the same y.
+      const ys = new Set(layouted.map((n) => Math.round(n.position.y)));
+      expect(ys.size).toBe(1);
+    });
+
+    it("is backward-compatible: maxPerRow=0 keeps a single row", () => {
+      const { nodes, edges } = linearChain(8);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow: 0,
+      });
+      const ys = new Set(layouted.map((n) => Math.round(n.position.y)));
+      expect(ys.size).toBe(1);
+    });
+
+    it("wraps a linear chain of N nodes into ceil(N/maxPerRow) rows", () => {
+      const N = 13;
+      const maxPerRow = 5;
+      const { nodes, edges } = linearChain(N);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow,
+      });
+
+      const byId = new Map(layouted.map((n) => [n.id, n.position]));
+      // Expect 3 distinct rows for 13 nodes at 5 per row.
+      const rowYs = [
+        ...new Set([...byId.values()].map((p) => Math.round(p.y))),
+      ].sort((a, b) => a - b);
+      expect(rowYs).toHaveLength(Math.ceil(N / maxPerRow));
+
+      // Row k holds columns [k*maxPerRow, ...] in left->right order.
+      for (let i = 0; i < N; i++) {
+        const pos = byId.get(`n${i}`)!;
+        const expectedRow = Math.floor(i / maxPerRow);
+        expect(Math.round(pos.y)).toBe(rowYs[expectedRow]);
+      }
+
+      // Within each row, x increases left->right with column index.
+      for (let row = 0; row < rowYs.length; row++) {
+        const start = row * maxPerRow;
+        const end = Math.min(start + maxPerRow, N);
+        let prevX = -Infinity;
+        for (let i = start; i < end; i++) {
+          const x = byId.get(`n${i}`)!.x;
+          expect(x).toBeGreaterThan(prevX);
+          prevX = x;
+        }
+      }
+    });
+
+    it("does not overlap wrapped rows vertically", () => {
+      const N = 12;
+      const maxPerRow = 5;
+      const { nodes, edges } = linearChain(N);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow,
+      });
+      const rowYs = [
+        ...new Set(layouted.map((n) => Math.round(n.position.y))),
+      ].sort((a, b) => a - b);
+      // Consecutive rows must be separated by at least one node height.
+      for (let i = 1; i < rowYs.length; i++) {
+        expect(rowYs[i] - rowYs[i - 1]).toBeGreaterThan(40);
+      }
+    });
+
+    it("keeps branch nodes (shared rank) stacked in the same column", () => {
+      // root -> b1, root -> b2 (b1,b2 share a rank/column), then both -> join
+      const nodes = [
+        makeNode("root"),
+        makeNode("b1"),
+        makeNode("b2"),
+        makeNode("join"),
+      ];
+      const edges = [
+        makeEdge("e1", "root", "b1"),
+        makeEdge("e2", "root", "b2"),
+        makeEdge("e3", "b1", "join"),
+        makeEdge("e4", "b2", "join"),
+      ];
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow: 5,
+      });
+      const byId = new Map(layouted.map((n) => [n.id, n.position]));
+      // Branch nodes share the same column → same x, different y, same row.
+      expect(Math.round(byId.get("b1")!.x)).toBe(
+        Math.round(byId.get("b2")!.x),
+      );
+      expect(Math.round(byId.get("b1")!.y)).not.toBe(
+        Math.round(byId.get("b2")!.y),
+      );
+    });
+
+    it("returns the same edge array when wrapping", () => {
+      const { nodes, edges } = linearChain(8);
+      const { edges: result } = getLayoutedElements(nodes, edges, {
+        maxPerRow: 5,
+      });
+      expect(result).toBe(edges);
+    });
+  });
 });
