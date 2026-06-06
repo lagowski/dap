@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Sequence
 
 from dap_types import Project
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
@@ -266,6 +266,8 @@ def list_projects(
 def projects_using_pipelines(
     session: Session,
     pipeline_ids: list[str],
+    *,
+    limit: int = 500,
 ) -> list[tuple[str, str, list[tuple[str, str]]]]:
     """Reverse-lookup: projects whose workflow bindings reference any of
     ``pipeline_ids``.
@@ -273,12 +275,24 @@ def projects_using_pipelines(
     Returns ``(project_id, project_name, [(kind, pipeline_id)])`` per project.
     Ownership-agnostic by design (impact view) — the caller gates on the
     agent / pipeline first, same contract as ``pipelines_using_agent``.
+
+    The candidate rows are pre-filtered in SQL (a ``LIKE`` over the
+    serialized ``pipelines`` JSON for each wanted id) so we don't load the
+    whole projects table into memory; the exact ``pid in wanted`` check then
+    runs only over those candidates. Pipeline ids are UUIDs, so a substring
+    LIKE can't collide with an unrelated binding. ``limit`` caps the result.
     """
     wanted = set(pipeline_ids)
     if not wanted:
         return []
+    bindings_text = cast(ProjectORM.pipelines, String)
+    candidate_query = (
+        select(ProjectORM)
+        .where(or_(*(bindings_text.contains(pid) for pid in sorted(wanted))))
+        .limit(limit)
+    )
     out: list[tuple[str, str, list[tuple[str, str]]]] = []
-    for project in session.scalars(select(ProjectORM)).all():
+    for project in session.scalars(candidate_query).all():
         matches = sorted(
             (kind, pid) for kind, pid in (project.pipelines or {}).items() if pid in wanted
         )
