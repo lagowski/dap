@@ -7,17 +7,20 @@ import { useRouter } from "next/navigation";
 import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Pencil } from "lucide-react";
 import {
   useAgent,
+  useAgentExecutions,
   useAgentUsage,
   useAgentVersions,
   useArchiveAgent,
 } from "@/hooks/api";
 import { downloadAgentExportWithAlert } from "@/lib/agent-export";
 import { formatApiError } from "@/lib/api/client";
+import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { NodeStatusBadge } from "@/components/status-badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
-import type { Agent } from "@/lib/api/types";
+import type { Agent, NodeStatus } from "@/lib/api/types";
 
 export default function AgentDetailPage({
   params,
@@ -157,6 +160,8 @@ export default function AgentDetailPage({
 
       <UsedInCard agentId={id} />
 
+      <ActivityCard agentId={id} />
+
       <VersionHistory
         currentVersion={agent.version}
         versions={versions.data}
@@ -247,6 +252,92 @@ function UsedInCard({ agentId }: { agentId: string }) {
         ) : (
           <p className="text-sm text-muted-foreground">
             Not used in any pipeline yet — safe to edit or archive.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActivityCard({ agentId }: { agentId: string }) {
+  const exec = useAgentExecutions(agentId);
+  const data = exec.data;
+
+  return (
+    <Card>
+      <CardContent className="pt-6 space-y-3">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-medium">Activity</h2>
+          {data && data.total > 0 ? (
+            <span className="text-xs text-muted-foreground">
+              {data.items.length >= data.total
+                ? `${data.total} execution${data.total === 1 ? "" : "s"}`
+                : `latest ${data.items.length} of ${data.total}`}
+            </span>
+          ) : null}
+        </div>
+        {exec.isPending ? (
+          <LoadingState />
+        ) : exec.isError ? (
+          <p className="text-sm text-destructive">
+            {formatApiError(exec.error)}
+          </p>
+        ) : data && data.items.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-1.5 font-medium">Run</th>
+                  <th className="px-3 py-1.5 font-medium">Node</th>
+                  <th className="px-3 py-1.5 font-medium">Status</th>
+                  <th className="px-3 py-1.5 font-medium">Started</th>
+                  <th className="px-3 py-1.5 font-medium text-right">Duration</th>
+                  <th className="px-3 py-1.5 font-medium text-right">Tokens</th>
+                  <th className="px-3 py-1.5 font-medium text-right">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((e) => (
+                  <tr
+                    key={e.id}
+                    className="border-b last:border-0 hover:bg-muted/30"
+                    title={e.error_message ?? undefined}
+                  >
+                    <td className="p-0 font-mono text-xs">
+                      <Link
+                        href={`/runs/${e.run_id}`}
+                        className="block px-3 py-1.5 hover:underline"
+                      >
+                        {e.run_id.slice(0, 8)}…
+                      </Link>
+                    </td>
+                    <td className="px-3 py-1.5 font-mono text-xs">{e.node_id}</td>
+                    <td className="px-3 py-1.5">
+                      <NodeStatusBadge status={e.status as NodeStatus} />
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-3 py-1.5 text-xs text-muted-foreground"
+                      suppressHydrationWarning
+                    >
+                      {new Date(e.started_at).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {formatDuration(e.duration_ms)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {formatTokens(e.tokens_used)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {formatCost(e.cost_usd)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No executions yet — this agent hasn&apos;t run in any pipeline.
           </p>
         )}
       </CardContent>
