@@ -17,6 +17,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from datetime import date, datetime
 from decimal import Decimal
@@ -164,14 +165,37 @@ def _resolve_auth_token(token: str | None) -> str:
     return (token or os.environ.get("DAP_AUTH_TOKEN") or "").strip()
 
 
+def _auth_headers(token: str | None = None) -> dict[str, str]:
+    """Build the ``Authorization: Bearer`` header dict (empty when no token).
+
+    Shared by both the short-lived request client (``_client``) and the
+    long-lived SSE stream client (``_events_client``) so the Bearer auth logic
+    lives in one place (#662 Phase 3d).
+    """
+    resolved = _resolve_auth_token(token)
+    return {"Authorization": f"Bearer {resolved}"} if resolved else {}
+
+
 def _client(engine_url: str, token: str | None = None) -> httpx.Client:
     """HTTP client for the engine, carrying ``Authorization: Bearer`` when a
     token is available. The engine accepts a JWT or an opaque ``dap_*`` API
     token (``/auth/api-tokens``); the CLI forwards whatever is configured via
     ``--token`` / ``DAP_AUTH_TOKEN``."""
-    resolved = _resolve_auth_token(token)
-    headers = {"Authorization": f"Bearer {resolved}"} if resolved else {}
-    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0, headers=headers)
+    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0, headers=_auth_headers(token))
+
+
+def _events_client(engine_url: str, token: str | None = None) -> httpx.Client:
+    """Long-lived HTTP client for the SSE events stream (``--follow``).
+
+    Same Bearer auth as ``_client`` but with the **read timeout disabled** so a
+    quiet stream (e.g. a 16-min cortex node producing no output) is not aborted
+    after the default 10s. Connect/write/pool timeouts are kept bounded so a
+    dead engine still fails fast rather than hanging forever (#662 Phase 3d).
+    """
+    timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
+    return httpx.Client(
+        base_url=engine_url.rstrip("/"), timeout=timeout, headers=_auth_headers(token)
+    )
 
 
 def _export_token_to_env(token: str | None) -> None:
@@ -545,27 +569,134 @@ def _handle_gate(
     return True
 
 
+# ---------------------------------------------------------------------------
+# Live output tailer — SSE (#662 Phase 3d, `--follow`)
+# ---------------------------------------------------------------------------
+
+
+def _emit_event(event: str, data: dict[str, Any]) -> None:
+    """Render a single parsed SSE event to the terminal.
+
+    ``node_log`` content is printed verbatim (it already carries its own
+    newlines) so the stream reads like the node's own stdout. ``node_started`` /
+    ``node_finished`` get a terse dim transition line; everything else is
+    ignored. ``run_finished`` is handled by the caller (it stops the loop).
+    """
+    if event == "node_log":
+        content = data.get("content")
+        if isinstance(content, str) and content:
+            # Print without adding an extra newline — the chunk already has its
+            # own line breaks. ``console.out`` avoids rich markup interpretation
+            # so raw agent output (which may contain ``[`` etc.) prints intact.
+            console.out(content, end="", highlight=False)
+    elif event == "node_started":
+        node_id = data.get("node_id", "?")
+        console.print(f"[dim]▶ {node_id}[/dim]")
+    elif event == "node_finished":
+        node_id = data.get("node_id", "?")
+        status = data.get("status", "?")
+        duration_ms = data.get("duration_ms")
+        suffix = ""
+        if isinstance(duration_ms, (int, float)):
+            suffix = f" ({duration_ms / 1000:.1f}s)"
+        glyph = "✓" if status == "success" else "✗"
+        console.print(f"[dim]{glyph} {node_id}{suffix}[/dim]")
+
+
+def _stream_events(engine_url: str, run_id: str, stop_event: threading.Event) -> None:
+    """Tail ``GET /runs/{run_id}/events`` (SSE), printing live node output.
+
+    Runs in a daemon thread alongside the main poll loop under ``--follow``.
+    Parses Server-Sent-Event frames (``event: <name>`` + accumulated ``data:``
+    lines, dispatched on the blank-line separator) and prints ``node_log``
+    content plus node transitions. Returns when ``run_finished`` arrives, when
+    ``stop_event`` is set, or when the stream drops — a dropped stream is
+    non-fatal (the main loop still drives gates/terminal detection), so any
+    transport/parse error prints a dim notice and returns rather than crashing
+    the run.
+    """
+    try:
+        with (
+            _events_client(engine_url) as client,
+            client.stream("GET", f"/runs/{run_id}/events") as response,
+        ):
+            response.raise_for_status()
+            event_name: str | None = None
+            data_buf: list[str] = []
+            for line in response.iter_lines():
+                if stop_event.is_set():
+                    return
+                if line == "":
+                    # Blank line terminates a frame — dispatch and reset.
+                    if event_name is not None and data_buf:
+                        raw = "\n".join(data_buf)
+                        try:
+                            payload = json.loads(raw)
+                        except (ValueError, TypeError):
+                            payload = None
+                        if isinstance(payload, dict):
+                            _emit_event(event_name, payload)
+                            if event_name == "run_finished":
+                                return
+                    event_name = None
+                    data_buf = []
+                elif line.startswith("event:"):
+                    event_name = line[len("event:") :].strip()
+                elif line.startswith("data:"):
+                    data_buf.append(line[len("data:") :].lstrip())
+                # Any other line (e.g. ``id:``, comments) is ignored.
+    except (httpx.HTTPError, ValueError) as exc:
+        console.print(f"[dim]  Live output stream ended: {exc}[/dim]")
+
+
 def poll_and_handle(
     engine_url: str,
     run_id: str,
     no_interactive: bool,
     watch_only: bool,
     show_progress: bool = True,
+    follow: bool = False,
 ) -> None:
-    """Poll run status and handle gates until completion or failure."""
+    """Poll run status and handle gates until completion or failure.
+
+    When ``follow`` is True, a daemon thread tails the run's SSE event stream
+    (``GET /runs/{run_id}/events``) and prints live node output to the terminal.
+    Under ``--follow`` the per-node progress spinner is suppressed (the streamed
+    output is the live view), but gate handling and terminal detection are
+    unchanged (#662 Phase 3d).
+    """
     start_time = time.monotonic()
     last_status = "running"
 
-    while True:
-        last_status, last_run = _poll_until_settled(
-            engine_url, run_id, "Running pipeline...", show_progress=show_progress
+    stop_event: threading.Event | None = None
+    tailer: threading.Thread | None = None
+    if follow:
+        # Streamed stdout is the live view — the spinner would clash with it.
+        show_progress = False
+        stop_event = threading.Event()
+        tailer = threading.Thread(
+            target=_stream_events,
+            args=(engine_url, run_id, stop_event),
+            daemon=True,
         )
-        if last_status != "paused":
-            break
-        should_continue = _handle_gate(engine_url, run_id, last_run, watch_only, no_interactive)
-        if not should_continue:
-            return
-        time.sleep(3)
+        tailer.start()
+
+    try:
+        while True:
+            last_status, last_run = _poll_until_settled(
+                engine_url, run_id, "Running pipeline...", show_progress=show_progress
+            )
+            if last_status != "paused":
+                break
+            should_continue = _handle_gate(engine_url, run_id, last_run, watch_only, no_interactive)
+            if not should_continue:
+                return
+            time.sleep(3)
+    finally:
+        if stop_event is not None:
+            stop_event.set()
+        if tailer is not None:
+            tailer.join(timeout=2.0)
 
     # Final report
     elapsed = int(time.monotonic() - start_time)
@@ -667,6 +798,7 @@ def cortex_run(
     workspace: str | None,
     token: str | None = None,
     show_progress: bool = True,
+    follow: bool = False,
 ) -> None:
     """Implement `dap project run cortex <issue-url>`."""
     _export_token_to_env(token)
@@ -724,6 +856,7 @@ def cortex_run(
         no_interactive=no_interactive,
         watch_only=watch,
         show_progress=show_progress,
+        follow=follow,
     )
 
 

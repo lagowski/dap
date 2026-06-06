@@ -596,9 +596,7 @@ class TestStreamEvents:
         assert args[0] == "GET"
         assert "/runs/r1/events" in args[1]
 
-    def test_node_transitions_print_dim_lines(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_node_transitions_print_dim_lines(self, capsys: pytest.CaptureFixture[str]) -> None:
         """node_started / node_finished render a short transition line."""
         lines = [
             "event: node_started",
@@ -621,9 +619,7 @@ class TestStreamEvents:
         out = capsys.readouterr().out
         assert "coder" in out
 
-    def test_malformed_data_frame_is_tolerated(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_malformed_data_frame_is_tolerated(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A non-JSON data frame must not crash the tailer."""
         lines = [
             "event: node_log",
@@ -675,9 +671,7 @@ class TestStreamEvents:
         with patch("dap_cli.commands.cortex._events_client", return_value=client):
             _stream_events("http://localhost:7333", "r1", stop)  # must return promptly
 
-    def test_dropped_stream_does_not_raise(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_dropped_stream_does_not_raise(self, capsys: pytest.CaptureFixture[str]) -> None:
         """An httpx error mid-stream prints a dim notice and returns, not crash."""
         import httpx
 
@@ -773,9 +767,7 @@ class TestCortexRunFollow:
         with (
             patch("dap_cli.commands.cortex.check_engine"),
             patch("dap_cli.commands.cortex.load_cortex_bundle", return_value={}),
-            patch(
-                "dap_cli.commands.cortex.ensure_pipeline_imported", return_value="pipe-1"
-            ),
+            patch("dap_cli.commands.cortex.ensure_pipeline_imported", return_value="pipe-1"),
             patch("dap_cli.commands.cortex._sync_workspace"),
             patch("dap_cli.commands.cortex.ensure_project", return_value="proj-1"),
             patch("dap_cli.commands.cortex.create_run", return_value="run-1"),

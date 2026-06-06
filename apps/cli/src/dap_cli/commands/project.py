@@ -60,6 +60,13 @@ def cmd_run(
             help="Show live per-node progress during the run",
         ),
     ] = True,
+    follow: Annotated[
+        bool,
+        typer.Option(
+            "--follow/--no-follow",
+            help="Stream live node output to the terminal during the run",
+        ),
+    ] = False,
     token: _TokenOption = None,
 ) -> None:
     """Trigger a pipeline run for a GitHub issue.
@@ -79,6 +86,7 @@ def cmd_run(
         workspace=workspace,
         token=token,
         show_progress=progress,
+        follow=follow,
     )
 
 
