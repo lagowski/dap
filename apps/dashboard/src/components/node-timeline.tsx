@@ -100,7 +100,7 @@ export function NodeTimeline({
             <button
               type="button"
               onClick={() => onSelectNode?.(nodeId)}
-              aria-label={`Inspect node ${nodeId}`}
+              aria-label={`Inspect node ${nodeId}, status ${status}`}
               className={`flex items-center gap-3 pb-3 pt-1 min-w-0 text-left rounded px-2 -mx-2 transition-colors ${
                 onSelectNode ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"
               } ${nodeId === selectedNode ? "bg-muted" : ""}`}
