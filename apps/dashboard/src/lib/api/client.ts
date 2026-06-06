@@ -14,6 +14,7 @@ import type {
   AdminUser,
   AdminUserUpdate,
   Agent,
+  AgentExecutions,
   AgentUsage,
   AuditEvent,
   AuditEventFilters,
@@ -356,6 +357,19 @@ export async function getAgent(id: string): Promise<Agent> {
 
 export async function getAgentUsage(id: string): Promise<AgentUsage> {
   return request<AgentUsage>(`/agents/${encodeURIComponent(id)}/usage`);
+}
+
+export async function getAgentExecutions(
+  id: string,
+  params: { offset?: number; limit?: number } = {},
+): Promise<AgentExecutions> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return request<AgentExecutions>(
+    `/agents/${encodeURIComponent(id)}/executions${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export async function createAgent(payload: AgentCreate): Promise<Agent> {

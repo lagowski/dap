@@ -19,6 +19,7 @@ export const queryKeys = {
   agent: (id: string) => ["agents", id] as const,
   agentVersions: (id: string) => ["agents", id, "versions"] as const,
   agentUsage: (id: string) => ["agents", id, "usage"] as const,
+  agentExecutions: (id: string) => ["agents", id, "executions"] as const,
   pipelines: ["pipelines"] as const,
   pipelinesList: ["pipelines", "list"] as const,
   pipeline: (id: string) => ["pipelines", id] as const,
