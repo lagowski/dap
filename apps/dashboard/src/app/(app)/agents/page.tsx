@@ -107,11 +107,14 @@ export default function AgentsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Agents</h1>
         <div className="flex items-center gap-2">
+          {/* sr-only (not display:none) — some Chromium builds refuse to
+              open the native file dialog when .click() targets a
+              display:none input; an off-screen input fires reliably. */}
           <input
             ref={fileInputRef}
             type="file"
             accept="application/json,.json"
-            className="hidden"
+            className="sr-only"
             onChange={handleFileChange}
             aria-hidden="true"
           />
