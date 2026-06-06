@@ -84,12 +84,24 @@ export function LiveOutputPanel({ runId, enabled }: LiveOutputPanelProps) {
             {currentNode}
           </span>
         )}
-        {isStreaming && (
+        {/* "streaming" (spinner) only when output is actually flowing —
+            many node types (python-func, api-call) never emit stdout, so a
+            spinning "streaming" while nothing arrives is misleading. When
+            connected but idle, show a calmer "live" dot instead. */}
+        {isStreaming && text.length > 0 ? (
           <span className="ml-auto flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
             <Loader2 className="h-3 w-3 animate-spin" />
             streaming
           </span>
-        )}
+        ) : isStreaming ? (
+          <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+            </span>
+            live
+          </span>
+        ) : null}
       </button>
 
       {!collapsed && (
