@@ -300,8 +300,8 @@ export default function PipelinesPage() {
                             key={pipeline.id}
                             className="border-b last:border-0 hover:bg-muted/30"
                           >
-                            <td className="px-4 py-2 font-medium whitespace-nowrap">
-                              <div className="flex items-center gap-1.5">
+                            <td className="px-4 py-2 font-medium">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <span>{pipeline.name}</span>
                                 {boundKinds.map((kind) => (
                                   <Badge
