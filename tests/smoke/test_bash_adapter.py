@@ -6,10 +6,17 @@ import asyncio
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from dap_runtimes import BashAdapter
 from dap_types import RuntimeTask
+
+from .conftest import build_subprocess_mock
+
+# The bash adapter spawns its subprocess via ``create_subprocess_exec`` imported
+# through ``asyncio`` at this module path; the streaming tests patch it there.
+_EXEC_PATCH_PATH = "dap_runtimes.adapters.bash.asyncio.create_subprocess_exec"
 
 
 @pytest.fixture
@@ -294,3 +301,125 @@ async def test_structured_shape_is_consistent_across_outcomes(
     missing_cmd = await adapter.execute(_task())
     assert missing_cmd.structured is not None
     assert set(missing_cmd.structured.keys()) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# Streaming stdout to ``on_output`` (#662 follow-up).
+#
+# The bash adapter has its own subprocess loop (it is NOT a ``_cli_base``
+# subclass). These tests drive a mocked subprocess so we can assert the
+# incremental ``on_output`` delivery directly, mirroring
+# ``test_cli_base_streaming.py``. They patch ``create_subprocess_exec`` at the
+# bash module path and use the shared ``build_subprocess_mock`` shim whose
+# ``stdout.read(n)`` yields queued byte chunks then ``b""`` at EOF.
+# ---------------------------------------------------------------------------
+
+
+async def _execute_mocked(
+    proc: object,
+    *,
+    on_output: object = None,
+    command: str = "echo hi",
+    timeout_ms: int = 5000,
+) -> object:
+    adapter = BashAdapter()
+    with patch(_EXEC_PATCH_PATH, AsyncMock(return_value=proc)):
+        return await adapter.execute(
+            _task(command=command, timeout_ms=timeout_ms),
+            on_output=on_output,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_on_output_receives_each_stdout_chunk_in_order() -> None:
+    """Each stdout chunk reaches ``on_output`` in order; full stdout unchanged."""
+    proc = build_subprocess_mock(stdout_chunks=[b"part-a ", b"part-b", b"!"])
+    received: list[str] = []
+
+    result = await _execute_mocked(proc, on_output=received.append)
+
+    assert received == ["part-a ", "part-b", "!"]
+    # The returned output is still the full concatenation, independent of the
+    # streaming callback.
+    assert result.output == "part-a part-b!"  # type: ignore[attr-defined]
+    assert result.success is True  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_on_output_does_not_change_returned_stdout_or_stderr() -> None:
+    """Streaming must not alter the captured stdout/stderr/exit_code."""
+    proc = build_subprocess_mock(
+        stdout_chunks=[b"line-1\n", b"line-2\n"],
+        stderr=b"warn: heads up",
+    )
+    received: list[str] = []
+
+    result = await _execute_mocked(proc, on_output=received.append)
+
+    assert result.output == "line-1\nline-2\n"  # type: ignore[attr-defined]
+    assert result.structured is not None  # type: ignore[attr-defined]
+    assert result.structured["stderr"] == "warn: heads up"  # type: ignore[attr-defined]
+    assert "".join(received) == result.output  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_on_output_none_matches_full_capture() -> None:
+    """``on_output=None`` (today's default) is byte-for-byte the old behaviour."""
+    proc = build_subprocess_mock(stdout_chunks=[b"abc", b"def"], stderr=b"err")
+
+    result = await _execute_mocked(proc, on_output=None)
+
+    assert result.output == "abcdef"  # type: ignore[attr-defined]
+    assert result.structured is not None  # type: ignore[attr-defined]
+    assert result.structured["stderr"] == "err"  # type: ignore[attr-defined]
+    assert result.structured["exit_code"] == 0  # type: ignore[attr-defined]
+    assert result.success is True  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_multibyte_char_split_across_chunks_is_not_corrupted() -> None:
+    """A UTF-8 char straddling a read boundary must be reassembled, not garbled."""
+    # "café" — the "é" (b"\xc3\xa9") is split across the two chunks.
+    proc = build_subprocess_mock(stdout_chunks=[b"caf\xc3", b"\xa9"])
+    received: list[str] = []
+
+    result = await _execute_mocked(proc, on_output=received.append)
+
+    assert "".join(received) == "café"
+    assert "�" not in "".join(received)
+    assert result.output == "café"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_on_output_raising_is_swallowed() -> None:
+    """A raising sink is logged and dropped — never fails the node."""
+    proc = build_subprocess_mock(stdout_chunks=[b"one", b"two"])
+
+    def boom(_chunk: str) -> None:
+        raise RuntimeError("flaky sink")
+
+    with patch("dap_runtimes.adapters._subprocess_stream.logger") as mock_logger:
+        result = await _execute_mocked(proc, on_output=boom)
+
+    assert result.output == "onetwo"  # type: ignore[attr-defined]
+    assert result.success is True  # type: ignore[attr-defined]
+    assert mock_logger.warning.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_streaming_timeout_still_kills_and_returns_timed_out() -> None:
+    """The timeout path still kills the tree and reports ``timed_out`` with a sink set."""
+    proc = build_subprocess_mock(hang=True)
+    proc.returncode = None
+    received: list[str] = []
+
+    result = await _execute_mocked(
+        proc, on_output=received.append, command="sleep 9", timeout_ms=50
+    )
+
+    assert result.success is False  # type: ignore[attr-defined]
+    assert result.structured is not None  # type: ignore[attr-defined]
+    assert result.structured["timed_out"] is True  # type: ignore[attr-defined]
+    assert any("timed out" in err.lower() for err in result.errors)  # type: ignore[attr-defined]
+    assert received == []
+    assert proc.wait.called
