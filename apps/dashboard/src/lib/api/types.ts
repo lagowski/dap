@@ -47,6 +47,9 @@ export type AgentUsage = ApiSchema<"AgentUsageResponse">;
 export type AgentExecutions = ApiSchema<"AgentExecutionsResponse">;
 export type AgentExecution = ApiSchema<"AgentExecutionRef">;
 
+/** Projects that bind a pipeline, and as which workflow kind(s) (#697). */
+export type PipelineUsage = ApiSchema<"PipelineUsageResponse">;
+
 export type AgentCreate = Omit<
   ApiSchema<"AgentCreate">,
   "timeout_ms" | "role"

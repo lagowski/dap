@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TriggerRunDialog } from "@/components/trigger-run-dialog";
+import { PipelineUsageDialog } from "./pipeline-usage-dialog";
 
 interface DesignerToolbarProps {
   name: string;
@@ -117,6 +118,7 @@ export function DesignerToolbar({
           >
             {isSaving ? "Saving…" : saveLabel}
           </Button>
+          {pipelineId != null ? <PipelineUsageDialog pipelineId={pipelineId} /> : null}
           {canCloneOrExport ? (
             <>
               <Button asChild type="button" variant="outline" size="sm">
