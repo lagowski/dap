@@ -14,6 +14,7 @@ import {
 import { useAgentsList, useArchiveAgent, useImportAgent } from "@/hooks/api";
 import { ApiError, formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
