@@ -45,7 +45,7 @@ import logging
 import os
 import platform
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
@@ -128,7 +128,7 @@ class PythonFuncAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True, version=platform.python_version())
 
-    async def execute(  # noqa: PLR0911,PLR0912,PLR0915
+    async def execute(
         self,
         task: RuntimeTask,
         on_output: OutputCallback | None = None,
@@ -139,62 +139,16 @@ class PythonFuncAdapter(BaseAdapter):
         del on_output
         config = task.runtime_config
 
+        # Resolve at invocation time — allows package installs without engine
+        # restart. The same resolver backs the engine's fail-fast preflight
+        # (#710), so a callable that passes preflight resolves here too. Any
+        # failure (bad format, unimportable module, missing/non-callable attr)
+        # is a configuration error → _failed, matching sibling adapters. #191/#192
         callable_path = config.get("callable_path")
-        if not callable_path or not isinstance(callable_path, str):
-            return _failed(
-                "python-func: runtime_config.callable_path is required "
-                "(format: 'package.module:func_name')",
-                duration_ms=0,
-            )
-
-        # Require explicit `module:attr` separator. Dot-notation was previously
-        # accepted as a fallback but only worked when every intermediate segment
-        # was importable as a module — e.g. `os.path.join` worked because
-        # `os.path` is a module, but `pkg.helpers.run` failed confusingly when
-        # `helpers` was a function. Always require `:` so the boundary between
-        # module and attribute is unambiguous. #192
-        if ":" not in callable_path:
-            return _failed(
-                f"python-func: callable_path must use 'module.path:func_name' "
-                f"format (got {callable_path!r}). Dot-only notation was removed "
-                f"in #192 — use ':' to separate module from attribute.",
-                duration_ms=0,
-            )
-        module_path, func_name = callable_path.rsplit(":", 1)
-        module_path = module_path.strip()
-        func_name = func_name.strip()
-        if not module_path or not func_name:
-            return _failed(
-                f"python-func: callable_path must have non-empty module and attr "
-                f"separated by ':' (got {callable_path!r}).",
-                duration_ms=0,
-            )
-
-        # Resolve at invocation time — allows package installs without engine restart.
-        # Any import-time failure (ImportError, SyntaxError, raises in module
-        # top-level code) is a configuration error — return _failed to match
-        # sibling adapters (bash/http/codex). BaseException (KeyboardInterrupt,
-        # SystemExit, GeneratorExit) still propagates. #191
-        try:
-            mod = importlib.import_module(module_path)
-        except Exception as exc:
-            return _failed(
-                f"python-func: cannot import '{callable_path}' ({type(exc).__name__}: {exc})",
-                duration_ms=0,
-            )
-
-        func = getattr(mod, func_name, _MISSING)
-        if func is _MISSING:
-            return _failed(
-                f"python-func: module '{module_path}' has no attribute '{func_name}'",
-                duration_ms=0,
-            )
-
-        if not callable(func):
-            return _failed(
-                f"python-func: '{callable_path}' is not callable",
-                duration_ms=0,
-            )
+        func, resolve_error = resolve_callable(callable_path)
+        if resolve_error is not None:
+            return _failed(resolve_error, duration_ms=0)
+        assert func is not None  # narrowed by resolve_error is None
 
         pass_prompt = bool(config.get("pass_prompt", True))
         pass_context = bool(config.get("pass_context", False))
@@ -302,6 +256,54 @@ class PythonFuncAdapter(BaseAdapter):
 
 # Sentinel — distinct from None so getattr can distinguish "attr missing" from "attr is None".
 _MISSING: object = object()
+
+
+def resolve_callable(  # noqa: PLR0911 — one early-return per distinct failure mode
+    callable_path: object,
+) -> tuple[Callable[..., Any] | None, str | None]:
+    """Resolve a python-func ``callable_path`` ('module:attr') to a callable.
+
+    Returns ``(func, None)`` on success, or ``(None, error_message)`` on any
+    failure: missing/blank/non-string path, missing ``:`` separator, blank
+    module or attribute, unimportable module (ImportError / SyntaxError /
+    top-level raise), missing attribute, or a non-callable attribute.
+
+    Shared by :class:`PythonFuncAdapter` (run time) and the engine's
+    fail-fast preflight (#710) so "resolvable at run time" and "passes
+    preflight" mean exactly the same thing. Uses ``importlib`` at call time,
+    preserving install-without-restart: a package installed after engine
+    start resolves on the next call with no restart.
+    """
+    if not callable_path or not isinstance(callable_path, str):
+        return None, (
+            "python-func: runtime_config.callable_path is required "
+            "(format: 'package.module:func_name')"
+        )
+    # Require an explicit `module:attr` separator (#192).
+    if ":" not in callable_path:
+        return None, (
+            f"python-func: callable_path must use 'module.path:func_name' "
+            f"format (got {callable_path!r}). Dot-only notation was removed "
+            f"in #192 — use ':' to separate module from attribute."
+        )
+    module_path, func_name = callable_path.rsplit(":", 1)
+    module_path = module_path.strip()
+    func_name = func_name.strip()
+    if not module_path or not func_name:
+        return None, (
+            f"python-func: callable_path must have non-empty module and attr "
+            f"separated by ':' (got {callable_path!r})."
+        )
+    try:
+        mod = importlib.import_module(module_path)
+    except Exception as exc:
+        return None, (f"python-func: cannot import '{callable_path}' ({type(exc).__name__}: {exc})")
+    func = getattr(mod, func_name, _MISSING)
+    if func is _MISSING:
+        return None, f"python-func: module '{module_path}' has no attribute '{func_name}'"
+    if not callable(func):
+        return None, f"python-func: '{callable_path}' is not callable"
+    return func, None
 
 
 def _elapsed_ms(start: float) -> int:

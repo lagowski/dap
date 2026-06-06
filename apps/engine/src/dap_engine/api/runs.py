@@ -40,6 +40,7 @@ from dap_engine.api.deps import (
     get_session_factory,
 )
 from dap_engine.api.run_batches import router as batch_router
+from dap_engine.api.run_callable_preflight import pipeline_callable_preflight_error
 from dap_engine.api.run_interventions import register_run_intervention_routes
 from dap_engine.api.run_lifecycle import register_run_lifecycle_routes
 from dap_engine.api.run_reads import register_run_read_routes
@@ -262,6 +263,17 @@ async def trigger_run(
         )
         session.commit()
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=denial)
+
+    # Fail-fast preflight (#710): resolve every python-func node's callable
+    # before the run starts. A missing package (e.g. dap-cortex) is a clean
+    # 422 here instead of a cryptic mid-run failed node. Per-request, so a
+    # package installed after engine start resolves on the next trigger.
+    callable_error = pipeline_callable_preflight_error(session, pipeline_version, registry)
+    if callable_error is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=callable_error,
+        )
 
     # Build initial state — defaults < project context (#65) < caller's
     # initial_state (caller wins). Project supplies ``repo`` from
