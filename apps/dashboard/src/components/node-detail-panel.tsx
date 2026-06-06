@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { useRunNodeLog, useRunStateHistory } from "@/hooks/api";
 import { NodeStatusBadge } from "@/components/status-badge";
 import { StateDiffView } from "@/components/state-diff-view";
@@ -12,10 +14,20 @@ import type { PipelineState, StateSnapshot } from "@/lib/api/types";
 interface NodeDetailPanelProps {
   runId: string;
   nodeId: string | null;
+  /** Execution-ordered node ids — enables prev/next stepping in-panel. */
+  nodeIds?: string[];
   onOpenChange: (open: boolean) => void;
+  /** Switch the panel to another node without closing it. */
+  onSelectNode?: (nodeId: string) => void;
 }
 
-export function NodeDetailPanel({ runId, nodeId, onOpenChange }: NodeDetailPanelProps) {
+export function NodeDetailPanel({
+  runId,
+  nodeId,
+  nodeIds,
+  onOpenChange,
+  onSelectNode,
+}: NodeDetailPanelProps) {
   const open = nodeId != null;
   const { data, isPending, isError, error } = useRunNodeLog(runId, nodeId);
   const { data: stateHistory } = useRunStateHistory(open ? runId : null);
@@ -24,14 +36,49 @@ export function NodeDetailPanel({ runId, nodeId, onOpenChange }: NodeDetailPanel
     return getSnapshotPair(stateHistory ?? [], nodeId);
   }, [stateHistory, nodeId]);
 
+  // Step through nodes in execution order without closing the dialog.
+  const order = nodeIds ?? [];
+  const idx = nodeId ? order.indexOf(nodeId) : -1;
+  const prevId = idx > 0 ? order[idx - 1] : null;
+  const nextId = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            Node: <span className="font-mono">{nodeId}</span>
-            {data && <NodeStatusBadge status={data.status} />}
-          </DialogTitle>
+          <div className="flex items-center justify-between gap-2 pr-8">
+            <DialogTitle className="flex min-w-0 items-center gap-2">
+              Node: <span className="font-mono truncate">{nodeId}</span>
+              {data && <NodeStatusBadge status={data.status} />}
+            </DialogTitle>
+            {order.length > 1 && idx >= 0 ? (
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={!prevId}
+                  onClick={() => prevId && onSelectNode?.(prevId)}
+                  aria-label="Previous node"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {idx + 1} / {order.length}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={!nextId}
+                  onClick={() => nextId && onSelectNode?.(nextId)}
+                  aria-label="Next node"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : null}
+          </div>
         </DialogHeader>
 
         {isPending && nodeId && (

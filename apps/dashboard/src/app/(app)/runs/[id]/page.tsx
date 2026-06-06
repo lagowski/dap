@@ -181,7 +181,9 @@ export default function RunDetailPage({
       <NodeDetailPanel
         runId={run.id}
         nodeId={selectedNode}
+        nodeIds={Object.keys(run.node_statuses)}
         onOpenChange={(open) => !open && setSelectedNode(null)}
+        onSelectNode={(nodeId) => setSelectedNode(nodeId)}
       />
     </div>
   );
