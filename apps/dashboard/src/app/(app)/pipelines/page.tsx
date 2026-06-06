@@ -7,6 +7,7 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
+  Pencil,
   Play,
   Plus,
   Upload,
@@ -21,6 +22,7 @@ import {
 import { useActiveProject } from "@/lib/active-project";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TriggerRunDialog } from "@/components/trigger-run-dialog";
@@ -328,39 +330,55 @@ export default function PipelinesPage() {
                             <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
                               {pipeline.id.slice(0, ID_PREFIX)}…
                             </td>
-                            <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
+                            <td className="px-4 py-2 text-right space-x-1 whitespace-nowrap">
                               <TriggerRunDialog
                                 pipelineId={pipeline.id}
                                 pipelineName={pipeline.name}
                                 currentVersion={pipeline.version}
                               >
                                 {(open) => (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={open}
-                                  >
-                                    <Play className="h-3.5 w-3.5 mr-1" />
-                                    Run
-                                  </Button>
+                                  <Tooltip label="Run pipeline">
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={open}
+                                      aria-label="Run pipeline"
+                                    >
+                                      <Play className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </Tooltip>
                                 )}
                               </TriggerRunDialog>
-                              <Button asChild variant="outline" size="sm">
-                                <Link href={`/pipelines/${pipeline.id}/edit`}>
-                                  Edit
-                                </Link>
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={archive.isPending}
-                                onClick={() =>
-                                  handleArchive(pipeline.id, pipeline.name)
-                                }
-                              >
-                                <Archive className="h-3.5 w-3.5 mr-1" />
-                                Archive
-                              </Button>
+                              <Tooltip label="Edit pipeline">
+                                <Button
+                                  asChild
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                >
+                                  <Link
+                                    href={`/pipelines/${pipeline.id}/edit`}
+                                    aria-label="Edit pipeline"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </Link>
+                                </Button>
+                              </Tooltip>
+                              <Tooltip label="Archive pipeline">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  aria-label="Archive pipeline"
+                                  disabled={archive.isPending}
+                                  onClick={() =>
+                                    handleArchive(pipeline.id, pipeline.name)
+                                  }
+                                >
+                                  <Archive className="h-3.5 w-3.5" />
+                                </Button>
+                              </Tooltip>
                             </td>
                           </tr>
                         );
