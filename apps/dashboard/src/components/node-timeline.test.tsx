@@ -77,10 +77,9 @@ describe("NodeTimeline", () => {
     render(
       <NodeTimeline nodeStatuses={statuses} currentNode={null} runId="r1" />,
     );
-    expect(screen.getByText("TaskSelector")).toBeInTheDocument();
-    expect(screen.getByText("FinalizeWriter")).toBeInTheDocument();
-    // runtime shown so python-func vs LLM nodes are distinguishable at a glance.
-    expect(screen.getByText("python-func")).toBeInTheDocument();
+    // Agent + runtime render as one secondary "(name · runtime)" label.
+    expect(screen.getByText(/TaskSelector · claude-code/)).toBeInTheDocument();
+    expect(screen.getByText(/FinalizeWriter · python-func/)).toBeInTheDocument();
   });
 
   it("falls back to a short agent id when the agent is unknown (#707)", () => {
