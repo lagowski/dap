@@ -108,9 +108,14 @@ export default function AdminApiTokensPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <KeyRound className="h-5 w-5 text-muted-foreground" aria-hidden />
-            {tokens.data
-              ? `$<span suppressHydrationWarning>{total.toLocaleString()}</span> ${total === 1 ? "token" : "tokens"}`
-              : "Tokens"}
+            {tokens.data ? (
+              <>
+                <span suppressHydrationWarning>{total.toLocaleString()}</span>{" "}
+                {total === 1 ? "token" : "tokens"}
+              </>
+            ) : (
+              "Tokens"
+            )}
           </CardTitle>
           <CardDescription>
             Revoking a token sets ``revoked_at`` server-side — the row stays
