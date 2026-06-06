@@ -25,6 +25,7 @@ import type {
   AgentUpdate,
   BackendProfilesInspectionResponse,
   CurrentUser,
+  ErrorExplanation,
   LoginCredentials,
   NodeExecutionLog,
   PaginatedList,
@@ -217,6 +218,16 @@ export async function getRunNodeLog(
 ): Promise<NodeExecutionLog> {
   return request<NodeExecutionLog>(
     `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}`,
+  );
+}
+
+/** Deterministic explanation + suggested actions for a failed node (#691). */
+export async function getNodeErrorExplanation(
+  runId: string,
+  nodeId: string,
+): Promise<ErrorExplanation> {
+  return request<ErrorExplanation>(
+    `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/explain`,
   );
 }
 

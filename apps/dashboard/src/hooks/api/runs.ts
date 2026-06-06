@@ -94,6 +94,29 @@ export function useRunNodeLog(runId: string | null, nodeId: string | null) {
   });
 }
 
+/**
+ * On-demand error explanation for a failed node (#691). Disabled until
+ * ``enabled`` flips true (the "Explain this error" button) so we never spend
+ * a request — or render an empty box — for nodes the user hasn't asked about.
+ */
+export function useRunNodeExplain(
+  runId: string | null,
+  nodeId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey:
+      runId && nodeId
+        ? queryKeys.runNodeExplain(runId, nodeId)
+        : ["runs", "noop", "nodes", "noop", "explain"],
+    queryFn:
+      runId && nodeId
+        ? () => api.getNodeErrorExplanation(runId, nodeId)
+        : skipToken,
+    enabled: enabled && runId != null && nodeId != null,
+  });
+}
+
 function useRunActionMutation<T>(action: (id: string) => Promise<T>) {
   const qc = useQueryClient();
   return useMutation({

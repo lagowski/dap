@@ -1,3 +1,4 @@
+from dap_runtimes.adapters._providers._base import classify_provider_failure
 from dap_runtimes.adapters.aider import AiderAdapter
 from dap_runtimes.adapters.api_call import ApiCallAdapter
 from dap_runtimes.adapters.bash import BashAdapter
@@ -18,5 +19,6 @@ __all__ = [
     "HttpAdapter",
     "PythonFuncAdapter",
     "RuntimeRegistry",
+    "classify_provider_failure",
     "create_default_registry",
 ]

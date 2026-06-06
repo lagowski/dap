@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from dap_engine.api.deps import get_run_registry, get_session
 from dap_engine.api.run_events import stream_run_events
 from dap_engine.auth.users import current_active_user
+from dap_engine.diagnostics.error_explainer import ErrorExplanation, explain_node_error
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
@@ -35,6 +36,9 @@ def register_run_read_routes(router: APIRouter) -> None:
     )
     router.get("/{run_id}/nodes", response_model=list[NodeExecutionLog])(list_run_node_logs)
     router.get("/{run_id}/nodes/{node_id}", response_model=NodeExecutionLog)(get_run_node_log)
+    router.get("/{run_id}/nodes/{node_id}/explain", response_model=ErrorExplanation)(
+        explain_run_node_error
+    )
     # SSE stream of run-execution events (#662, Phase 3a). No response_model:
     # the route returns a ``StreamingResponse`` (text/event-stream), and its
     # event schema is documented on ``stream_run_events``.
@@ -181,3 +185,24 @@ def get_run_node_log(
         )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+def explain_run_node_error(
+    run_id: str,
+    node_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> ErrorExplanation:
+    """Deterministic explanation + suggested actions for a node's failure (#691).
+
+    Ownership-gated through the node-log read (404 for non-owners). Works off
+    the node's recorded ``error_message`` only — no LLM, no secrets. An LLM
+    fallback for unrecognised errors is a follow-up (#691 slice 2 / #689).
+    """
+    try:
+        log = repo.get_run_node_log(
+            session, run_id, node_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return explain_node_error(log.error_message, runtime_id=log.runtime_id)
