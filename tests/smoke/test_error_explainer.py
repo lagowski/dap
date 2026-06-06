@@ -79,6 +79,15 @@ def test_missing_api_key_prefers_underscored_var_over_bare_word() -> None:
     assert add_env[0].target == "ANTHROPIC_API_KEY"
 
 
+def test_missing_api_key_skips_generic_underscored_token() -> None:
+    # "API_KEY" in prose is generic (all parts generic) — the real var wins (#718 review).
+    err = "the API_KEY format is wrong; unauthorized. Set OPENAI_API_KEY."
+    exp = explain_node_error(err)
+    add_env = [a for a in exp.actions if a.kind == "add_env"]
+    assert add_env
+    assert add_env[0].target == "OPENAI_API_KEY"
+
+
 def test_contract_mismatch_extracts_field() -> None:
     err = "agent output did not match output_schema: required field 'test_files' missing"
     exp = explain_node_error(err)
