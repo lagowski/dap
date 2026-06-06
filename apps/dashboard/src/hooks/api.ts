@@ -144,6 +144,15 @@ export function useAgent(id: string | null) {
   });
 }
 
+export function useAgentUsage(id: string | null) {
+  return useQuery({
+    queryKey: id ? queryKeys.agentUsage(id) : ["agents", "noop", "usage"],
+    queryFn: () =>
+      id ? api.getAgentUsage(id) : Promise.reject(new Error("no id")),
+    enabled: id != null,
+  });
+}
+
 export function useAgentVersions(id: string | null) {
   return useQuery({
     queryKey: id ? queryKeys.agentVersions(id) : ["agents", "noop", "versions"],

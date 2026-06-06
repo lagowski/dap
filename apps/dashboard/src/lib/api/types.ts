@@ -40,6 +40,9 @@ export type Agent = Omit<
     used_in_pipelines?: number | null;
   };
 
+/** Where an agent is used — pipelines that embed it + projects that bind those (#697). */
+export type AgentUsage = ApiSchema<"AgentUsageResponse">;
+
 export type AgentCreate = Omit<
   ApiSchema<"AgentCreate">,
   "timeout_ms" | "role"
