@@ -34,6 +34,7 @@ import type {
   PipelineState,
   PipelineUiMetadataPatch,
   PipelineUpdate,
+  PipelineUsage,
   Project,
   ProjectCreate,
   ProjectRunRequest,
@@ -256,6 +257,10 @@ export async function listPipelines(): Promise<PaginatedList<Pipeline>> {
 
 export async function getPipeline(id: string): Promise<Pipeline> {
   return request<Pipeline>(`/pipelines/${encodeURIComponent(id)}`);
+}
+
+export async function getPipelineUsage(id: string): Promise<PipelineUsage> {
+  return request<PipelineUsage>(`/pipelines/${encodeURIComponent(id)}/usage`);
 }
 
 export async function getPipelineVersion(

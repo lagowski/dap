@@ -23,6 +23,7 @@ export const queryKeys = {
   pipelines: ["pipelines"] as const,
   pipelinesList: ["pipelines", "list"] as const,
   pipeline: (id: string) => ["pipelines", id] as const,
+  pipelineUsage: (id: string) => ["pipelines", id, "usage"] as const,
   pipelineVersions: (id: string) => ["pipelines", id, "versions"] as const,
   projects: ["projects"] as const,
   projectsList: (filters?: { archived?: boolean }) =>

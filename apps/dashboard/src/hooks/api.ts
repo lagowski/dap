@@ -42,6 +42,15 @@ export function usePipeline(id: string | null) {
   });
 }
 
+export function usePipelineUsage(id: string | null) {
+  return useQuery({
+    queryKey: id ? queryKeys.pipelineUsage(id) : ["pipelines", "noop", "usage"],
+    queryFn: () =>
+      id ? api.getPipelineUsage(id) : Promise.reject(new Error("no id")),
+    enabled: id != null,
+  });
+}
+
 export function usePipelinesList() {
   return useQuery({
     queryKey: queryKeys.pipelinesList,
