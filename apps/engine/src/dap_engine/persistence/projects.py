@@ -261,3 +261,27 @@ def list_projects(
         .limit(limit)
     ).all()
     return [_project_from_orm(p) for p in projects_orm], total
+
+
+def projects_using_pipelines(
+    session: Session,
+    pipeline_ids: list[str],
+) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """Reverse-lookup: projects whose workflow bindings reference any of
+    ``pipeline_ids``.
+
+    Returns ``(project_id, project_name, [(kind, pipeline_id)])`` per project.
+    Ownership-agnostic by design (impact view) — the caller gates on the
+    agent / pipeline first, same contract as ``pipelines_using_agent``.
+    """
+    wanted = set(pipeline_ids)
+    if not wanted:
+        return []
+    out: list[tuple[str, str, list[tuple[str, str]]]] = []
+    for project in session.scalars(select(ProjectORM)).all():
+        matches = sorted(
+            (kind, pid) for kind, pid in (project.pipelines or {}).items() if pid in wanted
+        )
+        if matches:
+            out.append((project.id, project.name, matches))
+    return out

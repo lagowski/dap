@@ -59,6 +59,7 @@ from dap_engine.persistence.projects import (
     create_project,
     get_project,
     list_projects,
+    projects_using_pipelines,
     update_project,
 )
 from dap_engine.persistence.runs import (
@@ -118,6 +119,7 @@ __all__ = [
     "list_pipelines",
     "list_projects",
     "list_run_node_logs",
+    "projects_using_pipelines",
     "list_run_state_history",
     "list_runs",
     "mark_expired_gate_runs_as_failed",

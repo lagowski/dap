@@ -10,7 +10,7 @@ from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
 from dap_types import Agent, RuntimeTask
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
@@ -131,6 +131,59 @@ def get_agent(
         return repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+class _PipelineUsageRef(BaseModel):
+    id: str
+    name: str
+
+
+class _ProjectBindingRef(BaseModel):
+    kind: str
+    pipeline_id: str
+
+
+class _ProjectUsageRef(BaseModel):
+    id: str
+    name: str
+    bindings: list[_ProjectBindingRef]
+
+
+class AgentUsageResponse(BaseModel):
+    """Where an agent is used: the pipelines that embed it and the projects
+    that (via those pipelines) depend on it (#697)."""
+
+    pipelines: list[_PipelineUsageRef]
+    projects: list[_ProjectUsageRef]
+
+
+@router.get("/{agent_id}/usage", response_model=AgentUsageResponse)
+def get_agent_usage(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> AgentUsageResponse:
+    # Gate on agent ownership first (404 for unknown / foreign ids) — only
+    # then leak pipeline / project names, per ``pipelines_using_agent``'s
+    # caller contract.
+    try:
+        repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    pipelines = repo.pipelines_using_agent(session, agent_id)
+    projects = repo.projects_using_pipelines(session, [pid for pid, _ in pipelines])
+    return AgentUsageResponse(
+        pipelines=[_PipelineUsageRef(id=pid, name=name) for pid, name in pipelines],
+        projects=[
+            _ProjectUsageRef(
+                id=proj_id,
+                name=proj_name,
+                bindings=[_ProjectBindingRef(kind=kind, pipeline_id=pid) for kind, pid in binds],
+            )
+            for proj_id, proj_name, binds in projects
+        ],
+    )
 
 
 @router.put("/{agent_id}", response_model=Agent)
