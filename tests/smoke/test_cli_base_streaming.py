@@ -126,7 +126,9 @@ async def test_on_output_raising_is_logged_and_swallowed() -> None:
     def boom(_chunk: str) -> None:
         raise RuntimeError("flaky sink")
 
-    with patch("dap_runtimes.adapters._cli_base.logger") as mock_logger:
+    # The raising sink is logged by the shared streaming helper (#662 DRY
+    # extraction), so the logger lives at the helper module path now.
+    with patch("dap_runtimes.adapters._subprocess_stream.logger") as mock_logger:
         outcome = await _run(proc, on_output=boom)
 
     # The run still succeeds and returns the full stdout despite the sink raising.

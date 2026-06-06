@@ -36,7 +36,6 @@ calls live here after the extraction.
 from __future__ import annotations
 
 import asyncio
-import codecs
 import json
 import logging
 import os
@@ -49,16 +48,12 @@ from typing import Any, Final
 from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
+from dap_runtimes.adapters._subprocess_stream import drain_subprocess_output
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.cli_base")
 
 MS_PER_SECOND: Final = 1000
-
-# Chunked stdout read size (#662). A plain ``read(n)`` is deliberate: the
-# StreamReader ``readline`` path raises / deadlocks once a single line exceeds
-# its 64 KiB limit, which CLI stream-json output routinely does.
-_STDOUT_READ_SIZE: Final = 4096
 
 
 @dataclass(frozen=True)
@@ -423,22 +418,16 @@ class _BaseCliAdapter(BaseAdapter):
     ) -> SubprocessOutcome:
         """Spawn ``argv``, pipe ``stdin``, run with timeout. Always returns an outcome.
 
-        Replaces ``process.communicate(input=stdin)`` with a manual drain so
-        stdout can be streamed incrementally to ``on_output`` (#662). Three
-        coroutines run concurrently under one ``wait_for`` budget so we keep
-        the previous timeout semantics while avoiding a pipe deadlock:
-
-        - ``_read_stdout`` chunk-reads stdout (``read(4096)`` — *not*
-          ``readline``, which deadlocks on lines past the StreamReader 64 KiB
-          limit), accumulating the full buffer AND forwarding each chunk to
-          ``on_output`` when set;
-        - ``_read_stderr`` drains stderr concurrently — a full stderr pipe
-          would deadlock a stdout-only reader;
-        - ``_feed_stdin`` writes + closes stdin concurrently.
-
-        ``on_output`` never affects the returned full stdout/stderr, and a
-        raising sink is logged and swallowed so a flaky output consumer can't
-        fail the node.
+        Replaces ``process.communicate(input=stdin)`` with the shared
+        :func:`drain_subprocess_output` helper (#662): stdout + stderr are
+        drained concurrently (a full stderr pipe would deadlock a stdout-only
+        reader) and stdin is fed concurrently, all under one ``wait_for``
+        budget so the previous timeout semantics are preserved. stdout is
+        chunk-read and incrementally UTF-8 decoded so each fragment can be
+        forwarded to ``on_output`` without corrupting a multi-byte char split
+        across a read boundary. ``on_output`` never affects the returned full
+        stdout/stderr, and a raising sink is logged and swallowed so a flaky
+        output consumer can't fail the node.
         """
         new_session = hasattr(os, "setsid")
         start = time.monotonic()
@@ -470,53 +459,12 @@ class _BaseCliAdapter(BaseAdapter):
                 start_error=f"Failed to start subprocess: {exc}",
             )
 
-        async def _feed_stdin() -> None:
-            if process.stdin is None:
-                return
-            # ``communicate`` swallows broken-pipe / reset errors when the
-            # child exits before consuming all of stdin; mirror that so a
-            # fast-exiting CLI doesn't turn into a spurious failure.
-            try:
-                process.stdin.write(stdin)
-                await process.stdin.drain()
-                process.stdin.close()
-            except (BrokenPipeError, ConnectionResetError):
-                return
-
-        async def _read_stdout() -> bytes:
-            buf = bytearray()
-            assert process.stdout is not None
-            # Incremental UTF-8 decode so a multi-byte char split across two
-            # read() boundaries isn't emitted as replacement chars (#662
-            # review). The returned full stdout is still decoded as a whole
-            # from ``buf``, so the callback stream and the captured output
-            # agree.
-            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-            while True:
-                chunk = await process.stdout.read(_STDOUT_READ_SIZE)
-                if not chunk:
-                    break
-                buf += chunk
-                if on_output is not None:
-                    text = decoder.decode(chunk)
-                    if text:
-                        self._emit_output(on_output, text)
-            if on_output is not None:
-                tail = decoder.decode(b"", final=True)
-                if tail:
-                    self._emit_output(on_output, tail)
-            return bytes(buf)
-
-        async def _read_stderr() -> bytes:
-            assert process.stderr is not None
-            return await process.stderr.read()
-
         try:
-            stdout_bytes, stderr_bytes, _ = await asyncio.wait_for(
-                asyncio.gather(_read_stdout(), _read_stderr(), _feed_stdin()),
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                drain_subprocess_output(process, on_output=on_output, stdin=stdin),
                 timeout=timeout_seconds,
             )
-            # gather completing means EOF on both pipes; reap to set returncode.
+            # drain completing means EOF on both pipes; reap to set returncode.
             await process.wait()
         except TimeoutError:
             # wait_for cancelled the gather; the subprocess is still alive —
@@ -539,20 +487,6 @@ class _BaseCliAdapter(BaseAdapter):
             stderr=stderr_bytes.decode("utf-8", errors="replace"),
             duration_ms=_elapsed_ms(start),
         )
-
-    @staticmethod
-    def _emit_output(on_output: OutputCallback, text: str) -> None:
-        """Forward one decoded stdout fragment to ``on_output``, swallowing errors.
-
-        ``text`` is already incrementally decoded by the caller (so multi-byte
-        characters split across read boundaries stay intact). A misbehaving
-        sink (e.g. a DB write that transiently fails) must never crash the
-        subprocess read loop or fail the node — log and continue.
-        """
-        try:
-            on_output(text)
-        except Exception:
-            logger.warning("on_output callback raised; dropping stdout chunk", exc_info=True)
 
     def _failed(
         self,

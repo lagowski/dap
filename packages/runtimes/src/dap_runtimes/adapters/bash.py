@@ -35,6 +35,7 @@ from typing import Any, Final
 from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
+from dap_runtimes.adapters._subprocess_stream import drain_subprocess_output
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.bash")
@@ -77,11 +78,11 @@ class BashAdapter(BaseAdapter):
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch dict obscures
         # the mapping (same rationale as ApiCallAdapter.execute).
-        # on_output accepted-and-ignored for now: in Phase 3b-2a (#662)
-        # incremental stdout streaming is wired only for the shared CLI
-        # subprocess base (_cli_base). Bash has its own subprocess loop and
-        # keeps the unchanged full-capture path.
-        del on_output
+        # on_output (#662): bash has its own subprocess loop (it is NOT a
+        # _cli_base subclass), so streaming is wired here via the shared
+        # drain_subprocess_output helper — the same deadlock-safe concurrent
+        # drain + chunked read + incremental UTF-8 decode _cli_base uses.
+        # on_output never changes the returned full stdout/stderr.
         config = task.runtime_config
 
         command = _resolve_command(config, task.prompt_xml)
@@ -148,10 +149,20 @@ class BashAdapter(BaseAdapter):
             )
 
         try:
+            # Replace ``process.communicate()`` with a concurrent stdout +
+            # stderr drain (#662) so stdout can be streamed incrementally to
+            # ``on_output``. stdout is chunk-read (not readline) and decoded with
+            # an incremental UTF-8 decoder; a full stderr pipe is drained in the
+            # same gather to avoid a deadlock. The whole drain runs under one
+            # ``wait_for`` budget, preserving the previous timeout semantics; on
+            # EOF we reap the process to set its return code, exactly as
+            # ``communicate`` did. Bash pipes no stdin, so the helper's stdin
+            # feed is a no-op (``stdin=None``).
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
+                drain_subprocess_output(process, on_output=on_output, stdin=None),
                 timeout=timeout_seconds,
             )
+            await process.wait()
         except TimeoutError:
             await _kill_process_tree(process, new_session)
             return _failed(
