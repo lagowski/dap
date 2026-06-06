@@ -34,6 +34,7 @@ from dap_runtimes.adapters._providers._base import (
     ProviderError,
     ProviderResult,
     calculate_cost_usd,
+    classify_provider_failure,
 )
 
 ID: Final = "openai"
@@ -153,9 +154,15 @@ async def call(
     except openai.NotFoundError as exc:
         raise ProviderError(f"Model not found: {exc}") from exc
     except openai.BadRequestError as exc:
-        raise ProviderError(f"Bad request: {exc}") from exc
+        category = classify_provider_failure(str(exc), status_code=400)
+        label = "Out of credits / quota" if category == "out_of_credits" else "Bad request"
+        raise ProviderError(f"{label}: {exc}", category=category) from exc
     except openai.RateLimitError as exc:
-        raise ProviderError(f"Rate limited: {exc}") from exc
+        # OpenAI delivers ``insufficient_quota`` as a 429 too — classify so
+        # a non-recoverable billing failure isn't mislabelled "rate limited".
+        category = classify_provider_failure(str(exc), status_code=429)
+        label = "Out of credits / quota" if category == "out_of_credits" else "Rate limited"
+        raise ProviderError(f"{label}: {exc}", category=category) from exc
     except openai.APITimeoutError as exc:
         raise ProviderError(f"API timeout: {exc}") from exc
     except openai.APIConnectionError as exc:

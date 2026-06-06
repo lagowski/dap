@@ -12,6 +12,7 @@ from dap_runtimes.adapters._providers._base import (
     ProviderError,
     ProviderResult,
     calculate_cost_usd,
+    classify_provider_failure,
 )
 
 ID: Final = "gemini"
@@ -69,8 +70,19 @@ async def call(
         response = await client.aio.models.generate_content(**request_kwargs)
     except genai_errors.APIError as exc:
         # google-genai raises a single APIError class with a status code on it.
+        # Gemini reports quota exhaustion as 429 RESOURCE_EXHAUSTED.
         status = getattr(exc, "code", None)
-        raise ProviderError(f"Gemini API error {status}: {exc}") from exc
+        category = classify_provider_failure(
+            str(exc), status_code=status if isinstance(status, int) else None
+        )
+        prefix = (
+            "Out of credits / quota"
+            if category == "out_of_credits"
+            else "Rate limited"
+            if category == "rate_limit"
+            else f"Gemini API error {status}"
+        )
+        raise ProviderError(f"{prefix}: {exc}", category=category) from exc
     except Exception as exc:
         # Network / unexpected — surface generically.
         raise ProviderError(f"Gemini call failed: {exc}") from exc

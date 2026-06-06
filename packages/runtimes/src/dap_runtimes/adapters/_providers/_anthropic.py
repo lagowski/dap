@@ -12,6 +12,7 @@ from dap_runtimes.adapters._providers._base import (
     ProviderError,
     ProviderResult,
     calculate_cost_usd,
+    classify_provider_failure,
 )
 
 ID: Final = "anthropic"
@@ -84,9 +85,15 @@ async def call(
     except anthropic.NotFoundError as exc:
         raise ProviderError(f"Model not found: {exc.message}") from exc
     except anthropic.BadRequestError as exc:
-        raise ProviderError(f"Bad request: {exc.message}") from exc
+        # Anthropic surfaces credit exhaustion as a 400 ("credit balance is
+        # too low"), not a 429 — classify so it reads as out-of-credits.
+        category = classify_provider_failure(exc.message, status_code=400)
+        label = "Out of credits" if category == "out_of_credits" else "Bad request"
+        raise ProviderError(f"{label}: {exc.message}", category=category) from exc
     except anthropic.RateLimitError as exc:
-        raise ProviderError(f"Rate limited: {exc.message}") from exc
+        category = classify_provider_failure(exc.message, status_code=429)
+        label = "Out of credits" if category == "out_of_credits" else "Rate limited"
+        raise ProviderError(f"{label}: {exc.message}", category=category) from exc
     except anthropic.APITimeoutError as exc:
         raise ProviderError(f"API timeout: {exc}") from exc
     except anthropic.APIConnectionError as exc:

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 TOKENS_PER_MILLION = 1_000_000
+_HTTP_TOO_MANY_REQUESTS = 429
 
 
 @dataclass
@@ -38,7 +39,59 @@ class ProviderError(Exception):
 
     The api-call adapter catches this and surfaces ``str(error)`` in
     the ``RuntimeResult.errors`` list.
+
+    ``category`` (#692) classifies the failure so callers and the UI can
+    react to quota / credit exhaustion distinctly from a generic backend
+    error. One of:
+
+    - ``"out_of_credits"`` — quota / credit exhausted; will NOT recover on
+      retry (top up or switch provider/runtime).
+    - ``"rate_limit"`` — transient throttling; may recover on retry.
+    - ``None`` — anything else (auth, bad request, network, ...).
     """
+
+    def __init__(self, message: str, *, category: str | None = None) -> None:
+        super().__init__(message)
+        self.category = category
+
+
+def classify_provider_failure(
+    text: str,
+    *,
+    status_code: int | None = None,
+) -> str | None:
+    """Best-effort category for a provider failure (#692).
+
+    Keyed on the error *text* (plus an optional HTTP status) so it works
+    across SDKs without depending on provider-specific exception fields.
+    Returns ``"out_of_credits"``, ``"rate_limit"``, or ``None``.
+
+    Order matters: out-of-credits is checked first because providers often
+    deliver it *as* a 429 (e.g. OpenAI ``insufficient_quota``), and we must
+    not mislabel a non-recoverable billing failure as a transient one.
+    """
+    haystack = (text or "").lower()
+    out_of_credits_markers = (
+        "insufficient_quota",
+        "insufficient quota",
+        "credit balance",
+        "billing_hard_limit",
+        "billing hard limit",
+        "out of credits",
+        "exceeded your current quota",
+        "plan and billing",
+    )
+    if any(marker in haystack for marker in out_of_credits_markers):
+        return "out_of_credits"
+    if (
+        status_code == _HTTP_TOO_MANY_REQUESTS
+        or "rate limit" in haystack
+        or "too many requests" in haystack
+        or "resource_exhausted" in haystack
+        or "resource exhausted" in haystack
+    ):
+        return "rate_limit"
+    return None
 
 
 def calculate_cost_usd(
