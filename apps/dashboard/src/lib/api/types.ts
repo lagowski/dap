@@ -50,6 +50,10 @@ export type AgentExecution = ApiSchema<"AgentExecutionRef">;
 /** Projects that bind a pipeline, and as which workflow kind(s) (#697). */
 export type PipelineUsage = ApiSchema<"PipelineUsageResponse">;
 
+/** Deterministic explanation + suggested actions for a failed node (#691). */
+export type ErrorExplanation = ApiSchema<"ErrorExplanation">;
+export type SuggestedAction = ApiSchema<"SuggestedAction">;
+
 export type AgentCreate = Omit<
   ApiSchema<"AgentCreate">,
   "timeout_ms" | "role"

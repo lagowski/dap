@@ -1166,6 +1166,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/nodes/{node_id}/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Explain Run Node Error
+         * @description Deterministic explanation + suggested actions for a node's failure (#691).
+         *
+         *     Ownership-gated through the node-log read (404 for non-owners). Works off
+         *     the node's recorded ``error_message`` only — no LLM, no secrets. An LLM
+         *     fallback for unrecognised errors is a follow-up (#691 slice 2 / #689).
+         */
+        get: operations["explain_run_node_error_runs__run_id__nodes__node_id__explain_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}/nodes/{node_id}/retry": {
         parameters: {
             query?: never;
@@ -2307,6 +2331,13 @@ export interface components {
             /** Value */
             value: string | number | boolean | null;
         };
+        /** DocLink */
+        DocLink: {
+            /** Href */
+            href: string;
+            /** Label */
+            label: string;
+        };
         /**
          * EnvVarValidationResult
          * @description Per-key validation outcome.
@@ -2322,6 +2353,31 @@ export interface components {
             login?: string | null;
             /** Valid */
             valid?: boolean | null;
+        };
+        /** ErrorExplanation */
+        ErrorExplanation: {
+            /**
+             * Actions
+             * @default []
+             */
+            actions: components["schemas"]["SuggestedAction"][];
+            /** Cause */
+            cause: string;
+            /**
+             * Docs
+             * @default []
+             */
+            docs: components["schemas"]["DocLink"][];
+            /**
+             * Recognized
+             * @default false
+             */
+            recognized: boolean;
+            /**
+             * Source
+             * @default deterministic
+             */
+            source: string;
         };
         /** ErrorModel */
         ErrorModel: {
@@ -3226,6 +3282,23 @@ export interface components {
              * Format: date-time
              */
             timestamp: string;
+        };
+        /**
+         * SuggestedAction
+         * @description One concrete next step. ``kind``/``target`` let the UI offer a button.
+         *
+         *     ``kind`` is an open hint: ``set_extension`` (``target`` = extension key),
+         *     ``add_env`` (``target`` = env-var name), ``edit_agent``, ``retry``,
+         *     ``raise_budget``, or ``None`` for a plain instruction. The UI **never**
+         *     auto-applies — it only offers the affordance.
+         */
+        SuggestedAction: {
+            /** Kind */
+            kind?: string | null;
+            /** Target */
+            target?: string | null;
+            /** Text */
+            text: string;
         };
         /**
          * UserCreate
@@ -5388,6 +5461,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explain_run_node_error_runs__run_id__nodes__node_id__explain_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorExplanation"];
                 };
             };
             /** @description Validation Error */

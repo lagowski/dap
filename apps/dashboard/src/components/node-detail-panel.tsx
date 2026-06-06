@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { useRunNodeLog, useRunStateHistory } from "@/hooks/api";
+import { useRunNodeExplain, useRunNodeLog, useRunStateHistory } from "@/hooks/api";
 import { NodeStatusBadge } from "@/components/status-badge";
 import { StateDiffView } from "@/components/state-diff-view";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
@@ -105,6 +106,7 @@ export function NodeDetailPanel({
                 <pre className="text-xs bg-destructive/10 text-destructive p-3 rounded whitespace-pre-wrap">
                   {data.error_message}
                 </pre>
+                {nodeId && <ErrorExplainer runId={runId} nodeId={nodeId} />}
               </Section>
             )}
 
@@ -194,6 +196,77 @@ export function NodeDetailPanel({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * "Explain this error" affordance for a failed node (#691). On click it
+ * fetches the deterministic explanation (plain-language cause + suggested
+ * actions). Suggested actions are advisory — the UI never auto-applies them.
+ */
+function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading, isError } = useRunNodeExplain(runId, nodeId, open);
+
+  if (!open) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="mt-2"
+        onClick={() => setOpen(true)}
+      >
+        <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />
+        Explain this error
+      </Button>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded border bg-muted/40 p-3 text-xs space-y-2">
+      {isLoading && (
+        <span className="flex items-center gap-1.5 text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          Analyzing…
+        </span>
+      )}
+      {isError && (
+        <span className="text-destructive">Could not analyze this error.</span>
+      )}
+      {data && (
+        <>
+          <p className="font-medium text-foreground">{data.cause}</p>
+          {data.actions.length > 0 && (
+            <ul className="list-disc space-y-1 pl-4">
+              {data.actions.map((a, i) => (
+                <li key={i}>{a.text}</li>
+              ))}
+            </ul>
+          )}
+          {data.docs.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {data.docs.map((d) => (
+                <Link
+                  key={d.href}
+                  href={d.href}
+                  target="_blank"
+                  className="inline-flex items-center gap-1 text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  {d.label}
+                  <ExternalLink className="h-3 w-3" aria-hidden />
+                </Link>
+              ))}
+            </div>
+          )}
+          {!data.recognized && (
+            <p className="text-muted-foreground">
+              Heuristic match only — a richer AI explanation will appear here once an LLM is configured.
+            </p>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

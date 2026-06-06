@@ -28,6 +28,7 @@ export {
   usePipelineVersions,
   useResumeRun,
   useRun,
+  useRunNodeExplain,
   useRunNodeLog,
   useRunNodeLogs,
   useRunsList,
