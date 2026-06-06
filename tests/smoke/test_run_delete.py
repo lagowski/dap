@@ -227,7 +227,14 @@ def http() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
 
 def _authed_user_id(factory: sessionmaker[Session]) -> uuid.UUID:
     with factory() as s:
-        return s.execute(select(UserORM.id).where(UserORM.email == DEFAULT_TEST_EMAIL)).scalar_one()
+        user = (
+            s.scalars(
+                select(UserORM).where(UserORM.email == DEFAULT_TEST_EMAIL)  # type: ignore[arg-type]
+            )
+            .unique()
+            .one()
+        )
+        return user.id
 
 
 def test_delete_endpoint_204_and_audits(
