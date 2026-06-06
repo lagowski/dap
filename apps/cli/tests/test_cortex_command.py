@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from dap_cli.__main__ import app
+from dap_cli.commands import cortex as cortex_mod
 from dap_cli.commands.cortex import (
     _approve_gate,
     _format_progress,
@@ -671,6 +672,58 @@ class TestStreamEvents:
         with patch("dap_cli.commands.cortex._events_client", return_value=client):
             _stream_events("http://localhost:7333", "r1", stop)  # must return promptly
 
+    def test_final_frame_flushed_on_eof_without_trailing_blank(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A final run_finished frame with NO trailing blank line is still dispatched.
+
+        The engine may close the stream right after the last ``data:`` line. SSE
+        treats end-of-stream as an implicit frame terminator, so the pending
+        frame must be flushed on EOF — and a run_finished there must stop the
+        tailer the same as an in-loop one.
+        """
+        lines = [
+            "event: node_log",
+            'data: {"run_id": "r1", "node_id": "coder", "seq": 1, '
+            '"content": "before final\\n", "stream": "stdout"}',
+            "",
+            # Final frame: NO trailing "" — stream ends here (EOF).
+            "event: run_finished",
+            'data: {"run_id": "r1", "final_status": "success", "ended_at": null}',
+        ]
+        client = _sse_stream_client(lines)
+        stop = threading.Event()
+
+        with (
+            patch("dap_cli.commands.cortex._events_client", return_value=client),
+            patch("dap_cli.commands.cortex._emit_event", wraps=cortex_mod._emit_event) as emit,
+        ):
+            _stream_events("http://localhost:7333", "r1", stop)  # returns on EOF flush
+
+        out = capsys.readouterr().out
+        assert "before final" in out
+        # The pending run_finished frame was flushed on EOF (not dropped).
+        emitted_events = [c.args[0] for c in emit.call_args_list]
+        assert "run_finished" in emitted_events
+        # stop_event was never set — a clean return proves the run_finished frame
+        # triggered the stop-streaming path on its own.
+        assert not stop.is_set()
+
+    def test_final_node_log_flushed_on_eof(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A trailing node_log frame with no blank-line terminator still prints."""
+        lines = [
+            "event: node_log",
+            'data: {"run_id": "r1", "node_id": "coder", "seq": 1, '
+            '"content": "tail chunk\\n", "stream": "stdout"}',
+        ]
+        client = _sse_stream_client(lines)
+        stop = threading.Event()
+
+        with patch("dap_cli.commands.cortex._events_client", return_value=client):
+            _stream_events("http://localhost:7333", "r1", stop)
+
+        assert "tail chunk" in capsys.readouterr().out
+
     def test_dropped_stream_does_not_raise(self, capsys: pytest.CaptureFixture[str]) -> None:
         """An httpx error mid-stream prints a dim notice and returns, not crash."""
         import httpx
@@ -734,6 +787,98 @@ class TestPollAndHandleFollow:
                 follow=False,
             )
         mock_stream.assert_not_called()
+
+    def test_follow_shares_one_lock_between_tailer_and_gate(self) -> None:
+        """The same console_lock is passed to _stream_events and the gate path.
+
+        Under --follow the tailer thread and the main (gate) thread both write to
+        the Rich console; a single shared lock must serialise them. This asserts
+        the wiring: one lock object reaches both _stream_events and _handle_gate.
+        """
+        # First poll → paused (drives a gate), second poll → success (terminal).
+        runs = [
+            ("paused", {"final_status": "paused", "current_node": "gate-phase1"}),
+            ("success", {"final_status": "success"}),
+        ]
+        seen: dict[str, Any] = {}
+
+        def _fake_handle_gate(
+            engine_url: str,
+            run_id: str,
+            run: dict[str, Any],
+            watch_only: bool,
+            no_interactive: bool,
+            console_lock: Any = None,
+        ) -> bool:
+            seen["gate_lock"] = console_lock
+            return True  # continue polling
+
+        with (
+            patch("dap_cli.commands.cortex._poll_until_settled", side_effect=runs),
+            patch("dap_cli.commands.cortex._stream_events") as mock_stream,
+            patch("dap_cli.commands.cortex._handle_gate", side_effect=_fake_handle_gate),
+            patch("dap_cli.commands.cortex.time.sleep", return_value=None),
+        ):
+            poll_and_handle(
+                "http://localhost:7333",
+                "run-abc",
+                no_interactive=True,
+                watch_only=False,
+                show_progress=True,
+                follow=True,
+            )
+
+        tailer_lock = mock_stream.call_args.kwargs.get("console_lock")
+        if tailer_lock is None and len(mock_stream.call_args.args) > 3:
+            tailer_lock = mock_stream.call_args.args[3]
+        assert tailer_lock is not None
+        assert seen["gate_lock"] is tailer_lock
+
+    def test_gate_prompt_holds_lock_while_prompting(self) -> None:
+        """_handle_gate acquires the shared lock around the interactive prompt."""
+        lock = threading.Lock()
+        held_during_prompt: dict[str, bool] = {}
+
+        def _fake_prompt(gate_node: str, no_interactive: bool) -> tuple[bool, str]:
+            held_during_prompt["locked"] = lock.locked()
+            return True, ""
+
+        with (
+            patch("dap_cli.commands.cortex._find_pending_gate", return_value="gate-phase1"),
+            patch("dap_cli.commands.cortex._prompt_gate_approval", side_effect=_fake_prompt),
+            patch("dap_cli.commands.cortex._approve_gate", return_value=None),
+        ):
+            from dap_cli.commands.cortex import _handle_gate
+
+            result = _handle_gate(
+                "http://localhost:7333",
+                "run-abc",
+                {"current_node": "gate-phase1"},
+                watch_only=False,
+                no_interactive=False,
+                console_lock=lock,
+            )
+        assert result is True
+        assert held_during_prompt["locked"] is True
+
+    def test_no_follow_gate_path_uses_no_lock(self) -> None:
+        """Without follow, _handle_gate behaves exactly as before (no lock)."""
+        with (
+            patch("dap_cli.commands.cortex._find_pending_gate", return_value="gate-phase1"),
+            patch("dap_cli.commands.cortex._prompt_gate_approval", return_value=(True, "")),
+            patch("dap_cli.commands.cortex._approve_gate", return_value=None),
+        ):
+            from dap_cli.commands.cortex import _handle_gate
+
+            # console_lock defaults to None → no locking, unchanged behaviour.
+            result = _handle_gate(
+                "http://localhost:7333",
+                "run-abc",
+                {"current_node": "gate-phase1"},
+                watch_only=False,
+                no_interactive=False,
+            )
+        assert result is True
 
     def test_follow_suppresses_progress_spinner(self) -> None:
         """Under --follow the per-node spinner is suppressed (show_progress=False)."""
