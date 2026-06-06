@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
 import { useAgentsList } from "@/hooks/api";
 import { Badge } from "@/components/ui/badge";
@@ -96,7 +97,7 @@ export function AgentPalette({ onAddNode }: AgentPaletteProps) {
 
       <div className="p-2 space-y-2">
         {isPending && (
-          <p className="text-xs text-muted-foreground p-2">Loading…</p>
+          <LoadingState className="text-xs p-2" />
         )}
         {isError && (
           <p className="text-xs text-destructive p-2">Failed to load agents</p>

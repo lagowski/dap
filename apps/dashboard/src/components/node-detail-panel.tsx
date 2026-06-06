@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -82,7 +83,7 @@ export function NodeDetailPanel({
         </DialogHeader>
 
         {isPending && nodeId && (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <LoadingState />
         )}
 
         {isError && (

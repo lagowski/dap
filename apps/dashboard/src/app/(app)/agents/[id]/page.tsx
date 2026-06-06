@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Pencil } from "lucide-react";
@@ -26,7 +27,7 @@ export default function AgentDetailPage({
   const confirmDestructive = useConfirmDestructive();
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (

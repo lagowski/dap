@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -98,7 +99,7 @@ export default function AccountPage() {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           {currentUser.isPending ? (
-            <p className="text-muted-foreground">Loading…</p>
+            <LoadingState />
           ) : currentUser.isError ? (
             <p className="text-destructive">
               Couldn&apos;t reach engine: {formatApiError(currentUser.error)}

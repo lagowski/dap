@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LoadingState } from "@/components/ui/spinner";
 import { Archive, Pencil, Plus } from "lucide-react";
 import { useArchiveProject, useProjectsList } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
@@ -47,7 +48,7 @@ export default function ProjectsPage() {
         </p>
       ) : null}
 
-      {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {isPending && <LoadingState />}
       {isError && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">

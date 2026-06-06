@@ -22,6 +22,7 @@
  */
 
 import { Card, CardContent } from "@/components/ui/card";
+import { LoadingState } from "@/components/ui/spinner";
 import { useSettings } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 
@@ -35,7 +36,7 @@ export default function SettingsPage() {
   const { data, isPending, isError, error } = useSettings();
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (

@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useMemo, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, Loader2, Pause, Play, RefreshCw, Square, Zap, ZapOff } from "lucide-react";
 import {
@@ -75,7 +76,7 @@ export default function RunDetailPage({
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (

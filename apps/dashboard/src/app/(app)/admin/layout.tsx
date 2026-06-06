@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, ShieldCheck } from "lucide-react";
 
 import { useCurrentUser } from "@/hooks/api";
+import { LoadingState } from "@/components/ui/spinner";
 import { formatApiError } from "@/lib/api/client";
 
 /**
@@ -46,11 +47,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [currentUser.isLoading, currentUser.isError, currentUser.data, router]);
 
   if (currentUser.isLoading) {
-    return (
-      <div className="p-6 text-sm text-muted-foreground" aria-busy="true">
-        Loading…
-      </div>
-    );
+    return <LoadingState className="p-6" />;
   }
 
   // ``getCurrentUser`` returns ``null`` on 401 (middleware redirects
