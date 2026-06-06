@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.smoke._auth import register_and_login
+
 
 @pytest.fixture
 def client(authed_client: TestClient) -> TestClient:
@@ -93,4 +95,17 @@ def test_pipeline_usage_empty_when_unbound(client: TestClient) -> None:
 
 def test_pipeline_usage_unknown_pipeline_404(client: TestClient) -> None:
     resp = client.get("/pipelines/does-not-exist/usage")
+    assert resp.status_code == 404, resp.text
+
+
+def test_pipeline_usage_non_owner_404(client: TestClient) -> None:
+    """Ownership gating: a non-owner gets 404 (anti-enumeration), not 403."""
+    agent_id = _agent(client, name="Owner Agent")
+    pipeline_id = _pipeline(client, agent_id, name="Owner Pipeline")
+
+    other_token = register_and_login(client, email="other-usage@local.dev")
+    resp = client.get(
+        f"/pipelines/{pipeline_id}/usage",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
     assert resp.status_code == 404, resp.text
