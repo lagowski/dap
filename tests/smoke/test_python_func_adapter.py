@@ -785,3 +785,70 @@ async def test_sync_callable_runs_in_dedicated_executor(
         f"sync python-func ran on the WRONG executor — thread name was {name!r}; "
         f"expected the dedicated pool prefix 'dap-python-func' (#621)."
     )
+
+
+# ---------------------------------------------------------------------------
+# resolve_callable — the shared resolver backing both the adapter and the
+# engine's fail-fast preflight (#710).
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_callable_resolves_a_real_callable() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("json:dumps")
+    assert error is None
+    assert callable(func)
+
+
+def test_resolve_callable_rejects_missing_path() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable(None)
+    assert func is None
+    assert error is not None
+    assert "required" in error
+
+
+def test_resolve_callable_requires_colon_separator() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("json.dumps")
+    assert func is None
+    assert error is not None
+    assert "module.path:func_name" in error
+
+
+def test_resolve_callable_rejects_blank_parts() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    assert resolve_callable(":dumps")[1] is not None
+    assert resolve_callable("json:")[1] is not None
+
+
+def test_resolve_callable_reports_unimportable_module() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("dap_no_such_module_zzz_710:run")
+    assert func is None
+    assert error is not None
+    assert "cannot import" in error
+
+
+def test_resolve_callable_reports_missing_attribute() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("json:no_such_attr_710")
+    assert func is None
+    assert error is not None
+    assert "has no attribute" in error
+
+
+def test_resolve_callable_rejects_non_callable_attribute() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    # json.__name__ is a str, not callable.
+    func, error = resolve_callable("json:__name__")
+    assert func is None
+    assert error is not None
+    assert "is not callable" in error
