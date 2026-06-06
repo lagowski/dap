@@ -14,6 +14,7 @@ import type {
   AdminUser,
   AdminUserUpdate,
   Agent,
+  AgentUsage,
   AuditEvent,
   AuditEventFilters,
   AgentCreate,
@@ -351,6 +352,10 @@ export async function listAgents(params: {
 
 export async function getAgent(id: string): Promise<Agent> {
   return request<Agent>(`/agents/${encodeURIComponent(id)}`);
+}
+
+export async function getAgentUsage(id: string): Promise<AgentUsage> {
+  return request<AgentUsage>(`/agents/${encodeURIComponent(id)}/usage`);
 }
 
 export async function createAgent(payload: AgentCreate): Promise<Agent> {

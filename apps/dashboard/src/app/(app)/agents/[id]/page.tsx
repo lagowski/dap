@@ -5,7 +5,12 @@ import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Pencil } from "lucide-react";
-import { useAgent, useAgentVersions, useArchiveAgent } from "@/hooks/api";
+import {
+  useAgent,
+  useAgentUsage,
+  useAgentVersions,
+  useArchiveAgent,
+} from "@/hooks/api";
 import { downloadAgentExportWithAlert } from "@/lib/agent-export";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -150,6 +155,8 @@ export default function AgentDetailPage({
         </CardContent>
       </Card>
 
+      <UsedInCard agentId={id} />
+
       <VersionHistory
         currentVersion={agent.version}
         versions={versions.data}
@@ -158,6 +165,92 @@ export default function AgentDetailPage({
         error={versions.error}
       />
     </div>
+  );
+}
+
+function UsedInCard({ agentId }: { agentId: string }) {
+  const usage = useAgentUsage(agentId);
+  const data = usage.data;
+  const hasAny =
+    data != null && (data.pipelines.length > 0 || data.projects.length > 0);
+
+  return (
+    <Card>
+      <CardContent className="pt-6 space-y-3">
+        <h2 className="text-sm font-medium">Used in</h2>
+        {usage.isPending ? (
+          <LoadingState />
+        ) : usage.isError ? (
+          <p className="text-sm text-destructive">
+            {formatApiError(usage.error)}
+          </p>
+        ) : hasAny ? (
+          <div className="space-y-4">
+            <div>
+              <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Pipelines ({data.pipelines.length})
+              </h3>
+              {data.pipelines.length > 0 ? (
+                <ul className="space-y-1">
+                  {data.pipelines.map((p) => (
+                    <li key={p.id}>
+                      <Link
+                        href={`/pipelines/${p.id}/edit`}
+                        className="text-sm hover:underline"
+                      >
+                        {p.name}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">—</p>
+              )}
+            </div>
+            <div>
+              <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Projects ({data.projects.length})
+              </h3>
+              {data.projects.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {data.projects.map((proj) => (
+                    <li
+                      key={proj.id}
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <Link
+                        href={`/projects/${proj.id}`}
+                        className="text-sm hover:underline"
+                      >
+                        {proj.name}
+                      </Link>
+                      {proj.bindings.map((b) => (
+                        <Badge
+                          key={`${b.kind}:${b.pipeline_id}`}
+                          variant="secondary"
+                          className="font-mono text-[10px]"
+                          title={`bound as ${b.kind}`}
+                        >
+                          {b.kind}
+                        </Badge>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Not bound into any project.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Not used in any pipeline yet — safe to edit or archive.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
