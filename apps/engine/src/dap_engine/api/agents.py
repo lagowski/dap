@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
@@ -183,6 +184,69 @@ def get_agent_usage(
             )
             for proj_id, proj_name, binds in projects
         ],
+    )
+
+
+class AgentExecutionRef(BaseModel):
+    """One node execution of an agent — summary for the activity list. The
+    heavy stdout / prompt stay behind the run-detail view (#697)."""
+
+    id: str
+    run_id: str
+    node_id: str
+    runtime_id: str
+    status: str
+    started_at: datetime
+    ended_at: datetime | None
+    duration_ms: int
+    tokens_used: int
+    cost_usd: float
+    error_message: str | None
+
+
+class AgentExecutionsResponse(BaseModel):
+    items: list[AgentExecutionRef]
+    total: int
+    offset: int
+    limit: int
+
+
+@router.get("/{agent_id}/executions", response_model=AgentExecutionsResponse)
+def get_agent_executions(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> AgentExecutionsResponse:
+    """This agent's node executions across runs, newest first — the debug /
+    activity log (#697). Gated on agent ownership first."""
+    try:
+        repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    rows, total = repo.node_executions_for_agent(session, agent_id, offset=offset, limit=limit)
+    return AgentExecutionsResponse(
+        items=[
+            AgentExecutionRef(
+                id=r.id,
+                run_id=r.run_id,
+                node_id=r.node_id,
+                runtime_id=r.runtime_id,
+                status=r.status,
+                started_at=r.started_at,
+                ended_at=r.ended_at,
+                duration_ms=r.duration_ms,
+                tokens_used=r.tokens_used,
+                cost_usd=r.cost_usd,
+                error_message=r.error_message,
+            )
+            for r in rows
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
     )
 
 

@@ -96,6 +96,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{agent_id}/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Executions
+         * @description This agent's node executions across runs, newest first — the debug /
+         *     activity log (#697). Gated on agent ownership first.
+         */
+        get: operations["get_agent_executions_agents__agent_id__executions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{agent_id}/export": {
         parameters: {
             query?: never;
@@ -1766,6 +1787,49 @@ export interface components {
             runtime_result: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * AgentExecutionRef
+         * @description One node execution of an agent — summary for the activity list. The
+         *     heavy stdout / prompt stay behind the run-detail view (#697).
+         */
+        AgentExecutionRef: {
+            /** Cost Usd */
+            cost_usd: number;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Ended At */
+            ended_at: string | null;
+            /** Error Message */
+            error_message: string | null;
+            /** Id */
+            id: string;
+            /** Node Id */
+            node_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Runtime Id */
+            runtime_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Tokens Used */
+            tokens_used: number;
+        };
+        /** AgentExecutionsResponse */
+        AgentExecutionsResponse: {
+            /** Items */
+            items: components["schemas"]["AgentExecutionRef"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
         };
         /**
          * AgentExport
@@ -3502,6 +3566,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_executions_agents__agent_id__executions_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentExecutionsResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

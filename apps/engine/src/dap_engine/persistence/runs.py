@@ -191,6 +191,32 @@ def list_runs(
     return [_run_from_orm(r) for r in runs_orm], total
 
 
+def node_executions_for_agent(
+    session: Session,
+    agent_id: str,
+    *,
+    offset: int = 0,
+    limit: int = 50,
+) -> tuple[list[NodeExecutionLogORM], int]:
+    """Node executions for an agent across all runs, newest first (#697).
+
+    Ownership-agnostic (impact / debug view) — the caller gates on the agent
+    first, same contract as ``pipelines_using_agent``. Returns ORM rows; the
+    API maps them to a summary so the heavy ``stdout`` / ``prompt_xml`` stay
+    behind the run-detail view.
+    """
+    where = NodeExecutionLogORM.agent_id == agent_id
+    total = session.scalar(select(func.count()).select_from(NodeExecutionLogORM).where(where)) or 0
+    rows = session.scalars(
+        select(NodeExecutionLogORM)
+        .where(where)
+        .order_by(NodeExecutionLogORM.started_at.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return list(rows), total
+
+
 def get_run(
     session: Session,
     run_id: str,
