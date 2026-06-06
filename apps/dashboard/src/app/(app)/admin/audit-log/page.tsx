@@ -17,9 +17,29 @@ import { useAuditEvents } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import type { AuditEvent } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { AuditEventDetailDialog } from "./audit-event-detail-dialog";
 
 const PAGE_SIZE = 50;
 const FILTER_DEBOUNCE_MS = 300;
+
+/** Curated event-type families for the quick prefix filter. */
+const EVENT_FAMILIES = [
+  "agent.",
+  "pipeline.",
+  "project.",
+  "run.",
+  "user.",
+  "settings.",
+  "dispatch_policy.",
+  "runtime_policy.",
+] as const;
+
+/** datetime-local value (no tz) → ISO 8601 with tz, or undefined if blank. */
+function toIso(localValue: string): string | undefined {
+  if (!localValue) return undefined;
+  const date = new Date(localValue);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
 
 /**
  * Loose UUID v4 check — only used to skip the request when the user
@@ -70,10 +90,16 @@ export default function AdminAuditLogPage() {
   // so we don't spam the engine with one request per character.
   const [eventTypeDraft, setEventTypeDraft] = useState("");
   const [userIdDraft, setUserIdDraft] = useState("");
+  const [eventTypePrefix, setEventTypePrefix] = useState("");
+  const [createdFromDraft, setCreatedFromDraft] = useState("");
+  const [createdToDraft, setCreatedToDraft] = useState("");
   const [offset, setOffset] = useState(0);
+  const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
 
   const eventType = useDebouncedValue(eventTypeDraft, FILTER_DEBOUNCE_MS);
   const userIdDebounced = useDebouncedValue(userIdDraft, FILTER_DEBOUNCE_MS);
+  const createdFrom = toIso(createdFromDraft);
+  const createdTo = toIso(createdToDraft);
 
   // Skip the request entirely for a half-typed UUID — the engine
   // would 422 it. Empty-string still fires (clears the filter); a
@@ -87,12 +113,15 @@ export default function AdminAuditLogPage() {
   // user can finish typing without their cursor losing focus mid-type.
   useEffect(() => {
     setOffset(0);
-  }, [eventType, userIdDebounced]);
+  }, [eventType, userIdDebounced, eventTypePrefix, createdFrom, createdTo]);
 
   const events = useAuditEvents(
     {
       eventType: eventType.trim() || undefined,
+      eventTypePrefix: eventTypePrefix || undefined,
       userId: userIdTrimmed || undefined,
+      createdFrom,
+      createdTo,
       offset,
       limit: PAGE_SIZE,
     },
@@ -108,8 +137,9 @@ export default function AdminAuditLogPage() {
       <div>
         <h1 className="text-2xl font-semibold">Audit log</h1>
         <p className="text-sm text-muted-foreground">
-          Append-only record of security-relevant events. Filter by event type
-          or actor; newest events appear first.
+          Append-only record of security-relevant events. Filter by type, family,
+          actor, or time range; newest events appear first. Click a row for the
+          full payload.
         </p>
       </div>
 
@@ -120,18 +150,35 @@ export default function AdminAuditLogPage() {
             Filters
           </CardTitle>
           <CardDescription>
-            Exact-match on each field. Leave blank to show everything.
+            Event type / actor are exact-match; family is a prefix; the time
+            range bounds <code>created_at</code>. Leave blank to show everything.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1">
-            <Label htmlFor="event-type">Event type</Label>
+            <Label htmlFor="event-type">Event type (exact)</Label>
             <Input
               id="event-type"
               placeholder="user.logged_in"
               value={eventTypeDraft}
               onChange={(e) => setEventTypeDraft(e.target.value)}
             />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="event-family">Event family</Label>
+            <select
+              id="event-family"
+              value={eventTypePrefix}
+              onChange={(e) => setEventTypePrefix(e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">All families</option>
+              {EVENT_FAMILIES.map((fam) => (
+                <option key={fam} value={fam}>
+                  {fam}*
+                </option>
+              ))}
+            </select>
           </div>
           <div className="space-y-1">
             <Label htmlFor="user-id">User ID</Label>
@@ -147,6 +194,26 @@ export default function AdminAuditLogPage() {
                 Waiting for a complete UUID…
               </p>
             )}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label htmlFor="created-from">From</Label>
+              <Input
+                id="created-from"
+                type="datetime-local"
+                value={createdFromDraft}
+                onChange={(e) => setCreatedFromDraft(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="created-to">To</Label>
+              <Input
+                id="created-to"
+                type="datetime-local"
+                value={createdToDraft}
+                onChange={(e) => setCreatedToDraft(e.target.value)}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -198,7 +265,17 @@ export default function AdminAuditLogPage() {
                     return (
                       <tr
                         key={event.id}
-                        className="border-b last:border-b-0 hover:bg-accent/30"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Inspect ${event.event_type} event`}
+                        onClick={() => setSelectedEvent(event)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedEvent(event);
+                          }
+                        }}
+                        className="cursor-pointer border-b last:border-b-0 hover:bg-accent/30 focus:bg-accent/30 focus:outline-none"
                       >
                         <td className="px-4 py-3 align-middle text-xs whitespace-nowrap text-muted-foreground">
                           <span suppressHydrationWarning>{formatTimestamp(event.created_at)}</span>
@@ -265,6 +342,11 @@ export default function AdminAuditLogPage() {
           </div>
         )}
       </Card>
+
+      <AuditEventDetailDialog
+        event={selectedEvent}
+        onClose={() => setSelectedEvent(null)}
+      />
     </div>
   );
 }

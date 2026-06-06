@@ -505,7 +505,10 @@ export function useDeleteAdminUser() {
 export function useAuditEvents(
   filters: {
     eventType?: string;
+    eventTypePrefix?: string;
     userId?: string;
+    createdFrom?: string;
+    createdTo?: string;
     offset?: number;
     limit?: number;
   } = {},

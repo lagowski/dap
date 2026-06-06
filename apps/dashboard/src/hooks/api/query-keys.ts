@@ -37,7 +37,10 @@ export const queryKeys = {
   adminAuditEvents: ["admin", "audit-events"] as const,
   adminAuditEventsList: (filters?: {
     eventType?: string;
+    eventTypePrefix?: string;
     userId?: string;
+    createdFrom?: string;
+    createdTo?: string;
     offset?: number;
     limit?: number;
   }) => ["admin", "audit-events", "list", filters ?? {}] as const,

@@ -13,7 +13,9 @@ Verifies ``GET /audit/events``:
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from dap_engine.persistence.models import UserORM
 from fastapi.testclient import TestClient
@@ -153,3 +155,65 @@ def test_audit_events_orders_newest_first(client: TestClient) -> None:
     # ISO 8601 strings are lexicographically comparable, so a
     # straight string comparison suffices.
     assert items[0]["created_at"] >= items[1]["created_at"]
+
+
+def _admin_token(client: TestClient) -> str:
+    _register(client, "alice@example.com")
+    _promote_to_admin(client.app, "alice@example.com")
+    return _login(client, "alice@example.com")
+
+
+def test_audit_events_filters_by_event_type_prefix(client: TestClient) -> None:
+    """``event_type_prefix`` matches a whole family (e.g. all ``user.*``)."""
+    token = _admin_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = client.get("/audit/events?event_type_prefix=user.", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] >= 2
+    assert all(row["event_type"].startswith("user.") for row in body["items"])
+
+    # A prefix that matches no family returns an empty page (not an error).
+    empty = client.get("/audit/events?event_type_prefix=agent.", headers=headers)
+    assert empty.status_code == 200
+    assert empty.json()["total"] == 0
+
+
+def test_audit_events_prefix_escapes_like_wildcards(client: TestClient) -> None:
+    """A ``%`` in the prefix is treated literally, not as a SQL wildcard."""
+    token = _admin_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # "user.%" would match every "user." event if % weren't escaped; no
+    # event type contains a literal '%', so the correct result is 0.
+    resp = client.get("/audit/events?event_type_prefix=user.%25", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
+def test_audit_events_filters_by_created_range(client: TestClient) -> None:
+    """``created_from`` / ``created_to`` bound the window by timestamp."""
+    token = _admin_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    now = datetime.now(UTC)
+    # quote() so the "+00:00" offset isn't decoded as a space by the query
+    # parser (the dashboard's URLSearchParams encodes it the same way).
+    past = quote((now - timedelta(hours=1)).isoformat())
+    future = quote((now + timedelta(hours=1)).isoformat())
+
+    # Everything is in the past hour → from=past returns the events …
+    from_past = client.get(f"/audit/events?created_from={past}", headers=headers)
+    assert from_past.status_code == 200
+    assert from_past.json()["total"] >= 2
+
+    # … but from=future excludes them all.
+    from_future = client.get(f"/audit/events?created_from={future}", headers=headers)
+    assert from_future.status_code == 200
+    assert from_future.json()["total"] == 0
+
+    # to=past also excludes everything that just happened.
+    to_past = client.get(f"/audit/events?created_to={past}", headers=headers)
+    assert to_past.status_code == 200
+    assert to_past.json()["total"] == 0

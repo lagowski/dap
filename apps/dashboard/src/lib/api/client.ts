@@ -699,7 +699,10 @@ export async function listAuditEvents(
 ): Promise<PaginatedList<AuditEvent>> {
   const search = new URLSearchParams();
   if (params.eventType) search.set("event_type", params.eventType);
+  if (params.eventTypePrefix) search.set("event_type_prefix", params.eventTypePrefix);
   if (params.userId) search.set("user_id", params.userId);
+  if (params.createdFrom) search.set("created_from", params.createdFrom);
+  if (params.createdTo) search.set("created_to", params.createdTo);
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   const qs = search.toString();

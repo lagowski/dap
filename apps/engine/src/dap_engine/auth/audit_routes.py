@@ -30,6 +30,17 @@ from dap_engine.persistence.models import AuditLogORM
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards so a prefix filter matches literally.
+
+    ``%`` and ``_`` are SQL LIKE metacharacters; ``\\`` is the escape
+    character we pass to ``.like(..., escape="\\")``. Without this, an
+    event-type prefix containing ``%`` (or ``_``) would behave as a
+    wildcard instead of a literal substring.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class AuditEventRead(BaseModel):
     """Public representation of an audit row.
 
@@ -70,9 +81,24 @@ async def list_audit_events(
         default=None,
         description="Filter to events of this exact type (e.g. ``user.logged_in``).",
     ),
+    event_type_prefix: str | None = Query(
+        default=None,
+        description=(
+            "Filter to a whole event family by prefix (e.g. ``agent.`` matches "
+            "``agent.created`` / ``agent.archived``). LIKE wildcards are escaped."
+        ),
+    ),
     user_id: uuid.UUID | None = Query(
         default=None,
         description="Filter to events triggered by this user.",
+    ),
+    created_from: datetime | None = Query(
+        default=None,
+        description="Only events at or after this timestamp (ISO 8601).",
+    ),
+    created_to: datetime | None = Query(
+        default=None,
+        description="Only events at or before this timestamp (ISO 8601).",
     ),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
@@ -89,8 +115,16 @@ async def list_audit_events(
     where: list[ColumnElement[bool]] = []
     if event_type is not None:
         where.append(AuditLogORM.event_type == event_type)
+    if event_type_prefix is not None:
+        where.append(
+            AuditLogORM.event_type.like(f"{_escape_like(event_type_prefix)}%", escape="\\")
+        )
     if user_id is not None:
         where.append(AuditLogORM.user_id == user_id)
+    if created_from is not None:
+        where.append(AuditLogORM.created_at >= created_from)
+    if created_to is not None:
+        where.append(AuditLogORM.created_at <= created_to)
 
     total = (
         await session.scalar(
