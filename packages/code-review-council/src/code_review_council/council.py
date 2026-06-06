@@ -21,8 +21,10 @@ ordering in tests), pass ``parallel=False`` to ``review()``.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from code_review_council.agents.base import BaseAgent
+from code_review_council.agents.code_style import CodeStyleAgent
 from code_review_council.agents.correctness import CorrectnessAgent
 from code_review_council.agents.database import DatabaseAgent
 from code_review_council.agents.frontend import FrontendAgent
@@ -32,6 +34,25 @@ from code_review_council.arbiter import FinalArbiter
 from code_review_council.models import AgentReport, Finding, ProjectContext, ReviewVerdict
 from code_review_council.providers.base import BaseProvider
 
+# Opt-in switch (spike, issue #633). The line-by-line Code Style
+# specialist is registered in the package but kept OUT of the default
+# roster unless this env var is truthy at roster-build time. This keeps
+# the existing council behaviour byte-for-byte unchanged when unset, so
+# merging the spike does NOT silently add a 6th reviewer to every PR.
+# A maintainer flips it on to live-evaluate the specialist before it
+# becomes a default.
+_CODE_STYLE_ENV = "COUNCIL_ENABLE_CODE_STYLE"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _code_style_enabled() -> bool:
+    """True iff ``COUNCIL_ENABLE_CODE_STYLE`` is set to a truthy value.
+
+    Read at roster-build time so toggling needs no code change — set the
+    env var in the workflow to enable, unset (the default) to disable.
+    """
+    return os.environ.get(_CODE_STYLE_ENV, "").strip().lower() in _TRUTHY
+
 
 def default_agents(provider: BaseProvider, context: ProjectContext) -> list[BaseAgent]:
     """Construct the V2 roster.
@@ -40,14 +61,22 @@ def default_agents(provider: BaseProvider, context: ProjectContext) -> list[Base
     in the arbiter's dedup pass — earlier agents win on equal-severity
     duplicates. Security first so its high-severity findings land
     before Correctness's framing of the same line.
+
+    The CodeStyleAgent is appended LAST, and only when
+    :func:`_code_style_enabled` returns True. Last so its conservative
+    LOW/NIT findings lose dedup tie-breaks against the substantive
+    specialists, and gated so the default roster is unchanged (#633).
     """
-    return [
+    roster: list[BaseAgent] = [
         SecurityAgent(provider, context),
         CorrectnessAgent(provider, context),
         DatabaseAgent(provider, context),
         PerformanceAgent(provider, context),
         FrontendAgent(provider, context),
     ]
+    if _code_style_enabled():
+        roster.append(CodeStyleAgent(provider, context))
+    return roster
 
 
 class Council:
