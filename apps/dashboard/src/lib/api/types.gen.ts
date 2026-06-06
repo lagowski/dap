@@ -704,6 +704,27 @@ export interface paths {
         patch: operations["update_pipeline_ui_metadata_pipelines__pipeline_id__ui_metadata_patch"];
         trace?: never;
     };
+    "/pipelines/{pipeline_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pipeline Usage
+         * @description Which projects bind this pipeline (and as what workflow kind) — the
+         *     symmetric 'used in' for pipelines (#697). Gated on pipeline ownership.
+         */
+        get: operations["get_pipeline_usage_pipelines__pipeline_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pipelines/{pipeline_id}/versions": {
         parameters: {
             query?: never;
@@ -2918,6 +2939,14 @@ export interface components {
             } | null;
         };
         /**
+         * PipelineUsageResponse
+         * @description Projects that bind this pipeline, and as which workflow kind(s) (#697).
+         */
+        PipelineUsageResponse: {
+            /** Projects */
+            projects: components["schemas"]["_PipelineProjectRef"][];
+        };
+        /**
          * Project
          * @description A workspace + a binding of workflow kinds to pipelines.
          */
@@ -3315,6 +3344,15 @@ export interface components {
             valid: boolean;
             /** Warnings */
             warnings?: string[];
+        };
+        /** _PipelineProjectRef */
+        _PipelineProjectRef: {
+            /** Id */
+            id: string;
+            /** Kinds */
+            kinds: string[];
+            /** Name */
+            name: string;
         };
         /** _PipelineUsageRef */
         _PipelineUsageRef: {
@@ -4520,6 +4558,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pipeline_usage_pipelines__pipeline_id__usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineUsageResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

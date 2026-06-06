@@ -294,6 +294,40 @@ def get_pipeline(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+class _PipelineProjectRef(BaseModel):
+    id: str
+    name: str
+    kinds: list[str]
+
+
+class PipelineUsageResponse(BaseModel):
+    """Projects that bind this pipeline, and as which workflow kind(s) (#697)."""
+
+    projects: list[_PipelineProjectRef]
+
+
+@router.get("/{pipeline_id}/usage", response_model=PipelineUsageResponse)
+def get_pipeline_usage(
+    pipeline_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> PipelineUsageResponse:
+    """Which projects bind this pipeline (and as what workflow kind) — the
+    symmetric 'used in' for pipelines (#697). Gated on pipeline ownership."""
+    try:
+        repo.get_pipeline(session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    projects = repo.projects_using_pipelines(session, [pipeline_id])
+    return PipelineUsageResponse(
+        projects=[
+            _PipelineProjectRef(id=pid, name=name, kinds=[kind for kind, _ in binds])
+            for pid, name, binds in projects
+        ],
+    )
+
+
 @router.put("/{pipeline_id}", response_model=Pipeline)
 def update_pipeline(
     pipeline_id: str,
