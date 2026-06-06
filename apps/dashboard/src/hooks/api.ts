@@ -517,6 +517,17 @@ export function useAdminRevokeApiToken() {
   });
 }
 
+export function useCreateApiToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { name: string; expires_in_days?: number | null }) =>
+      api.createApiToken(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.adminApiTokens });
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Admin — Instance settings (#301, sub-C5)
 // ---------------------------------------------------------------------------

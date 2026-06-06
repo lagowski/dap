@@ -715,6 +715,33 @@ export async function adminRevokeApiToken(id: string): Promise<void> {
   });
 }
 
+export interface ApiTokenCreateResult {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  /** Raw ``dap_<...>`` token — returned once, never retrievable again. */
+  token: string;
+}
+
+/**
+ * Mint a new API token for the current user. The engine returns the raw
+ * value exactly once (it only stores the hash), so callers must surface it
+ * immediately. JWT-only endpoint — the dashboard session carries the JWT.
+ */
+export async function createApiToken(payload: {
+  name: string;
+  expires_in_days?: number | null;
+}): Promise<ApiTokenCreateResult> {
+  return request<ApiTokenCreateResult>("/auth/api-tokens", {
+    method: "POST",
+    json: payload,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Admin — Instance settings (#301, sub-C5)
 // ---------------------------------------------------------------------------
