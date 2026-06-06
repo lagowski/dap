@@ -152,6 +152,8 @@ export default function RunDetailPage({
           nodeStatuses={run.node_statuses}
           currentNode={run.current_node}
           runId={run.id}
+          selectedNode={selectedNode}
+          onSelectNode={(nodeId) => setSelectedNode(nodeId)}
         />
       )}
 
