@@ -4,6 +4,11 @@ version = "0.3.0"
 description = "Prompt Builder — Jinja2 → XML compiler for DAP agent prompts"
 readme = "README.md"
 requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "Rafał Łagowski", email = "rafal@lagowski.es" },
+    { name = "Daniel Łagowski", email = "daniel@lagowski.es" },
+]
 dependencies = [
     "jinja2>=3.1.4",
     "defusedxml>=0.7.1",
