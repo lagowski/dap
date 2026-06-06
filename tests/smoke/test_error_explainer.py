@@ -125,9 +125,14 @@ def http() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
 
 def _seed_failed_node(factory: sessionmaker[Session], *, error_message: str) -> tuple[str, str]:
     with factory() as s:
-        uid = s.execute(
-            select(UserORM.id).where(UserORM.email == DEFAULT_TEST_EMAIL)  # type: ignore[arg-type]
-        ).scalar_one()
+        user = (
+            s.scalars(
+                select(UserORM).where(UserORM.email == DEFAULT_TEST_EMAIL)  # type: ignore[arg-type]
+            )
+            .unique()
+            .one()
+        )
+        uid = user.id
         now = datetime.now(UTC)
         run_id = "run-explain-1"
         s.add(
