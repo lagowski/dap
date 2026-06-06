@@ -187,6 +187,9 @@ class NodeExecutionLogORM(Base):
         # ``get_run`` populates node_statuses by ``WHERE run_id = ? ORDER BY
         # started_at`` on every detail fetch — high-frequency polling (#251).
         Index("ix_node_execution_logs_run_started", "run_id", "started_at"),
+        # Per-agent activity log (#697): WHERE agent_id = ? ORDER BY started_at
+        # DESC. Migration 0008 adds this to existing DBs.
+        Index("ix_node_execution_logs_agent_started", "agent_id", "started_at"),
     )
 
 
