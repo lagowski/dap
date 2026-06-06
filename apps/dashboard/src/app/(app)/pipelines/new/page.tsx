@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { PipelineDesigner } from "@/components/designer/designer";
 import { PipelineTemplatePicker } from "@/components/designer/pipeline-template-picker";
 import { BackendProfileImportDialog } from "@/components/pipelines/backend-profile-import-dialog";
@@ -51,6 +52,10 @@ function NewPipelinePageContent() {
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [backendDialog, setBackendDialog] =
     useState<BackendProfileDialogState | null>(null);
+  // Two-step flow: step 1 picks a template (or blank canvas), step 2 shows
+  // the Designer with a "back to templates" affordance. Cloning skips to
+  // the Designer. (Picking a template navigates away to the edit page.)
+  const [step, setStep] = useState<"choose" | "design">("choose");
 
   const importBundle = async (bundle: PipelineExport) => {
     const created = await importPipeline.mutateAsync(bundle);
@@ -113,41 +118,58 @@ function NewPipelinePageContent() {
   }
 
   // Clone flow takes precedence — when ``?from=...`` is set the user
-  // explicitly asked to duplicate a specific pipeline, so the
-  // template picker would just be noise.
-  const showTemplatePicker = fromId === null;
+  // explicitly asked to duplicate a specific pipeline, so the chooser
+  // would just be noise; jump straight to the seeded Designer.
+  const showChooser = fromId === null && step === "choose";
+  const showDesigner = fromId !== null || step === "design";
 
   return (
     <div className="flex flex-col h-full">
-      {showTemplatePicker ? (
-        <div className="border-b bg-muted/20 p-4">
-          {templateError ? (
-            <p className="text-sm text-destructive mb-2" role="alert">
-              Template import failed: {templateError}
-            </p>
-          ) : null}
-          <PipelineTemplatePicker
-            onUseTemplate={handleUseTemplate}
-            // ``pendingTemplateId`` is the synchronous source of
-            // truth — gating on the mutation's ``isPending`` alone
-            // would leave a one-render-cycle hole where multiple
-            // cards could be clicked before the mutation has
-            // committed its state change.
-            disabled={pendingTemplateId !== null || backendDialog !== null}
-            pendingTemplateId={pendingTemplateId}
-          />
-          <p className="mt-3 text-xs text-muted-foreground">
-            Or scroll down to start from a blank canvas — the empty Designer
-            below is the &quot;scratch&quot; path.
-          </p>
+      {showChooser ? (
+        <div className="flex-1 min-h-0 w-full overflow-y-auto p-6">
+          <div className="mx-auto max-w-3xl">
+            {templateError ? (
+              <p className="text-sm text-destructive mb-3" role="alert">
+                Template import failed: {templateError}
+              </p>
+            ) : null}
+            <PipelineTemplatePicker
+              onUseTemplate={handleUseTemplate}
+              onStartScratch={() => setStep("design")}
+              // ``pendingTemplateId`` is the synchronous source of truth —
+              // gating on the mutation's ``isPending`` alone would leave a
+              // one-render-cycle hole where multiple rows could be clicked
+              // before the mutation has committed its state change.
+              disabled={pendingTemplateId !== null || backendDialog !== null}
+              pendingTemplateId={pendingTemplateId}
+            />
+          </div>
         </div>
       ) : null}
-      <div className="flex-1 min-h-0">
-        <PipelineDesigner
-          initialPipeline={null}
-          seedFromPipeline={sourceQuery.data ?? null}
-        />
-      </div>
+
+      {showDesigner ? (
+        <>
+          {fromId === null ? (
+            <div className="border-b bg-muted/20 px-4 py-2">
+              <button
+                type="button"
+                onClick={() => setStep("choose")}
+                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                Back to templates
+              </button>
+            </div>
+          ) : null}
+          <div className="flex-1 min-h-0">
+            <PipelineDesigner
+              initialPipeline={null}
+              seedFromPipeline={sourceQuery.data ?? null}
+            />
+          </div>
+        </>
+      ) : null}
+
       {backendDialog ? (
         <BackendProfileImportDialog
           open
