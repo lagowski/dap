@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy } from "lucide-react";
@@ -58,18 +58,17 @@ function NewAgentPageContent() {
   const [promoteIteration, setPromoteIteration] = useState(0);
   const formPanelId = useId();
   const testPanelId = useId();
-  // #681 — the form re-seeds *below* the template picker. Picking a template
-  // or "Start from scratch" only updates state, so on a tall page the change
-  // happens off-screen and reads as "nothing happened". Scroll the form into
-  // view on any explicit pick.
-  const formRef = useRef<HTMLDivElement>(null);
-  const handleTemplateChange = useCallback((next: AgentTemplate | null) => {
+
+  // Two-step flow: step 1 picks a template (or scratch), step 2 shows the
+  // form with a "back to templates" affordance. Cloning skips straight to
+  // the form. Replaces the old single-page picker-with-form-below.
+  const [step, setStep] = useState<"choose" | "form">("choose");
+  const handlePick = (next: AgentTemplate | null) => {
     setTemplate(next);
-    // Defer one frame so the form has re-rendered against the new seed.
-    requestAnimationFrame(() => {
-      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }, []);
+    setStep("form");
+  };
+  const showChooser = !isCloning && step === "choose";
+  const showForm = isCloning || step === "form";
 
   // ``seedKey`` identifies which clone-source / template the form is
   // currently mounted against. We carry it alongside ``snapshot`` so
@@ -130,28 +129,44 @@ function NewAgentPageContent() {
         ) : null}
       </div>
 
-      {!isCloning ? (
+      {showChooser ? (
         <Card>
           <CardContent className="pt-6">
-            <TemplatePicker
-              value={template?.id ?? null}
-              onChange={handleTemplateChange}
-            />
+            <TemplatePicker onSelect={handlePick} disabled={create.isPending} />
           </CardContent>
         </Card>
       ) : null}
 
-      <div ref={formRef} className="scroll-mt-6">
-        {!isCloning || (sourceQuery.data && sourceQuery.data.is_active) ? (
-          <AgentTabs
-            tab={tab}
-            onTabChange={setTab}
-            formPanelId={formPanelId}
-            testPanelId={testPanelId}
-          />
-        ) : null}
-      </div>
+      {showForm && !isCloning ? (
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+          <button
+            type="button"
+            onClick={() => setStep("choose")}
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+            Back to templates
+          </button>
+          <span className="text-muted-foreground">
+            Starting from{" "}
+            <span className="font-medium text-foreground">
+              {template ? template.name : "scratch"}
+            </span>
+          </span>
+        </div>
+      ) : null}
 
+      {showForm &&
+      (!isCloning || (sourceQuery.data && sourceQuery.data.is_active)) ? (
+        <AgentTabs
+          tab={tab}
+          onTabChange={setTab}
+          formPanelId={formPanelId}
+          testPanelId={testPanelId}
+        />
+      ) : null}
+
+      {showForm ? (
       <Card>
         <CardContent className="pt-6">
           {isCloning && sourceQuery.isPending ? (
@@ -235,6 +250,7 @@ function NewAgentPageContent() {
           )}
         </CardContent>
       </Card>
+      ) : null}
     </div>
   );
 }
