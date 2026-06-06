@@ -30,11 +30,11 @@ from dap_types import (
     Run,
     StateSnapshot,
 )
-from sqlalchemy import ColumnElement, func, select, update
+from sqlalchemy import ColumnElement, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
-from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.persistence._common import ConflictError, NotFoundError, _new_id, _now
 from dap_engine.persistence.models import (
     NodeExecutionLogORM,
     NodeOutputChunkORM,
@@ -280,6 +280,46 @@ def get_run(
     # causing unexpected churn during polling.
     node_statuses_override = {log.node_id: log.status for log in logs} if logs else None
     return _run_from_orm(run, node_statuses_override=node_statuses_override)
+
+
+def delete_run(
+    session: Session,
+    run_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> None:
+    """Delete a run and **every** row that references it, children-first (#700).
+
+    Ownership-gated: a non-owner (non-admin) gets ``NotFoundError`` — the same
+    anti-enumeration rule as every other run lookup. An in-flight run (not in
+    a terminal ``final_status``) raises ``ConflictError`` — abort it first.
+
+    The cascade is explicit and bottom-up so no orphaned rows are ever left
+    behind. A run has three child tables and no grandchildren
+    (``node_output_chunks``, ``node_execution_logs``, ``state_snapshots`` —
+    all FK ``runs.id``). If a new child table is ever added, the #700 smoke
+    test (which asserts every child table is empty after delete) will fail
+    until it's wired in here. The deletes run in the caller's transaction, so
+    they commit atomically with the ``run.deleted`` audit row.
+    """
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
+        # Anti-enumeration: cross-user delete is indistinguishable from "missing".
+        raise NotFoundError(f"Run not found: {run_id}")
+    if run.final_status not in _TERMINAL_STATUSES:
+        raise ConflictError(
+            f"Run {run_id} is {run.final_status!r} (in-flight); abort it before deleting."
+        )
+
+    # Children first (no inter-child FKs, so sibling order is irrelevant),
+    # then the run row itself.
+    session.execute(delete(NodeOutputChunkORM).where(NodeOutputChunkORM.run_id == run_id))
+    session.execute(delete(NodeExecutionLogORM).where(NodeExecutionLogORM.run_id == run_id))
+    session.execute(delete(StateSnapshotORM).where(StateSnapshotORM.run_id == run_id))
+    session.execute(delete(RunORM).where(RunORM.id == run_id))
 
 
 def get_run_state(

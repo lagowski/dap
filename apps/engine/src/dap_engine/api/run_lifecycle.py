@@ -19,6 +19,7 @@ from dap_engine.api.deps import (
     get_session,
     get_session_factory,
 )
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.execution import RunRegistry, execute_run_background
 from dap_engine.persistence import repository as repo
@@ -34,6 +35,34 @@ def register_run_lifecycle_routes(router: APIRouter) -> None:
     router.post("/{run_id}/abort", response_model=Run)(abort_run)
     router.post("/{run_id}/pause", response_model=Run)(pause_run_endpoint)
     router.post("/{run_id}/resume", response_model=Run)(resume_run_endpoint)
+    router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)(delete_run_endpoint)
+
+
+async def delete_run_endpoint(
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> None:
+    """Delete a run and every row that references it, children-first (#700).
+
+    Owner/admin gated (404 for non-owners — anti-enumeration). 409 if the run
+    is still in-flight (abort it first). Records a ``run.deleted`` audit event
+    in the same transaction as the cascade, so the trail commits atomically
+    with the deletion.
+    """
+    try:
+        repo.delete_run(session, run_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except repo.ConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    record_audit_event(
+        session,
+        user_id=user.id,
+        event_type="run.deleted",
+        event_data={"run_id": run_id},
+    )
 
 
 async def abort_run(
