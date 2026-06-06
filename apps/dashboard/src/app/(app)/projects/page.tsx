@@ -83,18 +83,18 @@ export default function ProjectsPage() {
                     key={project.id}
                     className="border-b last:border-0 hover:bg-muted/30"
                   >
-                    <td className="px-4 py-3 font-medium">
+                    <td className="p-0 font-medium">
                       <Link
                         href={`/projects/${project.id}`}
-                        className="hover:underline"
+                        className="block px-4 py-3"
                       >
-                        {project.name}
+                        <span className="hover:underline">{project.name}</span>
+                        {project.description ? (
+                          <div className="text-xs text-muted-foreground truncate max-w-[24rem]">
+                            {project.description}
+                          </div>
+                        ) : null}
                       </Link>
-                      {project.description ? (
-                        <div className="text-xs text-muted-foreground truncate max-w-[24rem]">
-                          {project.description}
-                        </div>
-                      ) : null}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                       {project.working_directory ?? project.repo_url ?? "—"}

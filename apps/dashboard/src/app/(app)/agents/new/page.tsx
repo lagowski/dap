@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useId, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy } from "lucide-react";
@@ -58,6 +58,18 @@ function NewAgentPageContent() {
   const [promoteIteration, setPromoteIteration] = useState(0);
   const formPanelId = useId();
   const testPanelId = useId();
+  // #681 — the form re-seeds *below* the template picker. Picking a template
+  // or "Start from scratch" only updates state, so on a tall page the change
+  // happens off-screen and reads as "nothing happened". Scroll the form into
+  // view on any explicit pick.
+  const formRef = useRef<HTMLDivElement>(null);
+  const handleTemplateChange = useCallback((next: AgentTemplate | null) => {
+    setTemplate(next);
+    // Defer one frame so the form has re-rendered against the new seed.
+    requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
 
   // ``seedKey`` identifies which clone-source / template the form is
   // currently mounted against. We carry it alongside ``snapshot`` so
@@ -123,20 +135,22 @@ function NewAgentPageContent() {
           <CardContent className="pt-6">
             <TemplatePicker
               value={template?.id ?? null}
-              onChange={setTemplate}
+              onChange={handleTemplateChange}
             />
           </CardContent>
         </Card>
       ) : null}
 
-      {!isCloning || (sourceQuery.data && sourceQuery.data.is_active) ? (
-        <AgentTabs
-          tab={tab}
-          onTabChange={setTab}
-          formPanelId={formPanelId}
-          testPanelId={testPanelId}
-        />
-      ) : null}
+      <div ref={formRef} className="scroll-mt-6">
+        {!isCloning || (sourceQuery.data && sourceQuery.data.is_active) ? (
+          <AgentTabs
+            tab={tab}
+            onTabChange={setTab}
+            formPanelId={formPanelId}
+            testPanelId={testPanelId}
+          />
+        ) : null}
+      </div>
 
       <Card>
         <CardContent className="pt-6">

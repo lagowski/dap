@@ -154,9 +154,14 @@ export default function AdminAuditLogPage() {
       <Card>
         <CardHeader>
           <CardTitle>
-            {events.data
-              ? `$<span suppressHydrationWarning>{total.toLocaleString()}</span> ${total === 1 ? "event" : "events"}`
-              : "Events"}
+            {events.data ? (
+              <>
+                <span suppressHydrationWarning>{total.toLocaleString()}</span>{" "}
+                {total === 1 ? "event" : "events"}
+              </>
+            ) : (
+              "Events"
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">

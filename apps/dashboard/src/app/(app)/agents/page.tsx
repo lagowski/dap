@@ -200,9 +200,12 @@ export default function AgentsPage() {
                 const blockArchive = usage > 0;
                 return (
                   <tr key={agent.id} className="border-b last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3 font-medium">
-                      <Link href={`/agents/${agent.id}`} className="hover:underline">
-                        {agent.name}
+                    <td className="p-0 font-medium">
+                      <Link
+                        href={`/agents/${agent.id}`}
+                        className="block px-4 py-3"
+                      >
+                        <span className="hover:underline">{agent.name}</span>
                       </Link>
                     </td>
                     <td className="px-4 py-3">
