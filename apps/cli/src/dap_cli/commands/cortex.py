@@ -17,7 +17,10 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -164,14 +167,37 @@ def _resolve_auth_token(token: str | None) -> str:
     return (token or os.environ.get("DAP_AUTH_TOKEN") or "").strip()
 
 
+def _auth_headers(token: str | None = None) -> dict[str, str]:
+    """Build the ``Authorization: Bearer`` header dict (empty when no token).
+
+    Shared by both the short-lived request client (``_client``) and the
+    long-lived SSE stream client (``_events_client``) so the Bearer auth logic
+    lives in one place (#662 Phase 3d).
+    """
+    resolved = _resolve_auth_token(token)
+    return {"Authorization": f"Bearer {resolved}"} if resolved else {}
+
+
 def _client(engine_url: str, token: str | None = None) -> httpx.Client:
     """HTTP client for the engine, carrying ``Authorization: Bearer`` when a
     token is available. The engine accepts a JWT or an opaque ``dap_*`` API
     token (``/auth/api-tokens``); the CLI forwards whatever is configured via
     ``--token`` / ``DAP_AUTH_TOKEN``."""
-    resolved = _resolve_auth_token(token)
-    headers = {"Authorization": f"Bearer {resolved}"} if resolved else {}
-    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0, headers=headers)
+    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0, headers=_auth_headers(token))
+
+
+def _events_client(engine_url: str, token: str | None = None) -> httpx.Client:
+    """Long-lived HTTP client for the SSE events stream (``--follow``).
+
+    Same Bearer auth as ``_client`` but with the **read timeout disabled** so a
+    quiet stream (e.g. a 16-min cortex node producing no output) is not aborted
+    after the default 10s. Connect/write/pool timeouts are kept bounded so a
+    dead engine still fails fast rather than hanging forever (#662 Phase 3d).
+    """
+    timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
+    return httpx.Client(
+        base_url=engine_url.rstrip("/"), timeout=timeout, headers=_auth_headers(token)
+    )
 
 
 def _export_token_to_env(token: str | None) -> None:
@@ -417,7 +443,12 @@ def _find_pending_gate(engine_url: str, run_id: str) -> str | None:
 
 
 def _prompt_gate_approval(gate_node: str, no_interactive: bool) -> tuple[bool, str]:
-    """Return (approved, reason). In non-interactive mode always approves."""
+    """Return (approved, reason). In non-interactive mode always approves.
+
+    The caller (``_handle_gate``) holds ``console_lock`` across this whole prompt
+    under ``--follow`` so the tailer thread can't write mid-prompt; the node is
+    paused at the gate, so the tailer has nothing to emit meanwhile.
+    """
     if no_interactive:
         return True, ""
     console.print(f"\n[yellow]⏸  Paused at gate:[/yellow] [bold]{gate_node}[/bold]")
@@ -516,33 +547,179 @@ def _handle_gate(
     run: dict[str, Any],
     watch_only: bool,
     no_interactive: bool,
+    console_lock: threading.Lock | None = None,
 ) -> bool:
-    """Handle a paused gate. Returns True to continue polling, False to stop."""
+    """Handle a paused gate. Returns True to continue polling, False to stop.
+
+    Under ``--follow`` a ``console_lock`` is shared with the SSE tailer thread.
+    The whole gate interaction (prompt + its console writes) is held under the
+    lock so the tailer can't write mid-prompt and corrupt the terminal — Rich's
+    ``Console`` is not thread-safe. With ``console_lock=None`` (the default, and
+    every non-follow caller) the body runs unguarded, exactly as before.
+    """
     gate_node = _find_pending_gate(engine_url, run_id)
     if not gate_node:
         gate_node = run.get("current_node") or "gate-phase1"
     gate_node = _known_gate_for_node(gate_node)
 
-    if watch_only:
-        console.print(
-            f"\n[yellow]⏸  Paused at:[/yellow] [bold]{gate_node}[/bold]  "
-            f"(--watch mode — not approving)"
-        )
-        console.print(f"  Approve with: dap project run cortex --run-id {run_id} approve")
-        return False
+    with _console_guard(console_lock):
+        if watch_only:
+            console.print(
+                f"\n[yellow]⏸  Paused at:[/yellow] [bold]{gate_node}[/bold]  "
+                f"(--watch mode — not approving)"
+            )
+            console.print(f"  Approve with: dap project run cortex --run-id {run_id} approve")
+            return False
 
-    approved, reason = _prompt_gate_approval(gate_node, no_interactive)
-    if not approved:
-        _reject_gate(engine_url, run_id, gate_node, reason)
-        return False
+        approved, reason = _prompt_gate_approval(gate_node, no_interactive)
+        if not approved:
+            _reject_gate(engine_url, run_id, gate_node, reason)
+            return False
 
-    console.print(f"[green]✓ Approving gate {gate_node}...[/green]")
-    try:
-        _approve_gate(engine_url, run_id, gate_node)
-    except httpx.HTTPError as exc:
-        console.print(f"[red]✗ Approve failed: {exc}[/red]")
-        raise SystemExit(1) from exc
+        console.print(f"[green]✓ Approving gate {gate_node}...[/green]")
+        try:
+            _approve_gate(engine_url, run_id, gate_node)
+        except httpx.HTTPError as exc:
+            console.print(f"[red]✗ Approve failed: {exc}[/red]")
+            raise SystemExit(1) from exc
     return True
+
+
+# ---------------------------------------------------------------------------
+# Live output tailer — SSE (#662 Phase 3d, `--follow`)
+# ---------------------------------------------------------------------------
+
+
+def _emit_event(
+    event: str, data: dict[str, Any], console_lock: threading.Lock | None = None
+) -> None:
+    """Render a single parsed SSE event to the terminal.
+
+    ``node_log`` content is printed verbatim (it already carries its own
+    newlines) so the stream reads like the node's own stdout. ``node_started`` /
+    ``node_finished`` get a terse dim transition line; everything else is
+    ignored. ``run_finished`` is handled by the caller (it stops the loop).
+
+    When ``console_lock`` is provided (``--follow``), each console write is held
+    under the lock so the tailer thread can't interleave with the main thread's
+    gate prompts (Rich ``Console`` is not thread-safe). When ``None`` the writes
+    happen exactly as before — no locking.
+    """
+    if event == "node_log":
+        content = data.get("content")
+        if isinstance(content, str) and content:
+            # Print without adding an extra newline — the chunk already has its
+            # own line breaks. ``console.out`` avoids rich markup interpretation
+            # so raw agent output (which may contain ``[`` etc.) prints intact.
+            with _console_guard(console_lock):
+                console.out(content, end="", highlight=False)
+    elif event == "node_started":
+        node_id = data.get("node_id", "?")
+        with _console_guard(console_lock):
+            console.print(f"[dim]▶ {node_id}[/dim]")
+    elif event == "node_finished":
+        node_id = data.get("node_id", "?")
+        status = data.get("status", "?")
+        duration_ms = data.get("duration_ms")
+        suffix = ""
+        if isinstance(duration_ms, (int, float)):
+            suffix = f" ({duration_ms / 1000:.1f}s)"
+        glyph = "✓" if status == "success" else "✗"
+        with _console_guard(console_lock):
+            console.print(f"[dim]{glyph} {node_id}{suffix}[/dim]")
+
+
+@contextmanager
+def _console_guard(console_lock: threading.Lock | None) -> Iterator[None]:
+    """Hold ``console_lock`` around a console write, or pass through when ``None``.
+
+    Keeps the non-``--follow`` path lock-free (and behaviourally identical) while
+    serialising the tailer thread against the main thread's gate prompts when a
+    shared lock is in play (#662 Phase 3d).
+    """
+    if console_lock is None:
+        yield
+        return
+    with console_lock:
+        yield
+
+
+def _dispatch_frame(
+    event_name: str | None,
+    data_buf: list[str],
+    console_lock: threading.Lock | None,
+) -> bool:
+    """Parse + emit one accumulated SSE frame. Returns True if it was ``run_finished``.
+
+    Shared by the in-loop blank-line terminator and the end-of-stream flush so
+    both paths handle ``run_finished`` (and the stop-streaming signal) the same.
+    """
+    if event_name is None or not data_buf:
+        return False
+    raw = "\n".join(data_buf)
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        _emit_event(event_name, payload, console_lock)
+        if event_name == "run_finished":
+            return True
+    return False
+
+
+def _stream_events(
+    engine_url: str,
+    run_id: str,
+    stop_event: threading.Event,
+    console_lock: threading.Lock | None = None,
+) -> None:
+    """Tail ``GET /runs/{run_id}/events`` (SSE), printing live node output.
+
+    Runs in a daemon thread alongside the main poll loop under ``--follow``.
+    Parses Server-Sent-Event frames (``event: <name>`` + accumulated ``data:``
+    lines, dispatched on the blank-line separator) and prints ``node_log``
+    content plus node transitions. Returns when ``run_finished`` arrives, when
+    ``stop_event`` is set, or when the stream drops — a dropped stream is
+    non-fatal (the main loop still drives gates/terminal detection), so any
+    transport/parse error prints a dim notice and returns rather than crashing
+    the run.
+
+    If the engine closes the stream right after the last ``data:`` line without
+    a trailing blank line, the final in-progress frame is flushed on EOF (SSE
+    treats end-of-stream as an implicit frame terminator), so a trailing
+    ``run_finished`` still stops the tailer cleanly.
+
+    ``console_lock``, when given, serialises every console write against the main
+    thread's gate prompts (Rich ``Console`` is not thread-safe). ``None`` keeps
+    the writes unguarded, exactly as the non-``--follow`` path.
+    """
+    try:
+        with (
+            _events_client(engine_url) as client,
+            client.stream("GET", f"/runs/{run_id}/events") as response,
+        ):
+            response.raise_for_status()
+            event_name: str | None = None
+            data_buf: list[str] = []
+            for line in response.iter_lines():
+                if stop_event.is_set():
+                    return
+                if line == "":
+                    # Blank line terminates a frame — dispatch and reset.
+                    if _dispatch_frame(event_name, data_buf, console_lock):
+                        return
+                    event_name = None
+                    data_buf = []
+                elif line.startswith("event:"):
+                    event_name = line[len("event:") :].strip()
+                elif line.startswith("data:"):
+                    data_buf.append(line[len("data:") :].lstrip())
+                # Any other line (e.g. ``id:``, comments) is ignored.
+            # EOF with an unterminated frame still in progress — flush it once.
+            _dispatch_frame(event_name, data_buf, console_lock)
+    except (httpx.HTTPError, ValueError) as exc:
+        console.print(f"[dim]  Live output stream ended: {exc}[/dim]")
 
 
 def poll_and_handle(
@@ -551,21 +728,61 @@ def poll_and_handle(
     no_interactive: bool,
     watch_only: bool,
     show_progress: bool = True,
+    follow: bool = False,
 ) -> None:
-    """Poll run status and handle gates until completion or failure."""
+    """Poll run status and handle gates until completion or failure.
+
+    When ``follow`` is True, a daemon thread tails the run's SSE event stream
+    (``GET /runs/{run_id}/events``) and prints live node output to the terminal.
+    Under ``--follow`` the per-node progress spinner is suppressed (the streamed
+    output is the live view), but gate handling and terminal detection are
+    unchanged (#662 Phase 3d).
+    """
     start_time = time.monotonic()
     last_status = "running"
 
-    while True:
-        last_status, last_run = _poll_until_settled(
-            engine_url, run_id, "Running pipeline...", show_progress=show_progress
+    stop_event: threading.Event | None = None
+    tailer: threading.Thread | None = None
+    # One lock shared between the tailer thread and the main (gate) thread so
+    # their concurrent console writes don't interleave (Rich isn't thread-safe).
+    # ``None`` outside --follow keeps every write path unguarded, as before.
+    console_lock: threading.Lock | None = None
+    if follow:
+        # Streamed stdout is the live view — the spinner would clash with it.
+        show_progress = False
+        console_lock = threading.Lock()
+        stop_event = threading.Event()
+        tailer = threading.Thread(
+            target=_stream_events,
+            args=(engine_url, run_id, stop_event),
+            kwargs={"console_lock": console_lock},
+            daemon=True,
         )
-        if last_status != "paused":
-            break
-        should_continue = _handle_gate(engine_url, run_id, last_run, watch_only, no_interactive)
-        if not should_continue:
-            return
-        time.sleep(3)
+        tailer.start()
+
+    try:
+        while True:
+            last_status, last_run = _poll_until_settled(
+                engine_url, run_id, "Running pipeline...", show_progress=show_progress
+            )
+            if last_status != "paused":
+                break
+            should_continue = _handle_gate(
+                engine_url,
+                run_id,
+                last_run,
+                watch_only,
+                no_interactive,
+                console_lock=console_lock,
+            )
+            if not should_continue:
+                return
+            time.sleep(3)
+    finally:
+        if stop_event is not None:
+            stop_event.set()
+        if tailer is not None:
+            tailer.join(timeout=2.0)
 
     # Final report
     elapsed = int(time.monotonic() - start_time)
@@ -667,6 +884,7 @@ def cortex_run(
     workspace: str | None,
     token: str | None = None,
     show_progress: bool = True,
+    follow: bool = False,
 ) -> None:
     """Implement `dap project run cortex <issue-url>`."""
     _export_token_to_env(token)
@@ -724,6 +942,7 @@ def cortex_run(
         no_interactive=no_interactive,
         watch_only=watch,
         show_progress=show_progress,
+        follow=follow,
     )
 
 
