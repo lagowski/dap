@@ -9,11 +9,26 @@ const mockUseRunNodeLog = vi.fn();
 const mockUseRunStateHistory = vi.fn();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockUseAgentsList = vi.fn((): { data: { items: any[] } } => ({ data: { items: [] } }));
+const mockUseRunNodeExplain = vi.fn(() => ({ data: null, isLoading: false, isError: false }));
 
 vi.mock("@/hooks/api", () => ({
   useRunNodeLog: (...args: unknown[]) => mockUseRunNodeLog(...args),
   useRunStateHistory: (...args: unknown[]) => mockUseRunStateHistory(...args),
   useAgentsList: () => mockUseAgentsList(),
+  useRunNodeExplain: () => mockUseRunNodeExplain(),
+}));
+
+const mockPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
+const mockSetPrefill = vi.fn();
+vi.mock("@/components/assistant/assistant-prefill", () => ({
+  useAssistantPrefill: () => ({
+    setPrefill: mockSetPrefill,
+    consumePrefill: () => null,
+  }),
 }));
 
 import { NodeDetailPanel } from "./node-detail-panel";
@@ -200,5 +215,92 @@ describe("NodeDetailPanel — cortex prompt + agent identity (#724)", () => {
     expect(screen.getByText("Cortex Phase 1 — Mockup")).toBeInTheDocument();
     expect(screen.getByText("Cortex")).toBeInTheDocument();
     expect(screen.getByText("prompt_builder")).toBeInTheDocument();
+  });
+});
+
+describe("NodeDetailPanel — Open in agent tester (#724 part 4)", () => {
+  beforeEach(() => {
+    mockUseRunNodeLog.mockReset();
+    mockUseRunStateHistory.mockReset();
+    mockUseAgentsList.mockReset();
+    mockPush.mockReset();
+    mockSetPrefill.mockReset();
+  });
+
+  it("stashes the input state and navigates to the agent's edit page with ?tab=test", async () => {
+    const user = userEvent.setup();
+    const beforeState = {
+      run_id: "r1",
+      repo: "lagowski/dap",
+      extensions: { issue_number: 42 },
+    };
+    const snapshots: StateSnapshot[] = [
+      {
+        id: "s0",
+        run_id: "r1",
+        node_id: "prev",
+        timestamp: "2026-01-01T00:00:00Z",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        state: beforeState as any,
+      },
+      {
+        id: "s1",
+        run_id: "r1",
+        node_id: "n1",
+        timestamp: "2026-01-01T00:00:01Z",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        state: { ...beforeState, extra: 1 } as any,
+      },
+    ];
+    mockUseRunNodeLog.mockReturnValue({
+      data: makeLog({ agent_id: "a-1", runtime_id: "python-func", prompt_xml: "" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseRunStateHistory.mockReturnValue({ data: snapshots });
+    mockUseAgentsList.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: "a-1",
+            name: "Coder",
+            role: "developer",
+            runtime_config: { callable_path: "cortex.nodes.coder:run" },
+          },
+        ],
+      },
+    });
+    const onOpenChange = vi.fn();
+    render(<NodeDetailPanel runId="r1" nodeId="n1" onOpenChange={onOpenChange} />);
+
+    await user.click(screen.getByRole("button", { name: /open in agent tester/i }));
+
+    expect(mockSetPrefill).toHaveBeenCalledTimes(1);
+    const payload = mockSetPrefill.mock.calls[0][0];
+    expect(payload.target).toBe("agent-test");
+    expect(payload.values.agent_id).toBe("a-1");
+    // ``input_state`` is the *before* snapshot, not the *after*.
+    expect(payload.values.input_state).toMatchObject({
+      run_id: "r1",
+      extensions: { issue_number: 42 },
+    });
+    expect(payload.values.input_state.extra).toBeUndefined();
+    expect(mockPush).toHaveBeenCalledWith("/agents/a-1/edit?tab=test");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("hides the 'Open in agent tester' button when the agent hasn't resolved", () => {
+    mockUseRunNodeLog.mockReturnValue({
+      data: makeLog({ agent_id: "unknown-agent" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseRunStateHistory.mockReturnValue({ data: [] });
+    mockUseAgentsList.mockReturnValue({ data: { items: [] } });
+    render(<NodeDetailPanel runId="r1" nodeId="n1" onOpenChange={() => {}} />);
+
+    expect(screen.queryByRole("button", { name: /open in agent tester/i })).toBeNull();
   });
 });

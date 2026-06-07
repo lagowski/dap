@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
 import { NodeStatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { StateDiffView } from "@/components/state-diff-view";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import { ApiError } from "@/lib/api/client";
 import type { PipelineState, StateSnapshot } from "@/lib/api/types";
@@ -63,6 +65,25 @@ export function NodeDetailPanel({
   const { before, after } = useMemo(() => {
     return getSnapshotPair(stateHistory ?? [], nodeId);
   }, [stateHistory, nodeId]);
+
+  // #724 part 4 — "Open in agent tester" stashes the node's input state via
+  // the #726 prefill bridge and navigates to the agent's edit page on the
+  // Test tab. Hidden until the agent has resolved (no point landing on a
+  // page that can't show what was prefilled).
+  const router = useRouter();
+  const { setPrefill } = useAssistantPrefill();
+  const openInAgentTester = () => {
+    if (!agent) return;
+    setPrefill({
+      target: "agent-test",
+      values: {
+        agent_id: agent.id,
+        input_state: before ?? null,
+      },
+    });
+    router.push(`/agents/${agent.id}/edit?tab=test`);
+    onOpenChange(false);
+  };
 
   // Step through nodes in execution order without closing the dialog.
   const order = nodeIds ?? [];
@@ -251,6 +272,19 @@ export function NodeDetailPanel({
               {agent && <Badge variant="secondary">{agent.role}</Badge>}
               <span className="font-mono">{data.runtime_id}</span>
               {isCortex && <Badge variant="outline">Cortex</Badge>}
+              {agent && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto h-7"
+                  onClick={openInAgentTester}
+                  title="Stash this node's input state and jump to the agent's Test tab (#724)"
+                >
+                  <Wand2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Open in agent tester
+                </Button>
+              )}
             </div>
           </div>
         )}
