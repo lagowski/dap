@@ -7,8 +7,14 @@ import Link from "next/link";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { useRunNodeExplain, useRunNodeLog, useRunStateHistory } from "@/hooks/api";
+import {
+  useAgentsList,
+  useRunNodeExplain,
+  useRunNodeLog,
+  useRunStateHistory,
+} from "@/hooks/api";
 import { NodeStatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { StateDiffView } from "@/components/state-diff-view";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import { ApiError } from "@/lib/api/client";
@@ -34,6 +40,25 @@ export function NodeDetailPanel({
   const open = nodeId != null;
   const { data, isPending, isError, error } = useRunNodeLog(runId, nodeId);
   const { data: stateHistory } = useRunStateHistory(open ? runId : null);
+  // Resolve the agent so we can show its name/role + a Cortex tag instead of a
+  // bare UUID (#724). Shared, cached query — no per-node fetch.
+  const { data: agentsList } = useAgentsList();
+  const agent = data
+    ? (agentsList?.items ?? []).find((a) => a.id === data.agent_id)
+    : undefined;
+  const callablePath =
+    typeof agent?.runtime_config?.callable_path === "string"
+      ? agent.runtime_config.callable_path
+      : null;
+  const isCortex =
+    data?.runtime_id === "python-func" && callablePath?.startsWith("cortex.") === true;
+  // Cortex python-func nodes build their own prompt inside the callable and
+  // record it into the node output's ``extensions.__audit`` (#724). Surface it.
+  const recordedPrompt = recordedPromptFrom(data?.output_json ?? null);
+  // Show the Prompt tab for LLM/CLI runtimes (they always have a prompt concept,
+  // empty → placeholder) and for cortex python-func nodes that recorded a
+  // prompt. Plain python-func with no recorded prompt has none (#705).
+  const showPromptTab = data?.runtime_id !== "python-func" || recordedPrompt != null;
 
   const { before, after } = useMemo(() => {
     return getSnapshotPair(stateHistory ?? [], nodeId);
@@ -135,10 +160,12 @@ export function NodeDetailPanel({
                 <TabsTrigger value="stdout" className="flex-1">
                   Std output
                 </TabsTrigger>
-                {/* python-func callables have no rendered prompt by design
-                    (they receive state directly), so don't offer an empty
-                    Prompt tab for them. */}
-                {data.runtime_id !== "python-func" && (
+                {/* Show the Prompt tab when there's a prompt to show: the
+                    rendered prompt_xml for LLM/CLI nodes, or — for cortex
+                    python-func nodes — the prompt the callable recorded into
+                    extensions.__audit (#724). Plain python-func with neither
+                    has no prompt, so the tab stays hidden (#705). */}
+                {showPromptTab && (
                   <TabsTrigger value="prompt" className="flex-1">
                     Prompt
                   </TabsTrigger>
@@ -168,9 +195,22 @@ export function NodeDetailPanel({
                 )}
               </TabsContent>
 
-              {data.runtime_id !== "python-func" && (
-                <TabsContent value="prompt">
-                  {data.prompt_xml ? (
+              {showPromptTab && (
+                <TabsContent value="prompt" className="space-y-3">
+                  {recordedPrompt ? (
+                    <>
+                      <p className="text-[11px] text-muted-foreground">
+                        Prompt as sent by the callable (recorded in{" "}
+                        <span className="font-mono">extensions.__audit</span>).
+                      </p>
+                      {recordedPrompt.system && (
+                        <PromptSection title="System" body={recordedPrompt.system} />
+                      )}
+                      {recordedPrompt.user && (
+                        <PromptSection title="User" body={recordedPrompt.user} />
+                      )}
+                    </>
+                  ) : data.prompt_xml ? (
                     <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
                       {data.prompt_xml}
                     </pre>
@@ -196,10 +236,21 @@ export function NodeDetailPanel({
               </TabsContent>
             </Tabs>
 
-            <div className="text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {agent ? (
+                <Link
+                  href={`/agents/${agent.id}`}
+                  aria-label={`View agent ${agent.name}`}
+                  className="font-medium text-foreground hover:underline"
+                >
+                  {agent.name}
+                </Link>
+              ) : (
+                <span className="font-mono">agent {data.agent_id.slice(0, 8)}…</span>
+              )}
+              {agent && <Badge variant="secondary">{agent.role}</Badge>}
               <span className="font-mono">{data.runtime_id}</span>
-              <span className="mx-2">·</span>
-              <span>agent {data.agent_id}</span>
+              {isCortex && <Badge variant="outline">Cortex</Badge>}
             </div>
           </div>
         )}
@@ -275,6 +326,46 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Pull the prompt a cortex python-func callable recorded into the node output
+ * (#724): ``output_json.state_delta.extensions.__audit.{system_prompt,
+ * user_prompt}``. Returns null when nothing is recorded. Defensive — the shape
+ * is free-form JSON.
+ */
+function recordedPromptFrom(
+  output: Record<string, unknown> | null,
+): { system?: string; user?: string } | null {
+  if (!output || typeof output !== "object") return null;
+  const stateDelta = (output as Record<string, unknown>).state_delta;
+  const extensions =
+    stateDelta && typeof stateDelta === "object"
+      ? (stateDelta as Record<string, unknown>).extensions
+      : null;
+  const audit =
+    extensions && typeof extensions === "object"
+      ? (extensions as Record<string, unknown>).__audit
+      : null;
+  if (!audit || typeof audit !== "object") return null;
+  const a = audit as Record<string, unknown>;
+  const system = typeof a.system_prompt === "string" ? a.system_prompt : undefined;
+  const user = typeof a.user_prompt === "string" ? a.user_prompt : undefined;
+  if (!system && !user) return null;
+  return { system, user };
+}
+
+function PromptSection({ title, body }: { title: string; body: string }) {
+  return (
+    <div>
+      <div className="mb-1 text-[10px] font-medium uppercase text-muted-foreground">
+        {title}
+      </div>
+      <pre className="max-h-[40vh] overflow-auto rounded bg-muted p-3 text-xs whitespace-pre-wrap">
+        {body}
+      </pre>
     </div>
   );
 }
