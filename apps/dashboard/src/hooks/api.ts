@@ -53,6 +53,23 @@ export function usePipelineUsage(id: string | null) {
   });
 }
 
+/**
+ * Pre-run readiness of a pipeline's python-func callables (#710). Lazily
+ * enabled (e.g. when the run dialog opens) so we don't resolve callables on
+ * every pipeline list render.
+ */
+export function usePipelineReadiness(
+  id: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: id ? queryKeys.pipelineReadiness(id) : ["pipelines", "noop", "readiness"],
+    queryFn: () =>
+      id ? api.getPipelineReadiness(id) : Promise.reject(new Error("no id")),
+    enabled: (options?.enabled ?? true) && id != null,
+  });
+}
+
 export function usePipelinesList() {
   return useQuery({
     queryKey: queryKeys.pipelinesList,

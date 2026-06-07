@@ -706,6 +706,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pipelines/{pipeline_id}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pipeline Readiness
+         * @description Resolve every ``python-func`` node's callable without running it (#710).
+         *
+         *     The read-only counterpart to the trigger-time preflight: it surfaces, before
+         *     you start a run, which nodes can't run on this engine (e.g. ``dap-cortex``
+         *     not installed, a wrong ``callable_path``, an import-time error) — the #1
+         *     cryptic cause of mid-run cortex failures. Per-request, so a package
+         *     installed after engine start shows ready on the next check. Gated on
+         *     pipeline ownership.
+         */
+        get: operations["get_pipeline_readiness_pipelines__pipeline_id__readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pipelines/{pipeline_id}/ui-metadata": {
         parameters: {
             query?: never;
@@ -2631,6 +2658,22 @@ export interface components {
             y: number;
         };
         /**
+         * NodeReadiness
+         * @description Whether one ``python-func`` node's callable resolves on this engine.
+         */
+        NodeReadiness: {
+            /** Agent Id */
+            agent_id: string;
+            /** Callable Path */
+            callable_path: string | null;
+            /** Error */
+            error: string | null;
+            /** Node Id */
+            node_id: string;
+            /** Resolvable */
+            resolvable: boolean;
+        };
+        /**
          * OutputSchemaValidation
          * @description Soft check of the runtime's structured output against ``output_schema``.
          *
@@ -2978,6 +3021,19 @@ export interface components {
             id: string;
             overrides?: components["schemas"]["NodeOverrides"] | null;
             position?: components["schemas"]["NodePosition"];
+        };
+        /**
+         * PipelineReadinessResponse
+         * @description Pre-run readiness of a pipeline's ``python-func`` nodes (#710 read-only).
+         *
+         *     ``ready`` is true when every checked node's callable resolves. ``checks`` is
+         *     empty for pipelines with no ``python-func`` nodes (nothing to resolve).
+         */
+        PipelineReadinessResponse: {
+            /** Checks */
+            checks: components["schemas"]["NodeReadiness"][];
+            /** Ready */
+            ready: boolean;
         };
         /**
          * PipelineState
@@ -4744,6 +4800,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PipelineExport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pipeline_readiness_pipelines__pipeline_id__readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineReadinessResponse"];
                 };
             };
             /** @description Validation Error */
