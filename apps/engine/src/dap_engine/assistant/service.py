@@ -105,9 +105,13 @@ async def generate_reply(
         return AssistantReply(text=_NO_PROVIDER_MESSAGE, grounded=False)
     provider_id, model_id = choice
 
-    # Instance env vars the adapter should overlay so the provider can read its
-    # key. We pass only what's not already in os.environ (the adapter merges).
-    instance_overlay = {k: v for k, v in env.items() if k not in os.environ}
+    # Overlay ONLY the selected provider's key — never the whole instance env
+    # (which holds DB URLs, other API keys, etc.). If the key is already in
+    # os.environ the adapter reads it directly and no overlay is needed.
+    key_env = PROVIDER_REGISTRY[provider_id].default_env_var
+    instance_overlay: dict[str, str] = {}
+    if key_env and key_env in env and key_env not in os.environ:
+        instance_overlay[key_env] = env[key_env]
 
     task = RuntimeTask(
         execution_id="assistant",

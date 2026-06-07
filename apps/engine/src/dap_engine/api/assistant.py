@@ -112,6 +112,8 @@ async def assistant_chat(
     ``assistant.chat`` audit event (no message content — just that a turn
     happened, by whom).
     """
+    # Instance env vars need the Fernet key to decrypt; without it the
+    # assistant simply falls back to provider keys present in os.environ.
     instance_env = _load_instance_env(session, config.crypto.instance_env_vars_key)
     # os.environ wins over instance vars (matches the run-time resolution order).
     env = {**instance_env, **os.environ}
@@ -127,6 +129,9 @@ async def assistant_chat(
         event_type="assistant.chat",
         event_data={"grounded": reply.grounded, "turns": len(payload.messages)},
     )
+    # Commit the audit row explicitly — this endpoint does no other DB write, so
+    # don't rely on the session dependency's end-of-request commit alone.
+    session.commit()
 
     return AssistantChatResponse(
         message=AssistantMessage(role="assistant", content=reply.text),

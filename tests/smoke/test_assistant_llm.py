@@ -92,6 +92,24 @@ async def test_generate_reply_success_is_grounded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_reply_passes_only_the_provider_key_to_adapter() -> None:
+    # Only the selected provider's key may reach the adapter env — never other
+    # instance secrets (DB URLs, unrelated keys). #721 review (HIGH security).
+    fake = _FakeAdapter(RuntimeResult(success=True, output="ok"))
+    await generate_reply(
+        [{"role": "user", "content": "x"}],
+        env={
+            "ANTHROPIC_API_KEY": "the-provider-key",
+            "ZZ_DATABASE_URL": "postgres://secret",
+            "ZZ_OTHER_SECRET": "nope",
+        },
+        adapter=fake,  # type: ignore[arg-type]
+    )
+    assert fake.last_task is not None
+    assert fake.last_task.instance_env_vars == {"ANTHROPIC_API_KEY": "the-provider-key"}
+
+
+@pytest.mark.asyncio
 async def test_generate_reply_failure_is_graceful() -> None:
     fake = _FakeAdapter(RuntimeResult(success=False, output="", errors=["boom"]))
     reply = await generate_reply(
