@@ -50,6 +50,10 @@ export type AgentExecution = ApiSchema<"AgentExecutionRef">;
 /** Projects that bind a pipeline, and as which workflow kind(s) (#697). */
 export type PipelineUsage = ApiSchema<"PipelineUsageResponse">;
 
+/** Pre-run readiness of a pipeline's python-func callables (#710). */
+export type PipelineReadiness = ApiSchema<"PipelineReadinessResponse">;
+export type NodeReadiness = ApiSchema<"NodeReadiness">;
+
 /** Deterministic explanation + suggested actions for a failed node (#691). */
 export type ErrorExplanation = ApiSchema<"ErrorExplanation">;
 export type SuggestedAction = ApiSchema<"SuggestedAction">;

@@ -5,19 +5,22 @@ from __future__ import annotations
 import logging
 from typing import Any, NoReturn
 
+from dap_runtimes import RuntimeRegistry
 from dap_types import Pipeline
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.api.backend_profiles import inspect_backend_profiles
-from dap_engine.api.deps import get_session
+from dap_engine.api.deps import get_registry, get_session
 from dap_engine.api.pipeline_bundles import (
     PipelineBundleError,
     build_pipeline_export,
     fetch_pipeline_import_request_from_url,
     materialise_pipeline_import,
 )
+from dap_engine.api.run_callable_preflight import inspect_pipeline_callables
 from dap_engine.api.schemas import (
     BackendProfilesInspectionResponse,
     PipelineExport,
@@ -28,7 +31,7 @@ from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import PipelineCreate, PipelineUiMetadataPatch, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import UserORM
+from dap_engine.persistence.models import PipelineVersionORM, UserORM
 
 logger = logging.getLogger("dap.engine.pipelines")
 
@@ -325,6 +328,77 @@ def get_pipeline_usage(
             _PipelineProjectRef(id=pid, name=name, kinds=[kind for kind, _ in binds])
             for pid, name, binds in projects
         ],
+    )
+
+
+class NodeReadiness(BaseModel):
+    """Whether one ``python-func`` node's callable resolves on this engine."""
+
+    node_id: str
+    agent_id: str
+    callable_path: str | None
+    resolvable: bool
+    error: str | None
+
+
+class PipelineReadinessResponse(BaseModel):
+    """Pre-run readiness of a pipeline's ``python-func`` nodes (#710 read-only).
+
+    ``ready`` is true when every checked node's callable resolves. ``checks`` is
+    empty for pipelines with no ``python-func`` nodes (nothing to resolve).
+    """
+
+    ready: bool
+    checks: list[NodeReadiness]
+
+
+@router.get("/{pipeline_id}/readiness", response_model=PipelineReadinessResponse)
+def get_pipeline_readiness(
+    pipeline_id: str,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+    user: UserORM = Depends(current_active_user),
+) -> PipelineReadinessResponse:
+    """Resolve every ``python-func`` node's callable without running it (#710).
+
+    The read-only counterpart to the trigger-time preflight: it surfaces, before
+    you start a run, which nodes can't run on this engine (e.g. ``dap-cortex``
+    not installed, a wrong ``callable_path``, an import-time error) — the #1
+    cryptic cause of mid-run cortex failures. Per-request, so a package
+    installed after engine start shows ready on the next check. Gated on
+    pipeline ownership.
+    """
+    try:
+        pipeline = repo.get_pipeline(
+            session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    pipeline_version = session.scalar(
+        select(PipelineVersionORM)
+        .where(PipelineVersionORM.pipeline_id == pipeline_id)
+        .where(PipelineVersionORM.version == pipeline.version)
+    )
+    if pipeline_version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pipeline version not found: {pipeline_id}@v{pipeline.version}",
+        )
+
+    checks = [
+        NodeReadiness(
+            node_id=c.node_id,
+            agent_id=c.agent_id,
+            callable_path=c.callable_path,
+            resolvable=c.resolvable,
+            error=c.error,
+        )
+        for c in inspect_pipeline_callables(session, pipeline_version, registry)
+    ]
+    return PipelineReadinessResponse(
+        ready=all(c.resolvable for c in checks),
+        checks=checks,
     )
 
 

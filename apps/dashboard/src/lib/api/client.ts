@@ -38,6 +38,7 @@ import type {
   PipelineUiMetadataPatch,
   PipelineUpdate,
   PipelineUsage,
+  PipelineReadiness,
   Project,
   ProjectCreate,
   ProjectRunRequest,
@@ -295,6 +296,10 @@ export async function getPipeline(id: string): Promise<Pipeline> {
 
 export async function getPipelineUsage(id: string): Promise<PipelineUsage> {
   return request<PipelineUsage>(`/pipelines/${encodeURIComponent(id)}/usage`);
+}
+
+export async function getPipelineReadiness(id: string): Promise<PipelineReadiness> {
+  return request<PipelineReadiness>(`/pipelines/${encodeURIComponent(id)}/readiness`);
 }
 
 export async function getPipelineVersion(

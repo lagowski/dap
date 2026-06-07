@@ -3,9 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
-import { useCurrentUser, useTriggerRun, usePipelineVersions } from "@/hooks/api";
+import {
+  useCurrentUser,
+  useTriggerRun,
+  usePipelineVersions,
+  usePipelineReadiness,
+} from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import { withAutoApprove } from "@/lib/run-trigger-options";
+import { PipelineReadinessNotice } from "@/components/pipeline-readiness-notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -47,6 +53,9 @@ export function TriggerRunDialog({
   // Defer the (potentially heavy) versions fetch until the user opens the
   // dialog — the pipelines list page renders one TriggerRunDialog per row.
   const versions = usePipelineVersions(pipelineId, { enabled: open });
+  // Pre-run readiness (#710): resolve python-func callables when the dialog
+  // opens so a missing package (e.g. dap-cortex) shows here, not as a 422.
+  const readiness = usePipelineReadiness(pipelineId, { enabled: open });
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
@@ -114,6 +123,8 @@ export function TriggerRunDialog({
           </DialogHeader>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
+            <PipelineReadinessNotice readiness={readiness.data} />
+
             <div className="space-y-1.5">
               <Label htmlFor="pipeline-version">Pipeline version</Label>
               <select
