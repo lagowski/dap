@@ -233,6 +233,9 @@ async def explain_run_node_error(
             # Audit the LLM call (#691): the error text + reply may quote
             # conversation content, so we record only the run/node identifiers
             # — enough to attribute the provider call, never its content.
+            # Committed before the response is written: the audit is forensic,
+            # so recording that the provider was invoked matters even if the
+            # client disconnects before receiving the body.
             record_audit_event(
                 session,
                 user_id=user.id,

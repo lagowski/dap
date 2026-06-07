@@ -352,7 +352,7 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
           <p
             ref={causeRef}
             tabIndex={-1}
-            className="whitespace-pre-wrap font-medium text-foreground outline-none"
+            className="whitespace-pre-wrap font-medium text-foreground rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {data.cause}
           </p>
