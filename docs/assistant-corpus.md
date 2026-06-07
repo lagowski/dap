@@ -1,16 +1,11 @@
-"""Curated DAP knowledge for the config assistant (#689).
-
-GENERATED from ``docs/assistant-corpus.md`` by
-``scripts/generate-assistant-corpus.py`` — do not edit by hand. Edit the
-markdown source and regenerate; the sync test fails in CI if they drift.
-
-Prompt-stuffed into the assistant's system prompt so its config advice is
-grounded in how DAP actually works rather than hallucinated.
-"""
-
-from __future__ import annotations
-
-DOCS_CORPUS = """\
+<!--
+Source of truth for the config assistant's grounding corpus.
+Generated into apps/engine/src/dap_engine/assistant/docs_corpus.py by
+scripts/generate-assistant-corpus.py — edit THIS file, then regenerate
+(CI fails if the two drift). This leading comment is stripped before the
+content is stuffed into the prompt. Keep it concise — a grounding summary,
+not the full docs; update it when the configuration surface changes.
+-->
 # DAP configuration reference (for the assistant)
 
 DAP runs deterministic agent pipelines. The configurable surface:
@@ -60,4 +55,3 @@ An agent = a unit of work. Fields:
 ## Cost guidance
 - Cheap/deterministic: bash, python-func (free), or api-call with a small model (haiku/flash/mini).
 - Quality coding: claude-code (implementer), or api-call with a strong model.
-"""
