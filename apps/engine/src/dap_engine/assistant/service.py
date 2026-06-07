@@ -14,10 +14,13 @@ overlay, they're not interpolated into any string we build).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from dap_runtimes import ApiCallAdapter
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
@@ -47,6 +50,22 @@ invent config fields that aren't in it. Be concise and concrete. These are
 suggestions the user applies manually; never claim anything was saved, and
 never ask for or include secret values (only env-var NAMES).
 
+## Actions (optional)
+When your answer recommends a concrete next step, you MAY append ONE block at
+the very end of your reply, exactly:
+<dap:actions>[ ... ]</dap:actions>
+containing a JSON array of action objects. The UI renders them as buttons.
+Allowed actions:
+- {"kind":"navigate","label":"Create this agent","href":"/agents/new"}
+- {"kind":"doc","label":"Runtimes","href":"/docs/runtimes.md"}
+- {"kind":"prefill","label":"Use these values","target":"agent","values":{
+    "name":"PR reviewer","role":"verifier","runtime_id":"api-call",
+    "runtime_config":{"provider":"anthropic","model_id":"claude-haiku-4-5"},
+    "prompt_template":"<agent_prompt>...</agent_prompt>"}}
+Rules: only emit a prefill when you proposed a concrete agent config; values
+must use real fields from the reference; never put secret VALUES anywhere. Omit
+the block entirely if no action applies. Keep the prose answer above the block.
+
 # Reference
 """
 
@@ -61,6 +80,50 @@ _NO_PROVIDER_MESSAGE = (
 class AssistantReply:
     text: str
     grounded: bool = False
+    actions: list[dict[str, Any]] = field(default_factory=list)
+
+
+# Match the whole block regardless of inner content so a malformed payload is
+# still stripped from the visible reply (we just emit no actions for it).
+_ACTIONS_RE = re.compile(r"<dap:actions>(.*?)</dap:actions>", re.DOTALL)
+_VALID_ACTION_KINDS = frozenset({"navigate", "doc", "prefill"})
+
+
+def parse_actions(text: str) -> tuple[str, list[dict[str, Any]]]:
+    """Pull a trailing ``<dap:actions>[...]</dap:actions>`` block out of the reply.
+
+    Returns ``(clean_text, actions)``. Best-effort and defensive: no block,
+    malformed JSON, or non-list payload → ``(text, [])``. Each action is kept
+    only if it has a known ``kind`` and a string ``label``; unknown fields are
+    dropped so a hallucinated shape can't reach the client.
+    """
+    match = _ACTIONS_RE.search(text)
+    if not match:
+        return text.strip(), []
+    clean = (text[: match.start()] + text[match.end() :]).strip()
+    try:
+        raw = json.loads(match.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return clean, []
+    if not isinstance(raw, list):
+        return clean, []
+    actions: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        label = item.get("label")
+        if kind not in _VALID_ACTION_KINDS or not isinstance(label, str) or not label:
+            continue
+        action: dict[str, Any] = {"kind": kind, "label": label}
+        if isinstance(item.get("href"), str):
+            action["href"] = item["href"]
+        if isinstance(item.get("target"), str):
+            action["target"] = item["target"]
+        if isinstance(item.get("values"), dict):
+            action["values"] = item["values"]
+        actions.append(action)
+    return clean, actions
 
 
 def select_provider(env: Mapping[str, str]) -> tuple[str, str] | None:
@@ -140,4 +203,5 @@ async def generate_reply(
             text="The model call failed — check the provider key/quota in Settings.",
             grounded=False,
         )
-    return AssistantReply(text=result.output.strip(), grounded=True)
+    text, actions = parse_actions(result.output)
+    return AssistantReply(text=text, grounded=True, actions=actions)

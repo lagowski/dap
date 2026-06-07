@@ -153,3 +153,53 @@ def test_chat_endpoint_requires_auth(client_no_auth: TestClient) -> None:
         "/assistant/chat", json={"messages": [{"role": "user", "content": "hi"}]}
     )
     assert resp.status_code == 401
+
+
+# ---- action parsing (#689 slice 3) ---------------------------------------
+
+
+def test_parse_actions_none() -> None:
+    from dap_engine.assistant.service import parse_actions
+
+    text, actions = parse_actions("just a plain answer, no actions")
+    assert actions == []
+    assert text == "just a plain answer, no actions"
+
+
+def test_parse_actions_extracts_and_strips_block() -> None:
+    from dap_engine.assistant.service import parse_actions
+
+    reply = (
+        "Use api-call + claude-haiku-4-5 as a verifier.\n"
+        '<dap:actions>[{"kind":"navigate","label":"Create this agent","href":"/agents/new"},'
+        '{"kind":"prefill","label":"Use these values","target":"agent",'
+        '"values":{"name":"PR reviewer","role":"verifier"}}]</dap:actions>'
+    )
+    text, actions = parse_actions(reply)
+    assert "<dap:actions>" not in text
+    assert text.startswith("Use api-call")
+    assert len(actions) == 2
+    assert actions[0] == {"kind": "navigate", "label": "Create this agent", "href": "/agents/new"}
+    assert actions[1]["kind"] == "prefill"
+    assert actions[1]["values"]["role"] == "verifier"
+
+
+def test_parse_actions_malformed_json_is_ignored() -> None:
+    from dap_engine.assistant.service import parse_actions
+
+    text, actions = parse_actions("answer <dap:actions>[not json}</dap:actions>")
+    assert actions == []
+    assert "<dap:actions>" not in text
+
+
+def test_parse_actions_drops_invalid_items() -> None:
+    from dap_engine.assistant.service import parse_actions
+
+    reply = (
+        '<dap:actions>[{"kind":"bogus","label":"x"},'
+        '{"kind":"doc"},'  # missing label
+        '{"kind":"doc","label":"Runtimes","href":"/docs/runtimes.md"}]</dap:actions>'
+    )
+    _text, actions = parse_actions(reply)
+    assert len(actions) == 1
+    assert actions[0] == {"kind": "doc", "label": "Runtimes", "href": "/docs/runtimes.md"}

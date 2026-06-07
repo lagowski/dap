@@ -16,6 +16,7 @@ import {
   type VariantBOverrides,
 } from "@/components/agents/agent-test-panel";
 import { TemplatePicker } from "@/components/agents/template-picker";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
 import type { AgentTemplate } from "@/lib/agent-templates";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
@@ -43,6 +44,12 @@ function NewAgentPageContent() {
   // and we render the empty form straight away.
   const sourceQuery = useAgent(fromId);
 
+  // Assistant prefill (#689 slice 3): consume once on mount. When present we
+  // seed the form from it and skip the template chooser. Fully editable; the
+  // user still has to click Create.
+  const { consumePrefill } = useAssistantPrefill();
+  const [prefillValues] = useState(() => consumePrefill("agent"));
+
   // Template picker state (#93). Only meaningful when not cloning —
   // cloning + template would be confusing UX. Picker stays hidden in
   // the clone flow.
@@ -63,12 +70,14 @@ function NewAgentPageContent() {
   // Two-step flow: step 1 picks a template (or scratch), step 2 shows the
   // form with a "back to templates" affordance. Cloning skips straight to
   // the form. Replaces the old single-page picker-with-form-below.
-  const [step, setStep] = useState<"choose" | "form">("choose");
+  const [step, setStep] = useState<"choose" | "form">(
+    prefillValues ? "form" : "choose",
+  );
   const handlePick = (next: AgentTemplate | null) => {
     setTemplate(next);
     setStep("form");
   };
-  const showChooser = !isCloning && step === "choose";
+  const showChooser = !isCloning && !prefillValues && step === "choose";
   const showForm = isCloning || step === "form";
 
   // ``seedKey`` identifies which clone-source / template the form is
@@ -76,11 +85,13 @@ function NewAgentPageContent() {
   // that switching templates / clone source clears stale snapshot
   // values from the previous seed (the existing "switch template to
   // reset" behaviour). Promote bumps within the same seed.
-  const seedKey = sourceQuery.data
-    ? `clone:${sourceQuery.data.id}`
-    : template !== null
-      ? `template:${template.id}`
-      : "scratch";
+  const seedKey = prefillValues
+    ? "assistant-prefill"
+    : sourceQuery.data
+      ? `clone:${sourceQuery.data.id}`
+      : template !== null
+        ? `template:${template.id}`
+        : "scratch";
 
   // Drop snapshot + promoted overrides when the user switches between
   // clone source / template / scratch — those are explicit "reset to
@@ -98,8 +109,9 @@ function NewAgentPageContent() {
   // promotion. ``snapshot`` is honoured only when its seed matches the
   // current one (effect above clears it on switch). Clone/template
   // are first-mount seeds.
-  const baseInitialValues =
-    sourceQuery.data !== undefined
+  const baseInitialValues = prefillValues
+    ? prefillInitialValuesFrom(prefillValues)
+    : sourceQuery.data !== undefined
       ? cloneInitialValuesFrom(sourceQuery.data)
       : template !== null
         ? templateInitialValuesFrom(template)
@@ -349,6 +361,37 @@ function toNewAgentDraft(
     budget_limit_usd: cloneSource ? cloneSource.budget_limit_usd : null,
     timeout_ms: cloneSource ? cloneSource.timeout_ms : 60_000,
   };
+}
+
+/**
+ * Map an assistant prefill payload (#689 slice 3) into the form's
+ * ``initialValues`` shape, keeping only known fields with valid types — a
+ * hallucinated/extra field can't reach the form. Everything stays editable.
+ */
+function prefillInitialValuesFrom(
+  values: Record<string, unknown>,
+): Partial<AgentFormValues> {
+  const out: Partial<AgentFormValues> = {};
+  if (typeof values.name === "string") out.name = values.name;
+  if (typeof values.role === "string") out.role = values.role;
+  if (typeof values.runtime_id === "string") out.runtime_id = values.runtime_id;
+  if (values.runtime_config && typeof values.runtime_config === "object") {
+    out.runtime_config = values.runtime_config as Record<string, unknown>;
+  }
+  if (typeof values.prompt_template === "string") {
+    out.prompt_template = values.prompt_template;
+  }
+  if (Array.isArray(values.input_schema)) {
+    out.input_schema = values.input_schema.filter(
+      (x): x is string => typeof x === "string",
+    );
+  }
+  if (Array.isArray(values.output_schema)) {
+    out.output_schema = values.output_schema.filter(
+      (x): x is string => typeof x === "string",
+    );
+  }
+  return out;
 }
 
 /**

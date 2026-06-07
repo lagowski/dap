@@ -12,6 +12,11 @@ vi.mock("@/hooks/api", () => ({
   }),
 }));
 
+const mockPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
 import { AssistantPanel } from "./assistant-panel";
 
 describe("AssistantPanel", () => {
@@ -51,5 +56,54 @@ describe("AssistantPanel", () => {
 
     expect(mockMutate).toHaveBeenCalledTimes(1);
     expect(screen.getByText("an agent that reviews PRs")).toBeInTheDocument();
+  });
+});
+
+describe("AssistantPanel actions (#689 slice 3)", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    mockMutate.mockReset();
+    mockPush.mockReset();
+  });
+
+  it("renders navigate/prefill buttons and doc links from the reply", async () => {
+    const user = userEvent.setup();
+    // mutate immediately resolves with an assistant reply carrying actions.
+    mockMutate.mockImplementation((_vars, opts) =>
+      opts.onSuccess({
+        message: { role: "assistant", content: "Use api-call + haiku." },
+        grounded: true,
+        citations: [],
+        actions: [
+          { kind: "navigate", label: "Create this agent", href: "/agents/new" },
+          { kind: "doc", label: "Runtimes", href: "/docs/runtimes.md" },
+          {
+            kind: "prefill",
+            label: "Use these values",
+            target: "agent",
+            values: { name: "PR reviewer", role: "verifier" },
+          },
+        ],
+      }),
+    );
+    render(<AssistantPanel />);
+    await user.click(
+      screen.getByRole("button", { name: /open configuration assistant/i }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: /message the assistant/i }),
+      "cheap reviewer",
+    );
+    await user.click(screen.getByRole("button", { name: /^send$/i }));
+
+    // All three actions render: navigate + prefill buttons, doc as a link.
+    expect(screen.getByRole("button", { name: /use these values/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /runtimes/i })).toHaveAttribute(
+      "href",
+      "/docs/runtimes.md",
+    );
+    // Clicking navigate routes (and closes the panel, so do it last).
+    await user.click(screen.getByRole("button", { name: /create this agent/i }));
+    expect(mockPush).toHaveBeenCalledWith("/agents/new");
   });
 });
