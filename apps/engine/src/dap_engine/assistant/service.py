@@ -88,9 +88,11 @@ the block entirely if no action applies. Keep the prose answer above the block.
 """
 
 _NO_PROVIDER_MESSAGE = (
-    "I can't answer yet — no LLM provider is configured on this instance. Add a "
-    "provider API key in Settings → environment variables (e.g. ANTHROPIC_API_KEY, "
-    "OPENAI_API_KEY, or GEMINI_API_KEY) and I'll start giving grounded config advice."
+    "I can't answer yet — no LLM provider is configured on this instance. An admin can "
+    "set one under Admin → Settings → instance environment variables: add a provider "
+    "API key (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY), or set "
+    "ASSISTANT_PROVIDER=claude-code to use the Claude CLI subscription. Then I'll start "
+    "giving grounded config advice."
 )
 
 
