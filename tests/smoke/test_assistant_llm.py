@@ -34,6 +34,24 @@ def test_select_provider_claude_code_honours_model_override() -> None:
     ) == ("claude-code", "claude-sonnet-4-6")
 
 
+def test_select_provider_honours_non_reserved_alias() -> None:
+    # ASSISTANT_PROVIDER (no DAP_ prefix) is settable as an instance env var.
+    assert select_provider({"ASSISTANT_PROVIDER": "claude-code"}) == (
+        "claude-code",
+        "claude-haiku-4-5",
+    )
+    assert select_provider(
+        {"ASSISTANT_PROVIDER": "openai", "OPENAI_API_KEY": "x", "ASSISTANT_MODEL": "gpt-4o"}
+    ) == ("openai", "gpt-4o")
+
+
+def test_select_provider_dap_prefix_wins_over_alias() -> None:
+    # The engine-env DAP_ form takes precedence over the instance-env alias.
+    assert select_provider(
+        {"DAP_ASSISTANT_PROVIDER": "claude-code", "ASSISTANT_PROVIDER": "openai"}
+    ) == ("claude-code", "claude-haiku-4-5")
+
+
 def test_select_provider_picks_anthropic_when_key_present() -> None:
     choice = select_provider({"ANTHROPIC_API_KEY": "x"})
     assert choice == ("anthropic", "claude-haiku-4-5")

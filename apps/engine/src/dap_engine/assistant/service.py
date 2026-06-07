@@ -193,11 +193,16 @@ def parse_actions(text: str) -> tuple[str, list[dict[str, Any]]]:
 def select_provider(env: Mapping[str, str]) -> tuple[str, str] | None:
     """Pick (provider_id, model_id) whose key is present in ``env``.
 
-    Honours DAP_ASSISTANT_PROVIDER / DAP_ASSISTANT_MODEL overrides, else walks
-    the priority order. Returns ``None`` when no provider key is available.
+    Honours the provider/model override, else walks the priority order. Returns
+    ``None`` when no provider key is available.
+
+    The override is read from ``DAP_ASSISTANT_PROVIDER`` (engine env only —
+    ``DAP_`` is a reserved instance-env prefix) OR ``ASSISTANT_PROVIDER``, the
+    non-reserved alias that *can* be set as an instance env var from the admin
+    UI. The ``DAP_``-prefixed form wins when both are present.
     """
-    override = env.get("DAP_ASSISTANT_PROVIDER")
-    model_override = env.get("DAP_ASSISTANT_MODEL")
+    override = env.get("DAP_ASSISTANT_PROVIDER") or env.get("ASSISTANT_PROVIDER")
+    model_override = env.get("DAP_ASSISTANT_MODEL") or env.get("ASSISTANT_MODEL")
     # claude-code is a CLI runtime, not an api-call provider with a key in the
     # registry — honour it only as an explicit opt-in, without an API-key check.
     if override == _CLI_PROVIDER:
