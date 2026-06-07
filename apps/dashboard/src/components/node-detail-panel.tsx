@@ -240,6 +240,7 @@ export function NodeDetailPanel({
               {agent ? (
                 <Link
                   href={`/agents/${agent.id}`}
+                  aria-label={`View agent ${agent.name}`}
                   className="font-medium text-foreground hover:underline"
                 >
                   {agent.name}
