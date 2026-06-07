@@ -21,6 +21,7 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from dap_engine.api.agents import router as agents_router
+from dap_engine.api.assistant import router as assistant_router
 from dap_engine.api.health import router as health_router
 from dap_engine.api.pipelines import router as pipelines_router
 from dap_engine.api.projects import router as projects_router
@@ -706,6 +707,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     app.include_router(projects_router)
     app.include_router(runs_router)
     app.include_router(settings_router)
+    app.include_router(assistant_router)
 
     # Auth routes (v0.3, see #299).
     # Existing endpoints are NOT yet auth-protected — that lands in a

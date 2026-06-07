@@ -23,6 +23,8 @@ import type {
   AgentDryRunResponse,
   AgentExport,
   AgentUpdate,
+  AssistantChatResponse,
+  AssistantMessage,
   BackendProfilesInspectionResponse,
   CurrentUser,
   ErrorExplanation,
@@ -229,6 +231,17 @@ export async function getNodeErrorExplanation(
   return request<ErrorExplanation>(
     `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/explain`,
   );
+}
+
+/** Config assistant chat turn (#689). */
+export async function assistantChat(
+  messages: AssistantMessage[],
+  context?: Record<string, unknown>,
+): Promise<AssistantChatResponse> {
+  return request<AssistantChatResponse>("/assistant/chat", {
+    method: "POST",
+    json: { messages, context: context ?? null },
+  });
 }
 
 export async function triggerRun(payload: RunCreateRequest): Promise<Run> {

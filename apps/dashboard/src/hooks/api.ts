@@ -579,3 +579,16 @@ export function useAdminSettings() {
     staleTime: 5 * 60 * 1000,
   });
 }
+
+/**
+ * Config assistant chat (#689). A plain mutation — the assistant panel owns
+ * the message history and sends the full transcript each turn.
+ */
+export function useAssistantChat() {
+  return useMutation({
+    mutationFn: (vars: {
+      messages: import("@/lib/api/types").AssistantMessage[];
+      context?: Record<string, unknown>;
+    }) => api.assistantChat(vars.messages, vars.context),
+  });
+}
