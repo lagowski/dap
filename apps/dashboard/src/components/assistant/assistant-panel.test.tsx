@@ -106,4 +106,63 @@ describe("AssistantPanel actions (#689 slice 3)", () => {
     await user.click(screen.getByRole("button", { name: /create this agent/i }));
     expect(mockPush).toHaveBeenCalledWith("/agents/new");
   });
+
+  it("ignores navigate actions whose href is not a same-origin path (#727)", async () => {
+    const user = userEvent.setup();
+    // The LLM proposes a navigate action with a protocol-relative URL — the
+    // classic open-redirect vector. The handler must refuse to route.
+    mockMutate.mockImplementation((_vars, opts) =>
+      opts.onSuccess({
+        message: { role: "assistant", content: "Sure." },
+        grounded: true,
+        citations: [],
+        actions: [
+          { kind: "navigate", label: "Take me there", href: "//evil.example" },
+          { kind: "navigate", label: "Or here", href: "https://evil.example/x" },
+        ],
+      }),
+    );
+    render(<AssistantPanel />);
+    await user.click(
+      screen.getByRole("button", { name: /open configuration assistant/i }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: /message the assistant/i }),
+      "anything",
+    );
+    await user.click(screen.getByRole("button", { name: /^send$/i }));
+
+    await user.click(screen.getByRole("button", { name: /take me there/i }));
+    await user.click(screen.getByRole("button", { name: /or here/i }));
+
+    // Neither button should have triggered a navigation.
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("renders doc links with rel='noopener noreferrer' (#727)", async () => {
+    const user = userEvent.setup();
+    mockMutate.mockImplementation((_vars, opts) =>
+      opts.onSuccess({
+        message: { role: "assistant", content: "Docs here." },
+        grounded: true,
+        citations: [],
+        actions: [
+          { kind: "doc", label: "Runtimes", href: "/docs/runtimes.md" },
+        ],
+      }),
+    );
+    render(<AssistantPanel />);
+    await user.click(
+      screen.getByRole("button", { name: /open configuration assistant/i }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: /message the assistant/i }),
+      "where are the runtimes docs",
+    );
+    await user.click(screen.getByRole("button", { name: /^send$/i }));
+
+    const link = screen.getByRole("link", { name: /runtimes/i });
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
 });

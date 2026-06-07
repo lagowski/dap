@@ -20,6 +20,17 @@ const PREFILL_ROUTES: Record<string, string> = {
   agent: "/agents/new",
 };
 
+/**
+ * Whether an assistant-supplied href is a same-origin internal path.
+ * Requires a single leading ``/`` so that protocol-relative (``//evil.com``)
+ * and absolute (``https://...``) URLs are rejected even if the LLM proposes
+ * one. Empty / undefined hrefs return false.
+ */
+function isInternalPath(href: string | null | undefined): boolean {
+  if (typeof href !== "string" || href.length === 0) return false;
+  return href.startsWith("/") && !href.startsWith("//");
+}
+
 type ChatTurn = AssistantMessage & {
   citations?: { label: string; href: string }[];
   actions?: AssistantAction[];
@@ -41,8 +52,11 @@ export function AssistantPanel() {
   const { setPrefill } = useAssistantPrefill();
 
   const runAction = (action: AssistantAction) => {
-    if (action.kind === "navigate" && action.href) {
-      router.push(action.href);
+    if (action.kind === "navigate" && isInternalPath(action.href)) {
+      // Guard #727: the LLM supplies ``href``; only same-origin paths are
+      // honoured so a jailbroken model can't trick router.push into an
+      // open-redirect with a protocol-relative URL.
+      router.push(action.href as string);
       setOpen(false);
     } else if (action.kind === "prefill" && action.target) {
       const route = PREFILL_ROUTES[action.target];
@@ -165,6 +179,10 @@ export function AssistantPanel() {
                       key={ai}
                       href={a.href}
                       target="_blank"
+                      // Guard #727: ``target="_blank"`` without ``noopener``
+                      // gives the opened page access to ``window.opener``.
+                      // The href is LLM-supplied; close that off.
+                      rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
                     >
                       <FileText className="h-3 w-3" aria-hidden />
