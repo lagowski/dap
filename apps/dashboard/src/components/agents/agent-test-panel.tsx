@@ -179,6 +179,9 @@ export function AgentTestPanel({
 
   // Managed (Cortex) agents run a real callable with side effects on dry-run
   // (#739 slice 3) — gate the run buttons behind an explicit acknowledgement.
+  // When ``draft`` is null there's nothing to detect *and* nothing to run
+  // (``canRunSingle`` requires ``draft !== null`` below), so a hidden warning
+  // can't unlock a run — the run is already disabled. No bypass.
   const managed = draft !== null && isManagedAgent(draft);
   const runGate = !managed || sideEffectsAck;
 
