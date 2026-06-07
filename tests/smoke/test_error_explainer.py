@@ -218,3 +218,57 @@ def test_explain_endpoint_404_for_unknown_node(
 ) -> None:
     client, _ = http
     assert client.get("/runs/nope/nodes/nope/explain").status_code == 404
+
+
+# ---- LLM fallback (#691 slice 2) ------------------------------------------
+
+
+class _FakeLLMAdapter:
+    def __init__(self, output: str) -> None:
+        self.output = output
+        self.last_task = None
+
+    async def execute(self, task, on_output=None):  # type: ignore[no-untyped-def]
+        from dap_types import RuntimeResult
+
+        self.last_task = task
+        return RuntimeResult(success=True, output=self.output)
+
+
+@pytest.mark.asyncio
+async def test_explain_error_llm_no_provider_returns_none() -> None:
+    from dap_engine.diagnostics.error_explainer import explain_error_llm
+
+    assert await explain_error_llm("boom", runtime_id="bash", env={}) is None
+
+
+@pytest.mark.asyncio
+async def test_explain_error_llm_uses_provider() -> None:
+    from dap_engine.diagnostics.error_explainer import explain_error_llm
+
+    fake = _FakeLLMAdapter("It failed because the package is missing. Install it.")
+    exp = await explain_error_llm(
+        "weird unrecognised error",
+        runtime_id="bash",
+        env={"ANTHROPIC_API_KEY": "sk-secret-zzz"},
+        adapter=fake,
+    )
+    assert exp is not None
+    assert exp.source == "llm"
+    assert exp.recognized is True
+    assert "package is missing" in exp.cause
+    # the error text is in the prompt for grounding; the key value never is.
+    assert "weird unrecognised error" in fake.last_task.prompt_xml  # type: ignore[union-attr]
+    assert "sk-secret-zzz" not in fake.last_task.runtime_config["system_prompt"]  # type: ignore[union-attr]
+
+
+def test_explain_endpoint_ai_falls_back_to_deterministic_without_provider(
+    http: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    # With ?ai=1 but no provider configured (CI), the endpoint returns the
+    # deterministic explanation rather than erroring.
+    client, factory = http
+    run_id, node_id = _seed_failed_node(factory, error_message="Segfault 0xdeadbeef (unrecognised)")
+    resp = client.get(f"/runs/{run_id}/nodes/{node_id}/explain?ai=1")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source"] == "deterministic"

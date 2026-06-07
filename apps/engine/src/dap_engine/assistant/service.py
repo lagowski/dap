@@ -156,6 +156,49 @@ def build_transcript(messages: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+async def run_llm(
+    *,
+    system_prompt: str,
+    user_text: str,
+    provider_id: str,
+    model_id: str,
+    env: Mapping[str, str],
+    adapter: ApiCallAdapter | None = None,
+    execution_id: str = "assistant",
+    max_tokens: int = 1024,
+) -> str | None:
+    """One grounded single-shot completion via ``ApiCallAdapter``.
+
+    The provider is already selected by the caller (via :func:`select_provider`).
+    Overlays ONLY that provider's key — never the whole instance env (which holds
+    DB URLs, other keys). Returns the model text, or ``None`` on failure (raw
+    provider errors are secret-tainted, so we don't surface or log their content).
+    """
+    key_env = PROVIDER_REGISTRY[provider_id].default_env_var
+    instance_overlay: dict[str, str] = {}
+    if key_env and key_env in env and key_env not in os.environ:
+        instance_overlay[key_env] = env[key_env]
+
+    task = RuntimeTask(
+        execution_id=execution_id,
+        prompt_xml=user_text,
+        working_directory=".",
+        timeout_ms=60_000,
+        runtime_config={
+            "provider": provider_id,
+            "model_id": model_id,
+            "system_prompt": system_prompt,
+            "max_tokens": max_tokens,
+        },
+        instance_env_vars=instance_overlay,
+    )
+    result = await (adapter or ApiCallAdapter()).execute(task)
+    if not result.success:
+        logger.warning("assistant: provider call failed")
+        return None
+    return result.output.strip()
+
+
 async def generate_reply(
     messages: list[dict[str, str]],
     *,
@@ -167,41 +210,19 @@ async def generate_reply(
     if choice is None:
         return AssistantReply(text=_NO_PROVIDER_MESSAGE, grounded=False)
     provider_id, model_id = choice
-
-    # Overlay ONLY the selected provider's key — never the whole instance env
-    # (which holds DB URLs, other API keys, etc.). If the key is already in
-    # os.environ the adapter reads it directly and no overlay is needed.
-    key_env = PROVIDER_REGISTRY[provider_id].default_env_var
-    instance_overlay: dict[str, str] = {}
-    if key_env and key_env in env and key_env not in os.environ:
-        instance_overlay[key_env] = env[key_env]
-
-    task = RuntimeTask(
+    text = await run_llm(
+        system_prompt=_SYSTEM_INSTRUCTIONS + DOCS_CORPUS,
+        user_text=build_transcript(messages),
+        provider_id=provider_id,
+        model_id=model_id,
+        env=env,
+        adapter=adapter,
         execution_id="assistant",
-        prompt_xml=build_transcript(messages),
-        working_directory=".",
-        timeout_ms=60_000,
-        runtime_config={
-            "provider": provider_id,
-            "model_id": model_id,
-            "system_prompt": _SYSTEM_INSTRUCTIONS + DOCS_CORPUS,
-            "max_tokens": 1024,
-        },
-        instance_env_vars=instance_overlay,
     )
-
-    result = await (adapter or ApiCallAdapter()).execute(task)
-    if not result.success:
-        # Raw provider errors can carry endpoint URLs / key fragments / stack
-        # traces (secret-tainted). Log only the fact — not the errors, and not
-        # ``provider_id`` (it's derived from the env dict, so CodeQL taints it
-        # even though it's just a provider name). The provider adapter logs its
-        # own diagnostics. A redaction layer (separate issue) would let us log
-        # richer detail safely.
-        logger.warning("assistant: provider call failed")
+    if text is None:
         return AssistantReply(
             text="The model call failed — check the provider key/quota in Settings.",
             grounded=False,
         )
-    text, actions = parse_actions(result.output)
-    return AssistantReply(text=text, grounded=True, actions=actions)
+    clean, actions = parse_actions(text)
+    return AssistantReply(text=clean, grounded=True, actions=actions)

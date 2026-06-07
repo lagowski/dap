@@ -21,16 +21,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_session
 from dap_engine.assistant.service import generate_reply
 from dap_engine.auth.audit import record_audit_event
-from dap_engine.auth.encryption import EncryptionError, decrypt_value
 from dap_engine.auth.users import current_active_user
+from dap_engine.instance_env import load_instance_env
 from dap_engine.persistence.models import UserORM
-from dap_engine.persistence.settings_models import InstanceEnvVarORM
 
 if TYPE_CHECKING:
     from dap_engine.app import EngineConfig
@@ -80,27 +78,6 @@ class AssistantChatResponse(BaseModel):
     actions: list[AssistantAction] = []
 
 
-def _load_instance_env(session: Session, fernet_key: str | None) -> dict[str, str]:
-    """Decrypt the instance env vars into a dict (empty if no key / no rows).
-
-    A row we can't decrypt (rotated Fernet key) is skipped with a warning
-    rather than failing the whole chat — the assistant should still answer
-    using whatever else is available (e.g. os.environ keys).
-    """
-    if not fernet_key:
-        return {}
-    out: dict[str, str] = {}
-    # Select just the columns (not the ORM entity) so no tracked instances land
-    # in the session — keeps the later commit scoped to the audit row only.
-    rows = session.execute(select(InstanceEnvVarORM.key, InstanceEnvVarORM.ciphertext)).all()
-    for key, ciphertext in rows:
-        try:
-            out[key] = decrypt_value(ciphertext, key=fernet_key)
-        except EncryptionError:
-            logger.warning("assistant: could not decrypt instance env var %r — skipping", key)
-    return out
-
-
 @router.post("/chat", response_model=AssistantChatResponse)
 async def assistant_chat(
     payload: AssistantChatRequest,
@@ -117,7 +94,7 @@ async def assistant_chat(
     """
     # Instance env vars need the Fernet key to decrypt; without it the
     # assistant simply falls back to provider keys present in os.environ.
-    instance_env = _load_instance_env(session, config.crypto.instance_env_vars_key)
+    instance_env = load_instance_env(session, config.crypto.instance_env_vars_key)
     # os.environ wins over instance vars (matches the run-time resolution order).
     env = {**instance_env, **os.environ}
 
