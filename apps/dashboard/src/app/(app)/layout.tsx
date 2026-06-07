@@ -1,3 +1,4 @@
+import { AssistantPanel } from "@/components/assistant/assistant-panel";
 import { ConfirmDestructiveProvider } from "@/components/confirm-destructive-dialog";
 import { Sidebar } from "@/components/sidebar";
 import { ToastProvider } from "@/components/ui/toast";
@@ -25,6 +26,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex h-full">
             <Sidebar />
             <main className="flex-1 overflow-auto bg-muted/30">{children}</main>
+            <AssistantPanel />
           </div>
         </ToastProvider>
       </ConfirmDestructiveProvider>

@@ -54,6 +54,11 @@ export type PipelineUsage = ApiSchema<"PipelineUsageResponse">;
 export type ErrorExplanation = ApiSchema<"ErrorExplanation">;
 export type SuggestedAction = ApiSchema<"SuggestedAction">;
 
+/** Config assistant chat (#689). */
+export type AssistantMessage = ApiSchema<"AssistantMessage">;
+export type AssistantChatRequest = ApiSchema<"AssistantChatRequest">;
+export type AssistantChatResponse = ApiSchema<"AssistantChatResponse">;
+
 export type AgentCreate = Omit<
   ApiSchema<"AgentCreate">,
   "timeout_ms" | "role"

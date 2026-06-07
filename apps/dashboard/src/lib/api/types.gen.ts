@@ -220,6 +220,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assistant/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assistant Chat
+         * @description Stub chat turn (#689 slice 1) — auth-gated; returns a placeholder reply.
+         *
+         *     The real implementation will call the instance's configured provider with
+         *     a docs-grounded system prompt and return grounded citations.
+         */
+        post: operations["assistant_chat_assistant_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit/events": {
         parameters: {
             query?: never;
@@ -2048,6 +2071,39 @@ export interface components {
             /** Revoked At */
             revoked_at: string | null;
         };
+        /** AssistantChatRequest */
+        AssistantChatRequest: {
+            /** Context */
+            context?: {
+                [key: string]: unknown;
+            } | null;
+            /** Messages */
+            messages: components["schemas"]["AssistantMessage"][];
+        };
+        /** AssistantChatResponse */
+        AssistantChatResponse: {
+            /**
+             * Citations
+             * @default []
+             */
+            citations: components["schemas"]["Citation"][];
+            /**
+             * Grounded
+             * @default false
+             */
+            grounded: boolean;
+            message: components["schemas"]["AssistantMessage"];
+        };
+        /** AssistantMessage */
+        AssistantMessage: {
+            /** Content */
+            content: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
         /**
          * AuditEventList
          * @description Paginated list — matches the shape ``GET /users`` returns.
@@ -2313,6 +2369,16 @@ export interface components {
              * @default 60000
              */
             timeout_ms: number;
+        };
+        /**
+         * Citation
+         * @description A grounded reference back to a DAP docs section.
+         */
+        Citation: {
+            /** Href */
+            href: string;
+            /** Label */
+            label: string;
         };
         /** ComparisonCondition */
         ComparisonCondition: {
@@ -3882,6 +3948,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assistant_chat_assistant_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantChatResponse"];
                 };
             };
             /** @description Validation Error */
