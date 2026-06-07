@@ -169,6 +169,9 @@ export default function RunDetailPage({
           currentNode={run.current_node}
           onNodeClick={(nodeId) => setSelectedNode(nodeId)}
           autoLayout
+          // Run view: don't render static-validation warnings as red edges —
+          // they read as run failures (the post-gate nodes simply never ran).
+          showWarnings={false}
         />
       ) : (
         <Card>

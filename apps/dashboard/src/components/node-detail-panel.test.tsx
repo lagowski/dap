@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ApiError } from "@/lib/api/client";
 import type { NodeExecutionLog, StateSnapshot } from "@/lib/api/types";
 
 // Hoisted mocks so the vi.mock factory can close over them.
@@ -96,5 +97,39 @@ describe("NodeDetailPanel — State diff empty states", () => {
 
     await user.click(screen.getByRole("tab", { name: /state diff/i }));
     expect(screen.getByText(/no state (snapshot|history)/i)).toBeInTheDocument();
+  });
+});
+
+describe("NodeDetailPanel — node that didn't run", () => {
+  beforeEach(() => {
+    mockUseRunNodeLog.mockReset();
+    mockUseRunStateHistory.mockReset();
+  });
+
+  it("shows a friendly message (not an error) on 404 — the node never ran", () => {
+    mockUseRunNodeLog.mockReturnValue({
+      data: null,
+      isPending: false,
+      isError: true,
+      error: new ApiError(404, "Node not found"),
+    });
+    mockUseRunStateHistory.mockReturnValue({ data: [] });
+    render(<NodeDetailPanel runId="r1" nodeId="coder" onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/didn.?t run in this run/i)).toBeInTheDocument();
+    expect(screen.queryByText(/failed to load/i)).toBeNull();
+  });
+
+  it("still shows a hard error for non-404 failures", () => {
+    mockUseRunNodeLog.mockReturnValue({
+      data: null,
+      isPending: false,
+      isError: true,
+      error: new ApiError(500, "boom"),
+    });
+    mockUseRunStateHistory.mockReturnValue({ data: [] });
+    render(<NodeDetailPanel runId="r1" nodeId="n1" onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/failed to load/i)).toBeInTheDocument();
   });
 });
