@@ -16,6 +16,7 @@ import {
   AgentTestPanel,
   type VariantBOverrides,
 } from "@/components/agents/agent-test-panel";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function EditAgentPage({
@@ -27,7 +28,13 @@ export default function EditAgentPage({
   const router = useRouter();
   const { data: agent, isPending, isError, error } = useAgent(id);
   const update = useUpdateAgent();
-  const [tab, setTab] = useState<AgentTab>("form");
+  // "Open in agent tester" (#724): a run node hands over the input state it ran
+  // with. Consume once on mount → open the Test tab pre-seeded with that state.
+  const { consumePrefill } = useAssistantPrefill();
+  const [testPrefill] = useState(() => consumePrefill("agent-test"));
+  const initialTestContext =
+    typeof testPrefill?.context === "string" ? testPrefill.context : undefined;
+  const [tab, setTab] = useState<AgentTab>(initialTestContext ? "test" : "form");
   const [snapshot, setSnapshot] = useState<{
     values: AgentFormValues;
     valid: boolean;
@@ -153,6 +160,7 @@ export default function EditAgentPage({
             <AgentTestPanel
               draft={draft}
               draftBlockedReason={draftBlockedReason}
+              initialContext={initialTestContext}
               onPromoteVariantB={(overrides) => {
                 setPromoted(overrides);
                 // Bump key → AgentForm remounts with the merged

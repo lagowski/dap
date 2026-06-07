@@ -2,8 +2,17 @@
 
 import { useMemo, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  FlaskConical,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -52,6 +61,8 @@ export function NodeDetailPanel({
       : null;
   const isCortex =
     data?.runtime_id === "python-func" && callablePath?.startsWith("cortex.") === true;
+  const router = useRouter();
+  const { setPrefill } = useAssistantPrefill();
   // Cortex python-func nodes build their own prompt inside the callable and
   // record it into the node output's ``extensions.__audit`` (#724). Surface it.
   const recordedPrompt = recordedPromptFrom(data?.output_json ?? null);
@@ -252,6 +263,30 @@ export function NodeDetailPanel({
               <span className="font-mono">{data.runtime_id}</span>
               {isCortex && <Badge variant="outline">Cortex</Badge>}
             </div>
+
+            {agent && (
+              // Open the agent's tester pre-seeded with the state this node
+              // received, so you can tweak params and re-run its work (#724).
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const inputState = before ?? after;
+                  if (inputState) {
+                    setPrefill({
+                      target: "agent-test",
+                      values: { context: JSON.stringify(inputState, null, 2) },
+                    });
+                  }
+                  router.push(`/agents/${agent.id}/edit`);
+                  onOpenChange(false);
+                }}
+              >
+                <FlaskConical className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                Open in agent tester
+              </Button>
+            )}
           </div>
         )}
       </DialogContent>
