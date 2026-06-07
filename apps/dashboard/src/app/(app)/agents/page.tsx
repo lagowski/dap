@@ -19,6 +19,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
+import { isManagedAgent } from "@/lib/managed-agent";
 import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
@@ -287,11 +288,16 @@ export default function AgentsPage() {
                               <td className="p-0 font-medium">
                                 <Link
                                   href={`/agents/${agent.id}`}
-                                  className="block px-4 py-2"
+                                  className="flex items-center gap-2 px-4 py-2"
                                 >
                                   <span className="hover:underline">
                                     {agent.name}
                                   </span>
+                                  {isManagedAgent(agent) && (
+                                    <Badge variant="outline" className="font-normal">
+                                      Managed · Cortex
+                                    </Badge>
+                                  )}
                                 </Link>
                               </td>
                               <td className="px-4 py-2">
