@@ -799,9 +799,10 @@ This repo runs in production against a private infrastructure that is **NOT** de
 | Execution host | `dixter-pc` — 192.168.1.100, SSH port 2222 | Self-hosted runner for the AI-review gate also lives here. |
 | DAP engine | `http://dixter-pc:7333` | systemd user unit `dap-engine`. |
 | DAP dashboard | `http://dixter-pc:3000` (typically accessed as `http://localhost:3001` via SSH `LocalForward`) | systemd user unit `dap-dashboard`. |
-| Postgres pod | `database/postgres-7b8d57c965-gvfld` on the k3s node 10.0.0.5 | `pgvector/pgvector:pg16`. Bound 20Gi PVC `postgres-data`. Started 2026-02-28. **Canonical persistent store — never recreate.** |
-| Postgres NodePort | `10.0.0.5:30432` → the pod above | All DAP-related databases live here. |
+| Postgres pod | `database/postgresql-trading-98c9667c-678rs` on the k3s node 10.0.0.5 (selector `app=postgresql-trading`; pod hash rotates on restart) | `postgres:18`. Bound 20Gi PVC `data-postgresql-0` (185 d). **Canonical persistent store — never recreate the deployment or the PVC.** Earlier doc revisions named `postgres-7b8d57c965-gvfld` here; that pod is defunct (different PVC, no `dap` role, `weekendinsight` env). |
+| Postgres NodePort | `10.0.0.5:30432` → the pod above (service `database/postgresql-nodeport`, selector `app=postgresql-trading`) | All DAP-related databases live here: `dap`, `cortex_project`, `ai_model`, plus a few project-specific DBs. |
 | Review gate check name | `copilot-review` | Required by branch protection on `develop`/`main` for the speacher repo. Stable across engine swaps (Copilot → Gemini → Claude → Codex). |
+| Repo ownership | All five tracked repos (`dap`, `speacher`, `cfd`, `cortex-project`, `news-sentiment`) are under the `lagowski/*` GitHub org as of 2026-06-06 | Migrated from `rafeekpro/{dap,speacher}` and `Dixter999/{cfd,cortex-project,news-sentiment}`. GitHub redirects from the old URLs still work. |
 
 ### The four secrets-handling rules
 
