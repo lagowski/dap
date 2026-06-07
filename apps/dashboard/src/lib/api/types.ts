@@ -43,6 +43,9 @@ export type Agent = Omit<
 /** Where an agent is used — pipelines that embed it + projects that bind those (#697). */
 export type AgentUsage = ApiSchema<"AgentUsageResponse">;
 
+/** A python-func agent's callable docstring + resolvability (#747). */
+export type AgentCallableInfo = ApiSchema<"AgentCallableInfo">;
+
 /** A page of an agent's node executions across runs — the activity log (#697). */
 export type AgentExecutions = ApiSchema<"AgentExecutionsResponse">;
 export type AgentExecution = ApiSchema<"AgentExecutionRef">;

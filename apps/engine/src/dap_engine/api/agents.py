@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import tempfile
 import uuid
 from datetime import datetime
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
+from dap_runtimes.adapters.python_func import resolve_callable
 from dap_types import Agent, RuntimeTask
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ValidationError
@@ -184,6 +186,54 @@ def get_agent_usage(
             )
             for proj_id, proj_name, binds in projects
         ],
+    )
+
+
+class AgentCallableInfo(BaseModel):
+    """What a ``python-func`` agent's callable does — its docstring (#747).
+
+    For managed/cortex agents the prompt is inert and the real behaviour lives
+    in the Python callable. This surfaces the callable's own docstring as a
+    grounded "what this does", plus whether it currently resolves on the engine
+    (the same resolution as the readiness check). ``callable_path`` is null for
+    non-``python-func`` agents — they have no callable to describe.
+    """
+
+    callable_path: str | None
+    resolvable: bool
+    doc: str | None
+    error: str | None
+
+
+@router.get("/{agent_id}/callable-info", response_model=AgentCallableInfo)
+def get_agent_callable_info(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> AgentCallableInfo:
+    """Resolve a ``python-func`` agent's callable and return its docstring (#747).
+
+    Read-only, no execution: imports the module (as the adapter would) and reads
+    ``inspect.getdoc`` off the function. Returns an empty shell for
+    non-``python-func`` agents. Gated on agent ownership.
+    """
+    try:
+        agent = repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if agent.runtime_id != "python-func":
+        return AgentCallableInfo(callable_path=None, resolvable=False, doc=None, error=None)
+
+    raw_path = agent.runtime_config.get("callable_path")
+    callable_path = raw_path if isinstance(raw_path, str) else None
+    func, error = resolve_callable(raw_path)
+    doc = inspect.getdoc(func) if func is not None else None
+    return AgentCallableInfo(
+        callable_path=callable_path,
+        resolvable=error is None,
+        doc=doc,
+        error=error,
     )
 
 

@@ -16,6 +16,7 @@ import type {
   Agent,
   AgentExecutions,
   AgentUsage,
+  AgentCallableInfo,
   AuditEvent,
   AuditEventFilters,
   AgentCreate,
@@ -401,6 +402,10 @@ export async function getAgent(id: string): Promise<Agent> {
 
 export async function getAgentUsage(id: string): Promise<AgentUsage> {
   return request<AgentUsage>(`/agents/${encodeURIComponent(id)}/usage`);
+}
+
+export async function getAgentCallableInfo(id: string): Promise<AgentCallableInfo> {
+  return request<AgentCallableInfo>(`/agents/${encodeURIComponent(id)}/callable-info`);
 }
 
 export async function getAgentExecutions(

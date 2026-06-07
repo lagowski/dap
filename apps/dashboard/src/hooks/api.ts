@@ -181,6 +181,22 @@ export function useAgentUsage(id: string | null) {
   });
 }
 
+/**
+ * A python-func agent's callable docstring ("what this does", #747). Lazily
+ * enabled — only fetched for managed agents where it's meaningful.
+ */
+export function useAgentCallableInfo(
+  id: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: id ? queryKeys.agentCallableInfo(id) : ["agents", "noop", "callable-info"],
+    queryFn: () =>
+      id ? api.getAgentCallableInfo(id) : Promise.reject(new Error("no id")),
+    enabled: (options?.enabled ?? true) && id != null,
+  });
+}
+
 export function useAgentExecutions(id: string | null) {
   return useQuery({
     queryKey: id
