@@ -26,7 +26,10 @@ import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useDryRunAgent } from "@/hooks/api";
+import { isManagedAgent } from "@/lib/managed-agent";
 import type { AgentDryRunDraft } from "@/lib/api/types";
+
+import { ManagedDryRunWarning } from "./managed-dry-run-warning";
 
 import {
   CompareColumns,
@@ -95,6 +98,8 @@ export function AgentTestPanel({
   const [contextText, setContextText] = useState(
     initialContextText ?? DEFAULT_CONTEXT,
   );
+  // Acknowledgement for managed agents' side-effecting dry-run (#739 slice 3).
+  const [sideEffectsAck, setSideEffectsAck] = useState(false);
   const [compareOn, setCompareOn] = useState(false);
   const [variantB, setVariantB] = useState<VariantBOverrides | null>(null);
   // Set the moment a VariantBEditor change handler runs (not on the
@@ -172,7 +177,15 @@ export function AgentTestPanel({
     dryRunB.mutate({ draft: draftB, context: parseResult.value });
   };
 
-  const canRunSingle = draft !== null && parseResult.ok && !dryRunA.isPending;
+  // Managed (Cortex) agents run a real callable with side effects on dry-run
+  // (#739 slice 3) — gate the run buttons behind an explicit acknowledgement.
+  // When ``draft`` is null there's nothing to detect *and* nothing to run
+  // (``canRunSingle`` requires ``draft !== null`` below), so a hidden warning
+  // can't unlock a run — the run is already disabled. No bypass.
+  const managed = draft !== null && isManagedAgent(draft);
+  const runGate = !managed || sideEffectsAck;
+
+  const canRunSingle = draft !== null && parseResult.ok && !dryRunA.isPending && runGate;
   const canRunBoth =
     canRunSingle &&
     variantB !== null &&
@@ -252,6 +265,13 @@ export function AgentTestPanel({
           }
         }}
       />
+
+      {managed ? (
+        <ManagedDryRunWarning
+          checked={sideEffectsAck}
+          onCheckedChange={setSideEffectsAck}
+        />
+      ) : null}
 
       {compareOn ? (
         <CompareControls
