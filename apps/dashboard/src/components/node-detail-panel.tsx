@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { StateDiffView } from "@/components/state-diff-view";
 import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
+import { managedAgentInfo } from "@/lib/managed-agent";
 import { ApiError } from "@/lib/api/client";
 import type { PipelineState, StateSnapshot } from "@/lib/api/types";
 
@@ -48,12 +49,12 @@ export function NodeDetailPanel({
   const agent = data
     ? (agentsList?.items ?? []).find((a) => a.id === data.agent_id)
     : undefined;
-  const callablePath =
-    typeof agent?.runtime_config?.callable_path === "string"
-      ? agent.runtime_config.callable_path
-      : null;
+  // Single source of truth for the managed/cortex classification (#739 tidy).
   const isCortex =
-    data?.runtime_id === "python-func" && callablePath?.startsWith("cortex.") === true;
+    managedAgentInfo({
+      runtime_id: data?.runtime_id ?? "",
+      runtime_config: agent?.runtime_config ?? {},
+    }).kind === "cortex";
   // Cortex python-func nodes build their own prompt inside the callable and
   // record it into the node output's ``extensions.__audit`` (#724). Surface it.
   const recordedPrompt = recordedPromptFrom(data?.output_json ?? null);

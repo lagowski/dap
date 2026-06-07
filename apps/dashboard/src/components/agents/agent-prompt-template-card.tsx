@@ -1,5 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 
+import { callablePathOf } from "@/lib/managed-agent";
+
 import { PythonFuncPromptNote } from "./python-func-prompt-note";
 
 interface PromptTemplateCardProps {
@@ -26,8 +28,7 @@ export function PromptTemplateCard({
   version,
 }: PromptTemplateCardProps) {
   if (runtimeId === "python-func") {
-    const callablePath =
-      typeof runtimeConfig?.callable_path === "string" ? runtimeConfig.callable_path : null;
+    const callablePath = callablePathOf({ runtime_id: runtimeId, runtime_config: runtimeConfig });
     return (
       <Card>
         <CardContent className="pt-6 space-y-2">
