@@ -11,6 +11,7 @@ import type { AssistantAction, AssistantMessage } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 import { useAssistantPageContext } from "./assistant-context";
+import { ChatMarkdown } from "./chat-markdown";
 import { useAssistantPrefill } from "./assistant-prefill";
 
 const STORAGE_KEY = "dap.assistant.open";
@@ -157,13 +158,17 @@ export function AssistantPanel() {
           <div
             key={i}
             className={cn(
-              "rounded-lg px-3 py-2 max-w-[90%] whitespace-pre-wrap",
+              "rounded-lg px-3 py-2 max-w-[90%]",
               turn.role === "user"
-                ? "ml-auto bg-primary text-primary-foreground"
+                ? "ml-auto whitespace-pre-wrap bg-primary text-primary-foreground"
                 : "bg-muted",
             )}
           >
-            {turn.content}
+            {turn.role === "assistant" ? (
+              <ChatMarkdown>{turn.content}</ChatMarkdown>
+            ) : (
+              turn.content
+            )}
             {turn.citations && turn.citations.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {turn.citations.map((c) => (
