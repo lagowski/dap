@@ -2,18 +2,27 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Loader2, Send, Sparkles, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowRight, FileText, Loader2, Send, Sparkles, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAssistantChat } from "@/hooks/api";
-import type { AssistantMessage } from "@/lib/api/types";
+import type { AssistantAction, AssistantMessage } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+import { useAssistantPrefill } from "./assistant-prefill";
 
 const STORAGE_KEY = "dap.assistant.open";
 
+// Which page a ``prefill`` action's ``target`` lands on. The page consumes the
+// pending prefill on mount and seeds its form.
+const PREFILL_ROUTES: Record<string, string> = {
+  agent: "/agents/new",
+};
+
 type ChatTurn = AssistantMessage & {
   citations?: { label: string; href: string }[];
+  actions?: AssistantAction[];
 };
 
 /**
@@ -28,6 +37,23 @@ export function AssistantPanel() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const chat = useAssistantChat();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const { setPrefill } = useAssistantPrefill();
+
+  const runAction = (action: AssistantAction) => {
+    if (action.kind === "navigate" && action.href) {
+      router.push(action.href);
+      setOpen(false);
+    } else if (action.kind === "prefill" && action.target) {
+      const route = PREFILL_ROUTES[action.target];
+      if (route) {
+        setPrefill({ target: action.target, values: action.values ?? {} });
+        router.push(route);
+        setOpen(false);
+      }
+    }
+    // ``doc`` actions render as plain links (handled in the markup).
+  };
 
   // Restore the open/closed preference once on mount.
   useEffect(() => {
@@ -57,7 +83,7 @@ export function AssistantPanel() {
         onSuccess: (res) =>
           setTurns((prev) => [
             ...prev,
-            { ...res.message, citations: res.citations },
+            { ...res.message, citations: res.citations, actions: res.actions },
           ]),
       },
     );
@@ -129,6 +155,39 @@ export function AssistantPanel() {
                     {c.label}
                   </Link>
                 ))}
+              </div>
+            )}
+            {turn.actions && turn.actions.length > 0 && (
+              <div className="mt-2 flex flex-col items-start gap-1.5">
+                {turn.actions.map((a, ai) =>
+                  a.kind === "doc" && a.href ? (
+                    <Link
+                      key={ai}
+                      href={a.href}
+                      target="_blank"
+                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      <FileText className="h-3 w-3" aria-hidden />
+                      {a.label}
+                    </Link>
+                  ) : (
+                    <Button
+                      key={ai}
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7"
+                      onClick={() => runAction(a)}
+                    >
+                      {a.kind === "prefill" ? (
+                        <Wand2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <ArrowRight className="mr-1 h-3.5 w-3.5" aria-hidden />
+                      )}
+                      {a.label}
+                    </Button>
+                  ),
+                )}
               </div>
             )}
           </div>

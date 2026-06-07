@@ -58,6 +58,7 @@ export type SuggestedAction = ApiSchema<"SuggestedAction">;
 export type AssistantMessage = ApiSchema<"AssistantMessage">;
 export type AssistantChatRequest = ApiSchema<"AssistantChatRequest">;
 export type AssistantChatResponse = ApiSchema<"AssistantChatResponse">;
+export type AssistantAction = ApiSchema<"AssistantAction">;
 
 export type AgentCreate = Omit<
   ApiSchema<"AgentCreate">,

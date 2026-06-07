@@ -140,5 +140,5 @@ async def assistant_chat(
         message=AssistantMessage(role="assistant", content=reply.text),
         grounded=reply.grounded,
         citations=[],
-        actions=[],
+        actions=[AssistantAction.model_validate(a) for a in reply.actions],
     )
