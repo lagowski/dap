@@ -1,0 +1,155 @@
+"""Config-assistant inference — provider selection + grounded reply (#689 slice 2)."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+
+import pytest
+from dap_engine.assistant.service import (
+    AssistantReply,
+    build_transcript,
+    generate_reply,
+    select_provider,
+)
+from dap_types import RuntimeResult, RuntimeTask
+from fastapi.testclient import TestClient
+
+# ---- provider selection (pure) -------------------------------------------
+
+
+def test_select_provider_picks_anthropic_when_key_present() -> None:
+    choice = select_provider({"ANTHROPIC_API_KEY": "x"})
+    assert choice == ("anthropic", "claude-haiku-4-5")
+
+
+def test_select_provider_none_when_no_key() -> None:
+    assert select_provider({"FOO": "bar"}) is None
+
+
+def test_select_provider_honours_overrides() -> None:
+    choice = select_provider(
+        {
+            "OPENAI_API_KEY": "x",
+            "DAP_ASSISTANT_PROVIDER": "openai",
+            "DAP_ASSISTANT_MODEL": "gpt-4o",
+        }
+    )
+    assert choice == ("openai", "gpt-4o")
+
+
+def test_select_provider_priority_prefers_anthropic_over_gemini() -> None:
+    choice = select_provider({"GEMINI_API_KEY": "g", "ANTHROPIC_API_KEY": "a"})
+    assert choice == ("anthropic", "claude-haiku-4-5")
+
+
+def test_build_transcript_renders_turns() -> None:
+    t = build_transcript(
+        [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+    )
+    assert "User: hi" in t
+    assert "Assistant: yo" in t
+    assert t.rstrip().endswith("Assistant:")
+
+
+# ---- generate_reply (provider call injected) ------------------------------
+
+
+class _FakeAdapter:
+    def __init__(self, result: RuntimeResult) -> None:
+        self._result = result
+        self.last_task: RuntimeTask | None = None
+
+    async def execute(self, task: RuntimeTask, on_output: object = None) -> RuntimeResult:
+        self.last_task = task
+        return self._result
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_no_provider() -> None:
+    reply = await generate_reply([{"role": "user", "content": "hi"}], env={})
+    assert isinstance(reply, AssistantReply)
+    assert reply.grounded is False
+    assert "no LLM provider" in reply.text
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_success_is_grounded() -> None:
+    fake = _FakeAdapter(RuntimeResult(success=True, output="  use api-call + haiku  "))
+    secret = "sk-secret-zzz-do-not-leak"
+    reply = await generate_reply(
+        [{"role": "user", "content": "cheap PR reviewer"}],
+        env={"ANTHROPIC_API_KEY": secret},
+        adapter=fake,  # type: ignore[arg-type]
+    )
+    assert reply.grounded is True
+    assert reply.text == "use api-call + haiku"
+    # The docs corpus is stuffed into the system prompt — grounding, no secrets.
+    assert fake.last_task is not None
+    sysprompt = fake.last_task.runtime_config["system_prompt"]
+    assert "DAP configuration reference" in sysprompt
+    assert secret not in sysprompt  # the key VALUE never enters the prompt
+    assert secret not in fake.last_task.prompt_xml
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_passes_only_the_provider_key_to_adapter() -> None:
+    # Only the selected provider's key may reach the adapter env — never other
+    # instance secrets (DB URLs, unrelated keys). #721 review (HIGH security).
+    fake = _FakeAdapter(RuntimeResult(success=True, output="ok"))
+    await generate_reply(
+        [{"role": "user", "content": "x"}],
+        env={
+            "ANTHROPIC_API_KEY": "the-provider-key",
+            "ZZ_DATABASE_URL": "postgres://secret",
+            "ZZ_OTHER_SECRET": "nope",
+        },
+        adapter=fake,  # type: ignore[arg-type]
+    )
+    assert fake.last_task is not None
+    assert fake.last_task.instance_env_vars == {"ANTHROPIC_API_KEY": "the-provider-key"}
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_failure_is_graceful() -> None:
+    fake = _FakeAdapter(RuntimeResult(success=False, output="", errors=["boom"]))
+    reply = await generate_reply(
+        [{"role": "user", "content": "x"}],
+        env={"ANTHROPIC_API_KEY": "x"},
+        adapter=fake,  # type: ignore[arg-type]
+    )
+    assert reply.grounded is False
+    assert "failed" in reply.text.lower()
+
+
+# ---- endpoint -------------------------------------------------------------
+
+
+@pytest.fixture
+def client(authed_client: TestClient) -> TestClient:
+    return authed_client
+
+
+def test_chat_endpoint_contract(client: TestClient) -> None:
+    resp = client.post("/assistant/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["message"]["role"] == "assistant"
+    assert isinstance(body["message"]["content"], str) and body["message"]["content"]
+    # actions contract is present (empty until slice 3).
+    assert body["actions"] == []
+
+
+@pytest.fixture
+def client_no_auth(engine_config_factory) -> Iterator[TestClient]:  # type: ignore[no-untyped-def]
+    from dap_engine.app import create_app
+
+    app = create_app(engine_config_factory())
+    with TestClient(app) as c:
+        yield c
+
+
+def test_chat_endpoint_requires_auth(client_no_auth: TestClient) -> None:
+    resp = client_no_auth.post(
+        "/assistant/chat", json={"messages": [{"role": "user", "content": "hi"}]}
+    )
+    assert resp.status_code == 401

@@ -231,10 +231,12 @@ export interface paths {
         put?: never;
         /**
          * Assistant Chat
-         * @description Stub chat turn (#689 slice 1) — auth-gated; returns a placeholder reply.
+         * @description One grounded assistant turn (#689). Auth-gated.
          *
-         *     The real implementation will call the instance's configured provider with
-         *     a docs-grounded system prompt and return grounded citations.
+         *     Reuses ApiCallAdapter against whichever provider key is configured;
+         *     a docs-grounded system prompt keeps advice accurate. Records a
+         *     ``assistant.chat`` audit event (no message content — just that a turn
+         *     happened, by whom).
          */
         post: operations["assistant_chat_assistant_chat_post"];
         delete?: never;
@@ -2071,6 +2073,31 @@ export interface components {
             /** Revoked At */
             revoked_at: string | null;
         };
+        /**
+         * AssistantAction
+         * @description A suggested follow-up the UI can offer as a button (#689).
+         *
+         *     ``kind``: ``navigate`` (go to ``href``), ``prefill`` (insert ``values`` into
+         *     the form named by ``target``), or ``doc`` (open ``href``). Advisory only —
+         *     the UI never auto-applies. Populated from slice 3; empty in slice 2.
+         */
+        AssistantAction: {
+            /** Href */
+            href?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "navigate" | "prefill" | "doc";
+            /** Label */
+            label: string;
+            /** Target */
+            target?: string | null;
+            /** Values */
+            values?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** AssistantChatRequest */
         AssistantChatRequest: {
             /** Context */
@@ -2082,6 +2109,11 @@ export interface components {
         };
         /** AssistantChatResponse */
         AssistantChatResponse: {
+            /**
+             * Actions
+             * @default []
+             */
+            actions: components["schemas"]["AssistantAction"][];
             /**
              * Citations
              * @default []
