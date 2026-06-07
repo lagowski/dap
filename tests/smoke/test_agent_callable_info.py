@@ -6,6 +6,8 @@ Surfaces the resolved callable's ``inspect.getdoc`` so managed/cortex agents
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,7 +17,9 @@ def client(authed_client: TestClient) -> TestClient:
     return authed_client
 
 
-def _agent(client: TestClient, *, runtime_id: str, runtime_config: dict, name: str) -> str:
+def _agent(
+    client: TestClient, *, runtime_id: str, runtime_config: dict[str, Any], name: str
+) -> str:
     resp = client.post(
         "/agents",
         json={
