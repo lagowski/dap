@@ -16,6 +16,13 @@ vi.mock("@/hooks/api", () => ({
   useAgentsList: () => mockUseAgentsList(),
 }));
 
+const mockPush = vi.fn();
+const mockSetPrefill = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
+vi.mock("@/components/assistant/assistant-prefill", () => ({
+  useAssistantPrefill: () => ({ setPrefill: mockSetPrefill, consumePrefill: () => null }),
+}));
+
 import { NodeDetailPanel } from "./node-detail-panel";
 
 function makeLog(overrides: Partial<NodeExecutionLog> = {}): NodeExecutionLog {
@@ -200,5 +207,44 @@ describe("NodeDetailPanel — cortex prompt + agent identity (#724)", () => {
     expect(screen.getByText("Cortex Phase 1 — Mockup")).toBeInTheDocument();
     expect(screen.getByText("Cortex")).toBeInTheDocument();
     expect(screen.getByText("prompt_builder")).toBeInTheDocument();
+  });
+});
+
+describe("NodeDetailPanel — Open in agent tester (#724 slice 2)", () => {
+  beforeEach(() => {
+    mockUseRunNodeLog.mockReset();
+    mockUseRunStateHistory.mockReset();
+    mockUseAgentsList.mockReset();
+    mockUseAgentsList.mockReturnValue({ data: { items: [] } });
+    mockPush.mockReset();
+    mockSetPrefill.mockReset();
+  });
+
+  it("stashes the node's input state and routes to the agent tester", async () => {
+    const user = userEvent.setup();
+    mockUseRunNodeLog.mockReturnValue({
+      data: makeLog({ agent_id: "a-1", node_id: "mockup" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseRunStateHistory.mockReturnValue({
+      data: [
+        { id: "s0", run_id: "r1", node_id: "prev", timestamp: "t", state: { extensions: { x: 1 } } },
+        { id: "s1", run_id: "r1", node_id: "mockup", timestamp: "t", state: { extensions: { x: 2 } } },
+      ],
+    });
+    mockUseAgentsList.mockReturnValue({
+      data: { items: [{ id: "a-1", name: "Mockup", role: "prompt_builder", runtime_config: {} }] },
+    });
+    render(<NodeDetailPanel runId="r1" nodeId="mockup" onOpenChange={() => {}} />);
+
+    await user.click(screen.getByRole("button", { name: /open in agent tester/i }));
+    expect(mockSetPrefill).toHaveBeenCalledWith(
+      expect.objectContaining({ target: "agent-test" }),
+    );
+    // The stashed context is the node's input (the "before" snapshot).
+    expect(mockSetPrefill.mock.calls[0][0].values.context).toContain('"x": 1');
+    expect(mockPush).toHaveBeenCalledWith("/agents/a-1/edit");
   });
 });
