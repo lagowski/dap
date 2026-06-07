@@ -14,6 +14,7 @@ overlay, they're not interpolated into any string we build).
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -23,6 +24,8 @@ from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
 from dap_types import RuntimeTask
 
 from dap_engine.assistant.docs_corpus import DOCS_CORPUS
+
+logger = logging.getLogger("dap.engine.assistant")
 
 # Provider preference + a sensible cheap default model for each. Overridable
 # per-instance via DAP_ASSISTANT_PROVIDER / DAP_ASSISTANT_MODEL env vars.
@@ -123,11 +126,15 @@ async def generate_reply(
 
     result = await (adapter or ApiCallAdapter()).execute(task)
     if not result.success:
+        # Raw provider errors can carry endpoint URLs / key fragments / stack
+        # traces — log them server-side, surface only a generic message.
+        logger.warning(
+            "assistant: provider %s call failed: %s",
+            provider_id,
+            "; ".join(result.errors) or "unknown error",
+        )
         return AssistantReply(
-            text=(
-                "The model call failed — check the provider key/quota for "
-                f"{provider_id}. Details: {'; '.join(result.errors) or 'unknown error'}"
-            ),
+            text=f"The model call failed — check the provider key/quota for {provider_id}.",
             grounded=False,
             errors=list(result.errors),
         )
