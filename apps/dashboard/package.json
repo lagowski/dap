@@ -31,6 +31,7 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-hook-form": "7.77.0",
+    "react-markdown": "^10.1.0",
     "tailwind-merge": "2.6.0",
     "tailwindcss-animate": "1.0.7",
     "zod": "4.4.3"
