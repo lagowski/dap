@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
+import { Markdown } from "@/components/ui/markdown";
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -306,7 +307,7 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
   // a11y: when the user clicks "Ask AI to explain" that button unmounts as the
   // LLM answer arrives, dropping keyboard focus to <body>. Move focus to the
   // explanation text so screen-reader / keyboard users land on the new content.
-  const causeRef = useRef<HTMLParagraphElement>(null);
+  const causeRef = useRef<HTMLDivElement>(null);
   const focusPending = useRef(false);
   useEffect(() => {
     if (focusPending.current && data?.source === "llm") {
@@ -349,13 +350,13 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
               AI explanation
             </span>
           )}
-          <p
+          <div
             ref={causeRef}
             tabIndex={-1}
-            className="whitespace-pre-wrap font-medium text-foreground rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {data.cause}
-          </p>
+            <Markdown>{data.cause}</Markdown>
+          </div>
           {data.actions.length > 0 && (
             <ul className="list-disc space-y-1 pl-4">
               {data.actions.map((a, i) => (
