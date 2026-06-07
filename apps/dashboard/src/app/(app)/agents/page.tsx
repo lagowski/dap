@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { isManagedAgent } from "@/lib/managed-agent";
 import { applyManagedFilter } from "@/lib/agent-list-filter";
+import { ManagedAgentsFilterToggle } from "@/components/agents/managed-agents-filter-toggle";
 import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
@@ -246,16 +247,12 @@ export default function AgentsPage() {
           </CardContent>
         </Card>
       )}
-      {data && data.items.length > 0 && managedCount > 0 && (
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={hideManaged}
-            onChange={(e) => setHideManaged(e.target.checked)}
-            className="h-3.5 w-3.5"
-          />
-          Hide {managedCount} managed (Cortex) agent{managedCount === 1 ? "" : "s"}
-        </label>
+      {data && data.items.length > 0 && (
+        <ManagedAgentsFilterToggle
+          count={managedCount}
+          checked={hideManaged}
+          onCheckedChange={setHideManaged}
+        />
       )}
       {data && data.items.length > 0 && (
         <Card>
