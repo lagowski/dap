@@ -55,14 +55,46 @@ class ErrorExplanation(BaseModel):
 _ENV_VAR_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,})\b")
 
 
+_ENV_VAR_NON_ENV_WORDS = frozenset(
+    {
+        "DAP",
+        "AI",
+        "LLM",
+        "PR",
+        "CI",
+        "URL",
+        "JSON",
+        "HTTP",
+        "API",
+        "KEY",
+        "SECRET",
+        "TOKEN",
+        "OAUTH",
+    }
+)
+
+
+def _is_generic_token(token: str) -> bool:
+    """A token whose every underscore-part is a generic word (e.g. ``API_KEY``)."""
+    return all(part in _ENV_VAR_NON_ENV_WORDS for part in token.split("_"))
+
+
 def _find_env_var(text: str) -> str | None:
-    """Pull the first ALL_CAPS token that looks like an env-var name."""
-    for match in _ENV_VAR_RE.finditer(text):
-        token = match.group(1)
-        # Skip obvious non-env words that happen to be upper-case.
-        if token in {"DAP", "AI", "LLM", "PR", "CI", "URL", "JSON", "HTTP"}:
-            continue
-        return token
+    """Pull the most likely env-var name from an error message.
+
+    Real env vars almost always contain an underscore (``ANTHROPIC_API_KEY``),
+    so prefer an underscored ALL-CAPS token first — otherwise a bare word like
+    "API" in "Invalid API key — set ANTHROPIC_API_KEY" would win. Skip tokens
+    whose every part is generic (``API_KEY`` appearing in prose), then fall
+    back to a standalone ALL-CAPS token that isn't a common non-env word.
+    """
+    candidates = [m.group(1) for m in _ENV_VAR_RE.finditer(text)]
+    for token in candidates:
+        if "_" in token and not _is_generic_token(token):
+            return token
+    for token in candidates:
+        if token not in _ENV_VAR_NON_ENV_WORDS:
+            return token
     return None
 
 
