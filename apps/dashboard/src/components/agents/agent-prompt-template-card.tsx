@@ -1,5 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 
+import { PythonFuncPromptNote } from "./python-func-prompt-note";
+
 interface PromptTemplateCardProps {
   runtimeId: string;
   promptTemplate: string;
@@ -30,18 +32,7 @@ export function PromptTemplateCard({
       <Card>
         <CardContent className="pt-6 space-y-2">
           <h2 className="text-sm font-medium">Prompt template</h2>
-          <p className="text-sm text-muted-foreground">
-            Not used by this runtime. <span className="font-mono">python-func</span> agents run a
-            Python callable
-            {callablePath ? (
-              <>
-                {" "}
-                (<span className="font-mono">{callablePath}</span>)
-              </>
-            ) : null}{" "}
-            directly and never render a prompt template — the stored template is an inert,
-            schema-required placeholder.
-          </p>
+          <PythonFuncPromptNote callablePath={callablePath} />
         </CardContent>
       </Card>
     );

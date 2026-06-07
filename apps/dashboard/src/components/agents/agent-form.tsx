@@ -22,7 +22,6 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
 import {
   ROLE_DEFAULT_INPUT_SCHEMA,
@@ -34,6 +33,7 @@ import { RuntimeConfigEditor } from "./runtime-config-editor";
 import { AGENT_RUNTIME_IDS } from "./runtime-config-schemas";
 
 import { Field } from "./agent-form/field";
+import { PromptTemplateField } from "./agent-form/prompt-template-field";
 import { RoleDefaultsHint } from "./agent-form/role-defaults-hint";
 import { ROLES, type AgentFormValues } from "./agent-form/types";
 import { useAgentForm } from "./agent-form/use-agent-form";
@@ -192,16 +192,11 @@ export function AgentForm({
         />
       </Field>
 
-      <Field
-        label="Prompt template (Jinja2 → XML)"
+      <PromptTemplateField
+        runtimeId={watchedRuntimeId}
+        registration={form.register("prompt_template")}
         error={form.formState.errors.prompt_template?.message}
-      >
-        <Textarea
-          {...form.register("prompt_template")}
-          rows={10}
-          className="font-mono text-xs"
-        />
-      </Field>
+      />
 
       {submitError ? (
         <p className="text-sm text-destructive" role="alert">
