@@ -130,9 +130,12 @@ async def generate_reply(
     result = await (adapter or ApiCallAdapter()).execute(task)
     if not result.success:
         # Raw provider errors can carry endpoint URLs / key fragments / stack
-        # traces (secret-tainted). Don't surface OR log their content — just the
-        # fact + the provider. The provider adapter logs its own diagnostics.
-        logger.warning("assistant: provider %s call failed", provider_id)
+        # traces (secret-tainted). Log only the fact — not the errors, and not
+        # ``provider_id`` (it's derived from the env dict, so CodeQL taints it
+        # even though it's just a provider name). The provider adapter logs its
+        # own diagnostics. A redaction layer (separate issue) would let us log
+        # richer detail safely.
+        logger.warning("assistant: provider call failed")
         return AssistantReply(
             text=f"The model call failed — check the provider key/quota for {provider_id}.",
             grounded=False,
