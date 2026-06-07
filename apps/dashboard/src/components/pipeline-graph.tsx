@@ -36,6 +36,14 @@ interface PipelineGraphProps {
    * in the pipeline designer so manual positioning is preserved.
    */
   autoLayout?: boolean;
+  /**
+   * Show design-time contract-cohesion warnings (red "no shared fields" /
+   * "max attempts" edges). On in the designer; OFF in the run view — in a run,
+   * red edges read as *failures* even though they're a static-validation
+   * concern, which is misleading on a successful run (the nodes downstream of
+   * a gate simply never ran). #689-followup.
+   */
+  showWarnings?: boolean;
 }
 
 const STATUS_COLORS: Record<NodeStatus, string> = {
@@ -62,6 +70,7 @@ export function PipelineGraph({
   currentNode,
   onNodeClick,
   autoLayout = false,
+  showWarnings = true,
 }: PipelineGraphProps) {
   const rawNodes = useMemo<Node[]>(() => {
     return pipeline.nodes.map((n, idx) => {
@@ -101,11 +110,17 @@ export function PipelineGraph({
 
   const rawEdges = useMemo<Edge[]>(() => {
     return pipeline.edges.map((e) => {
-      const annotation: EdgeAnnotation = annotations.get(e.id) ?? {
+      const rawAnnotation: EdgeAnnotation = annotations.get(e.id) ?? {
         fields: [],
         warning: false,
         unknown: false,
       };
+      // In the run view we suppress static-validation warnings so a
+      // successful run doesn't look failed (red edges). Keep field chips and
+      // condition labels — only the red warning styling is dropped.
+      const annotation: EdgeAnnotation = showWarnings
+        ? rawAnnotation
+        : { ...rawAnnotation, warning: false };
       const hasCondition = e.condition != null;
 
       // Derive colour and label from structured condition (#227).
@@ -148,7 +163,7 @@ export function PipelineGraph({
         data: { tooltip, annotation },
       };
     });
-  }, [pipeline.edges, pipeline.entry_point, annotations]);
+  }, [pipeline.edges, pipeline.entry_point, annotations, showWarnings]);
 
   // Filter sentinel targets and optionally apply dagre layout (#225).
   // Both steps live in the same useMemo so the filter doesn't create a

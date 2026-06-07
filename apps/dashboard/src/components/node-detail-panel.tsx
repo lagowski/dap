@@ -11,6 +11,7 @@ import { useRunNodeExplain, useRunNodeLog, useRunStateHistory } from "@/hooks/ap
 import { NodeStatusBadge } from "@/components/status-badge";
 import { StateDiffView } from "@/components/state-diff-view";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
+import { ApiError } from "@/lib/api/client";
 import type { PipelineState, StateSnapshot } from "@/lib/api/types";
 
 interface NodeDetailPanelProps {
@@ -87,11 +88,19 @@ export function NodeDetailPanel({
           <LoadingState />
         )}
 
-        {isError && (
-          <p className="text-sm text-destructive">
-            Failed to load: {(error as Error).message}
-          </p>
-        )}
+        {isError &&
+          (error instanceof ApiError && error.status === 404 ? (
+            // The node exists in the pipeline graph but never executed in this
+            // run (e.g. the run paused/ended at an earlier gate). There's no
+            // execution log to show — say so plainly instead of a scary error.
+            <p className="text-sm text-muted-foreground">
+              This node didn’t run in this run — no execution log to show.
+            </p>
+          ) : (
+            <p className="text-sm text-destructive">
+              Failed to load: {(error as Error).message}
+            </p>
+          ))}
 
         {data && (
           <div className="space-y-4 text-sm">
