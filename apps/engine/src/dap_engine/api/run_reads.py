@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_run_registry, get_session
 from dap_engine.api.run_events import stream_run_events
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.diagnostics.error_explainer import (
     ErrorExplanation,
@@ -229,5 +230,15 @@ async def explain_run_node_error(
         }
         llm = await explain_error_llm(log.error_message, runtime_id=log.runtime_id, env=env)
         if llm is not None:
+            # Audit the LLM call (#691): the error text + reply may quote
+            # conversation content, so we record only the run/node identifiers
+            # — enough to attribute the provider call, never its content.
+            record_audit_event(
+                session,
+                user_id=user.id,
+                event_type="error_explainer.llm",
+                event_data={"run_id": run_id, "node_id": node_id},
+            )
+            session.commit()
             return llm
     return deterministic

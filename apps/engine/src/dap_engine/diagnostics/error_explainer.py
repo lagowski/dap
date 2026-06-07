@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
-from dap_runtimes import classify_provider_failure
+from dap_runtimes import ApiCallAdapter, classify_provider_failure
 from pydantic import BaseModel
 
 from dap_engine.assistant.docs_corpus import DOCS_CORPUS
@@ -317,7 +317,7 @@ async def explain_error_llm(
     *,
     runtime_id: str | None,
     env: Mapping[str, str],
-    adapter: object | None = None,
+    adapter: ApiCallAdapter | None = None,
 ) -> ErrorExplanation | None:
     """LLM fallback for unrecognised errors (#691 slice 2).
 
@@ -336,7 +336,7 @@ async def explain_error_llm(
         provider_id=provider_id,
         model_id=model_id,
         env=env,
-        adapter=adapter,  # type: ignore[arg-type]
+        adapter=adapter,
         execution_id="error-explainer",
         max_tokens=512,
     )

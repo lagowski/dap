@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from dap_engine.diagnostics.error_explainer import explain_node_error
+from dap_types import RuntimeResult, RuntimeTask
 
 
 def test_empty_error_is_unrecognized() -> None:
@@ -226,11 +227,9 @@ def test_explain_endpoint_404_for_unknown_node(
 class _FakeLLMAdapter:
     def __init__(self, output: str) -> None:
         self.output = output
-        self.last_task = None
+        self.last_task: RuntimeTask | None = None
 
-    async def execute(self, task, on_output=None):  # type: ignore[no-untyped-def]
-        from dap_types import RuntimeResult
-
+    async def execute(self, task: RuntimeTask, on_output: object = None) -> RuntimeResult:
         self.last_task = task
         return RuntimeResult(success=True, output=self.output)
 
@@ -251,15 +250,16 @@ async def test_explain_error_llm_uses_provider() -> None:
         "weird unrecognised error",
         runtime_id="bash",
         env={"ANTHROPIC_API_KEY": "sk-secret-zzz"},
-        adapter=fake,
+        adapter=fake,  # type: ignore[arg-type]
     )
     assert exp is not None
     assert exp.source == "llm"
     assert exp.recognized is True
     assert "package is missing" in exp.cause
     # the error text is in the prompt for grounding; the key value never is.
-    assert "weird unrecognised error" in fake.last_task.prompt_xml  # type: ignore[union-attr]
-    assert "sk-secret-zzz" not in fake.last_task.runtime_config["system_prompt"]  # type: ignore[union-attr]
+    assert fake.last_task is not None
+    assert "weird unrecognised error" in fake.last_task.prompt_xml
+    assert "sk-secret-zzz" not in fake.last_task.runtime_config["system_prompt"]
 
 
 def test_explain_endpoint_ai_falls_back_to_deterministic_without_provider(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
 import {
   ChevronLeft,
@@ -303,6 +303,17 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
   const [open, setOpen] = useState(false);
   const [ai, setAi] = useState(false);
   const { data, isLoading, isError } = useRunNodeExplain(runId, nodeId, open, ai);
+  // a11y: when the user clicks "Ask AI to explain" that button unmounts as the
+  // LLM answer arrives, dropping keyboard focus to <body>. Move focus to the
+  // explanation text so screen-reader / keyboard users land on the new content.
+  const causeRef = useRef<HTMLParagraphElement>(null);
+  const focusPending = useRef(false);
+  useEffect(() => {
+    if (focusPending.current && data?.source === "llm") {
+      causeRef.current?.focus();
+      focusPending.current = false;
+    }
+  }, [data?.source]);
 
   if (!open) {
     return (
@@ -338,7 +349,13 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
               AI explanation
             </span>
           )}
-          <p className="whitespace-pre-wrap font-medium text-foreground">{data.cause}</p>
+          <p
+            ref={causeRef}
+            tabIndex={-1}
+            className="whitespace-pre-wrap font-medium text-foreground outline-none"
+          >
+            {data.cause}
+          </p>
           {data.actions.length > 0 && (
             <ul className="list-disc space-y-1 pl-4">
               {data.actions.map((a, i) => (
@@ -369,7 +386,10 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
               variant="secondary"
               size="sm"
               className="h-7"
-              onClick={() => setAi(true)}
+              onClick={() => {
+                focusPending.current = true;
+                setAi(true);
+              }}
             >
               <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />
               Ask AI to explain
