@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dap_runtimes import ApiCallAdapter
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
@@ -61,7 +61,6 @@ _NO_PROVIDER_MESSAGE = (
 class AssistantReply:
     text: str
     grounded: bool = False
-    errors: list[str] = field(default_factory=list)
 
 
 def select_provider(env: Mapping[str, str]) -> tuple[str, str] | None:
@@ -127,15 +126,11 @@ async def generate_reply(
     result = await (adapter or ApiCallAdapter()).execute(task)
     if not result.success:
         # Raw provider errors can carry endpoint URLs / key fragments / stack
-        # traces — log them server-side, surface only a generic message.
-        logger.warning(
-            "assistant: provider %s call failed: %s",
-            provider_id,
-            "; ".join(result.errors) or "unknown error",
-        )
+        # traces (secret-tainted). Don't surface OR log their content — just the
+        # fact + the provider. The provider adapter logs its own diagnostics.
+        logger.warning("assistant: provider %s call failed", provider_id)
         return AssistantReply(
             text=f"The model call failed — check the provider key/quota for {provider_id}.",
             grounded=False,
-            errors=list(result.errors),
         )
     return AssistantReply(text=result.output.strip(), grounded=True)
