@@ -11,7 +11,7 @@ import type { AssistantAction, AssistantMessage } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 import { useAssistantPageContext } from "./assistant-context";
-import { ChatMarkdown } from "./chat-markdown";
+import { Markdown } from "@/components/ui/markdown";
 import { useAssistantPrefill } from "./assistant-prefill";
 
 const STORAGE_KEY = "dap.assistant.open";
@@ -165,7 +165,7 @@ export function AssistantPanel() {
             )}
           >
             {turn.role === "assistant" ? (
-              <ChatMarkdown>{turn.content}</ChatMarkdown>
+              <Markdown>{turn.content}</Markdown>
             ) : (
               turn.content
             )}
