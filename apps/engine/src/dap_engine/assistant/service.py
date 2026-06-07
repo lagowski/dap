@@ -137,7 +137,7 @@ async def generate_reply(
         # richer detail safely.
         logger.warning("assistant: provider call failed")
         return AssistantReply(
-            text=f"The model call failed — check the provider key/quota for {provider_id}.",
+            text="The model call failed — check the provider key/quota in Settings.",
             grounded=False,
         )
     return AssistantReply(text=result.output.strip(), grounded=True)

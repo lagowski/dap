@@ -90,11 +90,14 @@ def _load_instance_env(session: Session, fernet_key: str | None) -> dict[str, st
     if not fernet_key:
         return {}
     out: dict[str, str] = {}
-    for row in session.execute(select(InstanceEnvVarORM)).scalars().all():
+    # Select just the columns (not the ORM entity) so no tracked instances land
+    # in the session — keeps the later commit scoped to the audit row only.
+    rows = session.execute(select(InstanceEnvVarORM.key, InstanceEnvVarORM.ciphertext)).all()
+    for key, ciphertext in rows:
         try:
-            out[row.key] = decrypt_value(row.ciphertext, key=fernet_key)
+            out[key] = decrypt_value(ciphertext, key=fernet_key)
         except EncryptionError:
-            logger.warning("assistant: could not decrypt instance env var %r — skipping", row.key)
+            logger.warning("assistant: could not decrypt instance env var %r — skipping", key)
     return out
 
 
