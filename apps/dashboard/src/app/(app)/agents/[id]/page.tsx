@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Pencil } from "lucide-react";
 import {
   useAgent,
+  useAgentCallableInfo,
   useAgentExecutions,
   useAgentUsage,
   useAgentVersions,
@@ -21,6 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { NodeStatusBadge } from "@/components/status-badge";
 import { PromptTemplateCard } from "@/components/agents/agent-prompt-template-card";
 import { ManagedAgentBanner } from "@/components/agents/managed-agent-banner";
+import { CallableDoc } from "@/components/agents/callable-doc";
+import { isManagedAgent } from "@/lib/managed-agent";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import type { Agent, NodeStatus } from "@/lib/api/types";
 
@@ -35,6 +38,11 @@ export default function AgentDetailPage({
   const versions = useAgentVersions(id);
   const archive = useArchiveAgent();
   const confirmDestructive = useConfirmDestructive();
+  // "What this agent does" (#747) — only fetched for managed agents, where the
+  // callable's docstring is the real description (the prompt is inert).
+  const callableInfo = useAgentCallableInfo(id, {
+    enabled: agent != null && isManagedAgent(agent),
+  });
 
   if (isPending) {
     return <LoadingState className="p-6" />;
@@ -129,6 +137,8 @@ export default function AgentDetailPage({
       </div>
 
       <ManagedAgentBanner agent={agent} />
+
+      {isManagedAgent(agent) && <CallableDoc info={callableInfo.data} />}
 
       <PromptTemplateCard
         runtimeId={agent.runtime_id}

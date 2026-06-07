@@ -96,6 +96,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{agent_id}/callable-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Callable Info
+         * @description Resolve a ``python-func`` agent's callable and return its docstring (#747).
+         *
+         *     Read-only, no execution: imports the module (as the adapter would) and reads
+         *     ``inspect.getdoc`` off the function. Returns an empty shell for
+         *     non-``python-func`` agents. Gated on agent ownership.
+         */
+        get: operations["get_agent_callable_info_agents__agent_id__callable_info_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{agent_id}/executions": {
         parameters: {
             query?: never;
@@ -1787,6 +1811,26 @@ export interface components {
             used_in_pipelines?: number | null;
             /** Version */
             version: number;
+        };
+        /**
+         * AgentCallableInfo
+         * @description What a ``python-func`` agent's callable does — its docstring (#747).
+         *
+         *     For managed/cortex agents the prompt is inert and the real behaviour lives
+         *     in the Python callable. This surfaces the callable's own docstring as a
+         *     grounded "what this does", plus whether it currently resolves on the engine
+         *     (the same resolution as the readiness check). ``callable_path`` is null for
+         *     non-``python-func`` agents — they have no callable to describe.
+         */
+        AgentCallableInfo: {
+            /** Callable Path */
+            callable_path: string | null;
+            /** Doc */
+            doc: string | null;
+            /** Error */
+            error: string | null;
+            /** Resolvable */
+            resolvable: boolean;
         };
         /**
          * AgentCreate
@@ -3841,6 +3885,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_callable_info_agents__agent_id__callable_info_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCallableInfo"];
+                };
             };
             /** @description Validation Error */
             422: {
