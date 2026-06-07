@@ -87,6 +87,22 @@ your project directory — exactly how Cortex is wired:
 > The reliable way to get a valid bundle is to **draw it in the Designer and
 > Export**, rather than hand-maintaining the JSON.
 
+## ⚠️ Keep the package's deps installed across engine deploys
+
+Your package's **dependencies** (e.g. `pydantic-settings`, `pygithub` for
+cortex) live in the engine venv but are **not** in DAP's lockfile. So
+`uv sync --all-packages` — which a routine engine deploy runs — **removes
+them**, silently breaking every `python-func` node with `ModuleNotFoundError`
+at the next run even though nothing in your package changed. (Cortex regressed
+exactly this way on 2026-06-06.)
+
+Deploy the engine with [`scripts/deploy-engine.sh`](../scripts/deploy-engine.sh)
+instead of a bare `uv sync` — it runs the sync, then reinstalls the out-of-lock
+deps (`CORTEX_EXTRA_DEPS`), verifies the package still imports, and restarts the
+engine. The pre-run readiness check (shown in the run dialog) also surfaces an
+unresolvable callable before you trigger a run, so a wiped dep shows up as a
+clear "node X can't import …" rather than a cryptic mid-run failure.
+
 ## Why you can't author the node code from the DAP UI
 
 DAP orchestrates and runs your callables, but it does **not** edit or install
