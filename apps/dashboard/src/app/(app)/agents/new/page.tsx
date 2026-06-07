@@ -17,6 +17,8 @@ import {
 } from "@/components/agents/agent-test-panel";
 import { TemplatePicker } from "@/components/agents/template-picker";
 import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
+import { usePublishAssistantContext } from "@/components/assistant/assistant-context";
+import { agentFormAssistantContext } from "@/components/agents/agent-form/types";
 import type { AgentTemplate } from "@/lib/agent-templates";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
@@ -66,6 +68,12 @@ function NewAgentPageContent() {
   const [promoteIteration, setPromoteIteration] = useState(0);
   const formPanelId = useId();
   const testPanelId = useId();
+
+  // Tell the assistant what the user is building so it can tailor advice to the
+  // half-filled form (#689 phase 2). Non-secret fields only.
+  usePublishAssistantContext(
+    agentFormAssistantContext(snapshot?.values, isCloning ? "clone" : "new"),
+  );
 
   // Two-step flow: step 1 picks a template (or scratch), step 2 shows the
   // form with a "back to templates" affordance. Cloning skips straight to

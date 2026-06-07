@@ -49,6 +49,34 @@ export interface AgentFormValues extends FormShape {
 }
 
 
+/**
+ * Build the **non-secret** assistant context (#689 phase 2) for an agent form.
+ * Names + shape + config scalars only — provider/model are not secrets (the
+ * keys live in env vars), and we publish ``has_prompt`` rather than the prompt
+ * body. Lets the assistant tailor advice to the half-filled form.
+ */
+export function agentFormAssistantContext(
+  values: AgentFormValues | undefined,
+  mode: "new" | "clone" | "edit",
+): Record<string, unknown> {
+  if (!values) return { page: "agent-form", mode };
+  const cfg = values.runtime_config ?? {};
+  const asString = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+  return {
+    page: "agent-form",
+    mode,
+    name: asString(values.name),
+    role: asString(values.role),
+    runtime_id: asString(values.runtime_id),
+    provider: asString(cfg.provider),
+    model_id: asString(cfg.model_id),
+    has_prompt: Boolean(values.prompt_template?.trim()),
+    input_schema: values.input_schema ?? [],
+    output_schema: values.output_schema ?? [],
+  };
+}
+
+
 export const DEFAULT_PROMPT_TEMPLATE = `<agent_prompt version="1">
   <role>{{ role }}</role>
   <task>
