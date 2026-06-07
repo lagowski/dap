@@ -64,10 +64,15 @@ export function useAssistantPageContext(): PageContextValue {
 export function usePublishAssistantContext(ctx: AssistantPageContext | null): void {
   const { setPageContext } = useAssistantPageContext();
   // Serialize for a stable effect dependency — callers typically build a fresh
-  // object every render, so we key off content, not reference identity.
+  // object every render, so we key off content, not reference identity. We
+  // publish the original ``ctx`` (not a JSON round-trip) so we don't silently
+  // drop ``undefined`` / ``Date`` / ``BigInt`` values; when the content changes,
+  // ``serialized`` changes and the effect re-runs with the matching ``ctx``.
   const serialized = ctx ? JSON.stringify(ctx) : null;
   useEffect(() => {
-    setPageContext(serialized ? (JSON.parse(serialized) as AssistantPageContext) : null);
+    setPageContext(ctx);
     return () => setPageContext(null);
+    // ``ctx`` is intentionally tracked via ``serialized`` (content, not identity).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serialized, setPageContext]);
 }
