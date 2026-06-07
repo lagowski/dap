@@ -2,6 +2,7 @@ import type { UseFormRegisterReturn } from "react-hook-form";
 
 import { Textarea } from "@/components/ui/textarea";
 
+import { PythonFuncPromptNote } from "../python-func-prompt-note";
 import { Field } from "./field";
 
 interface PromptTemplateFieldProps {
@@ -30,11 +31,7 @@ export function PromptTemplateField({
     return (
       <Field label="Prompt template (Jinja2 → XML)" error={error}>
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            Not used by this runtime. <span className="font-mono">python-func</span> agents run a
-            Python callable, not an LLM, so this template is never rendered — it&apos;s kept only to
-            satisfy the schema, so you don&apos;t need to edit it.
-          </p>
+          <PythonFuncPromptNote />
           <details className="text-xs">
             <summary className="cursor-pointer text-muted-foreground">
               Show template anyway
