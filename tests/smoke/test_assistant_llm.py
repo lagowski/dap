@@ -9,6 +9,7 @@ from dap_engine.assistant.service import (
     AssistantReply,
     build_transcript,
     generate_reply,
+    render_context,
     select_provider,
 )
 from dap_types import RuntimeResult, RuntimeTask
@@ -51,6 +52,46 @@ def test_build_transcript_renders_turns() -> None:
     assert t.rstrip().endswith("Assistant:")
 
 
+# ---- render_context (pure, #689 phase 2) ----------------------------------
+
+
+def test_render_context_none_is_empty() -> None:
+    assert render_context(None) == ""
+    assert render_context({}) == ""
+
+
+def test_render_context_includes_route_and_fields() -> None:
+    block = render_context({"route": "/agents/new", "name": "PR reviewer", "role": "verifier"})
+    assert "Current context" in block
+    assert "/agents/new" in block
+    assert "PR reviewer" in block
+    assert "verifier" in block
+
+
+def test_render_context_redacts_secret_looking_keys() -> None:
+    block = render_context(
+        {
+            "route": "/settings",
+            "api_key": "sk-super-secret",
+            "github_token": "ghp_zzz",
+            "password": "hunter2",
+            "name": "ok-to-show",
+        }
+    )
+    assert "sk-super-secret" not in block
+    assert "ghp_zzz" not in block
+    assert "hunter2" not in block
+    assert "[redacted]" in block
+    # non-secret fields still surface
+    assert "ok-to-show" in block
+    assert "/settings" in block
+
+
+def test_render_context_caps_size() -> None:
+    block = render_context({"blob": "x" * 50_000})
+    assert len(block) <= 4_500  # capped well below the raw payload
+
+
 # ---- generate_reply (provider call injected) ------------------------------
 
 
@@ -89,6 +130,24 @@ async def test_generate_reply_success_is_grounded() -> None:
     assert "DAP configuration reference" in sysprompt
     assert secret not in sysprompt  # the key VALUE never enters the prompt
     assert secret not in fake.last_task.prompt_xml
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_threads_context_into_prompt() -> None:
+    fake = _FakeAdapter(RuntimeResult(success=True, output="ok"))
+    await generate_reply(
+        [{"role": "user", "content": "what runtime should this agent use?"}],
+        env={"ANTHROPIC_API_KEY": "x"},
+        context={"route": "/agents/new", "name": "PR reviewer", "api_key": "sk-leak"},
+        adapter=fake,  # type: ignore[arg-type]
+    )
+    assert fake.last_task is not None
+    prompt = fake.last_task.prompt_xml
+    # the page context reaches the model …
+    assert "/agents/new" in prompt
+    assert "PR reviewer" in prompt
+    # … but a secret-looking value is redacted even if the client sent one.
+    assert "sk-leak" not in prompt
 
 
 @pytest.mark.asyncio

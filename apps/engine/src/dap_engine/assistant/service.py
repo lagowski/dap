@@ -50,6 +50,14 @@ invent config fields that aren't in it. Be concise and concrete. These are
 suggestions the user applies manually; never claim anything was saved, and
 never ask for or include secret values (only env-var NAMES).
 
+## Current context (optional)
+The user's message may be preceded by a "## Current context" block describing
+the page they're on and the (non-secret) form/pipeline state they're editing.
+When present, tailor your advice to it — fill the gaps in what they've started,
+reference fields they've already set, and prefer a prefill that completes their
+in-progress config rather than starting from scratch. The block never contains
+secret values; do not ask the user to paste any.
+
 ## Actions (optional)
 When your answer recommends a concrete next step, you MAY append ONE block at
 the very end of your reply, exactly:
@@ -81,6 +89,52 @@ class AssistantReply:
     text: str
     grounded: bool = False
     actions: list[dict[str, Any]] = field(default_factory=list)
+
+
+# Defence-in-depth (#689 phase 2): the page context is assembled client-side
+# from non-secret config fields, but we redact any value whose KEY name looks
+# secret-ish before it reaches the model prompt — belt-and-suspenders against a
+# page that mistakenly stuffs a token/password into the context.
+_SECRET_KEY_RE = re.compile(
+    r"(token|secret|passwd|password|api[_-]?key|\bkey\b|auth|bearer|credential|private)",
+    re.IGNORECASE,
+)
+# Cap the serialized context so a large form/pipeline can't blow the prompt
+# budget. Generous enough for a realistic agent form or pipeline outline.
+_CONTEXT_CHAR_CAP = 4_000
+
+
+def _redact(value: Any, *, key: str | None = None) -> Any:
+    """Recursively replace secret-keyed values with ``[redacted]``."""
+    if key is not None and _SECRET_KEY_RE.search(key):
+        return "[redacted]"
+    if isinstance(value, Mapping):
+        return {k: _redact(v, key=str(k)) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_redact(v) for v in value]
+    return value
+
+
+def render_context(context: Mapping[str, Any] | None) -> str:
+    """Render the page/form context into a redacted prompt block (#689 phase 2).
+
+    Returns ``""`` for empty/None or unserialisable context. Values whose key
+    name looks secret-ish are redacted, and the whole block is size-capped so a
+    big pipeline can't dominate the prompt. Names/shape only — never secrets.
+    """
+    if not context:
+        return ""
+    try:
+        body = json.dumps(_redact(dict(context)), indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return ""
+    if len(body) > _CONTEXT_CHAR_CAP:
+        body = body[:_CONTEXT_CHAR_CAP] + "\n… (truncated)"
+    return (
+        "## Current context\n"
+        "The user is on this page with this (non-secret) form/pipeline state:\n"
+        f"```json\n{body}\n```\n\n"
+    )
 
 
 # Match the whole block regardless of inner content so a malformed payload is
@@ -203,16 +257,22 @@ async def generate_reply(
     messages: list[dict[str, str]],
     *,
     env: Mapping[str, str],
+    context: Mapping[str, Any] | None = None,
     adapter: ApiCallAdapter | None = None,
 ) -> AssistantReply:
-    """Produce one grounded assistant reply, or a graceful no-provider message."""
+    """Produce one grounded assistant reply, or a graceful no-provider message.
+
+    ``context`` is the optional page/form state (#689 phase 2) — rendered into a
+    redacted block ahead of the transcript so advice is tailored to what the
+    user is editing. Secret-keyed values are stripped by :func:`render_context`.
+    """
     choice = select_provider(env)
     if choice is None:
         return AssistantReply(text=_NO_PROVIDER_MESSAGE, grounded=False)
     provider_id, model_id = choice
     text = await run_llm(
         system_prompt=_SYSTEM_INSTRUCTIONS + DOCS_CORPUS,
-        user_text=build_transcript(messages),
+        user_text=render_context(context) + build_transcript(messages),
         provider_id=provider_id,
         model_id=model_id,
         env=env,

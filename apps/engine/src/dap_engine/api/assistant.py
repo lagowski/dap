@@ -101,6 +101,7 @@ async def assistant_chat(
     reply = await generate_reply(
         [m.model_dump() for m in payload.messages],
         env=env,
+        context=payload.context,
     )
 
     record_audit_event(
