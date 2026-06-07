@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -40,7 +42,7 @@ def test_chat_rejects_malformed_messages(client: TestClient) -> None:
 
 
 @pytest.fixture
-def client_no_auth(engine_config_factory) -> TestClient:  # type: ignore[no-untyped-def]
+def client_no_auth(engine_config_factory) -> Iterator[TestClient]:  # type: ignore[no-untyped-def]
     from dap_engine.app import create_app
 
     app = create_app(engine_config_factory())
