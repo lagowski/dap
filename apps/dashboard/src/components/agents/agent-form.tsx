@@ -34,6 +34,7 @@ import { AGENT_RUNTIME_IDS } from "./runtime-config-schemas";
 
 import { Field } from "./agent-form/field";
 import { PromptTemplateField } from "./agent-form/prompt-template-field";
+import { PythonFuncContractNote } from "./python-func-contract-note";
 import { RoleDefaultsHint } from "./agent-form/role-defaults-hint";
 import { ROLES, type AgentFormValues } from "./agent-form/types";
 import { useAgentForm } from "./agent-form/use-agent-form";
@@ -151,6 +152,9 @@ export function AgentForm({
       </Field>
 
       <Field label="Inputs (read by the prompt)">
+        {watchedRuntimeId === "python-func" && (
+          <PythonFuncContractNote kind="inputs" />
+        )}
         <RoleDefaultsHint
           role={watchedRole}
           recommended={ROLE_DEFAULT_INPUT_SCHEMA[watchedRole]}
@@ -174,6 +178,9 @@ export function AgentForm({
       </Field>
 
       <Field label="Outputs (written back to PipelineState)">
+        {watchedRuntimeId === "python-func" && (
+          <PythonFuncContractNote kind="outputs" />
+        )}
         <RoleDefaultsHint
           role={watchedRole}
           recommended={ROLE_DEFAULT_OUTPUT_SCHEMA[watchedRole]}
