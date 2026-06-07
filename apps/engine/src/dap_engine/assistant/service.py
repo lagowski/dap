@@ -18,12 +18,14 @@ import json
 import logging
 import os
 import re
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from dap_runtimes import ApiCallAdapter
+from dap_runtimes import ApiCallAdapter, ClaudeCodeAdapter
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
+from dap_runtimes.adapters.base import BaseAdapter
 from dap_types import RuntimeTask
 
 from dap_engine.assistant.docs_corpus import DOCS_CORPUS
@@ -40,6 +42,14 @@ _DEFAULT_MODELS: dict[str, str] = {
     "glm": "glm-4.5",
     "openrouter": "anthropic/claude-3.5-haiku",
 }
+
+# Opt-in CLI provider: route the assistant through the claude-code CLI on the
+# Pro/Max subscription ($0, no API key — uses the host's ``claude login``
+# session) instead of a metered provider API. Selected only when explicitly set
+# via DAP_ASSISTANT_PROVIDER=claude-code; never auto-picked (needs the CLI +
+# login present on the engine host).
+_CLI_PROVIDER = "claude-code"
+_CLI_DEFAULT_MODEL = "claude-haiku-4-5"
 
 _SYSTEM_INSTRUCTIONS = """\
 You are the DAP configuration assistant. Help the user map an intent (e.g. "an
@@ -188,6 +198,10 @@ def select_provider(env: Mapping[str, str]) -> tuple[str, str] | None:
     """
     override = env.get("DAP_ASSISTANT_PROVIDER")
     model_override = env.get("DAP_ASSISTANT_MODEL")
+    # claude-code is a CLI runtime, not an api-call provider with a key in the
+    # registry — honour it only as an explicit opt-in, without an API-key check.
+    if override == _CLI_PROVIDER:
+        return _CLI_PROVIDER, model_override or _CLI_DEFAULT_MODEL
     candidates = (override, *_PROVIDER_PRIORITY) if override else _PROVIDER_PRIORITY
     for pid in candidates:
         info = PROVIDER_REGISTRY.get(pid)
@@ -210,6 +224,39 @@ def build_transcript(messages: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+async def _run_via_claude_code(
+    *,
+    system_prompt: str,
+    user_text: str,
+    model_id: str,
+    adapter: BaseAdapter | None = None,
+    execution_id: str = "assistant",
+) -> str | None:
+    """One single-shot completion via the claude-code CLI on the subscription.
+
+    claude-code has no separate system-prompt field — it reads the prompt from
+    stdin — so we pipe ``system_prompt`` + the transcript as one prompt.
+    ``use_subscription`` runs it on the unmetered Pro/Max pool ($0) using the
+    host's ``claude login`` session; no API key is overlaid. Runs in a throwaway
+    working directory so the agentic CLI can't touch the repo. Returns ``None``
+    on failure (the raw CLI error may be auth/secret-tainted — don't surface it).
+    """
+    with tempfile.TemporaryDirectory(prefix="dap-assistant-") as workdir:
+        task = RuntimeTask(
+            execution_id=execution_id,
+            prompt_xml=f"{system_prompt}\n\n{user_text}",
+            working_directory=workdir,
+            timeout_ms=120_000,
+            runtime_config={"model_id": model_id, "use_subscription": True},
+            instance_env_vars={},
+        )
+        result = await (adapter or ClaudeCodeAdapter()).execute(task)
+    if not result.success:
+        logger.warning("assistant: claude-code call failed")
+        return None
+    return result.output.strip()
+
+
 async def run_llm(
     *,
     system_prompt: str,
@@ -217,17 +264,28 @@ async def run_llm(
     provider_id: str,
     model_id: str,
     env: Mapping[str, str],
-    adapter: ApiCallAdapter | None = None,
+    adapter: BaseAdapter | None = None,
     execution_id: str = "assistant",
     max_tokens: int = 1024,
 ) -> str | None:
-    """One grounded single-shot completion via ``ApiCallAdapter``.
+    """One grounded single-shot completion.
 
     The provider is already selected by the caller (via :func:`select_provider`).
-    Overlays ONLY that provider's key — never the whole instance env (which holds
-    DB URLs, other keys). Returns the model text, or ``None`` on failure (raw
-    provider errors are secret-tainted, so we don't surface or log their content).
+    Routes to the claude-code CLI (subscription, $0) when ``provider_id`` is
+    ``claude-code``, else to :class:`ApiCallAdapter` — overlaying ONLY that
+    provider's key, never the whole instance env. Returns the model text, or
+    ``None`` on failure (raw provider errors are secret-tainted, so we don't
+    surface or log their content).
     """
+    if provider_id == _CLI_PROVIDER:
+        return await _run_via_claude_code(
+            system_prompt=system_prompt,
+            user_text=user_text,
+            model_id=model_id,
+            adapter=adapter,
+            execution_id=execution_id,
+        )
+
     key_env = PROVIDER_REGISTRY[provider_id].default_env_var
     instance_overlay: dict[str, str] = {}
     if key_env and key_env in env and key_env not in os.environ:
@@ -258,7 +316,7 @@ async def generate_reply(
     *,
     env: Mapping[str, str],
     context: Mapping[str, Any] | None = None,
-    adapter: ApiCallAdapter | None = None,
+    adapter: BaseAdapter | None = None,
 ) -> AssistantReply:
     """Produce one grounded assistant reply, or a graceful no-provider message.
 

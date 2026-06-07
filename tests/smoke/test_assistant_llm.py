@@ -10,12 +10,28 @@ from dap_engine.assistant.service import (
     build_transcript,
     generate_reply,
     render_context,
+    run_llm,
     select_provider,
 )
 from dap_types import RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
 # ---- provider selection (pure) -------------------------------------------
+
+
+def test_select_provider_claude_code_override_needs_no_key() -> None:
+    # Explicit opt-in routes the assistant through the claude-code CLI on the
+    # subscription — no API key required.
+    assert select_provider({"DAP_ASSISTANT_PROVIDER": "claude-code"}) == (
+        "claude-code",
+        "claude-haiku-4-5",
+    )
+
+
+def test_select_provider_claude_code_honours_model_override() -> None:
+    assert select_provider(
+        {"DAP_ASSISTANT_PROVIDER": "claude-code", "DAP_ASSISTANT_MODEL": "claude-sonnet-4-6"}
+    ) == ("claude-code", "claude-sonnet-4-6")
 
 
 def test_select_provider_picks_anthropic_when_key_present() -> None:
@@ -111,6 +127,45 @@ async def test_generate_reply_no_provider() -> None:
     assert isinstance(reply, AssistantReply)
     assert reply.grounded is False
     assert "no LLM provider" in reply.text
+
+
+@pytest.mark.asyncio
+async def test_run_llm_routes_claude_code_to_cli_subscription() -> None:
+    fake = _FakeAdapter(RuntimeResult(success=True, output="  use api-call + haiku  "))
+    text = await run_llm(
+        system_prompt="SYS-INSTRUCTIONS",
+        user_text="User: cheap reviewer\nAssistant:",
+        provider_id="claude-code",
+        model_id="claude-haiku-4-5",
+        env={"ANTHROPIC_API_KEY": "should-not-be-used"},
+        adapter=fake,  # type: ignore[arg-type]
+    )
+    assert text == "use api-call + haiku"
+    assert fake.last_task is not None
+    cfg = fake.last_task.runtime_config
+    # Runs on the subscription pool (free), not a metered api-call.
+    assert cfg["use_subscription"] is True
+    assert cfg["model_id"] == "claude-haiku-4-5"
+    assert "provider" not in cfg  # not the ApiCallAdapter shape
+    # system prompt + transcript are piped together (claude-code has no system field).
+    assert "SYS-INSTRUCTIONS" in fake.last_task.prompt_xml
+    assert "cheap reviewer" in fake.last_task.prompt_xml
+    # No API key overlaid — the CLI uses the host's `claude login` session.
+    assert fake.last_task.instance_env_vars == {}
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_via_claude_code_subscription() -> None:
+    fake = _FakeAdapter(RuntimeResult(success=True, output="use api-call + haiku"))
+    reply = await generate_reply(
+        [{"role": "user", "content": "cheap reviewer"}],
+        env={"DAP_ASSISTANT_PROVIDER": "claude-code"},
+        adapter=fake,  # type: ignore[arg-type]
+    )
+    assert reply.grounded is True
+    assert reply.text == "use api-call + haiku"
+    assert fake.last_task is not None
+    assert fake.last_task.runtime_config["use_subscription"] is True
 
 
 @pytest.mark.asyncio
