@@ -1,0 +1,65 @@
+{
+  "schema_version": "pipeline-export/1",
+  "_comment": "Minimal python-func pipeline: greet -> shout -> human gate. The agents reference callables in the 'examplepipe' package (install it editable in the engine venv first). See README.md.",
+  "pipeline": {
+    "name": "Example python-func pipeline",
+    "description": "greet -> shout -> human-approval gate, all python-func nodes",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "greet",
+    "nodes": [
+      { "id": "greet", "agent_id": "ex_greet", "position": { "x": 0, "y": 0 } },
+      { "id": "shout", "agent_id": "ex_shout", "position": { "x": 200, "y": 0 } },
+      { "id": "gate", "agent_id": "ex_gate", "position": { "x": 400, "y": 0 } }
+    ],
+    "edges": [
+      { "id": "e1", "source": "__start__", "target": "greet" },
+      { "id": "e2", "source": "greet", "target": "shout" },
+      { "id": "e3", "source": "shout", "target": "gate" },
+      { "id": "e4", "source": "gate", "target": "__end__" }
+    ],
+    "defaults": {
+      "max_attempts": 1,
+      "budget_limit_usd": 0.0,
+      "approval_required_nodes": ["gate"]
+    }
+  },
+  "bundled_agents": {
+    "ex_greet": {
+      "name": "Example Greet",
+      "role": "prompt_builder",
+      "runtime_id": "python-func",
+      "runtime_config": { "callable_path": "examplepipe.nodes:greet", "default_name": "world" },
+      "prompt_template": "<agent_prompt>unused for python-func</agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 5000
+    },
+    "ex_shout": {
+      "name": "Example Shout",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": { "callable_path": "examplepipe.nodes:shout" },
+      "prompt_template": "<agent_prompt>unused for python-func</agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 5000
+    },
+    "ex_gate": {
+      "name": "Example Approval Gate",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": { "callable_path": "examplepipe.gates:noop" },
+      "prompt_template": "<agent_prompt>unused for python-func</agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 5000
+    }
+  }
+}
