@@ -1,24 +1,41 @@
 """In-app configuration assistant (#689).
 
-Slice 1 ships the **contract + UI shell**: a chat endpoint the right-dock
-assistant panel talks to. The reply is a stub — the model backend (a direct
-call to a provider configured in ``instance_env_vars``, grounded on the DAP
-docs by prompt-stuffing) lands in the next slice and slots in behind this same
-request/response shape.
+Slice 2 wires a real model: pick whichever provider has a key configured
+(os.environ + the decrypted instance env vars), stuff the curated DAP docs
+into the system prompt for grounding, and answer via the tested
+:class:`ApiCallAdapter`. No provider configured → a graceful "no model" reply.
 
-Constraints carried forward (see the issue): no secrets in prompts — the
-``context`` hint may carry page/form *shape* and names, never env-var values.
+The response carries an ``actions`` list (navigate / prefill / doc) — empty for
+now, but the contract is in place so slice 3 (apply / scaffold from a
+recommendation) is a pure-UI change.
+
+Constraints: no secrets in prompts — the ``context`` hint and the prompt carry
+page/form shape and env-var *names*, never values.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import logging
+import os
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from dap_engine.api.deps import get_engine_config, get_session
+from dap_engine.assistant.service import generate_reply
+from dap_engine.auth.audit import record_audit_event
+from dap_engine.auth.encryption import EncryptionError, decrypt_value
 from dap_engine.auth.users import current_active_user
 from dap_engine.persistence.models import UserORM
+from dap_engine.persistence.settings_models import InstanceEnvVarORM
+
+if TYPE_CHECKING:
+    from dap_engine.app import EngineConfig
+
+logger = logging.getLogger("dap.engine.api.assistant")
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
@@ -35,40 +52,85 @@ class Citation(BaseModel):
     href: str
 
 
+class AssistantAction(BaseModel):
+    """A suggested follow-up the UI can offer as a button (#689).
+
+    ``kind``: ``navigate`` (go to ``href``), ``prefill`` (insert ``values`` into
+    the form named by ``target``), or ``doc`` (open ``href``). Advisory only —
+    the UI never auto-applies. Populated from slice 3; empty in slice 2.
+    """
+
+    kind: Literal["navigate", "prefill", "doc"]
+    label: str
+    href: str | None = None
+    target: str | None = None
+    values: dict[str, Any] | None = None
+
+
 class AssistantChatRequest(BaseModel):
     messages: list[AssistantMessage]
-    # Optional page/form context (slice 2). Names/shape only — never secrets.
+    # Optional page/form context (slice 2/3). Names/shape only — never secrets.
     context: dict[str, Any] | None = None
 
 
 class AssistantChatResponse(BaseModel):
     message: AssistantMessage
-    # True once the reply is grounded on the docs corpus; stub is ungrounded.
     grounded: bool = False
     citations: list[Citation] = []
+    actions: list[AssistantAction] = []
 
 
-_STUB_REPLY = (
-    "The configuration assistant is wired up, but its model backend isn't "
-    "connected yet — that's the next step. Soon I'll answer questions like "
-    '"an agent that reviews PRs cheaply" or "a deterministic, free classifier" '
-    "with concrete DAP configs (runtime, model, role, contracts, providers) and "
-    "links to the docs. For now, the docs under /docs are the best reference."
-)
+def _load_instance_env(session: Session, fernet_key: str | None) -> dict[str, str]:
+    """Decrypt the instance env vars into a dict (empty if no key / no rows).
+
+    A row we can't decrypt (rotated Fernet key) is skipped with a warning
+    rather than failing the whole chat — the assistant should still answer
+    using whatever else is available (e.g. os.environ keys).
+    """
+    if not fernet_key:
+        return {}
+    out: dict[str, str] = {}
+    for row in session.execute(select(InstanceEnvVarORM)).scalars().all():
+        try:
+            out[row.key] = decrypt_value(row.ciphertext, key=fernet_key)
+        except EncryptionError:
+            logger.warning("assistant: could not decrypt instance env var %r — skipping", row.key)
+    return out
 
 
 @router.post("/chat", response_model=AssistantChatResponse)
 async def assistant_chat(
     payload: AssistantChatRequest,
+    session: Session = Depends(get_session),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> AssistantChatResponse:
-    """Stub chat turn (#689 slice 1) — auth-gated; returns a placeholder reply.
+    """One grounded assistant turn (#689). Auth-gated.
 
-    The real implementation will call the instance's configured provider with
-    a docs-grounded system prompt and return grounded citations.
+    Reuses ApiCallAdapter against whichever provider key is configured;
+    a docs-grounded system prompt keeps advice accurate. Records a
+    ``assistant.chat`` audit event (no message content — just that a turn
+    happened, by whom).
     """
+    instance_env = _load_instance_env(session, config.crypto.instance_env_vars_key)
+    # os.environ wins over instance vars (matches the run-time resolution order).
+    env = {**instance_env, **os.environ}
+
+    reply = await generate_reply(
+        [m.model_dump() for m in payload.messages],
+        env=env,
+    )
+
+    record_audit_event(
+        session,
+        user_id=user.id,
+        event_type="assistant.chat",
+        event_data={"grounded": reply.grounded, "turns": len(payload.messages)},
+    )
+
     return AssistantChatResponse(
-        message=AssistantMessage(role="assistant", content=_STUB_REPLY),
-        grounded=False,
+        message=AssistantMessage(role="assistant", content=reply.text),
+        grounded=reply.grounded,
         citations=[],
+        actions=[],
     )

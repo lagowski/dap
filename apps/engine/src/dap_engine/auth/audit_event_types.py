@@ -99,6 +99,9 @@ AuditEventType = Literal[
     # all its children (logs, snapshots, output chunks). ``event_data``
     # carries ``run_id``.
     "run.deleted",
+    # Config assistant chat turn (#689). event_data carries non-content
+    # metadata only (grounded flag, turn count) — never the message text.
+    "assistant.chat",
     # Security policy denials that block execution before a run or dry-run
     # can invoke a runtime.
     "runtime_policy.denied",
