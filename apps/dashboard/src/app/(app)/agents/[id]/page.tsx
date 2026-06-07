@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { NodeStatusBadge } from "@/components/status-badge";
 import { PromptTemplateCard } from "@/components/agents/agent-prompt-template-card";
+import { ManagedAgentBanner } from "@/components/agents/managed-agent-banner";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import type { Agent, NodeStatus } from "@/lib/api/types";
 
@@ -126,6 +127,8 @@ export default function AgentDetailPage({
         <Metric label="Timeout (ms)" value={String(agent.timeout_ms)} />
         <Metric label="ID" value={agent.id.slice(0, 8) + "…"} mono />
       </div>
+
+      <ManagedAgentBanner agent={agent} />
 
       <PromptTemplateCard
         runtimeId={agent.runtime_id}

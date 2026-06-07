@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
 import { agentFormAssistantContext } from "@/components/agents/agent-form/types";
+import { ManagedAgentBanner } from "@/components/agents/managed-agent-banner";
 import { AgentTabs, type AgentTab } from "@/components/agents/agent-tabs";
 import {
   AgentTestPanel,
@@ -118,6 +119,8 @@ export default function EditAgentPage({
           </Button>
         </div>
       </div>
+
+      <ManagedAgentBanner agent={agent} />
 
       <AgentTabs
         tab={tab}
