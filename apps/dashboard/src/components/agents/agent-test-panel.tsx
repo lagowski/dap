@@ -76,14 +76,25 @@ interface AgentTestPanelProps {
    * Omit to hide the "Promote" button.
    */
   onPromoteVariantB?: (overrides: VariantBOverrides) => void;
+  /**
+   * Initial context-text override (#724). When the user opens this panel
+   * from a run node's "Open in agent tester" action, we seed the context
+   * with the input state the node received so the dry-run reflects the
+   * same conditions. Editable like any other context. Omitted ⇒ panel
+   * falls back to the default sample context.
+   */
+  initialContextText?: string;
 }
 
 export function AgentTestPanel({
   draft,
   draftBlockedReason,
   onPromoteVariantB,
+  initialContextText,
 }: AgentTestPanelProps) {
-  const [contextText, setContextText] = useState(DEFAULT_CONTEXT);
+  const [contextText, setContextText] = useState(
+    initialContextText ?? DEFAULT_CONTEXT,
+  );
   const [compareOn, setCompareOn] = useState(false);
   const [variantB, setVariantB] = useState<VariantBOverrides | null>(null);
   // Set the moment a VariantBEditor change handler runs (not on the

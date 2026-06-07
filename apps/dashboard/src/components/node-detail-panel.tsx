@@ -2,17 +2,45 @@
 
 import { useMemo, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { useRunNodeExplain, useRunNodeLog, useRunStateHistory } from "@/hooks/api";
+import { useAgent, useRunNodeExplain, useRunNodeLog, useRunStateHistory } from "@/hooks/api";
 import { NodeStatusBadge } from "@/components/status-badge";
 import { StateDiffView } from "@/components/state-diff-view";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
 import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import { ApiError } from "@/lib/api/client";
 import type { PipelineState, StateSnapshot } from "@/lib/api/types";
+
+/**
+ * #724 reserved structured-output key that lets a python-func callable
+ * record the LLM prompt it built internally. DAP renders it in the Prompt
+ * tab when present. Populating it is a dap-cortex change (filed
+ * separately) — DAP just renders whatever lands.
+ */
+const RECORDED_PROMPT_KEY = "__prompt";
+
+function recordedPromptFrom(outputJson: unknown): string | null {
+  if (outputJson == null || typeof outputJson !== "object") return null;
+  const candidate = (outputJson as Record<string, unknown>)[RECORDED_PROMPT_KEY];
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+}
+
+/**
+ * #724 helper — a Cortex callable is a python-func agent whose runtime_config
+ * carries a ``callable_path`` starting with ``cortex.``. The badge tells the
+ * operator at a glance that this node is bound to the cortex pipeline source,
+ * not generic python.
+ */
+function isCortexCallable(runtimeConfig: unknown): boolean {
+  if (runtimeConfig == null || typeof runtimeConfig !== "object") return false;
+  const cp = (runtimeConfig as Record<string, unknown>).callable_path;
+  return typeof cp === "string" && cp.startsWith("cortex.");
+}
 
 interface NodeDetailPanelProps {
   runId: string;
@@ -34,10 +62,35 @@ export function NodeDetailPanel({
   const open = nodeId != null;
   const { data, isPending, isError, error } = useRunNodeLog(runId, nodeId);
   const { data: stateHistory } = useRunStateHistory(open ? runId : null);
+  // #724 — resolve agent_id → name/role/runtime_config for the footer chip,
+  // the Cortex tag, and the "Open in agent tester" action. Skipped when
+  // the dialog is closed or the node hasn't loaded yet.
+  const agentId = data?.agent_id ?? null;
+  const { data: agent } = useAgent(agentId);
+  const router = useRouter();
+  const { setPrefill } = useAssistantPrefill();
 
   const { before, after } = useMemo(() => {
     return getSnapshotPair(stateHistory ?? [], nodeId);
   }, [stateHistory, nodeId]);
+
+  /**
+   * #724 — stash the node's runtime_config + input state and navigate to
+   * the agent's Edit page, where the Test panel consumes the prefill and
+   * seeds its inputs. Fully editable, never auto-runs.
+   */
+  const openInAgentTester = () => {
+    if (!agent) return;
+    setPrefill({
+      target: "agent-test",
+      values: {
+        agent_id: agent.id,
+        input_state: before ?? null,
+      },
+    });
+    router.push(`/agents/${agent.id}/edit?tab=test`);
+    onOpenChange(false);
+  };
 
   // Step through nodes in execution order without closing the dialog.
   const order = nodeIds ?? [];
@@ -135,10 +188,14 @@ export function NodeDetailPanel({
                 <TabsTrigger value="stdout" className="flex-1">
                   Std output
                 </TabsTrigger>
-                {/* python-func callables have no rendered prompt by design
-                    (they receive state directly), so don't offer an empty
-                    Prompt tab for them. */}
-                {data.runtime_id !== "python-func" && (
+                {/* Prompt tab visible when EITHER the runtime captured a
+                    classical prompt (prompt_xml — api-call / claude_cli /
+                    etc.) OR the callable recorded a prompt into its
+                    structured output (#724 — populated by dap-cortex on
+                    cortex nodes). Plain python-func without a recorded
+                    prompt still hides the tab. */}
+                {(data.runtime_id !== "python-func" ||
+                  recordedPromptFrom(data.output_json) != null) && (
                   <TabsTrigger value="prompt" className="flex-1">
                     Prompt
                   </TabsTrigger>
@@ -168,17 +225,36 @@ export function NodeDetailPanel({
                 )}
               </TabsContent>
 
-              {data.runtime_id !== "python-func" && (
+              {(data.runtime_id !== "python-func" ||
+                recordedPromptFrom(data.output_json) != null) && (
                 <TabsContent value="prompt">
-                  {data.prompt_xml ? (
-                    <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
-                      {data.prompt_xml}
-                    </pre>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      No prompt recorded for this node.
-                    </p>
-                  )}
+                  {(() => {
+                    const recorded = recordedPromptFrom(data.output_json);
+                    // ``prompt_xml`` is "" (empty string) when an LLM node
+                    // didn't capture one. Use ``||`` so we fall through to
+                    // the recorded prompt in that case (?? would treat ""
+                    // as a real value and short-circuit before recorded).
+                    const prompt = data.prompt_xml || recorded;
+                    if (!prompt) {
+                      return (
+                        <p className="text-xs text-muted-foreground">
+                          No prompt recorded for this node.
+                        </p>
+                      );
+                    }
+                    return (
+                      <>
+                        {recorded != null && !data.prompt_xml && (
+                          <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            Recorded by the callable (#724) — `output_json.__prompt`
+                          </p>
+                        )}
+                        <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
+                          {prompt}
+                        </pre>
+                      </>
+                    );
+                  })()}
                 </TabsContent>
               )}
 
@@ -196,10 +272,46 @@ export function NodeDetailPanel({
               </TabsContent>
             </Tabs>
 
-            <div className="text-xs text-muted-foreground">
+            {/* #724 — richer footer: linked agent name + role + Cortex tag.
+                Falls back to a short UUID if the agent hasn't resolved (cache
+                miss, 404, or still loading) so the panel never blanks out. */}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {agent ? (
+                <>
+                  <Link
+                    href={`/agents/${agent.id}`}
+                    className="font-medium text-foreground hover:underline"
+                  >
+                    {agent.name}
+                  </Link>
+                  <span className="text-muted-foreground">({agent.role})</span>
+                </>
+              ) : (
+                <span>agent {data.agent_id.slice(0, 8)}…</span>
+              )}
+              <span>·</span>
               <span className="font-mono">{data.runtime_id}</span>
-              <span className="mx-2">·</span>
-              <span>agent {data.agent_id}</span>
+              {agent && isCortexCallable(agent.runtime_config) && (
+                <span
+                  className="rounded-sm border border-blue-500/40 bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300"
+                  title="Cortex callable — agent.runtime_config.callable_path starts with 'cortex.'"
+                >
+                  Cortex
+                </span>
+              )}
+              {agent && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto h-7"
+                  onClick={openInAgentTester}
+                  title="Stash this node's input state + jump to the agent's Test tab"
+                >
+                  <Wand2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Open in agent tester
+                </Button>
+              )}
             </div>
           </div>
         )}

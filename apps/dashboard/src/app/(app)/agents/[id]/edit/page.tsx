@@ -2,7 +2,7 @@
 
 import { useId, useState, use } from "react";
 import { LoadingState } from "@/components/ui/spinner";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy, Download } from "lucide-react";
 import { useAgent, useUpdateAgent } from "@/hooks/api";
@@ -16,6 +16,7 @@ import {
   AgentTestPanel,
   type VariantBOverrides,
 } from "@/components/agents/agent-test-panel";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function EditAgentPage({
@@ -25,9 +26,24 @@ export default function EditAgentPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: agent, isPending, isError, error } = useAgent(id);
   const update = useUpdateAgent();
-  const [tab, setTab] = useState<AgentTab>("form");
+  // #724 — consume the "agent-test" prefill on first render. The caller (the
+  // run-detail panel's "Open in agent tester" button) stashes
+  // ``{target:"agent-test", values:{agent_id, input_state}}`` then navigates
+  // here with ``?tab=test``. We pull the values once, seed the test panel's
+  // initial context with the input state, and let the URL hint drop us on
+  // the Test tab.
+  const { consumePrefill } = useAssistantPrefill();
+  const [prefill] = useState(() => consumePrefill("agent-test"));
+  const initialTab: AgentTab =
+    searchParams?.get("tab") === "test" ? "test" : "form";
+  const [tab, setTab] = useState<AgentTab>(initialTab);
+  const [initialContextText] = useState(() => {
+    const inputState = prefill?.input_state;
+    return inputState != null ? JSON.stringify(inputState, null, 2) : undefined;
+  });
   const [snapshot, setSnapshot] = useState<{
     values: AgentFormValues;
     valid: boolean;
@@ -153,6 +169,7 @@ export default function EditAgentPage({
             <AgentTestPanel
               draft={draft}
               draftBlockedReason={draftBlockedReason}
+              initialContextText={initialContextText}
               onPromoteVariantB={(overrides) => {
                 setPromoted(overrides);
                 // Bump key → AgentForm remounts with the merged
