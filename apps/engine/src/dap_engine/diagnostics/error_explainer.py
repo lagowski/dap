@@ -15,9 +15,13 @@ extension *names* may appear in the suggestions, never values.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
-from dap_runtimes import classify_provider_failure
+from dap_runtimes import ApiCallAdapter, classify_provider_failure
 from pydantic import BaseModel
+
+from dap_engine.assistant.docs_corpus import DOCS_CORPUS
+from dap_engine.assistant.service import run_llm, select_provider
 
 _DOCS_BASE = "https://github.com/lagowski/dap/blob/develop/docs"
 
@@ -295,3 +299,47 @@ def explain_node_error(  # noqa: PLR0911 — a dispatcher: one return per known 
         docs=[DocLink(label="Runtimes & troubleshooting", href=f"{_DOCS_BASE}/runtimes.md")],
         recognized=False,
     )
+
+
+_LLM_EXPLAIN_SYSTEM = """\
+You are the DAP failure-diagnosis assistant. Given a failed pipeline node's
+error, explain in plain language WHY it failed and give 2-4 concrete next
+actions for a DAP operator. Ground your answer in the reference below — do not
+invent config fields. Be concise. Output ONLY the explanation prose (cause +
+a short bulleted list of actions). Never include secret values.
+
+# Reference
+"""
+
+
+async def explain_error_llm(
+    error_message: str,
+    *,
+    runtime_id: str | None,
+    env: Mapping[str, str],
+    adapter: ApiCallAdapter | None = None,
+) -> ErrorExplanation | None:
+    """LLM fallback for unrecognised errors (#691 slice 2).
+
+    Reuses the assistant's provider selection + docs-grounded completion. Returns
+    a ``source="llm"`` explanation, or ``None`` when no provider is configured or
+    the call fails (the caller falls back to the deterministic explanation).
+    """
+    choice = select_provider(env)
+    if choice is None:
+        return None
+    provider_id, model_id = choice
+    user_text = f"Runtime: {runtime_id or 'unknown'}\nError:\n{error_message}"
+    text = await run_llm(
+        system_prompt=_LLM_EXPLAIN_SYSTEM + DOCS_CORPUS,
+        user_text=user_text,
+        provider_id=provider_id,
+        model_id=model_id,
+        env=env,
+        adapter=adapter,
+        execution_id="error-explainer",
+        max_tokens=512,
+    )
+    if not text:
+        return None
+    return ErrorExplanation(cause=text, actions=[], docs=[], recognized=True, source="llm")

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "@/components/ui/spinner";
 import {
   ChevronLeft,
@@ -301,7 +301,19 @@ export function NodeDetailPanel({
  */
 function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
   const [open, setOpen] = useState(false);
-  const { data, isLoading, isError } = useRunNodeExplain(runId, nodeId, open);
+  const [ai, setAi] = useState(false);
+  const { data, isLoading, isError } = useRunNodeExplain(runId, nodeId, open, ai);
+  // a11y: when the user clicks "Ask AI to explain" that button unmounts as the
+  // LLM answer arrives, dropping keyboard focus to <body>. Move focus to the
+  // explanation text so screen-reader / keyboard users land on the new content.
+  const causeRef = useRef<HTMLParagraphElement>(null);
+  const focusPending = useRef(false);
+  useEffect(() => {
+    if (focusPending.current && data?.source === "llm") {
+      causeRef.current?.focus();
+      focusPending.current = false;
+    }
+  }, [data?.source]);
 
   if (!open) {
     return (
@@ -331,7 +343,19 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
       )}
       {data && (
         <>
-          <p className="font-medium text-foreground">{data.cause}</p>
+          {data.source === "llm" && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase text-blue-600 dark:text-blue-400">
+              <Sparkles className="h-3 w-3" aria-hidden />
+              AI explanation
+            </span>
+          )}
+          <p
+            ref={causeRef}
+            tabIndex={-1}
+            className="whitespace-pre-wrap font-medium text-foreground rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {data.cause}
+          </p>
           {data.actions.length > 0 && (
             <ul className="list-disc space-y-1 pl-4">
               {data.actions.map((a, i) => (
@@ -354,10 +378,22 @@ function ErrorExplainer({ runId, nodeId }: { runId: string; nodeId: string }) {
               ))}
             </div>
           )}
-          {!data.recognized && (
-            <p className="text-muted-foreground">
-              Heuristic match only — a richer AI explanation will appear here once an LLM is configured.
-            </p>
+          {!data.recognized && data.source !== "llm" && (
+            // Deterministic didn't recognise it — offer the LLM fallback (#691
+            // slice 2). On-demand so we don't spend a model call unasked.
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-7"
+              onClick={() => {
+                focusPending.current = true;
+                setAi(true);
+              }}
+            >
+              <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />
+              Ask AI to explain
+            </Button>
           )}
         </>
       )}

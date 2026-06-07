@@ -1200,11 +1200,12 @@ export interface paths {
         };
         /**
          * Explain Run Node Error
-         * @description Deterministic explanation + suggested actions for a node's failure (#691).
+         * @description Explanation + suggested actions for a node's failure (#691).
          *
-         *     Ownership-gated through the node-log read (404 for non-owners). Works off
-         *     the node's recorded ``error_message`` only — no LLM, no secrets. An LLM
-         *     fallback for unrecognised errors is a follow-up (#691 slice 2 / #689).
+         *     Ownership-gated through the node-log read (404 for non-owners). Default is
+         *     the deterministic explainer (no LLM, no secrets). With ``?ai=1`` the
+         *     configured provider is asked for a richer explanation; if no provider is
+         *     configured or the call fails, it falls back to the deterministic one.
          */
         get: operations["explain_run_node_error_runs__run_id__nodes__node_id__explain_get"];
         put?: never;
@@ -5607,7 +5608,10 @@ export interface operations {
     };
     explain_run_node_error_runs__run_id__nodes__node_id__explain_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Ask the configured LLM for a richer explanation (on-demand, #691). */
+                ai?: boolean;
+            };
             header?: never;
             path: {
                 run_id: string;
