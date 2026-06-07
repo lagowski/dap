@@ -7,10 +7,13 @@ import type { NodeExecutionLog, StateSnapshot } from "@/lib/api/types";
 // Hoisted mocks so the vi.mock factory can close over them.
 const mockUseRunNodeLog = vi.fn();
 const mockUseRunStateHistory = vi.fn();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockUseAgentsList = vi.fn((): { data: { items: any[] } } => ({ data: { items: [] } }));
 
 vi.mock("@/hooks/api", () => ({
   useRunNodeLog: (...args: unknown[]) => mockUseRunNodeLog(...args),
   useRunStateHistory: (...args: unknown[]) => mockUseRunStateHistory(...args),
+  useAgentsList: () => mockUseAgentsList(),
 }));
 
 import { NodeDetailPanel } from "./node-detail-panel";
@@ -131,5 +134,71 @@ describe("NodeDetailPanel — node that didn't run", () => {
     render(<NodeDetailPanel runId="r1" nodeId="n1" onOpenChange={() => {}} />);
 
     expect(screen.getByText(/failed to load/i)).toBeInTheDocument();
+  });
+});
+
+describe("NodeDetailPanel — cortex prompt + agent identity (#724)", () => {
+  beforeEach(() => {
+    mockUseRunNodeLog.mockReset();
+    mockUseRunStateHistory.mockReset();
+    mockUseAgentsList.mockReset();
+    mockUseAgentsList.mockReturnValue({ data: { items: [] } });
+  });
+
+  it("shows the recorded prompt for a cortex python-func node", async () => {
+    const user = userEvent.setup();
+    mockUseRunNodeLog.mockReturnValue({
+      data: makeLog({
+        runtime_id: "python-func",
+        prompt_xml: "",
+        output_json: {
+          state_delta: {
+            extensions: {
+              __audit: {
+                system_prompt: "You are the Mockup agent.",
+                user_prompt: "Issue #162: add IR paths",
+              },
+            },
+          },
+        },
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseRunStateHistory.mockReturnValue({ data: [] });
+    render(<NodeDetailPanel runId="r1" nodeId="mockup" onOpenChange={() => {}} />);
+
+    // Prompt tab IS shown (cortex recorded a prompt) even though it's python-func.
+    const promptTab = screen.getByRole("tab", { name: /prompt/i });
+    await user.click(promptTab);
+    expect(screen.getByText(/You are the Mockup agent/)).toBeInTheDocument();
+    expect(screen.getByText(/Issue #162/)).toBeInTheDocument();
+  });
+
+  it("shows the agent name + Cortex tag", () => {
+    mockUseRunNodeLog.mockReturnValue({
+      data: makeLog({ runtime_id: "python-func", agent_id: "a-1", prompt_xml: "" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseRunStateHistory.mockReturnValue({ data: [] });
+    mockUseAgentsList.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: "a-1",
+            name: "Cortex Phase 1 — Mockup",
+            role: "prompt_builder",
+            runtime_config: { callable_path: "cortex.nodes.mockup:run" },
+          },
+        ],
+      },
+    });
+    render(<NodeDetailPanel runId="r1" nodeId="mockup" onOpenChange={() => {}} />);
+    expect(screen.getByText("Cortex Phase 1 — Mockup")).toBeInTheDocument();
+    expect(screen.getByText("Cortex")).toBeInTheDocument();
+    expect(screen.getByText("prompt_builder")).toBeInTheDocument();
   });
 });
