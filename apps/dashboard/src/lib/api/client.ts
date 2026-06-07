@@ -223,13 +223,18 @@ export async function getRunNodeLog(
   );
 }
 
-/** Deterministic explanation + suggested actions for a failed node (#691). */
+/**
+ * Explanation + suggested actions for a failed node (#691). ``ai=true`` asks the
+ * configured LLM for a richer explanation (falls back to deterministic).
+ */
 export async function getNodeErrorExplanation(
   runId: string,
   nodeId: string,
+  ai = false,
 ): Promise<ErrorExplanation> {
+  const qs = ai ? "?ai=1" : "";
   return request<ErrorExplanation>(
-    `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/explain`,
+    `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/explain${qs}`,
   );
 }
 

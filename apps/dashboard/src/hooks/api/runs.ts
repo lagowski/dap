@@ -103,15 +103,16 @@ export function useRunNodeExplain(
   runId: string | null,
   nodeId: string | null,
   enabled: boolean,
+  ai = false,
 ) {
   return useQuery({
     queryKey:
       runId && nodeId
-        ? queryKeys.runNodeExplain(runId, nodeId)
+        ? [...queryKeys.runNodeExplain(runId, nodeId), ai ? "ai" : "det"]
         : ["runs", "noop", "nodes", "noop", "explain"],
     queryFn:
       runId && nodeId
-        ? () => api.getNodeErrorExplanation(runId, nodeId)
+        ? () => api.getNodeErrorExplanation(runId, nodeId, ai)
         : skipToken,
     enabled: enabled && runId != null && nodeId != null,
   });

@@ -3,20 +3,30 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, date, datetime, time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dap_types import NodeExecutionLog, PipelineState, Run, StateSnapshot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from dap_engine.api.deps import get_run_registry, get_session
+from dap_engine.api.deps import get_engine_config, get_run_registry, get_session
 from dap_engine.api.run_events import stream_run_events
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
-from dap_engine.diagnostics.error_explainer import ErrorExplanation, explain_node_error
+from dap_engine.diagnostics.error_explainer import (
+    ErrorExplanation,
+    explain_error_llm,
+    explain_node_error,
+)
 from dap_engine.execution import RunRegistry
+from dap_engine.instance_env import load_instance_env
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
+
+if TYPE_CHECKING:
+    from dap_engine.app import EngineConfig
 
 logger = logging.getLogger("dap.engine.api.run_reads")
 
@@ -187,17 +197,23 @@ def get_run_node_log(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
-def explain_run_node_error(
+async def explain_run_node_error(
     run_id: str,
     node_id: str,
+    ai: bool = Query(
+        default=False,
+        description="Ask the configured LLM for a richer explanation (on-demand, #691).",
+    ),
     session: Session = Depends(get_session),
+    config: EngineConfig = Depends(get_engine_config),
     user: UserORM = Depends(current_active_user),
 ) -> ErrorExplanation:
-    """Deterministic explanation + suggested actions for a node's failure (#691).
+    """Explanation + suggested actions for a node's failure (#691).
 
-    Ownership-gated through the node-log read (404 for non-owners). Works off
-    the node's recorded ``error_message`` only — no LLM, no secrets. An LLM
-    fallback for unrecognised errors is a follow-up (#691 slice 2 / #689).
+    Ownership-gated through the node-log read (404 for non-owners). Default is
+    the deterministic explainer (no LLM, no secrets). With ``?ai=1`` the
+    configured provider is asked for a richer explanation; if no provider is
+    configured or the call fails, it falls back to the deterministic one.
     """
     try:
         log = repo.get_run_node_log(
@@ -205,4 +221,27 @@ def explain_run_node_error(
         )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return explain_node_error(log.error_message, runtime_id=log.runtime_id)
+
+    deterministic = explain_node_error(log.error_message, runtime_id=log.runtime_id)
+    if ai and log.error_message:
+        env = {
+            **load_instance_env(session, config.crypto.instance_env_vars_key),
+            **os.environ,
+        }
+        llm = await explain_error_llm(log.error_message, runtime_id=log.runtime_id, env=env)
+        if llm is not None:
+            # Audit the LLM call (#691): the error text + reply may quote
+            # conversation content, so we record only the run/node identifiers
+            # — enough to attribute the provider call, never its content.
+            # Committed before the response is written: the audit is forensic,
+            # so recording that the provider was invoked matters even if the
+            # client disconnects before receiving the body.
+            record_audit_event(
+                session,
+                user_id=user.id,
+                event_type="error_explainer.llm",
+                event_data={"run_id": run_id, "node_id": node_id},
+            )
+            session.commit()
+            return llm
+    return deterministic
