@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { NodeStatusBadge } from "@/components/status-badge";
+import { PromptTemplateCard } from "@/components/agents/agent-prompt-template-card";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import type { Agent, NodeStatus } from "@/lib/api/types";
 
@@ -126,14 +127,12 @@ export default function AgentDetailPage({
         <Metric label="ID" value={agent.id.slice(0, 8) + "…"} mono />
       </div>
 
-      <Card>
-        <CardContent className="pt-6 space-y-2">
-          <h2 className="text-sm font-medium">Prompt template (current — v{agent.version})</h2>
-          <pre className="rounded border bg-muted/30 p-3 text-xs overflow-x-auto whitespace-pre-wrap">
-            {agent.prompt_template}
-          </pre>
-        </CardContent>
-      </Card>
+      <PromptTemplateCard
+        runtimeId={agent.runtime_id}
+        promptTemplate={agent.prompt_template}
+        runtimeConfig={agent.runtime_config}
+        version={agent.version}
+      />
 
       {Object.keys(agent.runtime_config).length > 0 && (
         <Card>
