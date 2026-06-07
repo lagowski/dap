@@ -43,8 +43,9 @@ An agent = a unit of work. Fields:
   Reference them by NAME (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GLM_API_KEY,
   OPENROUTER_API_KEY). Never put a key value in a prompt or agent config.
 - The config assistant itself picks the first provider whose key is set (priority anthropic →
-  openai → gemini → glm → openrouter). Override with DAP_ASSISTANT_PROVIDER / DAP_ASSISTANT_MODEL.
-  Set DAP_ASSISTANT_PROVIDER=claude-code to run it on the Claude CLI subscription ($0).
+  openai → gemini → glm → openrouter). Override with ASSISTANT_PROVIDER / ASSISTANT_MODEL (settable
+  as instance env vars) or DAP_ASSISTANT_PROVIDER / DAP_ASSISTANT_MODEL (engine env; wins).
+  Set ASSISTANT_PROVIDER=claude-code to run it on the Claude CLI subscription ($0).
 
 ## Built-in templates (starting points)
 - "Hello world — bash echo": a free bash agent. Good first run.
