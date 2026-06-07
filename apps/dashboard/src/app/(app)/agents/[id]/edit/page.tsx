@@ -11,12 +11,14 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
+import { agentFormAssistantContext } from "@/components/agents/agent-form/types";
 import { AgentTabs, type AgentTab } from "@/components/agents/agent-tabs";
 import {
   AgentTestPanel,
   type VariantBOverrides,
 } from "@/components/agents/agent-test-panel";
 import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
+import { usePublishAssistantContext } from "@/components/assistant/assistant-context";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function EditAgentPage({
@@ -58,6 +60,10 @@ export default function EditAgentPage({
   const [formIteration, setFormIteration] = useState(0);
   const formPanelId = useId();
   const testPanelId = useId();
+
+  // Publish the (non-secret) edited agent shape to the assistant (#689 phase 2).
+  // Before the early returns so the hook order stays stable across renders.
+  usePublishAssistantContext(agentFormAssistantContext(snapshot?.values, "edit"));
 
   if (isPending) {
     return <LoadingState className="p-6" />;

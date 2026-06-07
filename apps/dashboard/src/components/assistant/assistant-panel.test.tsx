@@ -15,6 +15,7 @@ vi.mock("@/hooks/api", () => ({
 const mockPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  usePathname: () => "/agents/new",
 }));
 
 import { AssistantPanel } from "./assistant-panel";
@@ -56,6 +57,22 @@ describe("AssistantPanel", () => {
 
     expect(mockMutate).toHaveBeenCalledTimes(1);
     expect(screen.getByText("an agent that reviews PRs")).toBeInTheDocument();
+  });
+
+  it("sends the current route as context (#689 phase 2)", async () => {
+    const user = userEvent.setup();
+    render(<AssistantPanel />);
+    await user.click(
+      screen.getByRole("button", { name: /open configuration assistant/i }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: /message the assistant/i }),
+      "help",
+    );
+    await user.click(screen.getByRole("button", { name: /^send$/i }));
+
+    const [vars] = mockMutate.mock.calls[0];
+    expect(vars.context).toMatchObject({ route: "/agents/new" });
   });
 });
 

@@ -1,4 +1,5 @@
 import { AssistantPanel } from "@/components/assistant/assistant-panel";
+import { AssistantPageContextProvider } from "@/components/assistant/assistant-context";
 import { AssistantPrefillProvider } from "@/components/assistant/assistant-prefill";
 import { ConfirmDestructiveProvider } from "@/components/confirm-destructive-dialog";
 import { Sidebar } from "@/components/sidebar";
@@ -25,11 +26,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <ConfirmDestructiveProvider>
         <ToastProvider>
           <AssistantPrefillProvider>
-            <div className="flex h-full">
-              <Sidebar />
-              <main className="flex-1 overflow-auto bg-muted/30">{children}</main>
-              <AssistantPanel />
-            </div>
+            <AssistantPageContextProvider>
+              <div className="flex h-full">
+                <Sidebar />
+                <main className="flex-1 overflow-auto bg-muted/30">{children}</main>
+                <AssistantPanel />
+              </div>
+            </AssistantPageContextProvider>
           </AssistantPrefillProvider>
         </ToastProvider>
       </ConfirmDestructiveProvider>

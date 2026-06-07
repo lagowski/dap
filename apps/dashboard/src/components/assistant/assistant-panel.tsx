@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ArrowRight, FileText, Loader2, Send, Sparkles, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,6 +10,7 @@ import { useAssistantChat } from "@/hooks/api";
 import type { AssistantAction, AssistantMessage } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+import { useAssistantPageContext } from "./assistant-context";
 import { useAssistantPrefill } from "./assistant-prefill";
 
 const STORAGE_KEY = "dap.assistant.open";
@@ -49,7 +50,9 @@ export function AssistantPanel() {
   const chat = useAssistantChat();
   const scrollRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const { setPrefill } = useAssistantPrefill();
+  const { context: pageContext } = useAssistantPageContext();
 
   const runAction = (action: AssistantAction) => {
     if (action.kind === "navigate" && isInternalPath(action.href)) {
@@ -91,8 +94,12 @@ export function AssistantPanel() {
     ];
     setTurns((prev) => [...prev, { role: "user", content }]);
     setDraft("");
+    // Always send the current route; merge in whatever the page published
+    // (#689 phase 2). Names/shape only — the page never publishes secrets and
+    // the backend redacts secret-looking keys as a second line of defence.
+    const context: Record<string, unknown> = { route: pathname, ...(pageContext ?? {}) };
     chat.mutate(
-      { messages: nextHistory },
+      { messages: nextHistory, context },
       {
         onSuccess: (res) =>
           setTurns((prev) => [
