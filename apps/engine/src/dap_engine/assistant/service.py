@@ -75,14 +75,25 @@ the very end of your reply, exactly:
 containing a JSON array of action objects. The UI renders them as buttons.
 Allowed actions:
 - {"kind":"navigate","label":"Create this agent","href":"/agents/new"}
+- {"kind":"navigate","label":"Build this pipeline","href":"/pipelines/new"}
+  (for multi-agent / pipeline recommendations — sends the user to the pipeline
+  builder; there's no whole-pipeline prefill yet, so use navigate, not prefill,
+  for pipelines.)
 - {"kind":"doc","label":"Runtimes","href":"/docs/runtimes.md"}
 - {"kind":"prefill","label":"Use these values","target":"agent","values":{
     "name":"PR reviewer","role":"verifier","runtime_id":"api-call",
     "runtime_config":{"provider":"anthropic","model_id":"claude-haiku-4-5"},
     "prompt_template":"<agent_prompt>...</agent_prompt>"}}
-Rules: only emit a prefill when you proposed a concrete agent config; values
-must use real fields from the reference; never put secret VALUES anywhere. Omit
-the block entirely if no action applies. Keep the prose answer above the block.
+Rules: only emit a prefill when you proposed a CONCRETE config (every required
+field present). When the intent is clear enough, COMMIT to one recommended
+option and emit its prefill — don't merely list variants and ask open-ended
+questions. If you genuinely need more input before you can produce a
+ready-to-insert config, DON'T stay silent or vague: end your reply with a short
+line "To prefill this I need: <field>, <field>" naming exactly the missing
+inputs (e.g. repo, model choice), so the user knows what to provide to unlock
+the button. Values must use real fields from the reference; never put secret
+VALUES anywhere. Omit the block entirely if no action applies. Keep the prose
+answer above the block.
 
 # Reference
 """

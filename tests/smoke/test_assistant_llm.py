@@ -201,6 +201,8 @@ async def test_generate_reply_success_is_grounded() -> None:
     assert fake.last_task is not None
     sysprompt = fake.last_task.runtime_config["system_prompt"]
     assert "DAP configuration reference" in sysprompt
+    # Prefill guidance (#689): when it lacks data, the model must say what it needs.
+    assert "To prefill this I need" in sysprompt
     assert secret not in sysprompt  # the key VALUE never enters the prompt
     assert secret not in fake.last_task.prompt_xml
 
