@@ -676,6 +676,10 @@ export interface AdminOAuthProvider {
   client_secret_configured: boolean;
 }
 
+/** Instance env vars — admin listing with masked previews (#388). */
+export type InstanceEnvVarListing = ApiSchema<"InstanceEnvVarListing">;
+export type InstanceEnvVarPreview = ApiSchema<"InstanceEnvVarPreview">;
+
 export interface AdminInstanceSettings {
   auth: {
     jwt_secret_configured: boolean;

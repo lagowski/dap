@@ -55,4 +55,5 @@ export const queryKeys = {
     limit?: number;
   }) => ["admin", "api-tokens", "list", filters ?? {}] as const,
   adminSettings: ["admin", "settings"] as const,
+  instanceEnvVars: ["admin", "env-vars"] as const,
 };

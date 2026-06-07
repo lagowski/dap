@@ -11,6 +11,7 @@
 import type {
   AdminApiToken,
   AdminInstanceSettings,
+  InstanceEnvVarListing,
   AdminUser,
   AdminUserUpdate,
   Agent,
@@ -824,4 +825,25 @@ export async function createApiToken(payload: {
  */
 export async function getAdminSettings(): Promise<AdminInstanceSettings> {
   return request<AdminInstanceSettings>("/settings/admin");
+}
+
+/** Instance env vars — admin-only, masked previews (never the raw value) (#388). */
+export async function listInstanceEnvVars(): Promise<InstanceEnvVarListing> {
+  return request<InstanceEnvVarListing>("/settings/admin/env-vars");
+}
+
+export async function upsertInstanceEnvVar(
+  key: string,
+  value: string,
+): Promise<InstanceEnvVarListing> {
+  return request<InstanceEnvVarListing>("/settings/admin/env-vars", {
+    method: "POST",
+    json: { [key]: value },
+  });
+}
+
+export async function deleteInstanceEnvVar(key: string): Promise<void> {
+  await request<void>(`/settings/admin/env-vars/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
 }

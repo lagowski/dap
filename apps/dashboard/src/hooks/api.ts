@@ -613,6 +613,31 @@ export function useAdminSettings() {
   });
 }
 
+/** Instance env vars — admin-only, masked previews (#388). */
+export function useInstanceEnvVars() {
+  return useQuery({
+    queryKey: queryKeys.instanceEnvVars,
+    queryFn: () => api.listInstanceEnvVars(),
+  });
+}
+
+export function useUpsertInstanceEnvVar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, value }: { key: string; value: string }) =>
+      api.upsertInstanceEnvVar(key, value),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.instanceEnvVars }),
+  });
+}
+
+export function useDeleteInstanceEnvVar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) => api.deleteInstanceEnvVar(key),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.instanceEnvVars }),
+  });
+}
+
 /**
  * Config assistant chat (#689). A plain mutation — the assistant panel owns
  * the message history and sends the full transcript each turn.
