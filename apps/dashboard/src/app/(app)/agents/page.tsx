@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { isManagedAgent } from "@/lib/managed-agent";
+import { applyManagedFilter } from "@/lib/agent-list-filter";
 import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
@@ -125,8 +126,17 @@ export default function AgentsPage() {
     }
   };
 
+  // Managed (Cortex) agents are bundle-owned nodes, not hand-authored agents
+  // (#739). They can clutter the list when you're working on your own — offer a
+  // one-click declutter toggle.
+  const [hideManaged, setHideManaged] = useState(false);
+  const { rows: visibleItems, managedCount } = useMemo(
+    () => applyManagedFilter(data?.items ?? [], { hideManaged }),
+    [data, hideManaged],
+  );
+
   const groupedAgents = useMemo(() => {
-    const items = data?.items ?? [];
+    const items = visibleItems;
     const by = new Map<string, typeof items>();
     for (const a of items) {
       const cat = agentCategory(a.name);
@@ -141,7 +151,7 @@ export default function AgentsPage() {
           categoryRank(a.cat) - categoryRank(b.cat) ||
           a.cat.localeCompare(b.cat),
       );
-  }, [data]);
+  }, [visibleItems]);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const toggle = (cat: string) =>
@@ -235,6 +245,17 @@ export default function AgentsPage() {
             No agents yet. Create the first one.
           </CardContent>
         </Card>
+      )}
+      {data && data.items.length > 0 && managedCount > 0 && (
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={hideManaged}
+            onChange={(e) => setHideManaged(e.target.checked)}
+            className="h-3.5 w-3.5"
+          />
+          Hide {managedCount} managed (Cortex) agent{managedCount === 1 ? "" : "s"}
+        </label>
       )}
       {data && data.items.length > 0 && (
         <Card>
