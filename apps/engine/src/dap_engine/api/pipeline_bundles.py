@@ -167,9 +167,15 @@ def materialise_pipeline_import(
         raise PipelineBundleError(422, exc.errors()) from exc
 
     _enforce_validation(create_payload, session)
-    # Re-importing a same-named bundle bumps the version under the existing
-    # pipeline_id instead of creating a duplicate row (#755).
-    return repo.import_pipeline(session, create_payload, user_id=user.id)
+    # Re-importing bumps the version under the existing pipeline_id instead of
+    # creating a duplicate row (#755): an explicit ``pipeline_id`` targets that
+    # row directly (honoured only when owned + non-archived), otherwise by name.
+    return repo.import_pipeline(
+        session,
+        create_payload,
+        user_id=user.id,
+        target_pipeline_id=payload.pipeline_id,
+    )
 
 
 def build_pipeline_export(
@@ -219,6 +225,9 @@ def build_pipeline_export(
     return PipelineExport(
         schema_version=PIPELINE_EXPORT_SCHEMA_VERSION,
         min_dap_version=__version__,
+        # Emit the source id so a re-import can target this pipeline explicitly
+        # instead of guessing by name (#755).
+        pipeline_id=pipeline_id,
         pipeline=payload,
         bundled_agents=bundled_agents,
     )

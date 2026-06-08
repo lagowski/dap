@@ -119,6 +119,10 @@ class PipelineExport(BaseModel):
         PIPELINE_EXPORT_SCHEMA_VERSION
     )
     min_dap_version: str | None = None
+    # The source pipeline's id, so a re-import can target it explicitly instead
+    # of guessing by name (#755). Importers honour it only when it matches a
+    # pipeline they own on the target install; otherwise it's ignored.
+    pipeline_id: str | None = None
     pipeline: PipelineExportPayload
     bundled_agents: dict[str, AgentExportPayload] | None = None
 
@@ -146,6 +150,11 @@ class PipelineImportRequest(BaseModel):
 
     schema_version: Literal["pipeline-export/1", "pipeline-export/2"]
     min_dap_version: str | None = None
+    # Explicit upgrade target (#755): when set and it matches a non-archived
+    # pipeline the caller owns, the import bumps that pipeline's version directly
+    # (ignoring name). An unknown / foreign / archived id is ignored and the
+    # import falls back to name-match-or-create.
+    pipeline_id: str | None = None
     pipeline: PipelineExportPayload
     bundled_agents: dict[str, BundledAgentImportPayload] | None = None
     backend_profiles: dict[str, Any] | None = None

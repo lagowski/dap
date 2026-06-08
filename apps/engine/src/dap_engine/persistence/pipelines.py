@@ -116,37 +116,23 @@ def create_pipeline(
     return _pipeline_from_orm(pipeline, version, is_current=True)
 
 
-def import_pipeline(
+def _bump_pipeline_version(
     session: Session,
+    existing: PipelineORM,
     payload: PipelineCreate,
-    *,
     user_id: uuid.UUID,
 ) -> Pipeline:
-    """Create a pipeline from an import, or bump the version of a same-named one (#755).
+    """Write a new version under ``existing`` at ``current + 1`` and make it current.
 
-    Re-importing a bundle whose pipeline name already exists (owned by the same
-    user, not archived) writes a new ``PipelineVersionORM`` at ``current + 1``
-    under the SAME ``pipeline_id`` and bumps ``current_version`` — so new runs
-    auto-route to the update and the prior version becomes historical, instead of
-    creating a parallel duplicate row. ``backend_profiles`` are carried onto the
-    new version (unlike :func:`update_pipeline`, which doesn't).
-
-    Always bumps on a name match — no "identical → no-op" short-circuit: bundle
-    imports re-create their agents, so node ``agent_id``s always differ and an
-    identical-definition check could never match anyway.
+    Carries ``backend_profiles`` onto the new version (unlike
+    :func:`update_pipeline`) and records a ``pipeline.updated`` audit row tagged
+    ``via=import``. Shared by both the explicit-id and name-match import paths.
+    The stored name is refreshed from the payload — an explicit-id import may
+    target a pipeline whose name differs from the bundle's.
     """
-    existing = session.scalars(
-        select(PipelineORM)
-        .where(PipelineORM.user_id == user_id)
-        .where(PipelineORM.name == payload.name)
-        .where(PipelineORM.archived_at.is_(None))
-        .order_by(PipelineORM.created_at.asc())
-    ).first()
-    if existing is None:
-        return create_pipeline(session, payload, user_id=user_id)
-
     now = _now()
     new_version_number = existing.current_version + 1
+    existing.name = payload.name
     existing.description = payload.description
     existing.current_version = new_version_number
     existing.updated_at = now
@@ -179,6 +165,51 @@ def import_pipeline(
         },
     )
     return _pipeline_from_orm(existing, version, is_current=True)
+
+
+def import_pipeline(
+    session: Session,
+    payload: PipelineCreate,
+    *,
+    user_id: uuid.UUID,
+    target_pipeline_id: str | None = None,
+) -> Pipeline:
+    """Create a pipeline from an import, or bump the version of an existing one (#755).
+
+    Resolution order:
+
+    1. **Explicit target** — if ``target_pipeline_id`` is given and names a
+       non-archived pipeline the caller owns, bump *that* pipeline's version,
+       regardless of name. A foreign / archived / unknown id is ignored (no
+       enumeration leak, no cross-user mutation) and resolution falls through to:
+    2. **Name match** — the newest non-archived pipeline the caller owns with the
+       same name is bumped to ``current + 1`` under the SAME ``pipeline_id`` — so
+       new runs auto-route to the update and the prior version becomes historical.
+    3. **No match** — a brand-new pipeline is created.
+
+    Bumps carry ``backend_profiles`` onto the new version. There is no
+    "identical → no-op" short-circuit: bundle imports re-create their agents, so
+    node ``agent_id``s always differ and an identical-definition check could
+    never match anyway.
+    """
+    if target_pipeline_id is not None:
+        target = session.get(PipelineORM, target_pipeline_id)
+        if target is not None and target.user_id == user_id and target.archived_at is None:
+            return _bump_pipeline_version(session, target, payload, user_id)
+        # Unknown / not-owned / archived id → ignore it and fall through to the
+        # name-match-or-create path below.
+
+    existing = session.scalars(
+        select(PipelineORM)
+        .where(PipelineORM.user_id == user_id)
+        .where(PipelineORM.name == payload.name)
+        .where(PipelineORM.archived_at.is_(None))
+        .order_by(PipelineORM.created_at.asc())
+    ).first()
+    if existing is None:
+        return create_pipeline(session, payload, user_id=user_id)
+
+    return _bump_pipeline_version(session, existing, payload, user_id)
 
 
 def update_pipeline(

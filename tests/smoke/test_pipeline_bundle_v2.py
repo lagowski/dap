@@ -17,6 +17,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.smoke._auth import register_and_login
+
 
 @pytest.fixture
 def client(authed_client: TestClient) -> TestClient:
@@ -179,6 +181,70 @@ def test_reimport_carries_backend_profiles_onto_the_bumped_version(client: TestC
     assert r2.status_code == 201, r2.text
     assert r2.json()["version"] == 2
     assert r2.json()["backend_profiles"] == profiles
+
+
+def test_explicit_pipeline_id_upgrades_that_pipeline_even_with_a_different_name(
+    client: TestClient,
+) -> None:
+    """An explicit pipeline_id targets that pipeline directly, ignoring name (#755)."""
+    r1 = client.post("/pipelines/import", json=_v2_bundle(_create_minimal_agent(client)))
+    assert r1.status_code == 201, r1.text
+    p1 = r1.json()
+
+    b2 = _v2_bundle(_create_minimal_agent(client), pipeline_id=p1["id"])
+    b2["pipeline"]["name"] = "A Completely Different Name"
+    r2 = client.post("/pipelines/import", json=b2)
+    assert r2.status_code == 201, r2.text
+    p2 = r2.json()
+    # Bumped the targeted pipeline despite the name change — not a new row.
+    assert p2["id"] == p1["id"]
+    assert p2["version"] == 2
+    assert p2["name"] == "A Completely Different Name"
+
+
+def test_explicit_unknown_pipeline_id_falls_back_to_create(client: TestClient) -> None:
+    """A pipeline_id that matches nothing the caller owns is ignored, not an error."""
+    bundle = _v2_bundle(
+        _create_minimal_agent(client),
+        pipeline_id="00000000-0000-4000-8000-000000000000",
+    )
+    response = client.post("/pipelines/import", json=bundle)
+    assert response.status_code == 201, response.text
+    # New pipeline created with a server-assigned id, not the bogus target.
+    assert response.json()["id"] != "00000000-0000-4000-8000-000000000000"
+    assert response.json()["version"] == 1
+
+
+def test_explicit_pipeline_id_owned_by_another_user_is_ignored(client: TestClient) -> None:
+    """Targeting someone else's pipeline_id must not touch it (no cross-user mutation)."""
+    # Alice (default fixture user) owns a pipeline.
+    alice = client.post("/pipelines/import", json=_v2_bundle(_create_minimal_agent(client)))
+    assert alice.status_code == 201, alice.text
+    alice_id = alice.json()["id"]
+
+    # Bob imports a bundle whose pipeline_id points at Alice's pipeline.
+    bob_jwt = register_and_login(client, "bob-import-explicit@example.com")
+    bob_headers = {"Authorization": f"Bearer {bob_jwt}"}
+    bob_agent = client.post(
+        "/agents",
+        headers=bob_headers,
+        json={
+            "name": "Bob Agent",
+            "role": "task_selector",
+            "runtime_id": "api-call",
+            "prompt_template": "<agent_prompt><role>x</role></agent_prompt>",
+        },
+    )
+    assert bob_agent.status_code == 201, bob_agent.text
+    bundle = _v2_bundle(str(bob_agent.json()["id"]), pipeline_id=alice_id)
+    bundle["pipeline"]["name"] = "Bob's Pipeline"
+    bob = client.post("/pipelines/import", headers=bob_headers, json=bundle)
+    assert bob.status_code == 201, bob.text
+    # Bob got his own brand-new pipeline; Alice's was not hijacked.
+    assert bob.json()["id"] != alice_id
+    assert bob.json()["version"] == 1
+    # Alice's pipeline is untouched, still at version 1.
+    assert client.get(f"/pipelines/{alice_id}").json()["version"] == 1
 
 
 def test_v2_bundle_ignores_structured_documentation_fields(client: TestClient) -> None:
