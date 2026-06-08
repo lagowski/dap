@@ -143,6 +143,44 @@ def test_v2_bundle_ignores_both_documentation_fields(client: TestClient) -> None
     assert response.status_code == 201, response.text
 
 
+def test_reimport_same_name_bumps_version_under_same_id(client: TestClient) -> None:
+    """Re-importing a same-named bundle bumps the version under the existing
+    pipeline_id instead of creating a duplicate row (#755)."""
+    r1 = client.post("/pipelines/import", json=_v2_bundle(_create_minimal_agent(client)))
+    assert r1.status_code == 201, r1.text
+    p1 = r1.json()
+    assert p1["version"] == 1
+
+    # Re-import the same name with a tweaked definition.
+    b2 = _v2_bundle(_create_minimal_agent(client))
+    b2["pipeline"]["description"] = "updated on re-import"
+    r2 = client.post("/pipelines/import", json=b2)
+    assert r2.status_code == 201, r2.text
+    p2 = r2.json()
+    assert p2["id"] == p1["id"]  # same pipeline, not a duplicate
+    assert p2["version"] == 2
+
+
+def test_import_different_name_creates_a_new_pipeline(client: TestClient) -> None:
+    r1 = client.post("/pipelines/import", json=_v2_bundle(_create_minimal_agent(client)))
+    b2 = _v2_bundle(_create_minimal_agent(client))
+    b2["pipeline"]["name"] = "A Distinctly Different Pipeline"
+    r2 = client.post("/pipelines/import", json=b2)
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["id"] != r1.json()["id"]
+
+
+def test_reimport_carries_backend_profiles_onto_the_bumped_version(client: TestClient) -> None:
+    """The version bump must preserve backend_profiles (cortex relies on them)."""
+    client.post("/pipelines/import", json=_v2_bundle(_create_minimal_agent(client)))
+    profiles = {"available": {"cheap": {"backend": "api/anthropic"}}, "agent_assignments": {}}
+    b2 = _v2_bundle(_create_minimal_agent(client), backend_profiles=profiles)
+    r2 = client.post("/pipelines/import", json=b2)
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["version"] == 2
+    assert r2.json()["backend_profiles"] == profiles
+
+
 def test_v2_bundle_ignores_structured_documentation_fields(client: TestClient) -> None:
     """Real bundles ship _comment / install_instructions as structured blocks,
     not strings — those must be ignored, not 422 with a string_type error (#755)."""

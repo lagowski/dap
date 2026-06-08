@@ -107,8 +107,9 @@ def test_export_404_unknown_pipeline(client: TestClient) -> None:
 
 
 def test_round_trip_preserves_all_portable_fields(client: TestClient) -> None:
-    """Export then import in the same DB — fields land on the new pipeline
-    with v1 and the agent reference still resolves locally."""
+    """Export then import in the same DB — re-importing the same name bumps the
+    version under the existing pipeline (#755), with all fields preserved and the
+    agent reference still resolving locally."""
     agent_id = _create_minimal_agent(client)
     created = client.post("/pipelines", json=_pipeline_payload(agent_id)).json()
     exported = client.get(f"/pipelines/{created['id']}/export").json()
@@ -117,8 +118,8 @@ def test_round_trip_preserves_all_portable_fields(client: TestClient) -> None:
     assert response.status_code == 201, response.text
     imported = response.json()
 
-    assert imported["id"] != created["id"]  # new pipeline
-    assert imported["version"] == 1
+    assert imported["id"] == created["id"]  # same pipeline, version bumped (#755)
+    assert imported["version"] == 2
     assert imported["name"] == created["name"]
     assert imported["description"] == created["description"]
     assert imported["entry_point"] == created["entry_point"]
@@ -417,9 +418,9 @@ def test_bundle_import_rolls_back_agents_on_pipeline_validation_failure(
 
 
 def test_bundle_round_trip(client: TestClient) -> None:
-    """Export with ``bundle=true`` → import same envelope → fresh
-    pipeline + fresh agents in a single round-trip. The imported
-    pipeline should still validate (no missing references)."""
+    """Export with ``bundle=true`` → import same envelope. Re-importing the same
+    name bumps the version under the existing pipeline (#755) and still creates
+    fresh agent rows for the bundled agents (the new version references them)."""
     source_agent_id = _create_minimal_agent(client, name="Round Trip Source")
     created = client.post("/pipelines", json=_pipeline_payload(source_agent_id)).json()
 
@@ -430,10 +431,10 @@ def test_bundle_round_trip(client: TestClient) -> None:
     assert response.status_code == 201, response.text
     imported = response.json()
 
-    # Two distinct pipelines, two distinct agent rows (since the
-    # importer always creates fresh; conflict resolution against
-    # existing names is out of scope per the issue).
-    assert imported["id"] != created["id"]
+    # Same pipeline, bumped to v2 (#755) — not a duplicate row. Bundled agents
+    # are still re-created, so the new version references fresh agent rows.
+    assert imported["id"] == created["id"]
+    assert imported["version"] == 2
     new_agent_id = imported["nodes"][0]["agent_id"]
     assert new_agent_id != source_agent_id
 
