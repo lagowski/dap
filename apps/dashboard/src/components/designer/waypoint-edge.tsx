@@ -4,11 +4,15 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   type EdgeProps,
+  Position,
   type XYPosition,
   useReactFlow,
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type React from "react";
+
+/** Distance (flow units) of the straight approach/exit stub off each handle. */
+export const APPROACH_STUB = 18;
 
 type WaypointEdgeData = {
   waypoints?: XYPosition[];
@@ -35,6 +39,56 @@ export function waypointPath(points: XYPosition[]): string {
     }
   }
   return path;
+}
+
+/** Offset a handle anchor outward along its normal, so the segment touching the
+ *  node runs straight into (or out of) the handle instead of approaching at an
+ *  angle. Top/Bottom shift vertically, Left/Right horizontally. */
+export function approachStub(
+  point: XYPosition,
+  position: Position | undefined,
+  distance = APPROACH_STUB,
+): XYPosition {
+  switch (position) {
+    case Position.Left:
+      return { x: point.x - distance, y: point.y };
+    case Position.Right:
+      return { x: point.x + distance, y: point.y };
+    case Position.Top:
+      return { x: point.x, y: point.y - distance };
+    case Position.Bottom:
+      return { x: point.x, y: point.y + distance };
+    default:
+      return { ...point };
+  }
+}
+
+/** Build the full point list for an edge: a straight exit stub off the source
+ *  handle, the manual waypoints, then a straight approach stub into the target
+ *  handle. The last segment (stub → target) is always colinear with the arrow. */
+export function routePoints(
+  source: XYPosition,
+  sourcePosition: Position | undefined,
+  waypoints: XYPosition[],
+  target: XYPosition,
+  targetPosition: Position | undefined,
+  distance = APPROACH_STUB,
+): XYPosition[] {
+  const candidates = [
+    source,
+    approachStub(source, sourcePosition, distance),
+    ...waypoints,
+    approachStub(target, targetPosition, distance),
+    target,
+  ];
+  // Drop consecutive duplicates (e.g. an unknown handle position whose stub
+  // coincides with its anchor) so we never emit a zero-length segment.
+  return candidates.filter(
+    (point, index) =>
+      index === 0 ||
+      point.x !== candidates[index - 1].x ||
+      point.y !== candidates[index - 1].y,
+  );
 }
 
 export function nudgeWaypoint(
@@ -67,8 +121,10 @@ export function WaypointEdge({
   id,
   sourceX,
   sourceY,
+  sourcePosition,
   targetX,
   targetY,
+  targetPosition,
   markerEnd,
   style,
   label,
@@ -83,12 +139,15 @@ export function WaypointEdge({
   const latestWaypointsRef = useRef(waypoints);
   const latestOnWaypointsChangeRef = useRef(edgeData.onWaypointsChange);
   const pathPoints = useMemo(
-    () => [
-      { x: sourceX, y: sourceY },
-      ...waypoints,
-      { x: targetX, y: targetY },
-    ],
-    [sourceX, sourceY, targetX, targetY, waypoints],
+    () =>
+      routePoints(
+        { x: sourceX, y: sourceY },
+        sourcePosition,
+        waypoints,
+        { x: targetX, y: targetY },
+        targetPosition,
+      ),
+    [sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints],
   );
   const path = waypointPath(pathPoints);
   const labelPosition = midpoint(pathPoints);
