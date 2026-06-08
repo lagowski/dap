@@ -31,7 +31,34 @@ vi.mock("@/components/assistant/assistant-prefill", () => ({
   }),
 }));
 
-import { NodeDetailPanel } from "./node-detail-panel";
+import { NodeDetailPanel, inputStateForNode } from "./node-detail-panel";
+
+const _snap = (node_id: string, state: Record<string, unknown>): StateSnapshot =>
+  ({ id: node_id, run_id: "r1", node_id, timestamp: "t", state }) as unknown as StateSnapshot;
+
+describe("inputStateForNode (#749)", () => {
+  const order = ["mockup", "mockup-write", "coder", "coder-write", "tester"];
+
+  it("returns the most recent upstream snapshot for a node with no snapshot", () => {
+    // Sparse cortex run: only *-write nodes recorded snapshots. Clicking `coder`
+    // (no snapshot) should seed from the latest upstream snapshot (mockup-write).
+    const snaps = [_snap("mockup-write", { extensions: { issue: 1 } })];
+    expect(inputStateForNode(snaps, order, "coder")).toEqual({ extensions: { issue: 1 } });
+  });
+
+  it("picks the closest upstream snapshot when several precede the node", () => {
+    const snaps = [
+      _snap("mockup-write", { step: "mockup" }),
+      _snap("coder-write", { step: "coder" }),
+    ];
+    expect(inputStateForNode(snaps, order, "tester")).toEqual({ step: "coder" });
+  });
+
+  it("returns null when nothing ran upstream", () => {
+    expect(inputStateForNode([_snap("coder-write", { x: 1 })], order, "mockup")).toBeNull();
+    expect(inputStateForNode([], order, "coder")).toBeNull();
+  });
+});
 
 function makeLog(overrides: Partial<NodeExecutionLog> = {}): NodeExecutionLog {
   return {

@@ -80,7 +80,9 @@ export function NodeDetailPanel({
       target: "agent-test",
       values: {
         agent_id: agent.id,
-        input_state: before ?? null,
+        // The state this node received — walks upstream so sparse cortex
+        // snapshots still seed the tester (#749), not just exact-match nodes.
+        input_state: inputStateForNode(stateHistory ?? [], nodeIds ?? [], nodeId),
       },
     });
     router.push(`/agents/${agent.id}/edit?tab=test`);
@@ -478,4 +480,40 @@ function getSnapshotPair(
   const after = snapshots[idx].state;
   const before = idx > 0 ? snapshots[idx - 1].state : null;
   return { before, after };
+}
+
+/**
+ * The state a node *received* — for "Open in agent tester" (#749). Snapshots are
+ * recorded after a node runs, and in cortex runs they're sparse (only ``*-write``
+ * nodes record them), so an exact node_id match misses the very nodes the
+ * operator wants to dogfood. Instead, return the most-recent snapshot from a
+ * node that ran *before* the clicked node in execution order (``order``) — that's
+ * the input the clicked node saw. ``null`` when nothing ran upstream.
+ */
+export function inputStateForNode(
+  snapshots: StateSnapshot[],
+  order: string[],
+  nodeId: string | null,
+): PipelineState | null {
+  if (!nodeId || snapshots.length === 0) return null;
+  // Preferred: use execution order to find the closest upstream snapshot.
+  if (order.length > 0) {
+    const pos = order.indexOf(nodeId);
+    let best: PipelineState | null = null;
+    let bestPos = -1;
+    for (const s of snapshots) {
+      const sp = order.indexOf(s.node_id);
+      if (sp === -1) continue;
+      const isUpstream = pos === -1 || sp < pos;
+      if (isUpstream && sp > bestPos) {
+        bestPos = sp;
+        best = s.state;
+      }
+    }
+    if (best !== null) return best;
+  }
+  // Fallback (no order available): snapshots are in execution order, so the
+  // node's own snapshot's predecessor is the state it received.
+  const idx = snapshots.findIndex((s) => s.node_id === nodeId);
+  return idx > 0 ? snapshots[idx - 1].state : null;
 }
