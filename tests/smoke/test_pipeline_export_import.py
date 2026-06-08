@@ -128,6 +128,27 @@ def test_round_trip_preserves_all_portable_fields(client: TestClient) -> None:
     assert len(imported["edges"]) == len(created["edges"])
 
 
+def test_export_carries_pipeline_id_and_reimport_targets_it_over_name(
+    client: TestClient,
+) -> None:
+    """Export emits the source pipeline_id; a renamed re-import still upgrades the
+    original pipeline via that id rather than creating a new row (#755 part B)."""
+    agent_id = _create_minimal_agent(client)
+    created = client.post("/pipelines", json=_pipeline_payload(agent_id)).json()
+
+    exported = client.get(f"/pipelines/{created['id']}/export").json()
+    assert exported["pipeline_id"] == created["id"]
+
+    # Rename the bundle: name no longer matches, so only the explicit id can win.
+    exported["pipeline"]["name"] = "Renamed Away From The Original"
+    response = client.post("/pipelines/import", json=exported)
+    assert response.status_code == 201, response.text
+    imported = response.json()
+    assert imported["id"] == created["id"]
+    assert imported["version"] == 2
+    assert imported["name"] == "Renamed Away From The Original"
+
+
 # ---------------------------------------------------------------------------
 # Import 422 paths
 # ---------------------------------------------------------------------------

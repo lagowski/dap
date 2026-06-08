@@ -2913,6 +2913,8 @@ export interface components {
             /** Min Dap Version */
             min_dap_version?: string | null;
             pipeline: components["schemas"]["PipelineExportPayload-Output"];
+            /** Pipeline Id */
+            pipeline_id?: string | null;
             /**
              * Schema Version
              * @default pipeline-export/2
@@ -3051,6 +3053,8 @@ export interface components {
             /** Min Dap Version */
             min_dap_version?: string | null;
             pipeline: components["schemas"]["PipelineExportPayload-Input"];
+            /** Pipeline Id */
+            pipeline_id?: string | null;
             /**
              * Schema Version
              * @enum {string}
