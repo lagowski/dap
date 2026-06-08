@@ -20,8 +20,21 @@ const EMPTY_WAYPOINTS: XYPosition[] = [];
 
 export function waypointPath(points: XYPosition[]): string {
   if (points.length === 0) return "";
-  const [first, ...rest] = points;
-  return rest.reduce((path, point) => `${path} L ${point.x},${point.y}`, `M ${first.x},${first.y}`);
+  // Orthogonal (right-angle / "broken-line") routing (#765): each segment that
+  // isn't already horizontal or vertical is drawn as H→V→H through the segment's
+  // mid-x, so edges run in clean right angles instead of diagonals.
+  let path = `M ${points[0].x},${points[0].y}`;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (a.x === b.x || a.y === b.y) {
+      path += ` L ${b.x},${b.y}`;
+    } else {
+      const midX = (a.x + b.x) / 2;
+      path += ` L ${midX},${a.y} L ${midX},${b.y} L ${b.x},${b.y}`;
+    }
+  }
+  return path;
 }
 
 export function nudgeWaypoint(
