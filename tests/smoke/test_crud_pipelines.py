@@ -146,6 +146,64 @@ def test_update_pipeline_creates_new_version(
     assert len(body["nodes"]) == 3
 
 
+_BACKEND_PROFILES = {
+    "available": {
+        "anthropic": {
+            "runtime_id": "api-call",
+            "runtime_config": {"provider": "anthropic", "model_id": "claude-sonnet-4-6"},
+        },
+        "openai": {
+            "runtime_id": "api-call",
+            "runtime_config": {"provider": "openai", "model_id": "gpt-4o"},
+        },
+    },
+    "agent_assignments": {"default_profile": "anthropic", "overrides": {"verify": "openai"}},
+}
+
+
+def test_update_preserves_backend_profiles_when_payload_omits_them(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    """A PUT without backend_profiles (e.g. the designer layout save) must carry
+    the prior version's per-node LLM assignments forward, not wipe them."""
+    created = client.post(
+        "/pipelines", json=_pipeline_payload(agents, backend_profiles=_BACKEND_PROFILES)
+    ).json()
+    assert created["backend_profiles"] == _BACKEND_PROFILES
+
+    # Plain update — the default payload has no backend_profiles key.
+    response = client.put(
+        f"/pipelines/{created['id']}", json=_pipeline_payload(agents, description="v2")
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == 2
+    assert body["backend_profiles"] == _BACKEND_PROFILES  # preserved, not clobbered
+
+
+def test_update_replaces_backend_profiles_when_payload_includes_them(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    """An explicit backend_profiles value (the LLM-per-node panel saving) replaces
+    the prior assignments."""
+    created = client.post(
+        "/pipelines", json=_pipeline_payload(agents, backend_profiles=_BACKEND_PROFILES)
+    ).json()
+
+    next_profiles = {
+        "available": _BACKEND_PROFILES["available"],
+        "agent_assignments": {"default_profile": "openai", "overrides": {}},
+    }
+    response = client.put(
+        f"/pipelines/{created['id']}",
+        json=_pipeline_payload(agents, backend_profiles=next_profiles),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["backend_profiles"] == next_profiles
+
+
 def test_patch_pipeline_ui_metadata_merges_without_new_version(
     client: TestClient,
     agents: dict[str, str],

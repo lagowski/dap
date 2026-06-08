@@ -230,7 +230,8 @@ def update_pipeline(
         raise NotFoundError(f"Pipeline not found: {pipeline_id}")
 
     now = _now()
-    new_version_number = pipeline.current_version + 1
+    prev_version_number = pipeline.current_version
+    new_version_number = prev_version_number + 1
 
     if payload.name is not None:
         pipeline.name = payload.name
@@ -238,6 +239,19 @@ def update_pipeline(
         pipeline.description = payload.description
     pipeline.current_version = new_version_number
     pipeline.updated_at = now
+
+    # backend_profiles drives per-node LLM/backend resolution at run time. A PUT
+    # that omits it (e.g. the designer's layout save, which doesn't yet manage
+    # profiles) must NOT wipe an imported bundle's assignments — carry the prior
+    # version's value forward. An explicit payload value replaces it. (#755 follow-up)
+    backend_profiles = payload.backend_profiles
+    if backend_profiles is None:
+        prev_version = session.scalars(
+            select(PipelineVersionORM)
+            .where(PipelineVersionORM.pipeline_id == pipeline.id)
+            .where(PipelineVersionORM.version == prev_version_number)
+        ).first()
+        backend_profiles = prev_version.backend_profiles if prev_version else None
 
     version = PipelineVersionORM(
         id=_new_id(),
@@ -252,6 +266,7 @@ def update_pipeline(
         edges=[e.model_dump(mode="json") for e in payload.edges],
         defaults=payload.defaults.model_dump(mode="json"),
         ui_metadata=payload.ui_metadata,
+        backend_profiles=backend_profiles,
         created_at=now,
     )
     session.add(version)
