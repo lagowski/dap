@@ -1,10 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { AlertCircle, ArrowLeft, CheckCircle2, Copy, Download, Package, Play } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  Copy,
+  Download,
+  Lightbulb,
+  Package,
+  Play,
+} from "lucide-react";
 import type { Pipeline, ValidationResult } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
 import type { AutoSaveLayoutStatus } from "./use-pipeline-save";
+import { distinctSuggestions } from "./validation-suggestions";
 import { downloadPipelineExportWithAlert } from "@/lib/pipeline-export";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -214,6 +224,31 @@ export function DesignerToolbar({
               </li>
             ))}
           </ul>
+          {(() => {
+            const suggestions = distinctSuggestions([
+              ...validationResult.errors,
+              ...validationResult.warnings,
+            ]);
+            if (suggestions.length === 0) return null;
+            return (
+              <div className="ml-5 mt-1.5 space-y-1 border-t border-amber-200/60 pt-1.5 dark:border-amber-900/40">
+                <div className="flex items-center gap-1.5 font-medium text-amber-800 dark:text-amber-300">
+                  <Lightbulb className="h-3.5 w-3.5" />
+                  Suggested fixes
+                </div>
+                <ul className="space-y-0.5">
+                  {suggestions.map((s, i) => (
+                    <li
+                      key={`s-${i}`}
+                      className="list-disc text-muted-foreground marker:text-amber-500"
+                    >
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
