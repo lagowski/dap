@@ -3037,7 +3037,7 @@ export interface components {
          */
         PipelineImportRequest: {
             /** Comment */
-            _comment?: string | null;
+            _comment?: unknown | null;
             /** Backend Profiles */
             backend_profiles?: {
                 [key: string]: unknown;
@@ -3047,7 +3047,7 @@ export interface components {
                 [key: string]: components["schemas"]["BundledAgentImportPayload"];
             } | null;
             /** Install Instructions */
-            install_instructions?: string | null;
+            install_instructions?: unknown | null;
             /** Min Dap Version */
             min_dap_version?: string | null;
             pipeline: components["schemas"]["PipelineExportPayload-Input"];
