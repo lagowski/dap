@@ -33,6 +33,8 @@ export interface PipelineFormPayload {
     approval_required_nodes: string[];
   };
   ui_metadata?: Record<string, unknown>;
+  /** Per-node LLM/backend assignments resolved by the engine at run time. */
+  backend_profiles?: Record<string, unknown> | null;
 }
 
 export const DEFAULT_DEFAULTS = {

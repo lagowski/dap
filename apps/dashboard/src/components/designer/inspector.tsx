@@ -25,6 +25,8 @@ import type { EdgeAnnotation } from "@/lib/edge-annotations";
 
 import { EdgePanel } from "./inspector/edge-panel";
 import { NodePanel } from "./inspector/node-panel";
+import { BackendProfilePanel } from "./inspector/backend-profile-editor";
+import type { BackendProfiles } from "@/lib/backend-profile-assignments";
 import type { DesignerEdge, DesignerNode } from "./types";
 
 
@@ -47,6 +49,8 @@ interface InspectorProps {
   onDeleteEdge: (edgeId: string) => void;
   onUpdateEdgeCondition: (edgeId: string, condition: EdgeCondition | null) => void;
   onUpdateEdgeLabel: (edgeId: string, label: string) => void;
+  backendProfiles: Record<string, unknown> | null;
+  onBackendProfilesChange: (next: Record<string, unknown>) => void;
 }
 
 
@@ -60,9 +64,16 @@ export function Inspector(props: InspectorProps) {
       </div>
       <div className="p-3">
         {props.selection.kind === "none" && (
-          <p className="text-xs text-muted-foreground">
-            Click a node or edge to inspect.
-          </p>
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">Click a node or edge to inspect.</p>
+            <div className="border-t pt-4">
+              <BackendProfilePanel
+                nodes={props.allNodes.map((n) => ({ id: n.id, label: n.id }))}
+                backendProfiles={props.backendProfiles as BackendProfiles | null}
+                onChange={props.onBackendProfilesChange}
+              />
+            </div>
+          </div>
         )}
         {props.selection.kind === "node" && (
           <NodePanel
@@ -73,6 +84,8 @@ export function Inspector(props: InspectorProps) {
             entryPoint={props.entryPoint}
             onSetEntryPoint={props.onSetEntryPoint}
             onDelete={props.onDeleteNode}
+            backendProfiles={props.backendProfiles as BackendProfiles | null}
+            onBackendProfilesChange={props.onBackendProfilesChange}
           />
         )}
         {props.selection.kind === "edge" && (

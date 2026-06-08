@@ -53,6 +53,9 @@ interface BuildPipelinePayloadParams {
   initialPipeline: Pipeline | null;
   viewport?: Viewport | null;
   edgeWaypoints?: EdgeWaypoints;
+  /** Per-node LLM/backend assignments (#755 follow-up). Sent verbatim so the
+   *  engine resolver and a future re-import see the same shape. */
+  backendProfiles?: Record<string, unknown> | null;
 }
 
 interface BuildLayoutUiMetadataParams {
@@ -107,6 +110,7 @@ export function buildPipelinePayload({
   initialPipeline,
   viewport,
   edgeWaypoints,
+  backendProfiles,
 }: BuildPipelinePayloadParams): PipelineFormPayload {
   return {
     name,
@@ -123,6 +127,12 @@ export function buildPipelinePayload({
       viewport,
       edgeWaypoints,
     }),
+    // Carry assignments through every save so a layout-only save doesn't drop
+    // them. Falls back to the pipeline's existing profiles when unmanaged.
+    backend_profiles:
+      backendProfiles ??
+      (initialPipeline?.backend_profiles as Record<string, unknown> | undefined) ??
+      null,
   };
 }
 

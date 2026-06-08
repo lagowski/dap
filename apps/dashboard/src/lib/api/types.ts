@@ -412,6 +412,8 @@ export interface Pipeline {
   is_active: boolean;
   /** Dashboard-private layout metadata (node positions, etc.). Not used by the engine. */
   ui_metadata?: Record<string, unknown>;
+  /** Per-node LLM/backend assignments resolved by the engine at run time. */
+  backend_profiles?: Record<string, unknown> | null;
 }
 
 export type FinalStatus = "running" | "success" | "failed" | "aborted" | "paused";

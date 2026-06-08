@@ -190,6 +190,12 @@ export function PipelineDesigner({
     | { kind: "none" }
   >({ kind: "none" });
 
+  // Per-node LLM/backend assignments (#755 follow-up). Seeded from the pipeline
+  // so an edit doesn't drop them; the inspector's "LLM per node" panel edits it.
+  const [backendProfiles, setBackendProfiles] = useState<Record<string, unknown> | null>(
+    () => (seed?.backend_profiles as Record<string, unknown> | undefined) ?? null,
+  );
+
   const onNodesChange: OnNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
     [],
@@ -355,6 +361,7 @@ export function PipelineDesigner({
     initialPipeline,
     viewport,
     edgeWaypoints,
+    backendProfiles,
   });
   const layoutSave = useAutoSaveLayout({
     pipelineId: initialPipeline?.id ?? null,
@@ -418,6 +425,8 @@ export function PipelineDesigner({
           onDeleteEdge={handleDeleteEdge}
           onUpdateEdgeCondition={handleUpdateEdgeCondition}
           onUpdateEdgeLabel={handleUpdateEdgeLabel}
+          backendProfiles={backendProfiles}
+          onBackendProfilesChange={setBackendProfiles}
         />
       </div>
     </div>
