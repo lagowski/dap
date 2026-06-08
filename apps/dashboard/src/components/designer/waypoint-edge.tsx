@@ -19,23 +19,65 @@ type WaypointEdgeData = {
 
 const EMPTY_WAYPOINTS: XYPosition[] = [];
 
-export function waypointPath(points: XYPosition[]): string {
-  if (points.length === 0) return "";
-  // Orthogonal (right-angle / "broken-line") routing (#765): each segment that
-  // isn't already horizontal or vertical is drawn as H→V→H through the segment's
-  // mid-x, so edges run in clean right angles instead of diagonals.
-  let path = `M ${points[0].x},${points[0].y}`;
+/** Corner-rounding radius (flow units) for edge bends. Clamped per-corner to
+ *  half the shorter adjacent segment so short legs never overshoot. */
+export const CORNER_RADIUS = 10;
+
+/** Expand a point list into an orthogonal (right-angle) vertex list (#765): any
+ *  segment that isn't already horizontal or vertical becomes H→V→H through the
+ *  segment's mid-x, so edges run in clean right angles instead of diagonals. */
+export function orthogonalVertices(points: XYPosition[]): XYPosition[] {
+  if (points.length === 0) return [];
+  const out: XYPosition[] = [points[0]];
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1];
     const b = points[i];
     if (a.x === b.x || a.y === b.y) {
-      path += ` L ${b.x},${b.y}`;
+      out.push(b);
     } else {
       const midX = (a.x + b.x) / 2;
-      path += ` L ${midX},${a.y} L ${midX},${b.y} L ${b.x},${b.y}`;
+      out.push({ x: midX, y: a.y }, { x: midX, y: b.y }, b);
     }
   }
+  return out;
+}
+
+/** Render a polyline with rounded corners: each genuine bend is cut back by
+ *  ``radius`` along both legs and joined with a quadratic curve through the
+ *  sharp corner. Collinear/degenerate vertices stay straight. */
+export function roundedPath(vertices: XYPosition[], radius = CORNER_RADIUS): string {
+  if (vertices.length === 0) return "";
+  let path = `M ${vertices[0].x},${vertices[0].y}`;
+  for (let i = 1; i < vertices.length - 1; i++) {
+    const prev = vertices[i - 1];
+    const curr = vertices[i];
+    const next = vertices[i + 1];
+    const inLen = Math.hypot(curr.x - prev.x, curr.y - prev.y);
+    const outLen = Math.hypot(next.x - curr.x, next.y - curr.y);
+    // Collinear or zero-length corner → no rounding, just go to the vertex.
+    const cross = (curr.x - prev.x) * (next.y - curr.y) - (curr.y - prev.y) * (next.x - curr.x);
+    if (inLen === 0 || outLen === 0 || Math.abs(cross) < 1e-6) {
+      path += ` L ${curr.x},${curr.y}`;
+      continue;
+    }
+    const r = Math.min(radius, inLen / 2, outLen / 2);
+    const before = {
+      x: curr.x - ((curr.x - prev.x) / inLen) * r,
+      y: curr.y - ((curr.y - prev.y) / inLen) * r,
+    };
+    const after = {
+      x: curr.x + ((next.x - curr.x) / outLen) * r,
+      y: curr.y + ((next.y - curr.y) / outLen) * r,
+    };
+    path += ` L ${before.x},${before.y} Q ${curr.x},${curr.y} ${after.x},${after.y}`;
+  }
+  const last = vertices[vertices.length - 1];
+  path += ` L ${last.x},${last.y}`;
   return path;
+}
+
+export function waypointPath(points: XYPosition[]): string {
+  return roundedPath(orthogonalVertices(points));
 }
 
 /** Bend point placed between ``neighbor`` and a handle ``anchor`` so the segment
