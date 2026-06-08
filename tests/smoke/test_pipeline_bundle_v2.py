@@ -143,6 +143,22 @@ def test_v2_bundle_ignores_both_documentation_fields(client: TestClient) -> None
     assert response.status_code == 201, response.text
 
 
+def test_v2_bundle_ignores_structured_documentation_fields(client: TestClient) -> None:
+    """Real bundles ship _comment / install_instructions as structured blocks,
+    not strings — those must be ignored, not 422 with a string_type error (#755)."""
+    agent_id = _create_minimal_agent(client)
+    bundle = _v2_bundle(
+        agent_id,
+        _comment={"author": "cortex", "notes": ["a", "b"]},
+        install_instructions={
+            "steps": ["pip install dap-cortex", "set CORTEX_DATABASE_URL"],
+            "required_env": ["CORTEX_DATABASE_URL"],
+        },
+    )
+    response = client.post("/pipelines/import", json=bundle)
+    assert response.status_code == 201, response.text
+
+
 # ---------------------------------------------------------------------------
 # 3. min_dap_version — version gate
 # ---------------------------------------------------------------------------
