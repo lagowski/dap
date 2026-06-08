@@ -22,6 +22,8 @@ import type { DesignerNode } from "../types";
 
 import { Field } from "./shared";
 import { StateAfterNodeView, computeStateAfterNode } from "./state-after-node";
+import { NodeProfileSelect } from "./backend-profile-editor";
+import type { BackendProfiles } from "@/lib/backend-profile-assignments";
 
 
 interface NodePanelProps {
@@ -32,6 +34,8 @@ interface NodePanelProps {
   entryPoint: string;
   onSetEntryPoint: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
+  backendProfiles: BackendProfiles | null;
+  onBackendProfilesChange: (next: BackendProfiles) => void;
 }
 
 const PROMPT_PREVIEW_LIMIT = 240;
@@ -45,6 +49,8 @@ export function NodePanel({
   entryPoint,
   onSetEntryPoint,
   onDelete,
+  backendProfiles,
+  onBackendProfilesChange,
 }: NodePanelProps) {
   const agent = agents.find((a) => a.id === node.agent_id);
   const isEntry = entryPoint === node.id;
@@ -56,6 +62,14 @@ export function NodePanel({
         <code className="text-xs font-mono bg-muted px-2 py-1 rounded block">
           {node.id}
         </code>
+      </Field>
+
+      <Field label="LLM / backend">
+        <NodeProfileSelect
+          nodeId={node.id}
+          backendProfiles={backendProfiles}
+          onChange={onBackendProfilesChange}
+        />
       </Field>
 
       <Field label="Agent">
