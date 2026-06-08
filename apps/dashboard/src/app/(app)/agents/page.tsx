@@ -8,6 +8,7 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
+  Package,
   Pencil,
   Plus,
   Upload,
@@ -20,24 +21,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
 import { isManagedAgent } from "@/lib/managed-agent";
-import { applyManagedFilter } from "@/lib/agent-list-filter";
-import { ManagedAgentsFilterToggle } from "@/components/agents/managed-agents-filter-toggle";
+import { groupAgentsIntoPackages } from "@/lib/agent-packages";
 import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
-
-// Group agents by a coarse category derived from the name — "Cortex Phase N"
-// agents cluster by phase, everything else lands in "Misc". Cortex phases
-// ascending, Misc last. (Mirrors the pipeline-editor palette grouping.)
-function agentCategory(name: string): string {
-  const m = name.match(/^\s*Cortex\s+Phase\s+(\d+)/i);
-  return m ? `Cortex Phase ${m[1]}` : "Misc";
-}
-
-function categoryRank(cat: string): number {
-  const m = cat.match(/^Cortex Phase (\d+)$/);
-  return m ? Number(m[1]) : 999;
-}
 
 interface BlockingPipeline {
   id: string;
@@ -127,44 +114,93 @@ export default function AgentsPage() {
     }
   };
 
-  // Managed (Cortex) agents are bundle-owned nodes, not hand-authored agents
-  // (#739). They can clutter the list when you're working on your own — offer a
-  // one-click declutter toggle.
-  const [hideManaged, setHideManaged] = useState(false);
-  const { rows: visibleItems, managedCount } = useMemo(
-    () => applyManagedFilter(data?.items ?? [], { hideManaged }),
-    [data, hideManaged],
+  // Managed (Cortex) agents are nodes of an externally-owned bundle (#739), not
+  // hand-authored agents — and there are dozens of them with no individual
+  // meaning. Present them as a single collapsible *package* instead of flooding
+  // the list; standalone agents render as normal rows above it.
+  const { standalone, packages } = useMemo(
+    () => groupAgentsIntoPackages(data?.items ?? []),
+    [data],
   );
 
-  const groupedAgents = useMemo(() => {
-    const items = visibleItems;
-    const by = new Map<string, typeof items>();
-    for (const a of items) {
-      const cat = agentCategory(a.name);
-      const arr = by.get(cat) ?? [];
-      arr.push(a);
-      by.set(cat, arr);
-    }
-    return [...by.entries()]
-      .map(([cat, agents]) => ({ cat, agents }))
-      .sort(
-        (a, b) =>
-          categoryRank(a.cat) - categoryRank(b.cat) ||
-          a.cat.localeCompare(b.cat),
-      );
-  }, [visibleItems]);
-
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const toggle = (cat: string) =>
-    setCollapsed((prev) => {
+  // Packages are collapsed by default (declutter); track which are expanded.
+  const [expandedPackages, setExpandedPackages] = useState<Set<string>>(() => new Set());
+  const togglePackage = (kind: string) =>
+    setExpandedPackages((prev) => {
       const next = new Set(prev);
-      if (next.has(cat)) {
-        next.delete(cat);
+      if (next.has(kind)) {
+        next.delete(kind);
       } else {
-        next.add(cat);
+        next.add(kind);
       }
       return next;
     });
+
+  const renderRow = (agent: (typeof standalone)[number]) => {
+    const usage = agent.used_in_pipelines ?? 0;
+    const blockArchive = usage > 0;
+    return (
+      <tr key={agent.id} className="border-b last:border-0 hover:bg-muted/30">
+        <td className="p-0 font-medium">
+          <Link
+            href={`/agents/${agent.id}`}
+            className="flex items-center gap-2 px-4 py-2"
+          >
+            <span className="hover:underline">{agent.name}</span>
+            {isManagedAgent(agent) && (
+              <Badge variant="outline" className="font-normal">
+                Managed · Cortex
+              </Badge>
+            )}
+          </Link>
+        </td>
+        <td className="px-4 py-2">
+          <Badge variant="secondary">{agent.role}</Badge>
+        </td>
+        <td className="px-4 py-2 font-mono text-xs">{agent.runtime_id}</td>
+        <td className="px-4 py-2 tabular-nums">v{agent.version}</td>
+        <td className="px-4 py-2 tabular-nums">
+          {usage === 0 ? (
+            <span className="text-xs text-muted-foreground">—</span>
+          ) : (
+            <Badge variant="info">
+              {usage} pipeline{usage === 1 ? "" : "s"}
+            </Badge>
+          )}
+        </td>
+        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+          {agent.id.slice(0, ID_PREFIX)}…
+        </td>
+        <td className="px-4 py-2 text-right space-x-1 whitespace-nowrap">
+          <Tooltip label="Edit agent">
+            <Button asChild variant="outline" size="icon" className="h-8 w-8">
+              <Link href={`/agents/${agent.id}/edit`} aria-label="Edit agent">
+                <Pencil className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </Tooltip>
+          <Tooltip
+            label={
+              blockArchive
+                ? `Used by ${usage} pipeline${usage === 1 ? "" : "s"} — detach first`
+                : "Archive agent"
+            }
+          >
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              aria-label="Archive agent"
+              disabled={archive.isPending || blockArchive}
+              onClick={() => handleArchive(agent.id, agent.name)}
+            >
+              <Archive className="h-3.5 w-3.5" />
+            </Button>
+          </Tooltip>
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -248,13 +284,6 @@ export default function AgentsPage() {
         </Card>
       )}
       {data && data.items.length > 0 && (
-        <ManagedAgentsFilterToggle
-          count={managedCount}
-          checked={hideManaged}
-          onCheckedChange={setHideManaged}
-        />
-      )}
-      {data && data.items.length > 0 && (
         <Card>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -270,117 +299,36 @@ export default function AgentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {groupedAgents.map(({ cat, agents }) => {
-                  const isCollapsed = collapsed.has(cat);
+                {standalone.map(renderRow)}
+                {packages.map((pkg) => {
+                  const isExpanded = expandedPackages.has(pkg.kind);
                   return (
-                    <Fragment key={cat}>
-                      <tr className="border-b bg-muted/40">
-                        <td colSpan={7} className="px-2 py-1.5">
+                    <Fragment key={pkg.kind}>
+                      <tr className="border-y bg-muted/40">
+                        <td colSpan={7} className="px-2 py-2">
                           <button
                             type="button"
-                            onClick={() => toggle(cat)}
-                            aria-expanded={!isCollapsed}
-                            className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                            onClick={() => togglePackage(pkg.kind)}
+                            aria-expanded={isExpanded}
+                            className="flex items-center gap-2 text-left hover:text-foreground"
                           >
-                            {isCollapsed ? (
-                              <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
                             ) : (
-                              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                              <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
                             )}
-                            {cat}
-                            <Badge variant="secondary" className="ml-1">
-                              {agents.length}
+                            <Package className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            <span className="font-semibold">{pkg.label}</span>
+                            <Badge variant="secondary">
+                              {pkg.agents.length} agent{pkg.agents.length === 1 ? "" : "s"}
                             </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              package · from the {pkg.source} · imported as a unit
+                            </span>
                           </button>
                         </td>
                       </tr>
-                      {!isCollapsed &&
-                        agents.map((agent) => {
-                          const usage = agent.used_in_pipelines ?? 0;
-                          const blockArchive = usage > 0;
-                          return (
-                            <tr
-                              key={agent.id}
-                              className="border-b last:border-0 hover:bg-muted/30"
-                            >
-                              <td className="p-0 font-medium">
-                                <Link
-                                  href={`/agents/${agent.id}`}
-                                  className="flex items-center gap-2 px-4 py-2"
-                                >
-                                  <span className="hover:underline">
-                                    {agent.name}
-                                  </span>
-                                  {isManagedAgent(agent) && (
-                                    <Badge variant="outline" className="font-normal">
-                                      Managed · Cortex
-                                    </Badge>
-                                  )}
-                                </Link>
-                              </td>
-                              <td className="px-4 py-2">
-                                <Badge variant="secondary">{agent.role}</Badge>
-                              </td>
-                              <td className="px-4 py-2 font-mono text-xs">
-                                {agent.runtime_id}
-                              </td>
-                              <td className="px-4 py-2 tabular-nums">
-                                v{agent.version}
-                              </td>
-                              <td className="px-4 py-2 tabular-nums">
-                                {usage === 0 ? (
-                                  <span className="text-xs text-muted-foreground">
-                                    —
-                                  </span>
-                                ) : (
-                                  <Badge variant="info">
-                                    {usage} pipeline{usage === 1 ? "" : "s"}
-                                  </Badge>
-                                )}
-                              </td>
-                              <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
-                                {agent.id.slice(0, ID_PREFIX)}…
-                              </td>
-                              <td className="px-4 py-2 text-right space-x-1 whitespace-nowrap">
-                                <Tooltip label="Edit agent">
-                                  <Button
-                                    asChild
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                  >
-                                    <Link
-                                      href={`/agents/${agent.id}/edit`}
-                                      aria-label="Edit agent"
-                                    >
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </Link>
-                                  </Button>
-                                </Tooltip>
-                                <Tooltip
-                                  label={
-                                    blockArchive
-                                      ? `Used by ${usage} pipeline${usage === 1 ? "" : "s"} — detach first`
-                                      : "Archive agent"
-                                  }
-                                >
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    aria-label="Archive agent"
-                                    disabled={archive.isPending || blockArchive}
-                                    onClick={() =>
-                                      handleArchive(agent.id, agent.name)
-                                    }
-                                  >
-                                    <Archive className="h-3.5 w-3.5" />
-                                  </Button>
-                                </Tooltip>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                      {isExpanded && pkg.agents.map(renderRow)}
                     </Fragment>
                   );
                 })}
