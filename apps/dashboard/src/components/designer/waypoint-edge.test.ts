@@ -1,31 +1,125 @@
 import { Position } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 
-import { normalBend, nudgeWaypoint, routePoints, waypointPath } from "./waypoint-edge";
+import {
+  CORNER_RADIUS,
+  normalBend,
+  nudgeWaypoint,
+  orthogonalVertices,
+  roundedPath,
+  routePoints,
+  waypointPath,
+} from "./waypoint-edge";
+
+describe("orthogonalVertices", () => {
+  it("returns an empty list without points", () => {
+    expect(orthogonalVertices([])).toEqual([]);
+  });
+
+  it("expands a diagonal segment to H→V→H through mid-x", () => {
+    expect(
+      orthogonalVertices([
+        { x: 0, y: 0 },
+        { x: 100, y: 50 },
+      ]),
+    ).toEqual([
+      { x: 0, y: 0 },
+      { x: 50, y: 0 },
+      { x: 50, y: 50 },
+      { x: 100, y: 50 },
+    ]);
+  });
+
+  it("keeps horizontal/vertical segments straight, only bends diagonals", () => {
+    expect(
+      orthogonalVertices([
+        { x: 0, y: 0 },
+        { x: 40, y: 10 },
+        { x: 80, y: 10 },
+        { x: 120, y: 0 },
+      ]),
+    ).toEqual([
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 10 },
+      { x: 40, y: 10 },
+      { x: 80, y: 10 },
+      { x: 100, y: 10 },
+      { x: 100, y: 0 },
+      { x: 120, y: 0 },
+    ]);
+  });
+});
+
+describe("roundedPath", () => {
+  it("renders an empty path without vertices", () => {
+    expect(roundedPath([])).toBe("");
+  });
+
+  it("keeps a straight line straight (no curve)", () => {
+    const d = roundedPath([
+      { x: 0, y: 0 },
+      { x: 0, y: 100 },
+    ]);
+    expect(d).toBe("M 0,0 L 0,100");
+    expect(d).not.toContain("Q");
+  });
+
+  it("leaves collinear vertices straight", () => {
+    expect(
+      roundedPath([
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+        { x: 10, y: 0 },
+      ]),
+    ).toBe("M 0,0 L 5,0 L 10,0");
+  });
+
+  it("rounds a right-angle corner with a quadratic through the sharp vertex", () => {
+    expect(
+      roundedPath(
+        [
+          { x: 0, y: 0 },
+          { x: 50, y: 0 },
+          { x: 50, y: 50 },
+        ],
+        10,
+      ),
+    ).toBe("M 0,0 L 40,0 Q 50,0 50,10 L 50,50");
+  });
+
+  it("clamps the radius to half the shorter adjacent leg", () => {
+    expect(
+      roundedPath(
+        [
+          { x: 0, y: 0 },
+          { x: 6, y: 0 },
+          { x: 6, y: 6 },
+        ],
+        10,
+      ),
+    ).toBe("M 0,0 L 3,0 Q 6,0 6,3 L 6,6");
+  });
+});
 
 describe("waypointPath", () => {
   it("renders an empty path without points", () => {
     expect(waypointPath([])).toBe("");
   });
 
-  it("routes a diagonal segment orthogonally (H→V→H through mid-x)", () => {
+  it("rounds the corners of an orthogonalised diagonal", () => {
     expect(
       waypointPath([
         { x: 0, y: 0 },
         { x: 100, y: 50 },
       ]),
-    ).toBe("M 0,0 L 50,0 L 50,50 L 100,50");
+    ).toBe("M 0,0 L 40,0 Q 50,0 50,10 L 50,40 Q 50,50 60,50 L 100,50");
   });
 
-  it("keeps horizontal/vertical segments straight, only bends diagonals", () => {
-    expect(
-      waypointPath([
-        { x: 0, y: 0 },
-        { x: 40, y: 10 },
-        { x: 80, y: 10 },
-        { x: 120, y: 0 },
-      ]),
-    ).toBe("M 0,0 L 20,0 L 20,10 L 40,10 L 80,10 L 100,10 L 100,0 L 120,0");
+  it("uses CORNER_RADIUS by default", () => {
+    expect(CORNER_RADIUS).toBeGreaterThan(0);
+    // A straight vertical run has no corner to round.
+    expect(waypointPath([{ x: 0, y: 0 }, { x: 0, y: 200 }])).not.toContain("Q");
   });
 });
 
