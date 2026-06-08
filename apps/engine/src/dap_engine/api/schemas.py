@@ -149,9 +149,13 @@ class PipelineImportRequest(BaseModel):
     pipeline: PipelineExportPayload
     bundled_agents: dict[str, BundledAgentImportPayload] | None = None
     backend_profiles: dict[str, Any] | None = None
-    install_instructions: str | None = None
+    # Ignored on import, but real bundles ship it as a structured block (operator
+    # steps + required env vars), not just a string — accept any shape so a full
+    # bundle doesn't 422 with a ``string_type`` error (#755).
+    install_instructions: Any | None = None
     # ``_comment`` is a reserved Python name convention; accept it via alias.
-    comment: str | None = Field(default=None, alias="_comment")
+    # Also accepted as any shape for the same reason.
+    comment: Any | None = Field(default=None, alias="_comment")
 
 
 class BackendProfileInspection(BaseModel):
