@@ -11,9 +11,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type React from "react";
 
-/** Distance (flow units) of the straight approach/exit stub off each handle. */
-export const APPROACH_STUB = 18;
-
 type WaypointEdgeData = {
   waypoints?: XYPosition[];
   onWaypointsChange?: (edgeId: string, waypoints: XYPosition[]) => void;
@@ -41,53 +38,57 @@ export function waypointPath(points: XYPosition[]): string {
   return path;
 }
 
-/** Offset a handle anchor outward along its normal, so the segment touching the
- *  node runs straight into (or out of) the handle instead of approaching at an
- *  angle. Top/Bottom shift vertically, Left/Right horizontally. */
-export function approachStub(
-  point: XYPosition,
+/** Bend point placed between ``neighbor`` and a handle ``anchor`` so the segment
+ *  that actually touches the node runs straight *along the handle's normal* —
+ *  vertical for Top/Bottom, horizontal for Left/Right. Unlike a fixed-length
+ *  stub, the resulting leg spans the full gap to ``neighbor``, so the arrowhead
+ *  is the continuation of a long straight line (──►) instead of sitting on a
+ *  tiny perpendicular nub at the end of a sideways line (──^). */
+export function normalBend(
+  anchor: XYPosition,
   position: Position | undefined,
-  distance = APPROACH_STUB,
+  neighbor: XYPosition,
 ): XYPosition {
   switch (position) {
-    case Position.Left:
-      return { x: point.x - distance, y: point.y };
-    case Position.Right:
-      return { x: point.x + distance, y: point.y };
     case Position.Top:
-      return { x: point.x, y: point.y - distance };
     case Position.Bottom:
-      return { x: point.x, y: point.y + distance };
+      // Final/first leg is vertical → share the anchor's x, turn at neighbor's y.
+      return { x: anchor.x, y: neighbor.y };
+    case Position.Left:
+    case Position.Right:
+      // Final/first leg is horizontal → share the anchor's y, turn at neighbor's x.
+      return { x: neighbor.x, y: anchor.y };
     default:
-      return { ...point };
+      return { ...anchor };
   }
 }
 
-/** Build the full point list for an edge: a straight exit stub off the source
- *  handle, the manual waypoints, then a straight approach stub into the target
- *  handle. The last segment (stub → target) is always colinear with the arrow. */
+/** Build the full point list for an edge: leave the source straight along its
+ *  handle normal, run through the manual waypoints, then enter the target
+ *  straight along its handle normal. Bends are inserted against the *current*
+ *  neighbour (sequentially) so the two ends can't cross when there are no
+ *  waypoints, and consecutive duplicates are dropped so no zero-length segment
+ *  is emitted. ``waypointPath`` then renders these axis-aligned points directly. */
 export function routePoints(
   source: XYPosition,
   sourcePosition: Position | undefined,
   waypoints: XYPosition[],
   target: XYPosition,
   targetPosition: Position | undefined,
-  distance = APPROACH_STUB,
 ): XYPosition[] {
-  const candidates = [
-    source,
-    approachStub(source, sourcePosition, distance),
-    ...waypoints,
-    approachStub(target, targetPosition, distance),
-    target,
-  ];
-  // Drop consecutive duplicates (e.g. an unknown handle position whose stub
-  // coincides with its anchor) so we never emit a zero-length segment.
-  return candidates.filter(
+  const points = [source, ...waypoints, target];
+
+  // Entry bend: make the leg into the target colinear with the arrow.
+  const beforeTarget = points[points.length - 2];
+  points.splice(points.length - 1, 0, normalBend(target, targetPosition, beforeTarget));
+
+  // Exit bend: leave the source straight along its normal.
+  const afterSource = points[1];
+  points.splice(1, 0, normalBend(source, sourcePosition, afterSource));
+
+  return points.filter(
     (point, index) =>
-      index === 0 ||
-      point.x !== candidates[index - 1].x ||
-      point.y !== candidates[index - 1].y,
+      index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y,
   );
 }
 
