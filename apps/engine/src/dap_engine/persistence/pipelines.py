@@ -116,6 +116,71 @@ def create_pipeline(
     return _pipeline_from_orm(pipeline, version, is_current=True)
 
 
+def import_pipeline(
+    session: Session,
+    payload: PipelineCreate,
+    *,
+    user_id: uuid.UUID,
+) -> Pipeline:
+    """Create a pipeline from an import, or bump the version of a same-named one (#755).
+
+    Re-importing a bundle whose pipeline name already exists (owned by the same
+    user, not archived) writes a new ``PipelineVersionORM`` at ``current + 1``
+    under the SAME ``pipeline_id`` and bumps ``current_version`` — so new runs
+    auto-route to the update and the prior version becomes historical, instead of
+    creating a parallel duplicate row. ``backend_profiles`` are carried onto the
+    new version (unlike :func:`update_pipeline`, which doesn't).
+
+    Always bumps on a name match — no "identical → no-op" short-circuit: bundle
+    imports re-create their agents, so node ``agent_id``s always differ and an
+    identical-definition check could never match anyway.
+    """
+    existing = session.scalars(
+        select(PipelineORM)
+        .where(PipelineORM.user_id == user_id)
+        .where(PipelineORM.name == payload.name)
+        .where(PipelineORM.archived_at.is_(None))
+        .order_by(PipelineORM.created_at.asc())
+    ).first()
+    if existing is None:
+        return create_pipeline(session, payload, user_id=user_id)
+
+    now = _now()
+    new_version_number = existing.current_version + 1
+    existing.description = payload.description
+    existing.current_version = new_version_number
+    existing.updated_at = now
+    version = PipelineVersionORM(
+        id=_new_id(),
+        pipeline_id=existing.id,
+        version=new_version_number,
+        name=payload.name,
+        description=payload.description,
+        schema_version=payload.schema_version,
+        state_schema_ref=payload.state_schema_ref,
+        entry_point=payload.entry_point,
+        nodes=[n.model_dump(mode="json") for n in payload.nodes],
+        edges=[e.model_dump(mode="json") for e in payload.edges],
+        defaults=payload.defaults.model_dump(mode="json"),
+        ui_metadata=payload.ui_metadata,
+        backend_profiles=getattr(payload, "backend_profiles", None),
+        created_at=now,
+    )
+    session.add(version)
+    session.flush()
+    record_audit_event(
+        session,
+        user_id=user_id,
+        event_type="pipeline.updated",
+        event_data={
+            "pipeline_id": existing.id,
+            "version": new_version_number,
+            "via": "import",
+        },
+    )
+    return _pipeline_from_orm(existing, version, is_current=True)
+
+
 def update_pipeline(
     session: Session,
     pipeline_id: str,

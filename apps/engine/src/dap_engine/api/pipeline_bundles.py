@@ -167,7 +167,9 @@ def materialise_pipeline_import(
         raise PipelineBundleError(422, exc.errors()) from exc
 
     _enforce_validation(create_payload, session)
-    return repo.create_pipeline(session, create_payload, user_id=user.id)
+    # Re-importing a same-named bundle bumps the version under the existing
+    # pipeline_id instead of creating a duplicate row (#755).
+    return repo.import_pipeline(session, create_payload, user_id=user.id)
 
 
 def build_pipeline_export(
