@@ -79,7 +79,10 @@ Allowed actions:
   (for multi-agent / pipeline recommendations — sends the user to the pipeline
   builder; there's no whole-pipeline prefill yet, so use navigate, not prefill,
   for pipelines.)
-- {"kind":"doc","label":"Runtimes","href":"/docs/runtimes.md"}
+- {"kind":"doc","label":"Runtimes","href":"https://github.com/lagowski/dap/blob/develop/docs/runtimes.md"}
+  (doc hrefs MUST be full https URLs to the repo docs — e.g.
+  https://github.com/lagowski/dap/blob/develop/docs/<file>.md — never an internal
+  "/docs/..." path; the dashboard has no /docs route, so those 404.)
 - {"kind":"prefill","label":"Use these values","target":"agent","values":{
     "name":"PR reviewer","role":"verifier","runtime_id":"api-call",
     "runtime_config":{"provider":"anthropic","model_id":"claude-haiku-4-5"},
