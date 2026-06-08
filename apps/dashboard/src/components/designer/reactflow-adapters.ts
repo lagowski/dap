@@ -8,9 +8,29 @@
  * back by ``buildPayload`` in ``use-pipeline-save``).
  */
 
+import { MarkerType } from "@xyflow/react";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 
 import type { PipelineEdge, PipelineNode } from "@/lib/api/types";
+
+type EdgeCondition = NonNullable<PipelineEdge["condition"]>;
+
+/**
+ * Short human label for an edge condition (#765) — so a conditional edge shows
+ * *what* it branches on, not a bare "if". Comparison → ``field op value``;
+ * logical → its comparisons joined with AND/OR (truncated). The ``extensions.``
+ * prefix is dropped for brevity.
+ */
+export function summarizeCondition(condition: EdgeCondition): string {
+  if (condition.type === "comparison") {
+    const field = condition.field.replace(/^extensions\./, "");
+    return `${field} ${condition.operator} ${String(condition.value)}`;
+  }
+  const joiner = condition.type === "or" ? " OR " : " AND ";
+  const parts = condition.children.slice(0, 2).map(summarizeCondition);
+  const summary = parts.join(joiner);
+  return condition.children.length > 2 ? `${summary} …` : summary;
+}
 
 
 /** Edge stroke colors keyed by annotation state. */
@@ -66,7 +86,9 @@ export function toReactFlowEdge(e: PipelineEdge, waypoints: XYPosition[] = []): 
     source: e.source,
     target: e.target,
     type: "waypoint",
-    label: e.condition ? "if" : undefined,
+    // Arrowhead so the flow direction is unambiguous (#765).
+    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+    label: e.condition ? summarizeCondition(e.condition) : undefined,
     animated: e.condition != null,
     data: { waypoints },
   };
