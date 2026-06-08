@@ -637,9 +637,9 @@ openai = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.107.1" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.107.1" },
-    { name = "anthropic", marker = "extra == 'api-call'", specifier = ">=0.107.1" },
+    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'api-call'", specifier = ">=0.40.0" },
     { name = "anyio", specifier = ">=4.6.0" },
     { name = "dap-schemas", editable = "packages/types" },
     { name = "google-genai", marker = "extra == 'all'", specifier = ">=2.7.0" },
