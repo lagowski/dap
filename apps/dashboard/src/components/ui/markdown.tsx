@@ -1,10 +1,13 @@
+"use client";
+
 import ReactMarkdown, { type Components } from "react-markdown";
 
 /**
- * Render an assistant chat message as Markdown (#689). react-markdown does not
- * render raw HTML and sanitizes dangerous URL protocols, so it's safe for LLM
- * output. Styling is a controlled ``components`` map (not the typography
- * plugin) so it stays tight inside the narrow chat bubble.
+ * Render LLM-generated prose as Markdown (#689): the config assistant chat, the
+ * AI error explanation, agent docstrings. react-markdown renders no raw HTML
+ * and sanitizes dangerous URL protocols, so it's safe for model output. Styling
+ * is a controlled ``components`` map (not the typography plugin) so it stays
+ * tight inside narrow panels.
  */
 const COMPONENTS: Components = {
   h1: ({ children }) => <h1 className="mt-2 mb-1 text-sm font-semibold">{children}</h1>,
@@ -44,7 +47,7 @@ const COMPONENTS: Components = {
   pre: ({ children }) => <pre className="my-1.5">{children}</pre>,
 };
 
-export function ChatMarkdown({ children }: { children: string }) {
+export function Markdown({ children }: { children: string }) {
   return (
     <div className="text-sm">
       <ReactMarkdown components={COMPONENTS}>{children}</ReactMarkdown>

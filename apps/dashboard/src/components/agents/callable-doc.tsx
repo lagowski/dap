@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { Markdown } from "@/components/ui/markdown";
 import type { AgentCallableInfo } from "@/lib/api/types";
 
 /**
@@ -16,7 +17,9 @@ export function CallableDoc({ info }: { info: AgentCallableInfo | undefined }) {
         {info === undefined ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : info.doc ? (
-          <p className="whitespace-pre-wrap text-sm text-foreground">{info.doc}</p>
+          <div className="text-foreground">
+            <Markdown>{info.doc}</Markdown>
+          </div>
         ) : !info.resolvable ? (
           <div className="space-y-1">
             <p className="text-sm text-destructive">

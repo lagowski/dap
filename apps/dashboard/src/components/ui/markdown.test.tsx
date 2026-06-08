@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ChatMarkdown } from "./chat-markdown";
+import { Markdown } from "./markdown";
 
-describe("ChatMarkdown (#689)", () => {
+describe("Markdown (#689)", () => {
   it("renders headings, bold, and inline code as elements (not raw markdown)", () => {
     const { container } = render(
-      <ChatMarkdown>{"# Title\n\nUse **api-call** with `model_id`."}</ChatMarkdown>,
+      <Markdown>{"# Title\n\nUse **api-call** with `model_id`."}</Markdown>,
     );
     expect(container.querySelector("h1")?.textContent).toBe("Title");
     expect(container.querySelector("strong")?.textContent).toBe("api-call");
@@ -16,12 +16,12 @@ describe("ChatMarkdown (#689)", () => {
   });
 
   it("renders lists", () => {
-    const { container } = render(<ChatMarkdown>{"- one\n- two"}</ChatMarkdown>);
+    const { container } = render(<Markdown>{"- one\n- two"}</Markdown>);
     expect(container.querySelectorAll("li")).toHaveLength(2);
   });
 
   it("renders links safely with target+rel", () => {
-    render(<ChatMarkdown>{"[docs](/docs/runtimes.md)"}</ChatMarkdown>);
+    render(<Markdown>{"[docs](/docs/runtimes.md)"}</Markdown>);
     const link = screen.getByRole("link", { name: "docs" });
     expect(link).toHaveAttribute("href", "/docs/runtimes.md");
     expect(link).toHaveAttribute("target", "_blank");
@@ -30,7 +30,7 @@ describe("ChatMarkdown (#689)", () => {
 
   it("does not execute raw HTML in the markdown", () => {
     const { container } = render(
-      <ChatMarkdown>{"text <img src=x onerror=alert(1)> more"}</ChatMarkdown>,
+      <Markdown>{"text <img src=x onerror=alert(1)> more"}</Markdown>,
     );
     // react-markdown ignores raw HTML by default — no img element is created.
     expect(container.querySelector("img")).toBeNull();
