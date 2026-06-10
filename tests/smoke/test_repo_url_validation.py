@@ -53,4 +53,6 @@ def test_rejects_non_github_host() -> None:
     with pytest.raises(HTTPException) as exc_info:
         _validate_github_url("https://evil.example.com/owner/repo")
     assert exc_info.value.status_code == 422
-    assert "github.com" in _detail(exc_info)
+    # Pin the exact message prefix (not a substring-of-URL check — that
+    # shape trips CodeQL's url-sanitization query on the test itself).
+    assert _detail(exc_info).startswith("repo_url must point to github.com")
