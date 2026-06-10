@@ -53,6 +53,7 @@ from dap_engine.config import (
     ServerConfig,
     TemplateRegistryConfig,
     parse_cors_origins,
+    parse_retention_days,
 )
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
@@ -83,6 +84,7 @@ __all__ = [
     "TemplateRegistryConfig",
     "create_app",
     "parse_cors_origins",
+    "parse_retention_days",
 ]
 
 logger = logging.getLogger("dap.engine")

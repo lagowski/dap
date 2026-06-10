@@ -6,7 +6,7 @@ import os
 
 import uvicorn
 
-from dap_engine.app import EngineConfig, create_app, parse_cors_origins
+from dap_engine.app import EngineConfig, create_app, parse_cors_origins, parse_retention_days
 from dap_engine.logging import configure_logging
 
 
@@ -89,8 +89,8 @@ def main() -> None:
             os.environ.get("DAP_INTERACTION_LOG_ENABLED", "1").strip().lower()
             not in ("0", "false", "no", "off")
         ),
-        interaction_log_retention_days=int(
-            os.environ.get("DAP_INTERACTION_LOG_RETENTION_DAYS", "90")
+        interaction_log_retention_days=parse_retention_days(
+            os.environ.get("DAP_INTERACTION_LOG_RETENTION_DAYS")
         ),
     )
 

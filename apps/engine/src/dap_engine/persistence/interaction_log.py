@@ -88,6 +88,11 @@ def purge_interactions(session: Session, *, older_than: dt.datetime) -> int:
 
     Caller commits. Run from the engine-startup retention sweep — see
     ``app.py``'s lifespan.
+
+    Bulk-DELETE caveat: this bypasses the ORM unit-of-work, so any
+    ``InteractionLogORM`` instances already loaded in ``session`` are NOT
+    expired. Call it on a fresh session (the startup sweep does) or
+    ``session.expire_all()`` afterwards before re-reading.
     """
     result = session.execute(
         delete(InteractionLogORM).where(InteractionLogORM.created_at < older_than)

@@ -29,6 +29,7 @@ __all__ = [
     "ServerConfig",
     "TemplateRegistryConfig",
     "parse_cors_origins",
+    "parse_retention_days",
 ]
 
 # Local-dev defaults: dashboard on :3000, alt port :7332. Override at
@@ -40,6 +41,25 @@ DEFAULT_CORS_ORIGINS: list[str] = [
     "http://localhost:7332",
     "http://127.0.0.1:7332",
 ]
+
+
+def parse_retention_days(raw: str | None) -> int:
+    """Parse ``DAP_INTERACTION_LOG_RETENTION_DAYS`` (#722).
+
+    Unset/blank → the 90-day default. A non-integer value fails startup
+    loudly with the env var named — same policy as ``DAP_LOG_LEVEL`` and
+    ``DAP_CORS_ORIGINS`` (a config typo should never silently produce a
+    different retention posture).
+    """
+    if raw is None or not raw.strip():
+        return 90
+    try:
+        return int(raw.strip())
+    except ValueError:
+        raise ValueError(
+            f"DAP_INTERACTION_LOG_RETENTION_DAYS={raw!r} is not an integer "
+            "(days; 0 or negative = keep forever)"
+        ) from None
 
 
 def parse_cors_origins(raw: str | None) -> list[str] | None:
