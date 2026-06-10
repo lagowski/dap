@@ -13,11 +13,15 @@ from dap_runtimes import RuntimeRegistry
 from dap_runtimes.adapters.python_func import resolve_callable
 from dap_types import Agent, RuntimeTask
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
 from dap_engine.api.export_redaction import scrub_secret_like_keys
+from dap_engine.api.validation import (
+    http_422_on_validation_error,
+    http_500_on_export_revalidation_error,
+)
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.persistence.models import UserORM
@@ -114,13 +118,8 @@ def import_agent(
     # Round-trip through model_dump → model_validate so that any future
     # field added to AgentExportPayload/AgentCreate flows automatically,
     # rather than relying on this function to be edited in lockstep.
-    try:
+    with http_422_on_validation_error():
         create_payload = AgentCreate.model_validate(payload.agent.model_dump())
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=exc.errors(),
-        ) from exc
     return repo.create_agent(session, create_payload, user_id=user.id)
 
 
@@ -426,7 +425,7 @@ def build_agent_export_payload(agent: Agent) -> AgentExportPayload:
     against a future migration introducing data we can't export,
     not a routine error path.
     """
-    try:
+    with http_500_on_export_revalidation_error("agent"):
         return AgentExportPayload(
             name=agent.name,
             role=agent.role,
@@ -439,11 +438,6 @@ def build_agent_export_payload(agent: Agent) -> AgentExportPayload:
             budget_limit_usd=agent.budget_limit_usd,
             timeout_ms=agent.timeout_ms,
         )
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Stored agent could not be re-validated for export: {exc.errors()}",
-        ) from exc
 
 
 @router.post("/{agent_id}/render-preview", response_model=RenderPreviewResponse)

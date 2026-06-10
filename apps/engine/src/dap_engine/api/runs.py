@@ -27,7 +27,6 @@ from dap_runtimes import RuntimeRegistry
 from dap_types import PipelineState, Project, Run
 from fastapi import APIRouter, Depends, HTTPException, status
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -45,6 +44,7 @@ from dap_engine.api.run_interventions import register_run_intervention_routes
 from dap_engine.api.run_lifecycle import register_run_lifecycle_routes
 from dap_engine.api.run_reads import register_run_read_routes
 from dap_engine.api.run_runtime_policy import pipeline_runtime_policy_error
+from dap_engine.api.validation import http_422_on_validation_error
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.contracts import RunCreateRequest
@@ -308,13 +308,8 @@ async def trigger_run(
         **project_defaults,
         **caller_state,
     }
-    try:
+    with http_422_on_validation_error(prefix="Invalid initial_state"):
         initial_state = PipelineState.model_validate(state_dict)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Invalid initial_state: {exc.errors()}",
-        ) from exc
 
     run_orm = repo.create_run(
         session,
