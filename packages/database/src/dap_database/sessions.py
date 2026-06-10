@@ -31,12 +31,18 @@ def make_async_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncS
 
 @contextmanager
 def session_scope(factory: sessionmaker[Session]) -> Iterator[Session]:
-    """Commit on success, roll back on any exception, always close."""
+    """Commit on success, roll back on any exception, always close.
+
+    ``except BaseException`` (not ``Exception``) so ``KeyboardInterrupt`` /
+    ``SystemExit`` also roll back explicitly before close — otherwise a
+    Ctrl-C mid-transaction could leave the DB write lock held until the
+    process exits (PR #779 council review).
+    """
     session = factory()
     try:
         yield session
         session.commit()
-    except Exception:
+    except BaseException:
         session.rollback()
         raise
     finally:
