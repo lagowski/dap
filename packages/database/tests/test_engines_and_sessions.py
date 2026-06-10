@@ -9,9 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
-
 from dap_database import (
     create_async_engine_for_url,
     create_postgresql_engine,
@@ -20,6 +17,8 @@ from dap_database import (
     make_session_factory,
     session_scope,
 )
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 # ---------------------------------------------------------------------------
 # SQLite engine
