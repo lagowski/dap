@@ -79,6 +79,7 @@ async def validate_env(
     """
     results: list[EnvVarValidationResult] = []
     probes_used = 0
+    cap_logged = False
     # Re-use a single client (one TLS connection pool) for all token probes.
     async with httpx.AsyncClient() as client:
         for key, value in payload.env_vars.items():
@@ -86,6 +87,17 @@ async def validate_env(
                 results.append(EnvVarValidationResult(key=key, is_token=False))
                 continue
             if probes_used >= MAX_TOKEN_PROBES_PER_REQUEST:
+                # Operator visibility (PR #783 review): a request stuffed
+                # with token-shaped values is an abuse signal worth one
+                # WARNING line — but this endpoint is a read-only
+                # best-effort probe, so no audit-table write.
+                if not cap_logged:
+                    cap_logged = True
+                    logger.warning(
+                        "validate_env: token-probe cap (%d) exceeded — "
+                        "remaining token-shaped values were not probed",
+                        MAX_TOKEN_PROBES_PER_REQUEST,
+                    )
                 # Best-effort contract: never block the save, just report
                 # that this value wasn't probed (valid stays None).
                 results.append(

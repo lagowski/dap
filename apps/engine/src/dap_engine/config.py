@@ -61,10 +61,19 @@ def parse_cors_origins(raw: str | None) -> list[str] | None:
         if origin == "*":
             continue
         parsed = urlparse(origin)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+            # Origin headers never carry a path/query/fragment — an entry
+            # with one (even a bare trailing slash) would silently never
+            # match CORSMiddleware's exact string comparison.
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError(
                 f"DAP_CORS_ORIGINS entry {origin!r} is not a valid origin — "
-                "expected http(s)://host[:port] or '*'"
+                "expected http(s)://host[:port] with no trailing path, or '*'"
             )
     return cleaned or None
 
