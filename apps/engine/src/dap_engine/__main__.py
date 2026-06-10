@@ -83,6 +83,15 @@ def main() -> None:
             os.environ.get("DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN", "").strip().lower()
             in ("1", "true", "yes", "on")
         ),
+        # EU AI Act interaction log (#722). Enabled by default; retention
+        # window in days drives the startup purge (0 = keep forever).
+        interaction_log_enabled=(
+            os.environ.get("DAP_INTERACTION_LOG_ENABLED", "1").strip().lower()
+            not in ("0", "false", "no", "off")
+        ),
+        interaction_log_retention_days=int(
+            os.environ.get("DAP_INTERACTION_LOG_RETENTION_DAYS", "90")
+        ),
     )
 
     app = create_app(config)

@@ -8,7 +8,7 @@ get 404 (same anti-enumeration shape as ``/audit``).
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -17,10 +17,14 @@ from dap_engine.persistence.models import InteractionLogORM, UserORM
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from tests.smoke._auth import authed_test_client
+from tests.smoke._auth import (
+    DEFAULT_TEST_EMAIL,
+    DEFAULT_TEST_PASSWORD,
+    authed_test_client,
+)
 
 # A realistic GitHub-token shape — must never appear in stored content.
-FAKE_TOKEN = "ghp_" + "a1B2" * 9  # noqa: S105 — deliberately fake
+FAKE_TOKEN = "ghp_" + "a1B2" * 9
 
 
 @pytest.fixture
@@ -128,12 +132,19 @@ async def test_startup_purges_rows_past_retention(
     config = engine_config_factory(interaction_log_retention_days=30)
     app = create_app(config)
     with authed_test_client(app) as client:
+        await _promote_default_user_to_admin(client)
         _insert_backdated_interaction(client.app, days_old=100)
         _insert_backdated_interaction(client.app, days_old=1)
 
     # Second boot against the same DB — startup purge runs in the lifespan.
+    # The user already exists, so log in instead of re-registering.
     app2 = create_app(config)
-    with authed_test_client(app2) as client:
-        await _promote_default_user_to_admin(client)
+    with TestClient(app2) as client:
+        login = client.post(
+            "/auth/jwt/login",
+            data={"username": DEFAULT_TEST_EMAIL, "password": DEFAULT_TEST_PASSWORD},
+        )
+        assert login.status_code == 200, login.text
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         body = client.get("/interactions").json()
         assert body["total"] == 1

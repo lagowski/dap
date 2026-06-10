@@ -14,6 +14,7 @@ from dap_engine.persistence.auth_models import (
     OAuthAccountORM,
     UserORM,
 )
+from dap_engine.persistence.interaction_models import InteractionLogORM
 from dap_engine.persistence.model_base import Base
 from dap_engine.persistence.pipeline_models import PipelineORM, PipelineVersionORM
 from dap_engine.persistence.project_models import ProjectORM
@@ -34,6 +35,7 @@ __all__ = [
     "Base",
     "BatchRunORM",
     "InstanceEnvVarORM",
+    "InteractionLogORM",
     "NodeExecutionLogORM",
     "NodeOutputChunkORM",
     "OAuthAccountORM",

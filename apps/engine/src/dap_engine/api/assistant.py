@@ -28,7 +28,9 @@ from dap_engine.assistant.service import generate_reply
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.instance_env import load_instance_env
+from dap_engine.persistence.interaction_log import record_interaction
 from dap_engine.persistence.models import UserORM
+from dap_engine.redaction import redact
 
 if TYPE_CHECKING:
     from dap_engine.app import EngineConfig
@@ -110,8 +112,31 @@ async def assistant_chat(
         event_type="assistant.chat",
         event_data={"grounded": reply.grounded, "turns": len(payload.messages)},
     )
-    # Commit the audit row explicitly — this endpoint does no other DB write, so
-    # don't rely on the session dependency's end-of-request commit alone.
+
+    if config.interaction_log.enabled:
+        # EU AI Act record-keeping (#722): store the full transcript + reply,
+        # redacted at this persistence boundary. ``instance_env`` holds the
+        # *decrypted* configured secrets — the exact-value layer names any
+        # leaked key; the pattern layer backstops pasted/echoed tokens.
+        record_interaction(
+            session,
+            user_id=user.id,
+            surface="assistant",
+            provider=reply.provider,
+            model=reply.model,
+            redacted_request=[
+                {
+                    "role": m.role,
+                    "content": redact(m.content, known_secrets=instance_env),
+                }
+                for m in payload.messages
+            ],
+            redacted_response=redact(reply.text, known_secrets=instance_env),
+            grounded=reply.grounded,
+        )
+
+    # Commit the audit + interaction rows explicitly — don't rely on the
+    # session dependency's end-of-request commit alone.
     session.commit()
 
     return AssistantChatResponse(

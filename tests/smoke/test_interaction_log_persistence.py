@@ -101,9 +101,7 @@ def test_purge_removes_only_rows_older_than_cutoff(session: Session) -> None:
 
     # Backdate the first row past the cutoff.
     old_row = (
-        session.query(InteractionLogORM)
-        .filter(InteractionLogORM.redacted_response == "old")
-        .one()
+        session.query(InteractionLogORM).filter(InteractionLogORM.redacted_response == "old").one()
     )
     old_row.created_at = dt.datetime.now(dt.UTC) - dt.timedelta(days=100)
     session.commit()

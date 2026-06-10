@@ -23,6 +23,7 @@ __all__ = [
     "DatabaseConfig",
     "EngineConfig",
     "EngineConfigKwargs",
+    "InteractionLogConfig",
     "OAuthConfig",
     "RuntimePolicyConfig",
     "ServerConfig",
@@ -254,6 +255,25 @@ class RuntimePolicyConfig:
     allow_bash_runtime_for_non_admin: bool = False
 
 
+@dataclass
+class InteractionLogConfig:
+    """EU AI Act interaction log — record-keeping of redacted model
+    interactions (#722).
+
+    ``enabled`` gates the write path (the assistant endpoint records a
+    redacted transcript+reply per turn). On by default — the whole point
+    is compliance record-keeping; operators with a different legal
+    posture opt out via ``DAP_INTERACTION_LOG_ENABLED=0``.
+
+    ``retention_days`` drives the startup purge: rows older than the
+    window are deleted when the engine boots. ``0`` (or negative) means
+    keep forever — retention becomes the operator's responsibility.
+    """
+
+    enabled: bool = True
+    retention_days: int = 90
+
+
 # Maps every legacy flat field name → ``(group, nested_name)``. Used
 # by ``EngineConfig.__init__`` to route flat kwargs into the right
 # nested group, and by ``__getattr__`` to translate legacy attribute
@@ -289,10 +309,22 @@ _FLAT_TO_NESTED: dict[str, tuple[str, str]] = {
     "instance_env_vars_key": ("crypto", "instance_env_vars_key"),
     # RuntimePolicyConfig
     "allow_bash_runtime_for_non_admin": ("runtime_policy", "allow_bash_runtime_for_non_admin"),
+    # InteractionLogConfig
+    "interaction_log_enabled": ("interaction_log", "enabled"),
+    "interaction_log_retention_days": ("interaction_log", "retention_days"),
 }
 
 _NESTED_GROUP_NAMES = frozenset(
-    {"db", "server", "auth", "oauth", "template_registry", "crypto", "runtime_policy"}
+    {
+        "db",
+        "server",
+        "auth",
+        "oauth",
+        "template_registry",
+        "crypto",
+        "runtime_policy",
+        "interaction_log",
+    }
 )
 
 
@@ -321,6 +353,7 @@ class EngineConfigKwargs(TypedDict, total=False):
     template_registry: NotRequired[TemplateRegistryConfig]
     crypto: NotRequired[CryptoConfig]
     runtime_policy: NotRequired[RuntimePolicyConfig]
+    interaction_log: NotRequired[InteractionLogConfig]
     # Flat-style kwargs (legacy — every test fixture uses these)
     db_path: NotRequired[str]
     database_url: NotRequired[str | None]
@@ -343,6 +376,8 @@ class EngineConfigKwargs(TypedDict, total=False):
     template_registry_auth_token: NotRequired[str | None]
     instance_env_vars_key: NotRequired[str | None]
     allow_bash_runtime_for_non_admin: NotRequired[bool]
+    interaction_log_enabled: NotRequired[bool]
+    interaction_log_retention_days: NotRequired[int]
 
 
 @dataclass(init=False)
@@ -370,6 +405,7 @@ class EngineConfig:
     template_registry: TemplateRegistryConfig
     crypto: CryptoConfig
     runtime_policy: RuntimePolicyConfig
+    interaction_log: InteractionLogConfig
 
     def __init__(self, **kwargs: Unpack[EngineConfigKwargs]) -> None:
         # ``copy.copy`` defends against the ``dataclasses.replace``
@@ -395,6 +431,7 @@ class EngineConfig:
             ("template_registry", TemplateRegistryConfig),
             ("crypto", CryptoConfig),
             ("runtime_policy", RuntimePolicyConfig),
+            ("interaction_log", InteractionLogConfig),
         ):
             value = kwargs.pop(group_name, None)  # type: ignore[misc]
             nested[group_name] = copy.copy(value) if value is not None else default_cls()
