@@ -7,6 +7,7 @@ is the consumer's job (``dap_engine.persistence.db`` keeps that part).
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from dap_database import (
@@ -19,6 +20,8 @@ from dap_database import (
 )
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import QueuePool
 
 # ---------------------------------------------------------------------------
 # SQLite engine
@@ -76,8 +79,9 @@ def test_create_postgresql_engine_rewrites_to_psycopg_driver() -> None:
 def test_create_postgresql_engine_pool_defaults() -> None:
     engine = create_postgresql_engine("postgres://u:p@localhost:1/db")
     try:
+        assert isinstance(engine.pool, QueuePool)
         assert engine.pool.size() == 5
-        assert engine.pool._max_overflow == 10  # type: ignore[attr-defined]
+        assert engine.pool._max_overflow == 10
     finally:
         engine.dispose()
 
@@ -87,8 +91,9 @@ def test_create_postgresql_engine_pool_overrides() -> None:
         "postgresql://u:p@localhost:1/db", pool_size=7, max_overflow=3
     )
     try:
+        assert isinstance(engine.pool, QueuePool)
         assert engine.pool.size() == 7
-        assert engine.pool._max_overflow == 3  # type: ignore[attr-defined]
+        assert engine.pool._max_overflow == 3
     finally:
         engine.dispose()
 
@@ -122,6 +127,24 @@ def test_session_scope_rolls_back_on_error(tmp_path: Path) -> None:
             raise RuntimeError("boom")
         with session_scope(factory) as session:
             assert session.execute(text("SELECT COUNT(*) FROM t")).scalar() == 0
+    finally:
+        engine.dispose()
+
+
+def test_session_scope_rolls_back_on_keyboard_interrupt(tmp_path: Path) -> None:
+    """Ctrl-C inside the scope must roll back explicitly before close.
+
+    ``KeyboardInterrupt`` inherits from ``BaseException``, not ``Exception``
+    — a bare ``except Exception`` would skip the rollback and leave the
+    write lock held until process exit (PR #779 council review, MEDIUM).
+    """
+    engine = create_sqlite_engine(str(tmp_path / "state.db"))
+    try:
+        factory = make_session_factory(engine)
+        with patch.object(Session, "rollback", autospec=True) as rollback:  # noqa: SIM117 — the raises() scope must not cover the mock assert
+            with pytest.raises(KeyboardInterrupt), session_scope(factory):
+                raise KeyboardInterrupt
+        rollback.assert_called_once()
     finally:
         engine.dispose()
 
