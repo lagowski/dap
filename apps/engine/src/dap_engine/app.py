@@ -38,7 +38,7 @@ from dap_engine.auth.users import auth_backend, configure_jwt
 # Config moved to ``dap_engine.config`` (#778 Phase 2) — re-exported here
 # because ~50 call sites (tests, CLI bootstrap, api/deps) import these
 # names from ``dap_engine.app``. New code: import from dap_engine.config.
-from dap_engine.config import (  # noqa: F401 — re-exports
+from dap_engine.config import (
     DEFAULT_CORS_ORIGINS,
     AuthConfig,
     CryptoConfig,
@@ -62,6 +62,23 @@ from dap_engine.persistence.db import (
     redact_database_url,
 )
 from dap_engine.version import __version__
+
+# ``create_app`` is defined here; everything else is re-exported from
+# ``dap_engine.config`` (#778 Phase 2) for the legacy import path.
+__all__ = [
+    "DEFAULT_CORS_ORIGINS",
+    "AuthConfig",
+    "CryptoConfig",
+    "DatabaseConfig",
+    "EngineConfig",
+    "EngineConfigKwargs",
+    "OAuthConfig",
+    "RuntimePolicyConfig",
+    "ServerConfig",
+    "TemplateRegistryConfig",
+    "create_app",
+    "parse_cors_origins",
+]
 
 logger = logging.getLogger("dap.engine")
 
