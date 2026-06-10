@@ -10,7 +10,11 @@ import {
   usePipelineReadiness,
 } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
-import { withAutoApprove } from "@/lib/run-trigger-options";
+import {
+  parseInitialState,
+  parsePipelineVersion,
+  withAutoApprove,
+} from "@/lib/run-trigger-options";
 import { PipelineReadinessNotice } from "@/components/pipeline-readiness-notice";
 import { Button } from "@/components/ui/button";
 import {
@@ -71,31 +75,18 @@ export function TriggerRunDialog({
     e.preventDefault();
     setParseError(null);
 
-    let initialState: Record<string, unknown> = {};
-    if (stateText.trim().length > 0) {
-      try {
-        initialState = JSON.parse(stateText);
-        if (typeof initialState !== "object" || initialState == null || Array.isArray(initialState)) {
-          throw new Error("initial_state must be a JSON object");
-        }
-      } catch (err) {
-        setParseError(err instanceof Error ? err.message : "Invalid JSON");
-        return;
-      }
+    const parsed = parseInitialState(stateText);
+    if (!parsed.ok) {
+      setParseError(parsed.error);
+      return;
     }
-
-    const parsedVersion =
-      versionStr === "current" ? undefined : Number(versionStr);
-    const pipelineVersion =
-      parsedVersion !== undefined && Number.isFinite(parsedVersion)
-        ? parsedVersion
-        : undefined;
+    const pipelineVersion = parsePipelineVersion(versionStr, "current");
 
     trigger.mutate(
       {
         pipeline_id: pipelineId,
         ...(pipelineVersion !== undefined ? { pipeline_version: pipelineVersion } : {}),
-        initial_state: withAutoApprove(initialState, isAdmin && autoApprove),
+        initial_state: withAutoApprove(parsed.value, isAdmin && autoApprove),
       },
       {
         onSuccess: (run) => {
