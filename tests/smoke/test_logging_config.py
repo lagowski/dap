@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-
 from dap_engine.logging import LOG_FORMAT, configure_logging
 
 

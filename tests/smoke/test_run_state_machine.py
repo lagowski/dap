@@ -26,11 +26,11 @@ from dap_types import FinalStatus
 
 def test_run_statuses_match_canonical_literal() -> None:
     """The machine must cover exactly the ``FinalStatus`` literal values."""
-    assert RUN_STATUSES == frozenset(get_args(FinalStatus))
+    assert frozenset(get_args(FinalStatus)) == RUN_STATUSES
 
 
 def test_terminal_statuses() -> None:
-    assert TERMINAL_STATUSES == frozenset({"success", "failed", "aborted"})
+    assert frozenset({"success", "failed", "aborted"}) == TERMINAL_STATUSES
     for status in TERMINAL_STATUSES:
         assert is_terminal(status)
     for status in RUN_STATUSES - TERMINAL_STATUSES:
@@ -80,7 +80,7 @@ def test_named_endpoint_sets_are_consistent_with_the_graph() -> None:
 
 def test_named_endpoint_sets_match_documented_behaviour() -> None:
     """Pin the exact sets the HTTP endpoints enforce (409 otherwise)."""
-    assert ABORTABLE_STATUSES == frozenset({"running", "paused"})
-    assert PAUSABLE_STATUSES == frozenset({"running"})
-    assert RESUMABLE_STATUSES == frozenset({"paused"})
-    assert REVIVABLE_STATUSES == frozenset({"paused", "failed"})
+    assert frozenset({"running", "paused"}) == ABORTABLE_STATUSES
+    assert frozenset({"running"}) == PAUSABLE_STATUSES
+    assert frozenset({"paused"}) == RESUMABLE_STATUSES
+    assert frozenset({"paused", "failed"}) == REVIVABLE_STATUSES
