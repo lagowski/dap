@@ -130,7 +130,7 @@ describe("createInvalidatingMutation", () => {
     result.current.mutate({ id: "w1" });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(mutationFn).toHaveBeenCalledWith({ id: "w1" });
+    expect(mutationFn.mock.calls[0][0]).toEqual({ id: "w1" });
     const cache = qc.getQueryCache();
     expect(cache.find({ queryKey: ["widgets"] })?.state.isInvalidated).toBe(true);
     expect(cache.find({ queryKey: ["widgets", "w1"] })?.state.isInvalidated).toBe(
