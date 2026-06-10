@@ -269,18 +269,25 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
             logger.warning("marked %d expired gate run(s) as failed", expired_count)
 
         # Interaction-log retention sweep (#722). retention_days <= 0 means
-        # keep forever (operator-managed retention).
+        # keep forever (operator-managed retention). Best-effort: a purge
+        # failure (locked DB, transient connection error) must not stop the
+        # engine from starting — unlike the schema migrations above, missing
+        # one sweep is harmless (the next boot retries).
         if cfg.interaction_log.enabled and cfg.interaction_log.retention_days > 0:
             cutoff = datetime.now(UTC) - timedelta(days=cfg.interaction_log.retention_days)
-            with session_factory() as purge_session:
-                purged = purge_interactions(purge_session, older_than=cutoff)
-                purge_session.commit()
-            if purged > 0:
-                logger.info(
-                    "purged %d interaction-log record(s) older than %d days",
-                    purged,
-                    cfg.interaction_log.retention_days,
-                )
+            try:
+                with session_factory() as purge_session:
+                    purged = purge_interactions(purge_session, older_than=cutoff)
+                    purge_session.commit()
+            except Exception:
+                logger.exception("interaction-log retention purge failed; continuing startup")
+            else:
+                if purged > 0:
+                    logger.info(
+                        "purged %d interaction-log record(s) older than %d days",
+                        purged,
+                        cfg.interaction_log.retention_days,
+                    )
 
         async with AsyncExitStack() as stack:
             checkpointer = await stack.enter_async_context(checkpointer_ctx)

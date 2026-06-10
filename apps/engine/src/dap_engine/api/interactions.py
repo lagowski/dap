@@ -17,8 +17,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_session
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import require_admin_user
 from dap_engine.persistence.interaction_log import list_interactions
+from dap_engine.persistence.models import UserORM
 
 router = APIRouter(prefix="/interactions", tags=["interactions"])
 
@@ -54,10 +56,10 @@ class InteractionList(BaseModel):
     "",
     response_model=InteractionList,
     summary="List interaction-log records (admin-only, paginated)",
-    dependencies=[Depends(require_admin_user)],
 )
 def list_interaction_records(
     session: Session = Depends(get_session),
+    admin: UserORM = Depends(require_admin_user),
     *,
     surface: str | None = Query(default=None),
     user_id: uuid.UUID | None = Query(default=None),
@@ -74,6 +76,21 @@ def list_interaction_records(
         user_id=user_id,
         created_from=created_from,
         created_to=created_to,
+    )
+    # Reading compliance records is itself security-relevant — leave a
+    # metadata-only trail (filters + count, never content). Committed by
+    # the get_session dependency at end of request.
+    record_audit_event(
+        session,
+        user_id=admin.id,
+        event_type="interactions.list",
+        event_data={
+            "surface": surface,
+            "filtered_user_id": str(user_id) if user_id else None,
+            "offset": offset,
+            "limit": limit,
+            "total": total,
+        },
     )
     return InteractionList(
         items=[InteractionRead.model_validate(row) for row in rows],

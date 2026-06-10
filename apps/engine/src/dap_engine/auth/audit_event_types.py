@@ -102,6 +102,7 @@ AuditEventType = Literal[
     # Config assistant chat turn (#689). event_data carries non-content
     # metadata only (grounded flag, turn count) — never the message text.
     "assistant.chat",
+    "interactions.list",
     # AI error-explanation request (#691). Audited only when the LLM was used;
     # event_data carries run_id/node_id only — never the error text or reply.
     "error_explainer.llm",
