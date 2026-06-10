@@ -66,6 +66,22 @@ def test_can_transition_matrix() -> None:
     assert not can_transition("failed", "success")
 
 
+def test_unknown_statuses_are_never_terminal_and_never_transition() -> None:
+    """Malformed statuses behave as illegal, with a real ``bool`` result.
+
+    PR #780 council review: ``can_transition`` must not fall through to an
+    implicit ``None`` for a status missing from TRANSITIONS, and a typo'd
+    status (e.g. ``'Paused'``) must read as not-terminal / not-transitionable
+    rather than raising — callers treat both exactly like an illegal
+    transition (409).
+    """
+    assert can_transition("bogus", "running") is False
+    assert can_transition("Paused", "running") is False  # case-sensitive
+    assert can_transition("running", "bogus") is False
+    assert is_terminal("bogus") is False
+    assert is_terminal("Success") is False  # case-sensitive
+
+
 def test_named_endpoint_sets_are_consistent_with_the_graph() -> None:
     """Each endpoint's allowed-status set must agree with TRANSITIONS."""
     for status in ABORTABLE_STATUSES:
