@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 from dap_cli.http_utils import auth_headers, make_client, resolve_auth_token
 
 

@@ -31,6 +31,8 @@ from rich.console import Console
 from rich.live import Live
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from dap_cli.http_utils import make_client
+
 console = Console()
 
 DEFAULT_ENGINE_URL = "http://localhost:7333"
@@ -157,47 +159,17 @@ def load_cortex_bundle() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_auth_token(token: str | None) -> str:
-    """Resolve the engine bearer token: explicit arg wins, else ``DAP_AUTH_TOKEN``.
-
-    Returns ``""`` when neither is set (or only whitespace) — the engine's
-    ``/health`` is public, but every other endpoint 401s, so a missing token
-    surfaces as a clear 401 the caller already handles.
-    """
-    return (token or os.environ.get("DAP_AUTH_TOKEN") or "").strip()
-
-
-def _auth_headers(token: str | None = None) -> dict[str, str]:
-    """Build the ``Authorization: Bearer`` header dict (empty when no token).
-
-    Shared by both the short-lived request client (``_client``) and the
-    long-lived SSE stream client (``_events_client``) so the Bearer auth logic
-    lives in one place (#662 Phase 3d).
-    """
-    resolved = _resolve_auth_token(token)
-    return {"Authorization": f"Bearer {resolved}"} if resolved else {}
-
-
 def _client(engine_url: str, token: str | None = None) -> httpx.Client:
-    """HTTP client for the engine, carrying ``Authorization: Bearer`` when a
-    token is available. The engine accepts a JWT or an opaque ``dap_*`` API
-    token (``/auth/api-tokens``); the CLI forwards whatever is configured via
-    ``--token`` / ``DAP_AUTH_TOKEN``."""
-    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0, headers=_auth_headers(token))
+    """Short-lived request client — see :func:`dap_cli.http_utils.make_client`."""
+    return make_client(engine_url, token)
 
 
 def _events_client(engine_url: str, token: str | None = None) -> httpx.Client:
-    """Long-lived HTTP client for the SSE events stream (``--follow``).
+    """Long-lived SSE stream client (``--follow``) — read timeout disabled.
 
-    Same Bearer auth as ``_client`` but with the **read timeout disabled** so a
-    quiet stream (e.g. a 16-min cortex node producing no output) is not aborted
-    after the default 10s. Connect/write/pool timeouts are kept bounded so a
-    dead engine still fails fast rather than hanging forever (#662 Phase 3d).
+    See :func:`dap_cli.http_utils.make_client` (``streaming=True``).
     """
-    timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
-    return httpx.Client(
-        base_url=engine_url.rstrip("/"), timeout=timeout, headers=_auth_headers(token)
-    )
+    return make_client(engine_url, token, streaming=True)
 
 
 def _export_token_to_env(token: str | None) -> None:
