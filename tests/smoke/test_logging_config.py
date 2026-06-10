@@ -32,11 +32,7 @@ def test_configure_logging_sets_level_and_format(
     configure_logging()
     root = logging.getLogger()
     assert root.level == logging.INFO
-    formats = [
-        h.formatter._fmt
-        for h in root.handlers
-        if h.formatter is not None
-    ]
+    formats = [h.formatter._fmt for h in root.handlers if h.formatter is not None]
     assert LOG_FORMAT in formats
 
 
