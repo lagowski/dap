@@ -238,6 +238,9 @@ def test_validate_env_caps_token_probes_at_ten(client: TestClient) -> None:
     assert len(probed) == 10
     assert len(skipped) == 2
     assert all("max 10" in (r["error"] or "") for r in skipped)
+    # The guard (not a coincidental limit) must be what skipped them:
+    # dict order is preserved, so exactly the 11th and 12th keys skip.
+    assert [r["key"] for r in skipped] == ["TOKEN_10", "TOKEN_11"]
     assert mock_client.get.await_count == 10
 
 

@@ -35,6 +35,11 @@ def test_wildcard_is_allowed_as_explicit_operator_choice() -> None:
         "a.example",  # missing scheme — browser would never match
         "ftp://a.example",  # non-http scheme
         "https://",  # scheme without host
+        # Origin headers never carry a path/trailing slash — an entry
+        # with one would silently never match in CORSMiddleware's exact
+        # string comparison (PR #783 council review).
+        "https://a.example/",
+        "https://a.example/path",
     ],
 )
 def test_rejects_malformed_origin_entries(raw: str) -> None:
