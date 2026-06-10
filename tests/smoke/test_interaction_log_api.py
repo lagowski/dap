@@ -148,3 +148,42 @@ async def test_startup_purges_rows_past_retention(
         client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         body = client.get("/interactions").json()
         assert body["total"] == 1
+
+
+async def test_admin_browse_leaves_an_audit_trail(client: TestClient) -> None:
+    """Reading compliance records is itself a security-relevant event
+    (PR #784 council review) — browsing /interactions writes an
+    ``interactions.list`` audit row with metadata only (no content)."""
+    _chat(client, "hello")
+    await _promote_default_user_to_admin(client)
+
+    client.get("/interactions", params={"surface": "assistant"})
+
+    audit = client.get("/audit/events", params={"event_type": "interactions.list"})
+    assert audit.status_code == 200, audit.text
+    events = audit.json()
+    assert events["total"] == 1
+    data = events["items"][0]["event_data"]
+    assert data["surface"] == "assistant"
+    assert data["total"] == 1
+    # Metadata only — the audit row must never carry interaction content.
+    assert "redacted_request" not in str(data)
+
+
+def test_failing_retention_purge_does_not_block_startup(
+    engine_config_factory: Callable[..., EngineConfig],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The startup sweep is best-effort retention enforcement — a DB
+    hiccup during purge must log and continue, not crash the engine
+    (PR #784 council review, HIGH)."""
+    import dap_engine.app as app_module
+
+    def _boom(*args: Any, **kwargs: Any) -> int:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(app_module, "purge_interactions", _boom)
+    config = engine_config_factory(interaction_log_retention_days=30)
+    app = create_app(config)
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
