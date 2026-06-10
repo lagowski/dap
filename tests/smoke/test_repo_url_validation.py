@@ -26,10 +26,7 @@ def test_accepts_canonical_https_url() -> None:
 
 
 def test_accepts_ssh_form() -> None:
-    assert (
-        _validate_github_url("git@github.com:owner/repo")
-        == "https://github.com/owner/repo.git"
-    )
+    assert _validate_github_url("git@github.com:owner/repo") == "https://github.com/owner/repo.git"
 
 
 @pytest.mark.parametrize(

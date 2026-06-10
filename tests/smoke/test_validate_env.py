@@ -229,7 +229,7 @@ def test_validate_env_caps_token_probes_at_ten(client: TestClient) -> None:
     env_vars = {f"TOKEN_{i:02d}": f"ghp_{'x' * 36}{i:02d}" for i in range(12)}
     with _mock_httpx_client(status_code=200, json_body={"login": "octocat"}) as ctx:
         resp = client.post("/projects/validate-env", json={"env_vars": env_vars})
-        mock_client = ctx.return_value  # type: ignore[attr-defined]
+        mock_client = ctx.return_value
     assert resp.status_code == 200
     results = resp.json()["results"]
     assert len(results) == 12
