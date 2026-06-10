@@ -11,6 +11,7 @@ resolution-markers = [
 members = [
     "code-review-council",
     "dap-cli",
+    "dap-database",
     "dap-engine",
     "dap-prompt-dsl",
     "dap-runtimes",
@@ -536,6 +537,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dap-database"
+version = "0.3.0"
+source = { editable = "packages/database" }
+dependencies = [
+    { name = "sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "sqlalchemy", specifier = ">=2.0.36" }]
+
+[[package]]
 name = "dap-engine"
 version = "0.3.0"
 source = { editable = "apps/engine" }
@@ -543,6 +555,7 @@ dependencies = [
     { name = "alembic" },
     { name = "anyio" },
     { name = "cryptography" },
+    { name = "dap-database" },
     { name = "dap-prompt-dsl" },
     { name = "dap-runtimes", extra = ["all"] },
     { name = "dap-schemas" },
@@ -564,6 +577,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13.3" },
     { name = "anyio", specifier = ">=4.6.0" },
     { name = "cryptography", specifier = ">=42.0" },
+    { name = "dap-database", editable = "packages/database" },
     { name = "dap-prompt-dsl", editable = "packages/prompt-dsl" },
     { name = "dap-runtimes", extras = ["all"], editable = "packages/runtimes" },
     { name = "dap-schemas", editable = "packages/types" },

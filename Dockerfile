@@ -50,6 +50,7 @@ COPY apps/engine/pyproject.toml apps/engine/README.md ./apps/engine/
 COPY packages/prompt-dsl/pyproject.toml packages/prompt-dsl/README.md ./packages/prompt-dsl/
 COPY packages/runtimes/pyproject.toml packages/runtimes/README.md ./packages/runtimes/
 COPY packages/types/pyproject.toml packages/types/README.md ./packages/types/
+COPY packages/database/pyproject.toml packages/database/README.md ./packages/database/
 # ``code-review-council`` is a workspace member used by the CI gate
 # (gemini_review.py). It's not a runtime dependency of the engine,
 # but it has to be physically present here because
@@ -67,12 +68,14 @@ RUN mkdir -p apps/cli/src/dap_cli apps/engine/src/dap_engine \
     packages/prompt-dsl/src/dap_prompt_dsl \
     packages/runtimes/src/dap_runtimes packages/types/src/dap_types \
     packages/code-review-council/src/code_review_council \
+    packages/database/src/dap_database \
     && touch apps/cli/src/dap_cli/__init__.py \
     && touch apps/engine/src/dap_engine/__init__.py \
     && touch packages/prompt-dsl/src/dap_prompt_dsl/__init__.py \
     && touch packages/runtimes/src/dap_runtimes/__init__.py \
     && touch packages/types/src/dap_types/__init__.py \
-    && touch packages/code-review-council/src/code_review_council/__init__.py
+    && touch packages/code-review-council/src/code_review_council/__init__.py \
+    && touch packages/database/src/dap_database/__init__.py
 
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
@@ -91,6 +94,7 @@ COPY packages/prompt-dsl/src ./packages/prompt-dsl/src
 COPY packages/runtimes/src ./packages/runtimes/src
 COPY packages/types/src ./packages/types/src
 COPY packages/code-review-council/src ./packages/code-review-council/src
+COPY packages/database/src ./packages/database/src
 
 # Second-pass sync: install every workspace member (--all-packages)
 # as **non-editable** wheels so the source tree doesn't need to be

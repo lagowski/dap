@@ -47,6 +47,7 @@ UNIT_FILES = frozenset(
         "test_claude_code_adapter.py",
         "test_cli_base_streaming.py",
         "test_cli_cortex_auth.py",
+        "test_cli_http_utils.py",
         "test_codex_adapter.py",
         "test_conditions.py",
         "test_db_url_helpers.py",
