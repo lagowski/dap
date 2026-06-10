@@ -33,7 +33,7 @@ def test_configure_logging_sets_level_and_format(
     root = logging.getLogger()
     assert root.level == logging.INFO
     formats = [
-        h.formatter._fmt  # type: ignore[union-attr]
+        h.formatter._fmt
         for h in root.handlers
         if h.formatter is not None
     ]
