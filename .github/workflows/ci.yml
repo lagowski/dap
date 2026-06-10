@@ -131,9 +131,12 @@ jobs:
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
         # Fast required gate: all non-integration Python tests plus
         # smoke files tagged ``unit`` by ``tests/smoke/conftest.py``.
-        # Heavier smoke tests run in the sharded job below. The --cov flags
-        # only add coverage reporting; they do not change which tests run.
-        run: uv run pytest -q -m "not integration" --ignore=tests/standalone --cov=apps --cov=packages --cov-report=xml
+        # Heavier smoke tests run in the sharded job below.
+        # ``--cov-fail-under=55`` is a regression floor for the unit-only
+        # gate (60% as of #778 Phase 5; the FULL suite measures 87% and is
+        # tracked on Codecov). Ratchet the floor up as unit coverage grows —
+        # never down.
+        run: uv run pytest -q -m "not integration" --ignore=tests/standalone --cov=apps --cov=packages --cov-report=xml --cov-fail-under=55
 
       - name: Upload coverage to Codecov
         # Informational only — never fail the required gate on a missing token

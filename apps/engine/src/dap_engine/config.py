@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 from typing import Any, NotRequired, TypedDict, Unpack
+from urllib.parse import urlparse
 
 __all__ = [
     "DEFAULT_CORS_ORIGINS",
@@ -52,6 +53,28 @@ def parse_cors_origins(raw: str | None) -> list[str] | None:
         return None
     parts = [p.strip() for p in raw.split(",")]
     cleaned = [p for p in parts if p]
+    # Fail startup on malformed entries (#778 audit security #5) — a
+    # typo'd origin (missing scheme, bare host) would never match in the
+    # browser and silently break the dashboard. ``*`` stays allowed as an
+    # explicit operator choice.
+    for origin in cleaned:
+        if origin == "*":
+            continue
+        parsed = urlparse(origin)
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+            # Origin headers never carry a path/query/fragment — an entry
+            # with one (even a bare trailing slash) would silently never
+            # match CORSMiddleware's exact string comparison.
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                f"DAP_CORS_ORIGINS entry {origin!r} is not a valid origin — "
+                "expected http(s)://host[:port] with no trailing path, or '*'"
+            )
     return cleaned or None
 
 

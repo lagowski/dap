@@ -215,3 +215,45 @@ def test_validate_env_requires_authentication() -> None:
                 # No Authorization header
             )
     assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# DoS guard — token probes capped per request (#778 audit security #3)
+# --------------------------------------------------------------------------
+
+
+def test_validate_env_caps_token_probes_at_ten(client: TestClient) -> None:
+    """12 token-shaped values → exactly 10 GitHub probes; the remaining 2
+    come back unprobed (valid=None) with an explanatory error instead of
+    silently hammering the GitHub API / burning rate limit."""
+    env_vars = {f"TOKEN_{i:02d}": f"ghp_{'x' * 36}{i:02d}" for i in range(12)}
+    with _mock_httpx_client(status_code=200, json_body={"login": "octocat"}) as ctx:
+        resp = client.post("/projects/validate-env", json={"env_vars": env_vars})
+        mock_client = ctx.return_value
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 12
+    probed = [r for r in results if r["valid"] is True]
+    skipped = [r for r in results if r["is_token"] and r["valid"] is None]
+    assert len(probed) == 10
+    assert len(skipped) == 2
+    assert all("max 10" in (r["error"] or "") for r in skipped)
+    # The guard (not a coincidental limit) must be what skipped them:
+    # dict order is preserved, so exactly the 11th and 12th keys skip.
+    assert [r["key"] for r in skipped] == ["TOKEN_10", "TOKEN_11"]
+    assert mock_client.get.await_count == 10
+
+
+def test_validate_env_non_tokens_do_not_consume_the_probe_budget(
+    client: TestClient,
+) -> None:
+    """Plain values are classified locally — only token-shaped values count
+    against the per-request probe cap."""
+    env_vars: dict[str, str] = {f"PLAIN_{i:02d}": f"value-{i}" for i in range(15)}
+    env_vars["REAL_TOKEN"] = "ghp_" + "y" * 38
+    with _mock_httpx_client(status_code=200, json_body={"login": "octocat"}):
+        resp = client.post("/projects/validate-env", json={"env_vars": env_vars})
+    assert resp.status_code == 200
+    token_results = [r for r in resp.json()["results"] if r["is_token"]]
+    assert len(token_results) == 1
+    assert token_results[0]["valid"] is True

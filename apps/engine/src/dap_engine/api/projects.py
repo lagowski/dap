@@ -52,6 +52,16 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 _GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "gho_")
 
+# DoS guard (#778 audit security #3): each token-shaped value costs a
+# GitHub API round-trip; an unauthenticated-rate-limit-sized payload
+# would otherwise let one request burn the whole quota.
+MAX_TOKEN_PROBES_PER_REQUEST = 10
+
+# GitHub slug charset (#778 audit security #2): owner/repo segments are
+# alphanumerics plus ``._-`` and never start with ``-`` (git argv flag
+# injection) or ``.`` (``..`` path traversal into the workspace layout).
+_SLUG_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 
 def _is_github_token(value: str) -> bool:
     """Return True if *value* looks like a GitHub token."""
@@ -68,12 +78,40 @@ async def validate_env(
     Requires authentication: prevents anonymous token enumeration (#350).
     """
     results: list[EnvVarValidationResult] = []
+    probes_used = 0
+    cap_logged = False
     # Re-use a single client (one TLS connection pool) for all token probes.
     async with httpx.AsyncClient() as client:
         for key, value in payload.env_vars.items():
             if not _is_github_token(value):
                 results.append(EnvVarValidationResult(key=key, is_token=False))
                 continue
+            if probes_used >= MAX_TOKEN_PROBES_PER_REQUEST:
+                # Operator visibility (PR #783 review): a request stuffed
+                # with token-shaped values is an abuse signal worth one
+                # WARNING line — but this endpoint is a read-only
+                # best-effort probe, so no audit-table write.
+                if not cap_logged:
+                    cap_logged = True
+                    logger.warning(
+                        "validate_env: token-probe cap (%d) exceeded — "
+                        "remaining token-shaped values were not probed",
+                        MAX_TOKEN_PROBES_PER_REQUEST,
+                    )
+                # Best-effort contract: never block the save, just report
+                # that this value wasn't probed (valid stays None).
+                results.append(
+                    EnvVarValidationResult(
+                        key=key,
+                        is_token=True,
+                        error=(
+                            "Skipped: too many tokens in one request "
+                            f"(max {MAX_TOKEN_PROBES_PER_REQUEST})"
+                        ),
+                    )
+                )
+                continue
+            probes_used += 1
             # Token-shaped — validate against GitHub API.
             try:
                 resp = await client.get(
@@ -322,13 +360,26 @@ def _validate_github_url(repo_url: str) -> str:
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"repo_url must point to {_GITHUB_HOST} (got {host!r})",
         )
-    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", repo_url)
+    match = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$", repo_url)
     if not match:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Cannot parse owner/repo from repo_url: {repo_url!r}",
         )
-    return f"https://{_GITHUB_HOST}/{match.group(1)}.git"
+    owner, repo_name = match.group(1), match.group(2)
+    # Charset guard (#778 audit security #2): the slug flows into git
+    # subprocess argv and the workspace filesystem path — reject anything
+    # outside GitHub's actual name alphabet before it gets there.
+    for segment in (owner, repo_name):
+        if not _SLUG_SEGMENT_RE.match(segment):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Invalid owner/repo segment {segment!r} — expected "
+                    "alphanumerics plus ._- (must not start with '-' or '.')"
+                ),
+            )
+    return f"https://{_GITHUB_HOST}/{owner}/{repo_name}.git"
 
 
 def _clone_token(project: Project) -> str | None:
