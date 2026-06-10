@@ -62,6 +62,7 @@ UNIT_FILES = frozenset(
         "test_provider_openai.py",
         "test_python_func_adapter.py",
         "test_run_registry.py",
+        "test_run_state_machine.py",
     }
 )
 
