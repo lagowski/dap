@@ -55,6 +55,7 @@ UNIT_FILES = frozenset(
         "test_gemini_cli_adapter.py",
         "test_http_adapter.py",
         "test_instance_env_vars_merge.py",
+        "test_logging_config.py",
         "test_output_parser.py",
         "test_pipeline_state_description.py",
         "test_prompt_builder.py",
