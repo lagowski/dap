@@ -201,7 +201,10 @@ VOLUME /data
 USER dap
 WORKDIR /home/dap
 
-EXPOSE 7333 3000
+# Ports come from the ENV block above (#778 Phase 4) — the single place
+# the numbers appear in the image definition. entrypoint.sh and the
+# HEALTHCHECK read the same variables at runtime.
+EXPOSE ${PORT_ENGINE} ${PORT_DASHBOARD}
 
 # 30s start_period covers cold-start migrations + uv resolve on big DBs.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
