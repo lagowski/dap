@@ -16,6 +16,11 @@ import type {
   ProjectUpdate,
   ValidateEnvRequest,
 } from "@/lib/api/types";
+import {
+  createEntityQuery,
+  createInvalidatingMutation,
+  refetchWhile,
+} from "@/lib/query-factory";
 import { queryKeys } from "./api/query-keys";
 
 export { queryKeys } from "./api/query-keys";
@@ -36,39 +41,34 @@ export {
   useTriggerRun,
 } from "./api/runs";
 
-export function usePipeline(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.pipeline(id) : ["pipelines", "noop"],
-    queryFn: () => (id ? api.getPipeline(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
-  });
-}
+// ---------------------------------------------------------------------------
+// Pipelines
+// ---------------------------------------------------------------------------
 
-export function usePipelineUsage(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.pipelineUsage(id) : ["pipelines", "noop", "usage"],
-    queryFn: () =>
-      id ? api.getPipelineUsage(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
-  });
-}
+export const usePipeline = createEntityQuery({
+  scope: "pipelines",
+  queryKey: queryKeys.pipeline,
+  queryFn: api.getPipeline,
+});
+
+export const usePipelineUsage = createEntityQuery({
+  scope: "pipelines",
+  suffix: ["usage"],
+  queryKey: queryKeys.pipelineUsage,
+  queryFn: api.getPipelineUsage,
+});
 
 /**
  * Pre-run readiness of a pipeline's python-func callables (#710). Lazily
  * enabled (e.g. when the run dialog opens) so we don't resolve callables on
  * every pipeline list render.
  */
-export function usePipelineReadiness(
-  id: string | null,
-  options?: { enabled?: boolean },
-) {
-  return useQuery({
-    queryKey: id ? queryKeys.pipelineReadiness(id) : ["pipelines", "noop", "readiness"],
-    queryFn: () =>
-      id ? api.getPipelineReadiness(id) : Promise.reject(new Error("no id")),
-    enabled: (options?.enabled ?? true) && id != null,
-  });
-}
+export const usePipelineReadiness = createEntityQuery({
+  scope: "pipelines",
+  suffix: ["readiness"],
+  queryKey: queryKeys.pipelineReadiness,
+  queryFn: api.getPipelineReadiness,
+});
 
 export function usePipelinesList() {
   return useQuery({
@@ -77,25 +77,15 @@ export function usePipelinesList() {
   });
 }
 
-export function useCreatePipeline() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: PipelineCreate) => api.createPipeline(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-    },
-  });
-}
+export const useCreatePipeline = createInvalidatingMutation({
+  mutationFn: (payload: PipelineCreate) => api.createPipeline(payload),
+  invalidates: () => [queryKeys.pipelines],
+});
 
-export function useImportPipeline() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: PipelineExport) => api.importPipeline(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-    },
-  });
-}
+export const useImportPipeline = createInvalidatingMutation({
+  mutationFn: (payload: PipelineExport) => api.importPipeline(payload),
+  invalidates: () => [queryKeys.pipelines],
+});
 
 export function useInspectPipelineImportBackends() {
   return useMutation({
@@ -103,49 +93,41 @@ export function useInspectPipelineImportBackends() {
   });
 }
 
-export function useUpdatePipeline() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: PipelineUpdate }) =>
-      api.updatePipeline(id, payload),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-      qc.invalidateQueries({ queryKey: queryKeys.pipeline(variables.id) });
-    },
-  });
-}
+export const useUpdatePipeline = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: PipelineUpdate }) =>
+    api.updatePipeline(id, payload),
+  invalidates: ({ id }) => [queryKeys.pipelines, queryKeys.pipeline(id)],
+});
 
-export function useUpdatePipelineUiMetadata() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: PipelineUiMetadataPatch }) =>
-      api.updatePipelineUiMetadata(id, payload),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipeline(variables.id) });
-      qc.invalidateQueries({ queryKey: queryKeys.pipelineVersions(variables.id) });
-    },
-  });
-}
+export const useUpdatePipelineUiMetadata = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: PipelineUiMetadataPatch }) =>
+    api.updatePipelineUiMetadata(id, payload),
+  invalidates: ({ id }) => [
+    queryKeys.pipeline(id),
+    queryKeys.pipelineVersions(id),
+  ],
+});
 
-export function useArchivePipeline() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.archivePipeline(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-      qc.invalidateQueries({ queryKey: queryKeys.pipeline(id) });
-      // Pipelines reference agents — archiving a pipeline drops its
-      // agents' usage counts, so the /agents list cache is now stale.
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-    },
-  });
-}
+export const useArchivePipeline = createInvalidatingMutation({
+  mutationFn: (id: string) => api.archivePipeline(id),
+  // Pipelines reference agents — archiving a pipeline drops its agents'
+  // usage counts, so the /agents list cache is stale too.
+  invalidates: (id) => [
+    queryKeys.pipelines,
+    queryKeys.pipeline(id),
+    queryKeys.agents,
+  ],
+});
 
 export function useValidatePipeline() {
   return useMutation({
     mutationFn: (payload: PipelineCreate) => api.validatePipeline(payload),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
 
 export function useAgentsList(filters?: { role?: string }) {
   return useQuery({
@@ -154,102 +136,68 @@ export function useAgentsList(filters?: { role?: string }) {
   });
 }
 
-export function useCreateAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: AgentCreate) => api.createAgent(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-    },
-  });
-}
+export const useCreateAgent = createInvalidatingMutation({
+  mutationFn: (payload: AgentCreate) => api.createAgent(payload),
+  invalidates: () => [queryKeys.agents],
+});
 
-export function useAgent(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.agent(id) : ["agents", "noop"],
-    queryFn: () => (id ? api.getAgent(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
-  });
-}
+export const useAgent = createEntityQuery({
+  scope: "agents",
+  queryKey: queryKeys.agent,
+  queryFn: api.getAgent,
+});
 
-export function useAgentUsage(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.agentUsage(id) : ["agents", "noop", "usage"],
-    queryFn: () =>
-      id ? api.getAgentUsage(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
-  });
-}
+export const useAgentUsage = createEntityQuery({
+  scope: "agents",
+  suffix: ["usage"],
+  queryKey: queryKeys.agentUsage,
+  queryFn: api.getAgentUsage,
+});
 
 /**
  * A python-func agent's callable docstring ("what this does", #747). Lazily
  * enabled — only fetched for managed agents where it's meaningful.
  */
-export function useAgentCallableInfo(
-  id: string | null,
-  options?: { enabled?: boolean },
-) {
-  return useQuery({
-    queryKey: id ? queryKeys.agentCallableInfo(id) : ["agents", "noop", "callable-info"],
-    queryFn: () =>
-      id ? api.getAgentCallableInfo(id) : Promise.reject(new Error("no id")),
-    enabled: (options?.enabled ?? true) && id != null,
-  });
-}
+export const useAgentCallableInfo = createEntityQuery({
+  scope: "agents",
+  suffix: ["callable-info"],
+  queryKey: queryKeys.agentCallableInfo,
+  queryFn: api.getAgentCallableInfo,
+});
 
-export function useAgentExecutions(id: string | null) {
-  return useQuery({
-    queryKey: id
-      ? queryKeys.agentExecutions(id)
-      : ["agents", "noop", "executions"],
-    queryFn: () =>
-      id ? api.getAgentExecutions(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
-  });
-}
+export const useAgentExecutions = createEntityQuery({
+  scope: "agents",
+  suffix: ["executions"],
+  queryKey: queryKeys.agentExecutions,
+  queryFn: api.getAgentExecutions,
+});
 
-export function useAgentVersions(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.agentVersions(id) : ["agents", "noop", "versions"],
-    queryFn: () =>
-      id ? api.listAgentVersions(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
-  });
-}
+export const useAgentVersions = createEntityQuery({
+  scope: "agents",
+  suffix: ["versions"],
+  queryKey: queryKeys.agentVersions,
+  queryFn: api.listAgentVersions,
+});
 
-export function useUpdateAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: AgentUpdate }) =>
-      api.updateAgent(id, payload),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-      qc.invalidateQueries({ queryKey: queryKeys.agent(variables.id) });
-      qc.invalidateQueries({ queryKey: queryKeys.agentVersions(variables.id) });
-    },
-  });
-}
+export const useUpdateAgent = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: AgentUpdate }) =>
+    api.updateAgent(id, payload),
+  invalidates: ({ id }) => [
+    queryKeys.agents,
+    queryKeys.agent(id),
+    queryKeys.agentVersions(id),
+  ],
+});
 
-export function useArchiveAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.archiveAgent(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-      qc.invalidateQueries({ queryKey: queryKeys.agent(id) });
-    },
-  });
-}
+export const useArchiveAgent = createInvalidatingMutation({
+  mutationFn: (id: string) => api.archiveAgent(id),
+  invalidates: (id) => [queryKeys.agents, queryKeys.agent(id)],
+});
 
-export function useImportAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: AgentExport) => api.importAgent(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-    },
-  });
-}
+export const useImportAgent = createInvalidatingMutation({
+  mutationFn: (payload: AgentExport) => api.importAgent(payload),
+  invalidates: () => [queryKeys.agents],
+});
 
 export function useDryRunAgent() {
   // Stateless on the server (#103) — no cache invalidation. The mutation
@@ -270,46 +218,27 @@ export function useProjectsList(filters?: { archived?: boolean }) {
   });
 }
 
-export function useProject(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.project(id) : ["projects", "noop"],
-    queryFn: () => (id ? api.getProject(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
-  });
-}
+export const useProject = createEntityQuery({
+  scope: "projects",
+  queryKey: queryKeys.project,
+  queryFn: api.getProject,
+});
 
-export function useCreateProject() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: ProjectCreate) => api.createProject(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.projects });
-    },
-  });
-}
+export const useCreateProject = createInvalidatingMutation({
+  mutationFn: (payload: ProjectCreate) => api.createProject(payload),
+  invalidates: () => [queryKeys.projects],
+});
 
-export function useUpdateProject() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: ProjectUpdate }) =>
-      api.updateProject(id, payload),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: queryKeys.projects });
-      qc.invalidateQueries({ queryKey: queryKeys.project(variables.id) });
-    },
-  });
-}
+export const useUpdateProject = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: ProjectUpdate }) =>
+    api.updateProject(id, payload),
+  invalidates: ({ id }) => [queryKeys.projects, queryKeys.project(id)],
+});
 
-export function useArchiveProject() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.archiveProject(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: queryKeys.projects });
-      qc.invalidateQueries({ queryKey: queryKeys.project(id) });
-    },
-  });
-}
+export const useArchiveProject = createInvalidatingMutation({
+  mutationFn: (id: string) => api.archiveProject(id),
+  invalidates: (id) => [queryKeys.projects, queryKeys.project(id)],
+});
 
 export function useValidateProjectEnv() {
   return useMutation({
@@ -317,19 +246,14 @@ export function useValidateProjectEnv() {
   });
 }
 
-export function useTriggerProjectRun() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (params: {
-      id: string;
-      kind: string;
-      payload?: ProjectRunRequest;
-    }) => api.triggerProjectRun(params.id, params.kind, params.payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
-  });
-}
+export const useTriggerProjectRun = createInvalidatingMutation({
+  mutationFn: (params: {
+    id: string;
+    kind: string;
+    payload?: ProjectRunRequest;
+  }) => api.triggerProjectRun(params.id, params.kind, params.payload),
+  invalidates: () => [queryKeys.runs],
+});
 
 export function useWorkspaceStatus(projectId: string | null) {
   return useQuery({
@@ -343,10 +267,8 @@ export function useWorkspaceStatus(projectId: string | null) {
         last_commit: string | null;
       }>(`/projects/${encodeURIComponent(projectId!)}/workspace/status`),
     enabled: projectId != null,
-    refetchInterval: (query) => {
-      const d = query.state.data;
-      return d?.exists ? false : 10_000;
-    },
+    // Poll until the workspace exists (init runs in the background).
+    refetchInterval: refetchWhile((d) => !d.exists, 10_000),
   });
 }
 
@@ -508,29 +430,18 @@ export function useAdminUsers(filters: { includeDeleted?: boolean } = {}) {
   });
 }
 
-export function useUpdateAdminUser() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (params: { id: string; payload: AdminUserUpdate }) =>
-      api.updateAdminUser(params.id, params.payload),
-    onSuccess: () => {
-      // Every variant of the admin-users list re-fetches; if an admin
-      // demotes themself the currentUser badge needs to flip too.
-      qc.invalidateQueries({ queryKey: queryKeys.adminUsers });
-      qc.invalidateQueries({ queryKey: queryKeys.currentUser });
-    },
-  });
-}
+export const useUpdateAdminUser = createInvalidatingMutation({
+  mutationFn: (params: { id: string; payload: AdminUserUpdate }) =>
+    api.updateAdminUser(params.id, params.payload),
+  // Every variant of the admin-users list re-fetches; if an admin
+  // demotes themself the currentUser badge needs to flip too.
+  invalidates: () => [queryKeys.adminUsers, queryKeys.currentUser],
+});
 
-export function useDeleteAdminUser() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.deleteAdminUser(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.adminUsers });
-    },
-  });
-}
+export const useDeleteAdminUser = createInvalidatingMutation({
+  mutationFn: (id: string) => api.deleteAdminUser(id),
+  invalidates: () => [queryKeys.adminUsers],
+});
 
 // ---------------------------------------------------------------------------
 // Admin — Audit log (#301, sub-C3)
@@ -574,26 +485,16 @@ export function useAdminApiTokens(filters: {
   });
 }
 
-export function useAdminRevokeApiToken() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.adminRevokeApiToken(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.adminApiTokens });
-    },
-  });
-}
+export const useAdminRevokeApiToken = createInvalidatingMutation({
+  mutationFn: (id: string) => api.adminRevokeApiToken(id),
+  invalidates: () => [queryKeys.adminApiTokens],
+});
 
-export function useCreateApiToken() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { name: string; expires_in_days?: number | null }) =>
-      api.createApiToken(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.adminApiTokens });
-    },
-  });
-}
+export const useCreateApiToken = createInvalidatingMutation({
+  mutationFn: (payload: { name: string; expires_in_days?: number | null }) =>
+    api.createApiToken(payload),
+  invalidates: () => [queryKeys.adminApiTokens],
+});
 
 // ---------------------------------------------------------------------------
 // Admin — Instance settings (#301, sub-C5)
@@ -621,22 +522,16 @@ export function useInstanceEnvVars() {
   });
 }
 
-export function useUpsertInstanceEnvVar() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ key, value }: { key: string; value: string }) =>
-      api.upsertInstanceEnvVar(key, value),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.instanceEnvVars }),
-  });
-}
+export const useUpsertInstanceEnvVar = createInvalidatingMutation({
+  mutationFn: ({ key, value }: { key: string; value: string }) =>
+    api.upsertInstanceEnvVar(key, value),
+  invalidates: () => [queryKeys.instanceEnvVars],
+});
 
-export function useDeleteInstanceEnvVar() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (key: string) => api.deleteInstanceEnvVar(key),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.instanceEnvVars }),
-  });
-}
+export const useDeleteInstanceEnvVar = createInvalidatingMutation({
+  mutationFn: (key: string) => api.deleteInstanceEnvVar(key),
+  invalidates: () => [queryKeys.instanceEnvVars],
+});
 
 /**
  * Config assistant chat (#689). A plain mutation — the assistant panel owns

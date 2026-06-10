@@ -9,11 +9,21 @@ import {
 import { useEffect, useState } from "react";
 import * as api from "@/lib/api/client";
 import type { RunCreateRequest } from "@/lib/api/types";
+import {
+  createEntityQuery,
+  createInvalidatingMutation,
+  refetchWhile,
+} from "@/lib/query-factory";
 import { queryKeys } from "./query-keys";
 
 const RUNS_LIST_REFETCH_MS = 2_000;
 const RUN_DETAIL_REFETCH_MS = 2_000;
 const RUN_DETAIL_BURST_MS = 500; // fast poll right after approve
+
+/** A run still needs live updates while running OR paused — paused runs
+ * must pick up gate_payload / approval state as soon as it changes. */
+const isRunBusy = (r: { final_status: string }) =>
+  r.final_status === "running" || r.final_status === "paused";
 
 export function useRunsList(
   filters?: {
@@ -30,20 +40,10 @@ export function useRunsList(
     queryKey: queryKeys.runsList(filters),
     queryFn: () => api.listRuns(filters),
     enabled: options?.enabled ?? true,
-    refetchInterval: (query) => {
-      // Keep polling while any run is running or paused (paused runs
-      // need live updates for gate approval detection).
-      const data = query.state.data;
-      if (
-        data &&
-        !data.items.some(
-          (r) => r.final_status === "running" || r.final_status === "paused",
-        )
-      ) {
-        return false;
-      }
-      return RUNS_LIST_REFETCH_MS;
-    },
+    refetchInterval: refetchWhile(
+      (data) => data.items.some(isRunBusy),
+      RUNS_LIST_REFETCH_MS,
+    ),
   });
 }
 
@@ -52,35 +52,29 @@ export function useRun(id: string | null, opts?: { live?: boolean }) {
     queryKey: id ? queryKeys.run(id) : ["runs", "noop"],
     queryFn: id ? () => api.getRun(id) : skipToken,
     enabled: id != null,
-    refetchInterval: (query) => {
-      // The user can turn off live auto-refresh (#662 Phase 2). When
-      // ``live`` is explicitly false we never poll, regardless of run
-      // status; the page exposes a manual Refresh button instead.
-      if (opts?.live === false) return false;
-      const data = query.state.data;
-      // Keep polling while running OR paused (paused needs to pick up
-      // gate_payload as soon as the interrupt fires).
-      if (data && data.final_status !== "running" && data.final_status !== "paused") return false;
-      return RUN_DETAIL_REFETCH_MS;
-    },
+    // The user can turn off live auto-refresh (#662 Phase 2). When ``live``
+    // is explicitly false we never poll, regardless of run status; the page
+    // exposes a manual Refresh button instead.
+    refetchInterval:
+      opts?.live === false
+        ? false
+        : refetchWhile(isRunBusy, RUN_DETAIL_REFETCH_MS),
   });
 }
 
-export function useRunStateHistory(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.runHistory(id) : ["runs", "noop", "history"],
-    queryFn: id ? () => api.getRunStateHistory(id) : skipToken,
-    enabled: id != null,
-  });
-}
+export const useRunStateHistory = createEntityQuery({
+  scope: "runs",
+  suffix: ["history"],
+  queryKey: queryKeys.runHistory,
+  queryFn: api.getRunStateHistory,
+});
 
-export function useRunNodeLogs(runId: string | null) {
-  return useQuery({
-    queryKey: runId ? queryKeys.runNodeLogs(runId) : ["runs", "noop", "nodes"],
-    queryFn: runId ? () => api.getRunNodeLogs(runId) : skipToken,
-    enabled: runId != null,
-  });
-}
+export const useRunNodeLogs = createEntityQuery({
+  scope: "runs",
+  suffix: ["nodes"],
+  queryKey: queryKeys.runNodeLogs,
+  queryFn: api.getRunNodeLogs,
+});
 
 export function useRunNodeLog(runId: string | null, nodeId: string | null) {
   return useQuery({
@@ -118,32 +112,31 @@ export function useRunNodeExplain(
   });
 }
 
-function useRunActionMutation<T>(action: (id: string) => Promise<T>) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: action,
-    onSuccess: (_data, runId) => {
-      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
-  });
-}
+/** Lifecycle actions share the same invalidation: the run + every list. */
+const runActionInvalidates = (runId: string) => [
+  queryKeys.run(runId),
+  queryKeys.runs,
+];
 
-export function useAbortRun() {
-  return useRunActionMutation(api.abortRun);
-}
+export const useAbortRun = createInvalidatingMutation({
+  mutationFn: api.abortRun,
+  invalidates: runActionInvalidates,
+});
 
-export function usePauseRun() {
-  return useRunActionMutation(api.pauseRun);
-}
+export const usePauseRun = createInvalidatingMutation({
+  mutationFn: api.pauseRun,
+  invalidates: runActionInvalidates,
+});
 
-export function useResumeRun() {
-  return useRunActionMutation(api.resumeRun);
-}
+export const useResumeRun = createInvalidatingMutation({
+  mutationFn: api.resumeRun,
+  invalidates: runActionInvalidates,
+});
 
-export function useDeleteRun() {
-  return useRunActionMutation(api.deleteRun);
-}
+export const useDeleteRun = createInvalidatingMutation({
+  mutationFn: api.deleteRun,
+  invalidates: runActionInvalidates,
+});
 
 export function useApproveGate() {
   const qc = useQueryClient();
@@ -176,17 +169,12 @@ export function useApproveGate() {
   });
 }
 
-export function usePipelineVersions(
-  id: string | null,
-  options?: { enabled?: boolean },
-) {
-  const enabled = (options?.enabled ?? true) && id != null;
-  return useQuery({
-    queryKey: id ? queryKeys.pipelineVersions(id) : ["pipelines", "noop", "versions"],
-    queryFn: id ? () => api.listPipelineVersions(id) : skipToken,
-    enabled,
-  });
-}
+export const usePipelineVersions = createEntityQuery({
+  scope: "pipelines",
+  suffix: ["versions"],
+  queryKey: queryKeys.pipelineVersions,
+  queryFn: api.listPipelineVersions,
+});
 
 /** Returns formatted time remaining until `expiresAt` and whether it's urgent (< 5 min). */
 export function useGateCountdown(expiresAt: string | null | undefined): {
@@ -213,12 +201,7 @@ export function useGateCountdown(expiresAt: string | null | undefined): {
   return { label, isUrgent: totalMins < 5 };
 }
 
-export function useTriggerRun() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: RunCreateRequest) => api.triggerRun(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
-  });
-}
+export const useTriggerRun = createInvalidatingMutation({
+  mutationFn: (payload: RunCreateRequest) => api.triggerRun(payload),
+  invalidates: () => [queryKeys.runs],
+});
