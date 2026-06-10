@@ -44,17 +44,20 @@ UNIT_FILES = frozenset(
     {
         "test_agent_schema_validation.py",
         "test_api_call_adapter.py",
+        "test_api_validation_helpers.py",
         "test_claude_code_adapter.py",
         "test_cli_base_streaming.py",
         "test_cli_cortex_auth.py",
         "test_cli_http_utils.py",
         "test_codex_adapter.py",
         "test_conditions.py",
+        "test_config_module.py",
         "test_db_url_helpers.py",
         "test_gate_payload_warnings.py",
         "test_gemini_cli_adapter.py",
         "test_http_adapter.py",
         "test_instance_env_vars_merge.py",
+        "test_logging_config.py",
         "test_output_parser.py",
         "test_pipeline_state_description.py",
         "test_prompt_builder.py",
@@ -62,6 +65,7 @@ UNIT_FILES = frozenset(
         "test_provider_openai.py",
         "test_python_func_adapter.py",
         "test_run_registry.py",
+        "test_run_state_machine.py",
     }
 )
 

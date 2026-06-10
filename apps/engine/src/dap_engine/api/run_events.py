@@ -69,6 +69,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from dap_engine.api.deps import get_session_factory
 from dap_engine.auth.users import current_active_user
+from dap_engine.domain.run_state_machine import TERMINAL_STATUSES
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
 
@@ -77,7 +78,6 @@ logger = logging.getLogger("dap.engine.api.run_events")
 # Terminal final_status values — a run in one of these has finished
 # executing; ``paused`` is intentionally NOT terminal so the client sees
 # the gate and the subsequent resume on the same stream.
-_TERMINAL_STATUSES = frozenset({"success", "failed", "aborted"})
 
 # Node statuses that count as "finished" for a node_finished event.
 _NODE_FINISHED_STATUSES = frozenset({"success", "failed", "skipped"})
@@ -178,7 +178,7 @@ def _diff_events(prev: RunSnapshot | None, cur: RunSnapshot) -> list[_Event]:
                 },
             )
         )
-        if cur.final_status in _TERMINAL_STATUSES:
+        if cur.final_status in TERMINAL_STATUSES:
             events.append(_run_finished_event(cur))
         return events
 
@@ -206,7 +206,7 @@ def _diff_events(prev: RunSnapshot | None, cur: RunSnapshot) -> list[_Event]:
             events.append(("node_finished", _node_finished_payload(cur, node_id, node_status)))
 
     # run_finished last — a terminal run closes the stream after this.
-    if cur.final_status in _TERMINAL_STATUSES and prev.final_status not in _TERMINAL_STATUSES:
+    if cur.final_status in TERMINAL_STATUSES and prev.final_status not in TERMINAL_STATUSES:
         events.append(_run_finished_event(cur))
 
     return events
@@ -341,7 +341,7 @@ async def stream_run_events(
 
             prev = cur
 
-            if cur.final_status in _TERMINAL_STATUSES:
+            if cur.final_status in TERMINAL_STATUSES:
                 # Defensive: _diff_events already emitted run_finished, but
                 # guard against ever looping on a terminal run.
                 return

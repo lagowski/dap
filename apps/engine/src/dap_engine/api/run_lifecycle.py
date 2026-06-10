@@ -21,6 +21,11 @@ from dap_engine.api.deps import (
 )
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
+from dap_engine.domain.run_state_machine import (
+    ABORTABLE_STATUSES,
+    PAUSABLE_STATUSES,
+    RESUMABLE_STATUSES,
+)
 from dap_engine.execution import RunRegistry, execute_run_background
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import UserORM
@@ -81,7 +86,7 @@ async def abort_run(
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    if run.final_status not in {"running", "paused"}:
+    if run.final_status not in ABORTABLE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Run is not running or paused (final_status={run.final_status})",
@@ -117,7 +122,7 @@ async def pause_run_endpoint(
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    if run.final_status != "running":
+    if run.final_status not in PAUSABLE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Run is not running (final_status={run.final_status})",
@@ -174,7 +179,7 @@ async def resume_run_endpoint(
 
     # Fast-fail with informative current status; the atomic claim below is the
     # actual source of truth for the paused→running transition (#185).
-    if run.final_status != "paused":
+    if run.final_status not in RESUMABLE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Run is not paused (final_status={run.final_status})",

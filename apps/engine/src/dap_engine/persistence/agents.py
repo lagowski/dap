@@ -29,25 +29,11 @@ from sqlalchemy.orm import Session
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.persistence.base import get_owned_or_not_found, ownership_filter
 from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineORM
 from dap_engine.persistence.pipelines import _current_pipeline_versions
 
 logger = logging.getLogger("dap.engine.persistence.agents")
-
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Centralised so every list query gets the rule without copy-paste.
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see rows they own.
-    """
-    if is_admin:
-        return []
-    return [AgentORM.user_id == actor_id]
 
 
 def _agent_from_orm(
@@ -292,11 +278,9 @@ def get_agent(
     is_admin: bool,
 ) -> Agent:
     """Fetch an agent. Non-admins only see their own."""
-    agent = session.get(AgentORM, agent_id)
-    if agent is None:
-        raise NotFoundError(f"Agent not found: {agent_id}")
-    if not is_admin and agent.user_id != actor_id:
-        raise NotFoundError(f"Agent not found: {agent_id}")
+    agent = get_owned_or_not_found(
+        session, AgentORM, agent_id, actor_id=actor_id, is_admin=is_admin, label="Agent"
+    )
     version = _get_agent_version_orm(session, agent_id, agent.current_version)
     return _agent_from_orm(agent, version, is_current=True)
 
@@ -415,7 +399,7 @@ def list_agents(
     limit: int = 50,
 ) -> tuple[Sequence[Agent], int]:
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(AgentORM, actor_id=actor_id, is_admin=is_admin))
     if not archived:
         where_clauses.append(AgentORM.archived_at.is_(None))
     if role is not None:

@@ -21,6 +21,10 @@ from dap_engine.api.deps import (
     get_session_factory,
 )
 from dap_engine.auth.users import current_active_user
+from dap_engine.domain.run_state_machine import (
+    RESUMABLE_STATUSES,
+    REVIVABLE_STATUSES,
+)
 from dap_engine.execution import (
     REWIND_RETRY,
     REWIND_SKIP,
@@ -94,7 +98,7 @@ async def approve_gate_endpoint(
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    if run.final_status != "paused":
+    if run.final_status not in RESUMABLE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Run is not paused (final_status={run.final_status})",
@@ -257,7 +261,7 @@ async def _do_node_intervention(
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    if run.final_status not in {"paused", "failed"}:
+    if run.final_status not in REVIVABLE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(

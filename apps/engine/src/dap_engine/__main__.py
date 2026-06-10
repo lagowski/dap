@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 import os
 
 import uvicorn
 
 from dap_engine.app import EngineConfig, create_app, parse_cors_origins
+from dap_engine.logging import configure_logging
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    configure_logging()
 
     config = EngineConfig(
         db_path=os.environ.get("DAP_DB_PATH", "./.dap/state.db"),
