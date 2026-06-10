@@ -118,6 +118,18 @@ jobs:
           IMAGE_TAG: dap:pr-${{ github.event.pull_request.number || 'develop' }}
         run: |
           set -euo pipefail
+          # EXPOSE reads ${PORT_ENGINE}/${PORT_DASHBOARD} from the ENV
+          # block (#778 Phase 4). Assert the variables resolved to real
+          # port numbers so a builder that didn't interpolate them fails
+          # here instead of shipping an image with no exposed ports
+          # (PR #782 council review).
+          EXPOSED=$(docker image inspect "${IMAGE_TAG}" -f '{{json .Config.ExposedPorts}}')
+          echo "Exposed ports: ${EXPOSED}"
+          if [[ "${EXPOSED}" != *'"7333/tcp"'* || "${EXPOSED}" != *'"3000/tcp"'* ]]; then
+              echo "::error::EXPOSE did not resolve to 7333/3000: ${EXPOSED}"
+              exit 1
+          fi
+
           SECRET="$(openssl rand -hex 32)"
           # Map both ports to ephemeral host ports — gives the test a
           # stable handle without conflicting with anything else on the
