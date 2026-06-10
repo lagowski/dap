@@ -115,6 +115,10 @@ class AssistantReply:
     text: str
     grounded: bool = False
     actions: list[dict[str, Any]] = field(default_factory=list)
+    # Which backend produced the reply — recorded in the interaction log
+    # (#722). ``None`` on the no-provider fallback path.
+    provider: str | None = None
+    model: str | None = None
 
 
 # Defence-in-depth (#689 phase 2): the page context is assembled client-side
@@ -362,6 +366,10 @@ async def generate_reply(
         return AssistantReply(
             text="The model call failed — check the provider key/quota in Settings.",
             grounded=False,
+            provider=provider_id,
+            model=model_id,
         )
     clean, actions = parse_actions(text)
-    return AssistantReply(text=clean, grounded=True, actions=actions)
+    return AssistantReply(
+        text=clean, grounded=True, actions=actions, provider=provider_id, model=model_id
+    )

@@ -517,6 +517,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/interactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List interaction-log records (admin-only, paginated) */
+        get: operations["list_interaction_records_interactions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pipelines": {
         parameters: {
             query?: never;
@@ -2589,6 +2606,58 @@ export interface components {
             /** Value Set */
             value_set: boolean;
         };
+        /**
+         * InteractionList
+         * @description Paginated list — same envelope as ``/audit/events``.
+         */
+        InteractionList: {
+            /** Items */
+            items: components["schemas"]["InteractionRead"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * InteractionRead
+         * @description Public representation of one redacted interaction record.
+         */
+        InteractionRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Extra */
+            extra: {
+                [key: string]: unknown;
+            } | null;
+            /** Grounded */
+            grounded: boolean | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Model */
+            model: string | null;
+            /** Provider */
+            provider: string | null;
+            /** Redacted Request */
+            redacted_request: {
+                [key: string]: unknown;
+            }[];
+            /** Redacted Response */
+            redacted_response: string;
+            /** Surface */
+            surface: string;
+            /** Tokens Used */
+            tokens_used: number | null;
+            /** User Id */
+            user_id: string | null;
+        };
         /** LogicalCondition */
         "LogicalCondition-Input": {
             /** Children */
@@ -4559,6 +4628,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    list_interaction_records_interactions_get: {
+        parameters: {
+            query?: {
+                surface?: string | null;
+                user_id?: string | null;
+                created_from?: string | null;
+                created_to?: string | null;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

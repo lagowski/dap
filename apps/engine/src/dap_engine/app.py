@@ -5,6 +5,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from psycopg_pool import AsyncConnectionPool
 from dap_engine.api.agents import router as agents_router
 from dap_engine.api.assistant import router as assistant_router
 from dap_engine.api.health import router as health_router
+from dap_engine.api.interactions import router as interactions_router
 from dap_engine.api.pipelines import router as pipelines_router
 from dap_engine.api.projects import router as projects_router
 from dap_engine.api.runs import router as runs_router
@@ -45,11 +47,13 @@ from dap_engine.config import (
     DatabaseConfig,
     EngineConfig,
     EngineConfigKwargs,
+    InteractionLogConfig,
     OAuthConfig,
     RuntimePolicyConfig,
     ServerConfig,
     TemplateRegistryConfig,
     parse_cors_origins,
+    parse_retention_days,
 )
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
@@ -61,6 +65,7 @@ from dap_engine.persistence.db import (
     pg_conn_string,
     redact_database_url,
 )
+from dap_engine.persistence.interaction_log import purge_interactions
 from dap_engine.version import __version__
 
 # ``create_app`` is defined here; everything else is re-exported from
@@ -72,12 +77,14 @@ __all__ = [
     "DatabaseConfig",
     "EngineConfig",
     "EngineConfigKwargs",
+    "InteractionLogConfig",
     "OAuthConfig",
     "RuntimePolicyConfig",
     "ServerConfig",
     "TemplateRegistryConfig",
     "create_app",
     "parse_cors_origins",
+    "parse_retention_days",
 ]
 
 logger = logging.getLogger("dap.engine")
@@ -261,6 +268,27 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         if expired_count > 0:
             logger.warning("marked %d expired gate run(s) as failed", expired_count)
 
+        # Interaction-log retention sweep (#722). retention_days <= 0 means
+        # keep forever (operator-managed retention). Best-effort: a purge
+        # failure (locked DB, transient connection error) must not stop the
+        # engine from starting — unlike the schema migrations above, missing
+        # one sweep is harmless (the next boot retries).
+        if cfg.interaction_log.enabled and cfg.interaction_log.retention_days > 0:
+            cutoff = datetime.now(UTC) - timedelta(days=cfg.interaction_log.retention_days)
+            try:
+                with session_factory() as purge_session:
+                    purged = purge_interactions(purge_session, older_than=cutoff)
+                    purge_session.commit()
+            except Exception:
+                logger.exception("interaction-log retention purge failed; continuing startup")
+            else:
+                if purged > 0:
+                    logger.info(
+                        "purged %d interaction-log record(s) older than %d days",
+                        purged,
+                        cfg.interaction_log.retention_days,
+                    )
+
         async with AsyncExitStack() as stack:
             checkpointer = await stack.enter_async_context(checkpointer_ctx)
             # Create checkpointer tables (checkpoints, checkpoint_blobs, etc.) on
@@ -377,6 +405,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     # into ``audit_log`` from the auth subsystem + ownership repos;
     # this router exposes them to the admin panel.
     app.include_router(audit_router)
+    app.include_router(interactions_router)
 
     # OAuth routers — only mounted when both credentials are present.
     # ``associate_by_email=True`` lets a user with an existing local
