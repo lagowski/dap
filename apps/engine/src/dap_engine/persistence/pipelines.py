@@ -27,22 +27,8 @@ from sqlalchemy.orm import Session
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.contracts import PipelineCreate, PipelineUiMetadataPatch, PipelineUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.persistence.base import get_owned_or_not_found, ownership_filter
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
-
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Centralised so every list query gets the rule without copy-paste.
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see rows they own.
-    """
-    if is_admin:
-        return []
-    return [PipelineORM.user_id == actor_id]
 
 
 def _pipeline_from_orm(
@@ -345,11 +331,9 @@ def get_pipeline(
     is_admin: bool,
 ) -> Pipeline:
     """Fetch a pipeline. Non-admins only see their own."""
-    pipeline = session.get(PipelineORM, pipeline_id)
-    if pipeline is None:
-        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
-    if not is_admin and pipeline.user_id != actor_id:
-        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    pipeline = get_owned_or_not_found(
+        session, PipelineORM, pipeline_id, actor_id=actor_id, is_admin=is_admin, label="Pipeline"
+    )
     version = _get_pipeline_version_orm(session, pipeline_id, pipeline.current_version)
     return _pipeline_from_orm(pipeline, version, is_current=True)
 
@@ -408,7 +392,7 @@ def list_pipelines(
     limit: int = 50,
 ) -> tuple[Sequence[Pipeline], int]:
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(PipelineORM, actor_id=actor_id, is_admin=is_admin))
     if not archived:
         where_clauses.append(PipelineORM.archived_at.is_(None))
 

@@ -40,6 +40,7 @@ from dap_engine.domain.run_state_machine import (
     TERMINAL_STATUSES,
 )
 from dap_engine.persistence._common import ConflictError, NotFoundError, _new_id, _now
+from dap_engine.persistence.base import ownership_filter
 from dap_engine.persistence.models import (
     NodeExecutionLogORM,
     NodeOutputChunkORM,
@@ -48,20 +49,6 @@ from dap_engine.persistence.models import (
 )
 
 logger = logging.getLogger("dap.engine.persistence.runs")
-
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see runs they triggered.
-    """
-    if is_admin:
-        return []
-    return [RunORM.user_id == actor_id]
 
 
 def _run_from_orm(
@@ -163,7 +150,7 @@ def list_runs(
     router enforces the mapping from query string to one of these.
     """
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(RunORM, actor_id=actor_id, is_admin=is_admin))
     if pipeline_id is not None:
         where_clauses.append(RunORM.pipeline_id == pipeline_id)
     statuses = list(final_statuses or ([final_status] if final_status is not None else []))

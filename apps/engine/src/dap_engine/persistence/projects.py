@@ -26,22 +26,8 @@ from sqlalchemy.orm import Session
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.contracts import ProjectCreate, ProjectUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.persistence.base import get_owned_or_not_found, ownership_filter
 from dap_engine.persistence.models import PipelineORM, ProjectORM
-
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Centralised so every list query gets the rule without copy-paste.
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see rows they own.
-    """
-    if is_admin:
-        return []
-    return [ProjectORM.user_id == actor_id]
 
 
 def _project_from_orm(project: ProjectORM) -> Project:
@@ -229,11 +215,9 @@ def get_project(
     is_admin: bool,
 ) -> Project:
     """Fetch a project. Non-admins only see their own."""
-    project = session.get(ProjectORM, project_id)
-    if project is None:
-        raise NotFoundError(f"Project not found: {project_id}")
-    if not is_admin and project.user_id != actor_id:
-        raise NotFoundError(f"Project not found: {project_id}")
+    project = get_owned_or_not_found(
+        session, ProjectORM, project_id, actor_id=actor_id, is_admin=is_admin, label="Project"
+    )
     return _project_from_orm(project)
 
 
@@ -247,7 +231,7 @@ def list_projects(
     limit: int = 50,
 ) -> tuple[Sequence[Project], int]:
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(ProjectORM, actor_id=actor_id, is_admin=is_admin))
     if not archived:
         where_clauses.append(ProjectORM.archived_at.is_(None))
 
