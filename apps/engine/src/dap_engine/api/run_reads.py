@@ -20,6 +20,7 @@ from dap_engine.diagnostics.error_explainer import (
     explain_error_llm,
     explain_node_error,
 )
+from dap_engine.domain.run_state_machine import TERMINAL_STATUSES
 from dap_engine.execution import RunRegistry
 from dap_engine.instance_env import load_instance_env
 from dap_engine.persistence import repository as repo
@@ -32,7 +33,6 @@ logger = logging.getLogger("dap.engine.api.run_reads")
 
 # Terminal final_status values — a run in one of these has, by definition,
 # finished executing and should have no active task in the run registry.
-_TERMINAL_STATUSES = frozenset({"success", "failed", "aborted"})
 
 
 def register_run_read_routes(router: APIRouter) -> None:
@@ -134,7 +134,7 @@ def get_run(
     # not still have a live task in the registry. If it does, we are looking
     # at cross-run state bleed — log the impossible condition so the next
     # occurrence reveals the mechanism. Log-only: the response is unchanged.
-    if run.final_status in _TERMINAL_STATUSES and run_registry.is_running(run_id):
+    if run.final_status in TERMINAL_STATUSES and run_registry.is_running(run_id):
         logger.warning(
             "run %s served terminal state %r (ended_at=%s) while its task is still "
             "active in the run registry — possible cross-run state bleed (#636)",

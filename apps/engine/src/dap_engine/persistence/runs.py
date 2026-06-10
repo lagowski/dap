@@ -21,7 +21,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Final
+from typing import Any
 
 from dap_types import (
     NodeExecutionLog,
@@ -34,6 +34,11 @@ from sqlalchemy import ColumnElement, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
+from dap_engine.domain.run_state_machine import (
+    RESUMABLE_STATUSES,
+    REVIVABLE_STATUSES,
+    TERMINAL_STATUSES,
+)
 from dap_engine.persistence._common import ConflictError, NotFoundError, _new_id, _now
 from dap_engine.persistence.models import (
     NodeExecutionLogORM,
@@ -57,12 +62,6 @@ def _ownership_filter(
     if is_admin:
         return []
     return [RunORM.user_id == actor_id]
-
-
-# Statuses considered terminal — once a run lands in any of these,
-# ``finalize_run`` / ``pause_run`` short-circuit so a stray late cancel
-# can't overwrite the run's recorded outcome (#257).
-_TERMINAL_STATUSES: Final = frozenset({"success", "failed", "aborted"})
 
 
 def _run_from_orm(
@@ -309,7 +308,7 @@ def delete_run(
     if not is_admin and run.user_id != actor_id:
         # Anti-enumeration: cross-user delete is indistinguishable from "missing".
         raise NotFoundError(f"Run not found: {run_id}")
-    if run.final_status not in _TERMINAL_STATUSES:
+    if run.final_status not in TERMINAL_STATUSES:
         raise ConflictError(
             f"Run {run_id} is {run.final_status!r} (in-flight); abort it before deleting."
         )
@@ -482,7 +481,7 @@ def finalize_run(
         update(RunORM)
         .where(
             RunORM.id == run_id,
-            RunORM.final_status.notin_(_TERMINAL_STATUSES),
+            RunORM.final_status.notin_(TERMINAL_STATUSES),
         )
         .values(**values)
     )
@@ -542,7 +541,7 @@ def pause_run(
         update(RunORM)
         .where(
             RunORM.id == run_id,
-            RunORM.final_status.notin_(_TERMINAL_STATUSES),
+            RunORM.final_status.notin_(TERMINAL_STATUSES),
         )
         .values(**values)
     )
@@ -571,7 +570,7 @@ def try_claim_resume(session: Session, run_id: str) -> bool:
     """
     stmt = (
         update(RunORM)
-        .where(RunORM.id == run_id, RunORM.final_status == "paused")
+        .where(RunORM.id == run_id, RunORM.final_status.in_(RESUMABLE_STATUSES))
         .values(
             final_status="running",
             ended_at=None,
@@ -600,7 +599,7 @@ def try_claim_revive(session: Session, run_id: str) -> bool:
     """
     stmt = (
         update(RunORM)
-        .where(RunORM.id == run_id, RunORM.final_status.in_(("paused", "failed")))
+        .where(RunORM.id == run_id, RunORM.final_status.in_(REVIVABLE_STATUSES))
         .values(final_status="running", ended_at=None, failure_reason=None)
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
