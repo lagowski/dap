@@ -24,7 +24,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=2.0.0",
     "packaging>=24.0",
     # PostgreSQL backend (optional — only used when DAP_DATABASE_URL points to pg)
-    "psycopg[binary,pool]>=3.2",
+    "psycopg[binary,pool]>=3.3.4",
     "langgraph-checkpoint-postgres>=2.0",
     # Auth (v0.3 — see #299).
     # `fastapi-users[sqlalchemy]` pulls aiosqlite already; the `oauth`
