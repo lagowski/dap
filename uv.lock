@@ -665,9 +665,9 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'http'", specifier = ">=3.1.4" },
     { name = "jsonpath-ng", marker = "extra == 'all'", specifier = ">=1.6.1" },
     { name = "jsonpath-ng", marker = "extra == 'http'", specifier = ">=1.6.1" },
-    { name = "openai", marker = "extra == 'all'", specifier = ">=2.41.1" },
-    { name = "openai", marker = "extra == 'api-call'", specifier = ">=2.41.1" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.41.1" },
+    { name = "openai", marker = "extra == 'all'", specifier = ">=1.55.0" },
+    { name = "openai", marker = "extra == 'api-call'", specifier = ">=1.55.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.55.0" },
 ]
 provides-extras = ["anthropic", "openai", "google", "api-call", "http", "all"]
 
