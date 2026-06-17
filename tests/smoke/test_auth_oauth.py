@@ -19,8 +19,9 @@ What this covers:
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
@@ -72,8 +73,31 @@ def test_oauth_routes_only_mounted_when_credentials_present(
     assert resp.status_code == 404
 
 
+def _collect_paths(routes: Iterable[Any]) -> set[str]:
+    """Walk fastapi's route tree, descending into nested routers.
+
+    Since fastapi 0.137 (#15745), ``router.routes`` is no longer a flat list of
+    ``APIRoute`` objects — it can contain ``_IncludedRouter`` wrappers whose
+    leaves are exposed via ``effective_candidates`` (each an
+    ``_EffectiveRouteContext`` carrying the effective ``path``).
+    """
+    paths: set[str] = set()
+    for r in routes:
+        path = getattr(r, "path", None)
+        if path is not None:
+            paths.add(path)
+        effective = getattr(r, "effective_candidates", None)
+        if callable(effective):
+            paths.update(_collect_paths(effective()))
+            continue
+        nested = getattr(r, "routes", None)
+        if nested:
+            paths.update(_collect_paths(nested))
+    return paths
+
+
 def test_oauth_routes_present_when_configured(oauth_client: TestClient) -> None:
-    paths = {r.path for r in oauth_client.app.routes}  # type: ignore[attr-defined]
+    paths = _collect_paths(oauth_client.app.routes)  # type: ignore[attr-defined]
     assert "/auth/github/authorize" in paths
     assert "/auth/github/callback" in paths
     assert "/auth/google/authorize" in paths
