@@ -42,12 +42,12 @@ google = [
     # without updating this source constraint; see follow-up tracking
     # issue). Keeps source + lockfile in sync so ``uv lock`` from a fresh
     # checkout doesn't silently downgrade google-genai.
-    "google-genai>=2.7.0",
+    "google-genai>=2.9.0",
 ]
 api-call = [
     "anthropic>=0.40.0",
     "openai>=1.55.0",
-    "google-genai>=2.7.0",
+    "google-genai>=2.9.0",
 ]
 http = [
     "httpx>=0.27.2",
@@ -57,7 +57,7 @@ http = [
 all = [
     "anthropic>=0.40.0",
     "openai>=1.55.0",
-    "google-genai>=2.7.0",
+    "google-genai>=2.9.0",
     "httpx>=0.27.2",
     "jinja2>=3.1.4",
     "jsonpath-ng>=1.6.1",
