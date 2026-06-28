@@ -20,7 +20,9 @@ def test_chat_requires_auth(client_no_auth: TestClient) -> None:
     assert resp.status_code == 401
 
 
-def test_chat_returns_assistant_message(client: TestClient) -> None:
+def test_chat_returns_assistant_message(
+    client: TestClient, no_provider_env: None
+) -> None:
     resp = client.post(
         "/assistant/chat",
         json={"messages": [{"role": "user", "content": "an agent that reviews PRs cheaply"}]},
