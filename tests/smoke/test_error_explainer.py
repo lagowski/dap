@@ -264,6 +264,7 @@ async def test_explain_error_llm_uses_provider() -> None:
 
 def test_explain_endpoint_ai_falls_back_to_deterministic_without_provider(
     http: tuple[TestClient, sessionmaker[Session]],
+    no_provider_env: None,
 ) -> None:
     # With ?ai=1 but no provider configured (CI), the endpoint returns the
     # deterministic explanation rather than erroring.

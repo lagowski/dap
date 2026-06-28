@@ -119,6 +119,29 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture
+def no_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip every registered provider's default API-key env var.
+
+    Tests that assert a "no provider configured" world (healthcheck
+    unavailable, ``/explain?ai=1`` falling back to the deterministic
+    path, the ungrounded assistant stub) must control the environment
+    they assert against — otherwise they pass in CI (no keys set) and
+    fail on any machine that exports e.g. ``GLM_API_KEY``.
+
+    The clear-list is derived from ``PROVIDER_REGISTRY`` — the same
+    source of truth ``ApiCallAdapter.healthcheck`` reads — so adding a
+    new first-class provider (as #115 did for GLM) can never silently
+    make these tests environment-dependent again. See #798.
+    """
+    from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
+
+    for info in PROVIDER_REGISTRY.values():
+        # ``default_env_var`` is None for openai-compat (key is per-agent).
+        if info.default_env_var is not None:
+            monkeypatch.delenv(info.default_env_var, raising=False)
+
+
+@pytest.fixture
 def engine_config_factory(
     tmp_path: Path,
 ) -> Callable[..., EngineConfig]:
