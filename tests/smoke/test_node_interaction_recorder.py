@@ -123,9 +123,7 @@ def test_records_cli_kind_runtimes(session: Session) -> None:
     assert total == 1
 
 
-def test_skips_when_disabled_via_env(
-    session: Session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_skips_when_disabled_via_env(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DAP_INTERACTION_LOG_ENABLED", "0")
     _record(session)
     session.commit()
