@@ -45,7 +45,7 @@ jobs:
       run_bundle_wheel: ${{ steps.paths.outputs.run_bundle_wheel }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Classify PR paths
         id: paths
@@ -91,7 +91,7 @@ jobs:
         if: needs.classify.result == 'success' && needs.classify.outputs.run_docker != 'true'
         run: echo "Docker build skipped by path policy for this PR."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.classify.result != 'success' || needs.classify.outputs.run_docker == 'true'
 
       - name: Set up Docker buildx
@@ -221,7 +221,7 @@ jobs:
         if: needs.classify.result == 'success' && needs.classify.outputs.run_bundle_wheel != 'true'
         run: echo "Wheel bundle check skipped by path policy for this PR."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.classify.result != 'success' || needs.classify.outputs.run_bundle_wheel == 'true'
 
       - uses: actions/setup-node@v6
