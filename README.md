@@ -199,6 +199,7 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 - [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
 - [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
 - [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
+- [`docs/python-func-pipelines.md`](docs/python-func-pipelines.md) — building a pipeline whose nodes run your own Python code (the Cortex pattern); runnable example in [`examples/python-func-pipeline/`](examples/python-func-pipeline/).
 - [`docs/database-migrations.md`](docs/database-migrations.md) — legacy migration freeze, Alembic policy, and developer workflow for new schema changes.
 - [`docs/database-indexes.md`](docs/database-indexes.md) — query-shape notes for indexes that support hot API paths.
 - [`docs/dependency-updates.md`](docs/dependency-updates.md) — Dependabot grouping policy and review expectations.
@@ -220,9 +221,13 @@ packages/
   types/                Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
   runtimes/             Runtime adapter implementations (8 adapters, 6 api-call providers)
   prompt-dsl/           Jinja2 → XML prompt compiler with sandboxing + schema validation
+  database/             Shared SQLAlchemy engine + session factories (SQLite WAL / PostgreSQL)
   code-review-council/  Multi-agent PR reviewer (security/correctness/db/perf/frontend + arbiter); powers the gemini-review CI check
 examples/
-  pipelines/   Importable .pipeline-bundle.json examples (github-issue-triage, team-collaboration, cortex-github-issue)
+  pipelines/            Importable .pipeline-bundle.json examples (github-issue-triage, team-collaboration, cortex-github-issue)
+  python-func-pipeline/ Runnable python-func pipeline example (logic package + bundle JSON)
+  ops-pipeline/         Drop-in bundle for command-execution issues
+  standalone/           Docker compose file for the standalone install path
 scripts/
   setup        First-run installer (pre-flight, .env, deps, hooks)
   dev          Day-to-day launcher (engine + dashboard + log multiplexing)

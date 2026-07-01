@@ -64,7 +64,8 @@ Engine code is split by responsibility:
   recording helpers, and security policy helpers.
 
 The engine should not depend on dashboard code. It may depend on
-`packages/types`, `packages/runtimes`, and `packages/prompt-dsl`.
+`packages/types`, `packages/runtimes`, `packages/prompt-dsl`, and
+`packages/database`.
 
 ### `apps/dashboard` — Next.js 15
 
@@ -100,7 +101,7 @@ engine boundary that serialise or validate the affected model.
 
 ### Workspace layer — `Project`
 
-A `Project` (added in v0.6) is a workspace: a binding of *workflow
+A `Project` (added in v0.3) is a workspace: a binding of *workflow
 kinds* (configure / plan / develop / verify / release, plus any
 custom kind you want) to specific `pipeline_id`s, plus context that
 the engine folds into every run — `working_directory`, default
@@ -131,6 +132,13 @@ can't reach attributes outside the state projection.
 The prompt DSL owns template rendering and XML validation only. Runtime
 selection, persistence, cost accounting, and run finalisation belong to the
 engine.
+
+### `packages/database` — shared SQLAlchemy plumbing
+
+Shared engine + session factories (sync and async) used by the engine's
+`persistence/` and `auth/` layers, supporting SQLite (WAL) and PostgreSQL.
+Import path `dap_database`. It owns connection/session lifecycle only — ORM
+models, query shapes, and migrations stay in `apps/engine`.
 
 ### `packages/code-review-council` — automated review helper
 
@@ -331,7 +339,7 @@ Two SQLite databases per `.dap` directory:
 
 Both run with `journal_mode=WAL`. App tables: `agents`,
 `agent_versions`, `pipelines`, `pipeline_versions`, `projects`
-(v0.6 — single unversioned row per project, FK target for
+(v0.3 — single unversioned row per project, FK target for
 `runs.project_id`), `runs`, `state_snapshots`,
 `node_execution_logs`. Alembic revisions live under
 `apps/engine/src/dap_engine/alembic/`; legacy in-code migrations for older
