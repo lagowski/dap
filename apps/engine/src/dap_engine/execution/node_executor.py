@@ -30,6 +30,7 @@ from dap_types import OutputCallback, PipelineState, RuntimeResult, RuntimeTask
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
+from dap_engine.execution.interaction_recorder import record_node_interaction
 from dap_engine.execution.output_parser import parse_node_output
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import (
@@ -444,6 +445,40 @@ def _save_execution_log(
         extra_data=audit,
     )
     ctx.session.add(log)
+
+    # EU AI Act interaction log (#785) — follow-up to the assistant-path
+    # recorder from #722/#784. For model-invoking runtimes (``api``/``cli``),
+    # store a **redacted** copy of the rendered prompt + the model output,
+    # keyed on ``surface="node"``. Skipped for python-func/bash/http.
+    #
+    # If the registry doesn't know the runtime (unit tests that call
+    # ``_save_execution_log`` directly with a minimal fixture registry),
+    # skip logging quietly rather than fail the save path — the interaction
+    # log is a record-keeping layer, not on the critical path.
+    try:
+        adapter_kind = ctx.registry.get(ctx.runtime_id).kind
+    except KeyError:
+        return
+    # Merge known-secret sources for the exact-value redaction layer.
+    # project-scoped secrets take precedence over instance-scoped ones —
+    # same override order as ``env`` inside the assistant path.
+    known_secrets = {**ctx.instance_env_vars, **ctx.project_env_vars}
+    runtime_config = ctx.merged_runtime_config
+    provider = runtime_config.get("provider")
+    model = runtime_config.get("model_id") or runtime_config.get("model")
+    record_node_interaction(
+        ctx.session,
+        run_id=ctx.run_id,
+        node_id=ctx.node_id,
+        execution_id=execution_id,
+        runtime_id=ctx.runtime_id,
+        adapter_kind=adapter_kind,
+        prompt_xml=prompt_xml,
+        result=result,
+        known_secrets=known_secrets,
+        provider=str(provider) if provider is not None else None,
+        model=str(model) if model is not None else None,
+    )
 
 
 def _save_snapshot(*, ctx: NodeContext, state: PipelineState) -> None:
