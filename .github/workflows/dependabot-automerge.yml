@@ -1,0 +1,65 @@
+name: Dependabot auto-merge
+
+# Auto-approves and auto-merges (squash) dependabot PRs when the bump is
+# semver-patch or semver-minor across any ecosystem covered by dependabot.yml
+# (uv + npm). Semver-major bumps are explicitly held back for human review —
+# they historically require code adaptation (fastapi 0.137's routes-tree
+# change was a recent example, PR #789).
+#
+# The workflow relies on `gh pr merge --auto`, which only actually merges once
+# every required status check on the PR is green — so this does NOT bypass
+# branch protection; it just removes the "waiting for a human approval on a
+# green bot PR" step.
+#
+# Introduced 2026-07-01, coordinated with fleet-gate orchestrator.
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  automerge:
+    name: Dependabot auto-merge
+    runs-on: ubuntu-latest
+    # Only run on dependabot's own PRs — this is a safety guard on top of the
+    # per-step gating below; without it, the job would still exit fast (no
+    # metadata to fetch) but there's no reason to spend the runner minute.
+    if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Fetch dependabot metadata
+        id: metadata
+        # dependabot/fetch-metadata @ v2 — SHA pinned to satisfy supply-chain
+        # posture ('permissions on tag' hijack). Refresh this SHA when
+        # bumping to a new v2.x release; do NOT switch to v3 without review
+        # (v3 added `skip-commit-verification: true` as default).
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve and enable auto-merge on patch/minor bumps
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr review "$PR_URL" --approve --body \
+            "Auto-approved: ${{ steps.metadata.outputs.update-type }} bump of ${{ steps.metadata.outputs.dependency-names }}."
+          gh pr merge "$PR_URL" --auto --squash
+
+      - name: Log skipped major bump (awaits human review)
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr comment "$PR_URL" --body \
+            "🕒 Major-version bump (${{ steps.metadata.outputs.dependency-names }}). Not auto-merged — held for human review per policy in \`.github/workflows/dependabot-automerge.yml\`."
