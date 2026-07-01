@@ -142,7 +142,7 @@ jobs:
         # Informational only — never fail the required gate on a missing token
         # or a Codecov outage (fail_ci_if_error: false).
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: ./coverage.xml
           flags: python
@@ -320,7 +320,7 @@ jobs:
         # Informational only — never fail the required gate on a missing token
         # or a Codecov outage (fail_ci_if_error: false).
         if: needs.classify.result != 'success' || needs.classify.outputs.run_dashboard == 'true'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: apps/dashboard/coverage/lcov.info
           flags: dashboard
