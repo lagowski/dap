@@ -11,7 +11,7 @@ authors = [
 ]
 dependencies = [
     "dap-schemas>=0.3,<0.4",
-    "anyio>=4.6.0",
+    "anyio>=4.14.2",
 ]
 keywords = ["agent", "llm", "pipeline", "runtime", "workflow"]
 classifiers = [
