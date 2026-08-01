@@ -176,6 +176,20 @@ jobs:
               const stale = !reviewed && !bypassed && staleEnabled
                 && (alreadyStale || waitedMin >= STALE_MIN);
 
+
+              // NEVER green on an absent review. Success comes from a real Copilot review, a
+              // dependency-bot exemption, or an operator's explicit label — never from waiting
+              // long enough. `failure` here is not a verdict on the code: it is the gate saying
+              // this will not clear on its own, which `pending` cannot express.
+              const want = (reviewed || bypassed) ? 'success' : (stale ? 'failure' : 'pending');
+              // BEFORE the timeline read below, on purpose. `failure` is sticky, so a stale PR
+              // is re-evaluated every sweep for as long as it lives — and the never-asked
+              // lookup used to run before this return, paying a timeline read per sweep per
+              // stuck PR forever, to compute a description that would never be posted. Caught
+              // in review on the fleet deploy. The read now happens exactly once: at the
+              // pending -> failure transition, where the description is actually chosen.
+              if (cur === want) return;
+
               // #157: "not asked" and "asked and silent" are different failures with different
               // fixes, and the old message sent half its readers to the wrong one. The ruleset
               // requests Copilot at PR OPEN (+1s, measured on five PRs); review_on_push only
@@ -189,28 +203,42 @@ jobs:
               let neverAsked = false;
               if (stale) {
                 try {
-                  const tl = await github.paginate(github.rest.issues.listEventsForTimeline,
-                    { owner, repo, issue_number: pr.number, per_page: 100 });
+                  // Page-by-page with an EARLY EXIT, not github.paginate: one matching event
+                  // answers the question, and paginate fetches the WHOLE timeline regardless.
+                  // The difference bites exactly when this code runs — an outage means many
+                  // stale PRs on one sweep, and full-timeline reads there multiply API calls
+                  // toward the rate limit. Caught in review on the fleet deploy.
                   // The REQUEST names the reviewer 'Copilot' (measured live: five PRs, every
                   // timeline shows requested_reviewer.login === 'Copilot'); the REVIEW is later
                   // submitted by 'copilot-pull-request-reviewer[bot]'. Two identities, one bot.
                   // Both are accepted here so a GitHub-side rename of either never silently
                   // turns every stale PR into "never asked".
                   const copilotLogins = ['copilot', 'copilot-pull-request-reviewer'];
-                  neverAsked = !tl.some((e) => e.event === 'review_requested'
-                    && copilotLogins.includes((e.requested_reviewer?.login || '').toLowerCase().replace(/\[bot\]$/, '')));
+                  const askedFor = (e) => e.event === 'review_requested'
+                    && copilotLogins.includes((e.requested_reviewer?.login || '').toLowerCase().replace(/\[bot\]$/, ''));
+                  let asked = false;
+                  let sawEnd = false;
+                  for (let page = 1; page <= 10 && !asked; page++) {
+                    const { data: tl } = await github.rest.issues.listEventsForTimeline(
+                      { owner, repo, issue_number: pr.number, per_page: 100, page });
+                    asked = tl.some(askedFor);
+                    if (tl.length < 100) { sawEnd = true; break; }
+                  }
+                  // "Never asked" is a claim about the WHOLE timeline, so it may only be made
+                  // after seeing the end of it. A scan that hits the page cap without finding
+                  // the event proves nothing — the request may sit on page 11 — and the wrong
+                  // verdict here sends someone to close a perfectly recoverable PR. Incomplete
+                  // scan -> unknown -> the generic message, same as an unreadable timeline.
+                  if (asked || sawEnd) {
+                    neverAsked = !asked;
+                  } else {
+                    core.warning(`#${pr.number}: timeline exceeds the scan cap — cannot confirm never-asked; keeping the generic stale message`);
+                  }
                 } catch (e) {
                   // Cannot tell the two apart -> keep the generic message rather than guess.
                   core.warning(`#${pr.number}: timeline unreadable (${e.message}) — cannot distinguish never-asked from silent`);
                 }
               }
-
-              // NEVER green on an absent review. Success comes from a real Copilot review, a
-              // dependency-bot exemption, or an operator's explicit label — never from waiting
-              // long enough. `failure` here is not a verdict on the code: it is the gate saying
-              // this will not clear on its own, which `pending` cannot express.
-              const want = (reviewed || bypassed) ? 'success' : (stale ? 'failure' : 'pending');
-              if (cur === want) return;
 
               try {
                 await github.rest.repos.createCommitStatus({
@@ -223,7 +251,7 @@ jobs:
                         ? 'Copilot has reviewed this commit'
                         : stale
                           ? (neverAsked
-                            ? `Copilot was never asked (outage at open?) — pushes cannot fix it: open a NEW PR from this branch, or label "${BYPASS_LABEL}"`
+                            ? `Copilot was never asked (outage at open?) — close this PR, open a new one from the branch, or label "${BYPASS_LABEL}"`
                             : `No Copilot review after ${Math.round(waitedMin)} min — check the AI-credit budget, then label "${BYPASS_LABEL}"`)
                           : 'Waiting for Copilot code review…',
                 });
