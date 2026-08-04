@@ -44,7 +44,7 @@ dependencies = [
     # the dependency is visible to anyone auditing what we encrypt
     # with and which version of Fernet we rely on. Floor at 48.0.1
     # to clear GHSA-537c-gmf6-5ccf.
-    "cryptography>=48.0.1",
+    "cryptography>=50.0.0",
     # Transitive deps with active CVE advisories — explicit floors so
     # ``uv lock`` always pulls a non-vulnerable resolution. Drop these
     # once fastapi-users / starlette upstream pins satisfy the floors
