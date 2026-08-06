@@ -38,6 +38,34 @@ def _is_ci_policy(path: str) -> bool:
     }
 
 
+def _is_canon_delivered(path: str) -> bool:
+    """A file WRITTEN BY THE FLEET DEPLOYER, not owned by this repository.
+
+    The fleet deployer (pr-review-gate) opens a "chore: sync AI review gate" PR into
+    every repo whenever the canon changes; ~48% of the last 40 PRs here were exactly
+    that, and each one changed nothing but the responder caller below. That file was
+    matched by no predicate here, so ``unknown_changed`` was True and the PR ran the
+    full CI gate -- ruff, pytest, pip-audit, the dashboard build, Playwright, both
+    Docker builds -- over a diff that cannot affect any of them.
+
+    ENUMERATED BY EXACT NAME, never as a ``.github/workflows/`` prefix. dap carries
+    ``deploy: skip``, so the canon delivers exactly one file here; everything else
+    under .github/ is this repository's own. The distinction is load-bearing: under a
+    prefix rule, a PR rewriting .github/workflows/ci.yml would skip the CI that file
+    defines and report green, hiding a broken pipeline until it merged to the default
+    branch. ``_is_ci_policy`` covers today's four CI-defining workflows, but a NEW
+    workflow added later would have been silently inert under a prefix. It is not here.
+
+    Source of truth, not memory: ``node deploy/canon-fileset.js dap`` in pr-review-gate
+    (deploy/deploy.js ``canonFileset``). If the canon ever stops delivering this file,
+    this set must shrink with it -- drift the other way is already safe, since a file
+    the canon ADDS is simply absent here and runs the full CI.
+    """
+    return path in {
+        ".github/workflows/copilot-comment-responder.yml",
+    }
+
+
 def _is_dashboard(path: str) -> bool:
     return _under(path, "apps/dashboard/") or path in {"package.json", "package-lock.json"}
 
@@ -147,6 +175,7 @@ def classify(paths: list[str]) -> dict[str, str]:
             _is_docs(path)
             or _is_lockfile(path)
             or _is_ci_policy(path)
+            or _is_canon_delivered(path)
             or _is_dashboard(path)
             or _is_python_backend(path)
             or _is_docker(path)

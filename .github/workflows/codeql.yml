@@ -1,10 +1,23 @@
 name: CodeQL
 
+# PATHS-IGNORE IS SAFE HERE: `Analyze (...)` is not a required status check on either
+# branch (develop requires Python / Dashboard / Playwright smoke; main adds `Verify PR
+# source is develop` and `gemini-review`). Nothing waits for it, so the workflow can be
+# filtered out of the run entirely. ci.yml / e2e.yml / docker-build.yml do NOT get this
+# treatment -- their checks ARE required, and they already start-and-exit-early through
+# the classify job in .github/scripts/classify_ci_paths.py.
+#
+# The weekly cron below is untouched, so unchanged code is still scanned on schedule --
+# that is what makes skipping a workflow-only PR here cost nothing in coverage.
 on:
   push:
     branches: [develop, main]
+    paths-ignore:
+      - '.github/workflows/copilot-comment-responder.yml'
   pull_request:
     branches: [develop, main]
+    paths-ignore:
+      - '.github/workflows/copilot-comment-responder.yml'
   schedule:
     # Weekly scan (Mondays 06:17 UTC) to catch advisories on unchanged code.
     - cron: "17 6 * * 1"
