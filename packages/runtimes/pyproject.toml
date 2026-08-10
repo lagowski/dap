@@ -34,7 +34,7 @@ anthropic = [
     "anthropic>=0.120.2",
 ]
 openai = [
-    "openai>=1.55.0",
+    "openai>=2.53.0",
 ]
 google = [
     # Lower bound bumped to >=2.7.0 in 2026-06 to match the ``uv.lock``
@@ -46,7 +46,7 @@ google = [
 ]
 api-call = [
     "anthropic>=0.120.2",
-    "openai>=1.55.0",
+    "openai>=2.53.0",
     "google-genai>=2.10.0",
 ]
 http = [
@@ -56,7 +56,7 @@ http = [
 ]
 all = [
     "anthropic>=0.120.2",
-    "openai>=1.55.0",
+    "openai>=2.53.0",
     "google-genai>=2.10.0",
     "httpx>=0.27.2",
     "jinja2>=3.1.4",

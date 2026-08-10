@@ -11,7 +11,7 @@ authors = [
 ]
 dependencies = [
     "dap-engine>=0.3,<0.4",
-    "typer>=0.27.0",
+    "typer>=0.27.1",
     "rich>=13.9.2",
     "uvicorn[standard]>=0.52.0",
     "psutil>=6.1.0",
