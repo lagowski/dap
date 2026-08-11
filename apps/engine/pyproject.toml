@@ -59,6 +59,12 @@ dependencies = [
     # resolutions.
     # langgraph-checkpoint >= 4.1.1 — CVE-2026-48775
     "langgraph-checkpoint>=4.1.1",
+    # langgraph-checkpoint-sqlite >= 3.1.1 — PYSEC-2026-3636. Same shape and same
+    # remedy as the postgres sibling in 8f3db0e: the direct requirement above is
+    # `>=2.0.0`, which resolved happily to the vulnerable 3.1.0, so the floor goes
+    # HERE where the other advisories live rather than being tightened up there —
+    # one list, read in one place, when the next advisory lands.
+    "langgraph-checkpoint-sqlite>=3.1.1",
     # langsmith >= 0.8.18 — GHSA-f4xh-w4cj-qxq8
     "langsmith>=0.8.18",
     # msgpack >= 1.2.1 — GHSA-6v7p-g79w-8964
