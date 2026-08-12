@@ -18,6 +18,13 @@ permissions:
 
 env:
   UV_VERSION: "0.8.15"
+  # uv defaults to `managed`, i.e. it PREFERS its own CPython and downloads it from
+  # python-build-standalone on GitHub Releases. On 2026-08-12 that download failed mid-run
+  # ("http2 error: refused stream"), one of four toolchain fetches that broke fleet CI that
+  # day for reasons unrelated to any code. `only-system` makes uv use the interpreter
+  # actions/setup-python already put there — which on ubuntu-latest comes out of the runner's
+  # tool cache and crosses no network at all.
+  UV_PYTHON_PREFERENCE: only-system
   NODE_VERSION: "22"
   PNPM_VERSION: "9"
 
@@ -100,7 +107,9 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
-        run: uv python install
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
 
       # Guard against source/lock drift (#645): dependabot's uv group can bump
       # uv.lock without widening the source pyproject.toml constraints (or vice
@@ -185,7 +194,9 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python_smoke == 'true'
-        run: uv python install
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
 
       - name: Install workspace (frozen)
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python_smoke == 'true'
@@ -226,7 +237,9 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_pip_audit == 'true'
-        run: uv python install
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
 
       - name: Install workspace (frozen)
         if: needs.classify.result != 'success' || needs.classify.outputs.run_pip_audit == 'true'
@@ -275,7 +288,9 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_dashboard == 'true'
-        run: uv python install
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
 
       - name: Install Python workspace (frozen)
         if: needs.classify.result != 'success' || needs.classify.outputs.run_dashboard == 'true'
