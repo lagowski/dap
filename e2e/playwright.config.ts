@@ -106,7 +106,25 @@ export default defineConfig({
       url: 'http://127.0.0.1:7333/health',
       reuseExistingServer: false,
       timeout: 60_000,
-      env: { DAP_DB_PATH: TEST_DB },
+      env: {
+        DAP_DB_PATH: TEST_DB,
+        // THE SUITE RUNS AS THE REGULAR FIXTURE USER, ON PURPOSE — the `app` project's whole
+        // point is the non-admin path. Its runs use a single-node bash agent (`echo ok`, see
+        // e2e/helpers/runs.ts), and the engine now refuses the bash runtime to non-admins
+        // unless an operator opts in. Six specs therefore died on
+        //   403 "bash runtime is disabled for non-admin users"
+        // and develop has been red since 2026-08-14 — a policy change the tests never heard
+        // about, not a flake.
+        //
+        // Set HERE rather than in .github/workflows/e2e.yml so `npm --prefix e2e test` on a
+        // laptop behaves exactly like CI. Fixing only the workflow would leave every local
+        // run failing for a reason the machine already knew, which is its own trap.
+        //
+        // THE POLICY ITSELF STAYS COVERED: tests/smoke/test_runtime_policy.py asserts the
+        // refusal and its exact message four times over. This opt-in makes the e2e engine an
+        // opted-in deployment; it does not remove the guard from the product.
+        DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN: '1',
+      },
       stdout: 'pipe',
       stderr: 'pipe',
     },
