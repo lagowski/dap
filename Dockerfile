@@ -130,7 +130,19 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 COPY apps/dashboard/ ./
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm build
+# THE BUILD MUST FAIL HERE, NOT IN THE CONTAINER. `next build` happily emits a standalone
+# tree missing a file the server resolves at RUNTIME, so the first symptom was a
+# MODULE_NOT_FOUND at `docker run` — on three unrelated pull requests, none of which had
+# touched JavaScript. The assertion below names the cause at the stage that produced it.
+RUN pnpm build && \
+    esm=$(ls -d .next/standalone/node_modules/.pnpm/next@*/node_modules/@swc/helpers/esm \
+          2>/dev/null | head -1) && \
+    test -f "$esm/_interop_require_default.js" || { \
+      echo "FATAL: the standalone bundle has no @swc/helpers/esm tree."; \
+      echo "next/dist/server/require-hook.js resolves @swc/helpers/esm/* at runtime, but"; \
+      echo "@swc/helpers declares main=cjs/index.cjs, so the file tracer copies cjs/ only."; \
+      echo "Fix: outputFileTracingIncludes in apps/dashboard/next.config.ts."; \
+      exit 1; }
 
 
 # ---------------------------------------------------------------------------
