@@ -17,7 +17,7 @@ dependencies = [
     # without updating this source constraint, creating a drift that any
     # fresh ``uv lock`` would silently revert). See follow-up tracking
     # issue for the dependabot misconfiguration root cause.
-    "google-genai>=2.17.0,<3.0",
+    "google-genai>=2.18.1,<3.0",
     # OpenAI-compatible HTTP client for OpenRouterProvider. ``httpx``
     # rather than the ``openai`` SDK because we only need raw chat-
     # completions + JSON-object response_format, and a one-file httpx

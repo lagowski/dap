@@ -20,7 +20,7 @@ dependencies = [
     # DB drivers (aiosqlite, psycopg) are deliberately NOT declared here —
     # the consumer picks its backend and ships the driver, mirroring how
     # the engine already treats psycopg as its own dependency.
-    "sqlalchemy>=2.0.36",
+    "sqlalchemy>=2.0.52",
 ]
 keywords = ["sqlalchemy", "database", "sqlite", "postgresql"]
 classifiers = [
