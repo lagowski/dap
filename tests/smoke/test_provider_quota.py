@@ -11,7 +11,7 @@ import os
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import openai
 import pytest
 from dap_runtimes import ApiCallAdapter
@@ -103,8 +103,12 @@ def _task() -> RuntimeTask:
 def _openai_error(
     cls: type[openai.APIStatusError], message: str, status: int
 ) -> openai.APIStatusError:
-    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
-    response = httpx.Response(status, request=request)
+    # httpx2, not httpx: openai 3.0 moved its transport and `APIStatusError.response` is
+    # annotated `httpx2.Response`. The two packages coexist in this workspace — the HTTP
+    # runtime adapter still uses httpx — so a fake built from the wrong one type-checks as
+    # the wrong library rather than failing loudly.
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx2.Response(status, request=request)
     return cls(message, response=response, body=None)
 
 
