@@ -107,7 +107,7 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: '.python-version'
 
@@ -194,7 +194,7 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_python_smoke == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: '.python-version'
 
@@ -237,7 +237,7 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_pip_audit == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: '.python-version'
 
@@ -288,7 +288,7 @@ jobs:
 
       - name: Pin Python from .python-version
         if: needs.classify.result != 'success' || needs.classify.outputs.run_dashboard == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: '.python-version'
 
