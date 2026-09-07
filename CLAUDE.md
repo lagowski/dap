@@ -815,3 +815,23 @@ This repo runs in production against a private infrastructure that is **NOT** de
 Anything beyond the table and four rules above — actual host credentials, the API token, the password hash, the Fernet key, the per-account PAT values, the codex-bridge runner setup steps — is in the vault and stays there. If you find yourself wanting to write any of those values into this repo, stop and re-read rule 1.
 
 <!-- end appendix -->
+
+---
+
+## Labels
+
+Every issue opened in this repository carries `type:`, `area:` and `size:` **at creation** —
+including issues filed by `gh issue create` or the REST API, neither of which picks up issue
+forms.
+
+- `type:` — `feat` | `bug` | `chore` | `infra` | `spike` | `docs`
+- `area:` — the part of the tree the work lands in; the issue forms list the current set
+- `size:` — `S` (one sitting) | `M` (a day or so) | `L` (more than a day — consider filing it
+  as `tracking` and splitting it instead)
+
+An epic also carries `tracking`, and is never dispatched to a worker.
+
+`needs-split`, `not-code` and `tracking` all mean **do not dispatch**.
+
+These exist because dispatching the wrong issue is expensive: an unlabelled epic once produced
+seven issues in one 3,074-line PR, three of them in no sprint at all.
