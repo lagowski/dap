@@ -1,0 +1,42 @@
+name: Bug
+description: Something is wrong
+labels: ["type:bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of this repository is misbehaving?
+      options:
+        - assistant
+        - auth
+        - ci
+        - cli
+        - code-review-council
+        - cortex-integration
+        - dashboard
+        - db
+        - engine
+        - observability
+        - prompt-dsl
+        - runtimes
+        - types
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options:
+        - "S — one sitting"
+        - "M — a day or so"
+        - "L — more than a day (file it as tracking and split it instead)"
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Done means
+      description: What is true when this is fixed, that is not true now.
+    validations:
+      required: true
