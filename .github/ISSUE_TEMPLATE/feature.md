@@ -2,7 +2,7 @@
 name: Feature
 about: Nowa funkcja w zakresie fazy implementacji (F0-F12)
 title: "feat: "
-labels: feature
+labels: feature, type:feat
 ---
 
 ## Cel
