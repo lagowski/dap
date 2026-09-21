@@ -19,10 +19,13 @@ def _load_repair() -> ModuleType:
 repair: Any = _load_repair()
 
 MISMATCH = (
-    ' ERR_PNPM_LOCKFILE_CONFIG_MISMATCH  Cannot proceed with the frozen installation. '
+    " ERR_PNPM_LOCKFILE_CONFIG_MISMATCH  Cannot proceed with the frozen installation. "
     'The current "overrides" configuration doesn\'t match the value found in the lockfile'
 )
-OUTDATED = " ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with \"frozen-lockfile\" because pnpm-lock.yaml is not up to date"
+OUTDATED = (
+    ' ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" '
+    "because pnpm-lock.yaml is not up to date"
+)
 
 
 def test_clean_frozen_check_needs_no_repair() -> None:
@@ -45,7 +48,12 @@ def test_outdated_lockfile_is_repaired() -> None:
 
 def test_unrelated_failure_is_not_repaired() -> None:
     # Network, registry or auth failures must surface, never trigger a push.
-    assert repair.classify_frozen_result(1, " ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found") == "error"
+    assert (
+        repair.classify_frozen_result(
+            1, " ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found"
+        )
+        == "error"
+    )
 
 
 def test_failure_without_a_pnpm_error_code_is_not_repaired() -> None:
