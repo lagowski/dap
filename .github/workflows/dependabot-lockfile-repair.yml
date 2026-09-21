@@ -1,0 +1,91 @@
+name: Dependabot lockfile repair
+
+# Dependabot drops the `overrides:` block from apps/dashboard/pnpm-lock.yaml when
+# it regenerates it, while package.json still declares pnpm.overrides. Every job
+# running `pnpm install --frozen-lockfile` then aborts with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: Dashboard typecheck, Playwright smoke,
+# Packaging build and bundle-wheel all go red on one root cause (#888, #900).
+#
+# This job runs the same frozen check on each Dependabot dashboard PR and, only
+# when it fails with a lockfile-consistency error, regenerates the lockfile and
+# pushes it back to the PR branch. A consistent lockfile is left byte-identical.
+# See .github/scripts/repair_pnpm_lockfile.py.
+#
+# The push needs LOCKFILE_REPAIR_TOKEN, stored as a *Dependabot* secret:
+#   - Dependabot-triggered runs can only read Dependabot secrets, not Actions secrets.
+#   - A push made with GITHUB_TOKEN leaves the PR's checks in an approval-required
+#     state instead of running them, so the required checks would never re-run.
+# Use a fine-grained PAT (or GitHub App token) limited to this repository with
+# Contents: read and write.
+#
+# Loop safety: the repair push is made by the token's owner, not dependabot[bot],
+# so the synchronize event it causes does not match the `if:` below.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - "apps/dashboard/package.json"
+      - "apps/dashboard/pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-lockfile-repair-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
+
+jobs:
+  repair:
+    name: Dependabot lockfile repair
+    runs-on: ubuntu-latest
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'dependabot/npm_and_yarn/apps/dashboard/')
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Check and repair lockfile
+        run: python3 .github/scripts/repair_pnpm_lockfile.py apps/dashboard
+
+      - name: Push repaired lockfile
+        env:
+          TOKEN: ${{ secrets.LOCKFILE_REPAIR_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          if git diff --quiet -- apps/dashboard/pnpm-lock.yaml; then
+            echo "Lockfile unchanged; nothing to push."
+            exit 0
+          fi
+          if [ -z "$TOKEN" ]; then
+            echo "::error::The lockfile needs repair but the Dependabot secret LOCKFILE_REPAIR_TOKEN is not set. Create a fine-grained PAT for this repo with Contents: read and write, then: gh secret set LOCKFILE_REPAIR_TOKEN --app dependabot --repo $REPO"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/dashboard/pnpm-lock.yaml
+          git commit \
+            -m "fix(dashboard): restore pnpm lockfile consistency after Dependabot regeneration" \
+            -m "Automated by .github/workflows/dependabot-lockfile-repair.yml: the frozen-lockfile check failed with a lockfile-consistency error, so the lockfile was regenerated with pnpm ${PNPM_VERSION} and the check re-run clean."
+          git push "https://x-access-token:${TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
