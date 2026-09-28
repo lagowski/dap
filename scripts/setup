@@ -94,7 +94,7 @@ check_tool uv "$UV_MIN" get_uv_version \
 check_tool node "$NODE_MIN" get_node_version \
   "install with nvm: nvm install 22 && nvm use 22"
 check_tool pnpm "$PNPM_MIN" get_pnpm_version \
-  "corepack enable && corepack prepare pnpm@latest --activate"
+  "corepack enable && corepack prepare pnpm@9.15.9 --activate"
 
 if [[ $bad -ne 0 ]]; then
   echo "[setup] one or more prerequisites missing — fix the items above and re-run." >&2

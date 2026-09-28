@@ -27,13 +27,13 @@ BUNDLE_DEST="${REPO_ROOT}/apps/cli/src/dap_cli/_dashboard"
 echo "==> Building dashboard at ${DASHBOARD_SRC}"
 cd "${DASHBOARD_SRC}"
 
-# ``pnpm`` is expected on PATH. CI uses corepack; local dev uses the
-# repo's own pnpm version pinned via packageManager. The dashboard's
-# pnpm-lock.yaml is v9 format — pnpm 9 and 10 both read it, so we
-# don't pin a major here.
+# ``pnpm`` is expected on PATH. apps/dashboard/package.json pins
+# ``packageManager: pnpm@9.15.9``, and newer pnpm switches to it on its own.
+# Don't install pnpm 11 as a workaround: it ignores package.json
+# "pnpm".overrides (see tests/ci/test_dashboard_pnpm_pin.py).
 if ! command -v pnpm >/dev/null 2>&1; then
     echo >&2 "error: pnpm not on PATH."
-    echo >&2 "       Install via 'corepack enable && corepack prepare pnpm@latest --activate'"
+    echo >&2 "       Install via 'corepack enable && corepack prepare pnpm@9.15.9 --activate'"
     exit 1
 fi
 
