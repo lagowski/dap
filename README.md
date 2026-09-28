@@ -43,7 +43,7 @@ Scripts that hit `localhost:7333` unauthenticated need an API token now (`/admin
 - Node 22+
 - pnpm 9+
 
-`scripts/setup` checks all four for you, so you don't need to verify by hand. If you do want to install them yourself: `pyenv install 3.13 && pyenv local 3.13`, `curl -LsSf https://astral.sh/uv/install.sh | sh`, `nvm install 22 && nvm use 22`, `corepack enable && corepack prepare pnpm@latest --activate`.
+`scripts/setup` checks all four for you, so you don't need to verify by hand. If you do want to install them yourself: `pyenv install 3.13 && pyenv local 3.13`, `curl -LsSf https://astral.sh/uv/install.sh | sh`, `nvm install 22 && nvm use 22`, `corepack enable && corepack prepare pnpm@9.15.9 --activate`.
 
 ## Install (from source)
 
