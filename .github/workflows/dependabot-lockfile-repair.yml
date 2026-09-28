@@ -6,6 +6,12 @@ name: Dependabot lockfile repair
 # ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: Dashboard typecheck, Playwright smoke,
 # Packaging build and bundle-wheel all go red on one root cause (#888, #900).
 #
+# Root cause (#903): with no `packageManager` pin, Dependabot used pnpm 11, which no
+# longer reads the "pnpm" field of package.json. apps/dashboard/package.json now pins
+# `packageManager: pnpm@9.15.9`, which Dependabot honours, so this job should find the
+# lockfile consistent and exit clean. It stays as a backstop; LOCKFILE_REPAIR_TOKEN is
+# only needed if it ever has to push. tests/ci/test_dashboard_pnpm_pin.py guards the pin.
+#
 # This job runs the same frozen check on each Dependabot dashboard PR and, only
 # when it fails with a lockfile-consistency error, regenerates the lockfile and
 # pushes it back to the PR branch. A consistent lockfile is left byte-identical.
