@@ -121,7 +121,7 @@ FROM node:${NODE_VERSION}-slim AS dashboard-builder
 WORKDIR /build/apps/dashboard
 
 RUN --mount=type=cache,target=/root/.cache/corepack \
-    corepack enable && corepack prepare pnpm@10.0.0 --activate
+    corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 # Lockfile first — pnpm cache survives source edits.
 COPY apps/dashboard/package.json apps/dashboard/pnpm-lock.yaml ./
