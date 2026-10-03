@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`github` runtime: write operations (#921, part of #810)** — `comment`,
+  `update_issue_section` (replaces the text between
+  `<!-- dap:section:NAME -->` markers; idempotent, and refuses missing or
+  duplicated markers), `create_branch` (from a branch or a sha; a no-op if
+  the branch already exists there), `open_pr` (returns the existing open PR
+  for that head) and `merge_pr` (squash by default). `merge_pr` requires
+  `expected_head_sha`, so GitHub refuses the merge if the PR moved after it
+  was reviewed. Each op returns the affected number, URL or sha into state.
+  Branch names are restricted to characters that can't reshape the request
+  URL.
 - **`github` runtime: read operations (#920, part of #810)** — a new runtime
   for GitHub REST operations as pipeline nodes. `op: read_issue` returns an
   issue's title, body, state, labels and URL; `op: read_pr` adds draft/merged

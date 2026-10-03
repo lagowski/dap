@@ -86,6 +86,12 @@ const isProvider =
   (config: Record<string, unknown>): boolean =>
     wanted.includes(String(config.provider ?? "anthropic"));
 
+/** github runtime (#920, #921): show a field only for the ops that take it. */
+const forOps =
+  (...ops: string[]) =>
+  (config: Record<string, unknown>): boolean =>
+    ops.includes(String(config.op ?? "read_issue"));
+
 const hasBranch = (config: Record<string, unknown>): boolean =>
   typeof config.branch === "string" && config.branch.trim() !== "";
 
@@ -530,6 +536,11 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         options: [
           { value: "read_issue", label: "Read issue" },
           { value: "read_pr", label: "Read pull request (incl. changed files)" },
+          { value: "comment", label: "Comment on issue / PR" },
+          { value: "update_issue_section", label: "Update a marked section of an issue" },
+          { value: "create_branch", label: "Create branch" },
+          { value: "open_pr", label: "Open pull request" },
+          { value: "merge_pr", label: "Merge pull request (pinned head)" },
         ],
       },
       {
@@ -538,23 +549,101 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         kind: "text",
         required: true,
         placeholder: "owner/name or {{ state.repo }}",
-        description: "owner/name. Jinja over the run's state is allowed, e.g. {{ state.repo }}.",
+        description: "owner/name. Every text field accepts Jinja over the run's state, e.g. {{ state.repo }}.",
       },
       {
         key: "issue",
         label: "Issue number",
         kind: "text",
         placeholder: "42 or {{ state.extensions.issue_number }}",
-        description: "A number, or Jinja over the run's state.",
-        visible: (config) => (config.op ?? "read_issue") === "read_issue",
+        description: "An issue or PR number (PRs accept issue comments too).",
+        visible: forOps("read_issue", "comment", "update_issue_section"),
       },
       {
         key: "pr",
         label: "Pull request number",
         kind: "text",
         placeholder: "12 or {{ state.extensions.pr_number }}",
-        description: "A number, or Jinja over the run's state.",
-        visible: (config) => config.op === "read_pr",
+        visible: forOps("read_pr", "merge_pr"),
+      },
+      {
+        key: "body",
+        label: "Body",
+        kind: "text",
+        placeholder: "Markdown, or Jinja over the run's state",
+        description: "Comment text, or the PR description.",
+        visible: forOps("comment", "open_pr"),
+      },
+      {
+        key: "section",
+        label: "Section name",
+        kind: "text",
+        placeholder: "plan",
+        description:
+          "Replaces the text between <!-- dap:section:NAME --> and <!-- /dap:section:NAME --> in the issue body. Fails if the markers are missing or duplicated; writes nothing if the text is already there.",
+        visible: forOps("update_issue_section"),
+      },
+      {
+        key: "content",
+        label: "Section content",
+        kind: "text",
+        visible: forOps("update_issue_section"),
+      },
+      {
+        key: "branch",
+        label: "New branch",
+        kind: "text",
+        placeholder: "feat/my-change",
+        description: "Already existing at Base is a no-op; existing elsewhere fails.",
+        visible: forOps("create_branch"),
+      },
+      {
+        key: "head",
+        label: "Head branch",
+        kind: "text",
+        placeholder: "feat/my-change (or owner:branch from a fork)",
+        description: "If an open PR already exists for it, that PR is returned instead.",
+        visible: forOps("open_pr"),
+      },
+      {
+        key: "base",
+        label: "Base",
+        kind: "text",
+        placeholder: "develop",
+        description: "Branch name, or a full commit sha for New branch.",
+        visible: forOps("create_branch", "open_pr"),
+      },
+      {
+        key: "title",
+        label: "PR title",
+        kind: "text",
+        visible: forOps("open_pr"),
+      },
+      {
+        key: "draft",
+        label: "Open as draft",
+        kind: "boolean",
+        visible: forOps("open_pr"),
+      },
+      {
+        key: "expected_head_sha",
+        label: "Expected head sha",
+        kind: "text",
+        placeholder: "{{ state.github_pr.head.sha }}",
+        description:
+          "Required. The full sha of the head that was reviewed (e.g. from a read_pr node: {{ state.github_pr.head.sha }}). GitHub refuses the merge if the PR has moved since.",
+        visible: forOps("merge_pr"),
+      },
+      {
+        key: "method",
+        label: "Merge method",
+        kind: "select",
+        options: [
+          { value: "squash", label: "squash (default)" },
+          { value: "merge", label: "merge commit" },
+          { value: "rebase", label: "rebase" },
+        ],
+        visible: forOps("merge_pr"),
       },
       {
         key: "token_env",
@@ -568,7 +657,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "state_key",
         label: "State key",
         kind: "text",
-        placeholder: "github_issue / github_pr",
+        placeholder: "github_issue / github_pr / github_comment / …",
         description: "Where the result is written in the run's state.",
       },
       {
