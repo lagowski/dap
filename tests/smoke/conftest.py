@@ -323,3 +323,17 @@ def build_subprocess_mock(
     process.kill = MagicMock()
     process.terminate = MagicMock()
     return process
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> dict[str, Path]:
+    """A bare remote with `develop` and a clean clone of it (#922, #923)."""
+    from tests.smoke._git_repo import make_git_repo
+
+    return make_git_repo(tmp_path)
+
+
+@pytest.fixture
+def openai_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CodexAdapter's config validation needs OPENAI_API_KEY; the fake CLI ignores it."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
