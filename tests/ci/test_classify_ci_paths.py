@@ -171,3 +171,47 @@ def test_workflow_change_runs_everything_and_ai_review() -> None:
     assert outputs["run_bundle_wheel"] == "true"
     assert outputs["run_e2e"] == "true"
     assert outputs["skip_ai_review"] == "false"
+
+
+def test_empty_file_list_runs_playwright_full() -> None:
+    assert classifier.classify([])["run_e2e_full"] == "true"
+
+
+def test_playwright_full_runs_on_dashboard_engine_and_e2e_changes() -> None:
+    """The full suite rotted for 60+ nights (#870) because PRs only ran smoke.
+
+    A PR that can change what the full suite exercises -- the dashboard, the engine
+    behind it, or the specs themselves -- now runs it. That includes the dashboard
+    lockfile, so Dependabot's dashboard bumps are covered too.
+    """
+    for path in [
+        "apps/dashboard/src/app/(app)/runs/page.tsx",
+        "apps/dashboard/pnpm-lock.yaml",
+        "apps/engine/src/dap_engine/app.py",
+        "e2e/tests/app/runs/gate.spec.ts",
+    ]:
+        assert classifier.classify([path])["run_e2e_full"] == "true", path
+
+
+def test_playwright_full_skips_changes_outside_dashboard_engine_and_e2e() -> None:
+    # These still run Playwright smoke (run_e2e); only the full suite is skipped.
+    for path in ["apps/cli/src/dap_cli/main.py", "packages/runtimes/src/x.py", "uv.lock"]:
+        outputs = classifier.classify([path])
+        assert outputs["run_e2e_full"] == "false", path
+        assert outputs["run_e2e"] == "true", path
+
+
+def test_playwright_full_skips_docs_even_under_dashboard_or_engine() -> None:
+    assert classifier.classify(["apps/dashboard/README.md"])["run_e2e_full"] == "false"
+    assert classifier.classify(["docs/architecture.md"])["run_e2e_full"] == "false"
+
+
+def test_playwright_full_runs_when_ci_policy_changes() -> None:
+    # A change to e2e.yml or this classifier must exercise the job it defines.
+    assert classifier.classify([".github/workflows/e2e.yml"])["run_e2e_full"] == "true"
+    assert classifier.classify([".github/scripts/classify_ci_paths.py"])["run_e2e_full"] == "true"
+
+
+def test_gate_sync_pr_skips_playwright_full() -> None:
+    outputs = classifier.classify([".github/workflows/copilot-comment-responder.yml"])
+    assert outputs["run_e2e_full"] == "false"
