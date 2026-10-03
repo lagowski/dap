@@ -1,5 +1,6 @@
 import { test, expect } from '../../../test-fixtures';
 import { ADMIN_EMAIL } from '../../../fixtures';
+import { confirmDestructive } from '../../../helpers/confirm';
 
 // All five mutations on /admin/users — promote, demote, suspend,
 // reactivate, soft-delete — plus the "Show soft-deleted" filter and
@@ -69,13 +70,9 @@ test('admin users — soft-delete drops row from default list and Show toggle br
   const row = page.getByRole('row').filter({ hasText: target.email });
   await expect(row).toBeVisible();
 
-  // Soft-delete fires window.confirm() — accept before clicking.
-  page.once('dialog', (d) => {
-    d.accept().catch(() => {
-      // dialog races with the subsequent re-render
-    });
-  });
+  // Soft-delete opens the in-page ConfirmDestructiveDialog.
   await row.getByRole('button', { name: `Soft-delete ${target.email}` }).click();
+  await confirmDestructive(page, 'Soft-delete');
 
   // Row vanishes from the default (active-only) listing.
   await expect(page.getByRole('row').filter({ hasText: target.email })).toHaveCount(0);

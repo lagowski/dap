@@ -6,6 +6,7 @@ import {
   waitForRunStatus,
 } from '../../../helpers/runs';
 import { createPipeline } from '../../../helpers/pipelines';
+import { confirmDestructive } from '../../../helpers/confirm';
 
 // Run lifecycle covers three flows that had zero e2e coverage before:
 //   1. Triggering a run via the /runs page's TriggerRunPageDialog
@@ -60,12 +61,9 @@ test('runs abort — clicking Abort on a running run drives final_status to abor
   await waitForRunStatus(request, triggered.id, (s) => s === 'running', 5_000);
 
   await page.goto(`/runs/${triggered.id}`);
-  page.once('dialog', (d) => {
-    d.accept().catch(() => {
-      // dialog races with the post-click navigation/re-render
-    });
-  });
+  // Abort opens the in-page ConfirmDestructiveDialog.
   await page.getByRole('button', { name: 'Abort' }).click();
+  await confirmDestructive(page, 'Abort');
 
   // Poll until the engine settles the abort. The bash subprocess
   // continues sleeping (langgraph can't interrupt a syscall mid-flight),
