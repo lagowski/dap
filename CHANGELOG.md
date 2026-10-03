@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Push guards on CLI code runtimes (#923, part of #810)** — three opt-in
+  checks run after a successful run and before any push, so a failing guard
+  never reaches the remote: `require_nonempty_diff` (the run must add a
+  commit; with `push`, uncommitted leftovers don't count), `append_only` (no
+  amend, rebase or reset over commits that predate the run) and
+  `ancestry_guard` (never drop commits someone else pushed, including ones
+  `force_with_lease` can't see). A failed guard names itself and lists the
+  commits involved.
 - **Git workspace config on CLI code runtimes (#922, part of #810)** — the
   `claude-code`, `codex` and `gemini-cli` runtimes accept optional
   `workspace`, `branch`, `base`, `push`, `force_with_lease` and
@@ -97,6 +105,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude Code Pro subscription" deployments.
 
 ### Fixed
+- **CLI code runtimes push the configured branch, not `HEAD` (#923)** — if
+  the CLI ended its turn on another branch, the #922 push sent that
+  branch's commits under the configured branch's name. Every read after the
+  run is now pinned to `refs/heads/<branch>`.
+
 - **Stale pool connections after DB reconnect (#580)** — runs no
   longer fail instantly when the SQLAlchemy pool holds a connection
   the database has since dropped; dead connections are recycled

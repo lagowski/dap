@@ -18,6 +18,23 @@ develop, then push" as data instead of a python-func node:
   token for git's HTTPS calls to github.com. The token reaches git through
   ``GIT_CONFIG_*`` env vars only, never argv, and is scrubbed from every message.
 
+Three opt-in guards (#923) run after a successful CLI run and before any push, so a guard
+failure never reaches the remote:
+
+- ``require_nonempty_diff``: the run must leave at least one new commit on ``branch``.
+  Without ``push``, uncommitted changes count too; with it they don't, since they would
+  not be pushed (the "silent zero output" run that looks green).
+- ``append_only``: every commit on ``branch`` before the run must still be in its history
+  afterwards: no amend, rebase or reset over existing work. Rewriting the run's own new
+  commits is allowed. (cortex scanned the reflog for such operations, which also flagged
+  harmless amends of the run's own commits; ancestry is the precise test.)
+- ``ancestry_guard``: the remote branch, freshly fetched, must be an ancestor of what is
+  about to be pushed, so commits someone else pushed are never dropped, including ones
+  that were already there at checkout, which ``force_with_lease`` can't see.
+
+Everything after the CLI runs reads ``refs/heads/<branch>``, never ``HEAD``: a CLI that ends
+its turn on another branch must not make us judge or push the wrong commits (cortex #815).
+
 With none of these keys set, :func:`parse_git_config` returns ``None`` and the adapter
 behaves exactly as before.
 
@@ -36,7 +53,15 @@ from typing import Any, Final
 
 logger = logging.getLogger("dap.runtimes.git_workspace")
 
-GIT_CONFIG_KEYS: Final = ("workspace", "branch", "base", "push", "force_with_lease", "token_env")
+_STRING_KEYS: Final = ("workspace", "branch", "base", "token_env")
+_BOOL_KEYS: Final = (
+    "push",
+    "force_with_lease",
+    "require_nonempty_diff",
+    "append_only",
+    "ancestry_guard",
+)
+GIT_CONFIG_KEYS: Final = (*_STRING_KEYS, *_BOOL_KEYS)
 DEFAULT_BASE: Final = "develop"
 REMOTE: Final = "origin"
 GIT_TIMEOUT_SECONDS: Final = 120.0
@@ -51,6 +76,9 @@ class GitWorkspaceConfig:
     push: bool
     force_with_lease: bool
     token_env: str | None
+    require_nonempty_diff: bool = False
+    append_only: bool = False
+    ancestry_guard: bool = False
 
 
 @dataclass
@@ -65,8 +93,10 @@ class GitWorkspace:
     # Remote tip of ``branch`` at checkout; ``None`` if it didn't exist there yet.
     lease_sha: str | None = None
 
-    def info(self, *, head_sha: str | None, pushed: bool) -> dict[str, Any]:
-        return {
+    def info(
+        self, *, head_sha: str | None, pushed: bool, guard: str | None = None
+    ) -> dict[str, Any]:
+        info: dict[str, Any] = {
             "workspace": self.path,
             "branch": self.config.branch,
             "base": self.config.base,
@@ -74,6 +104,9 @@ class GitWorkspace:
             "head_sha": head_sha,
             "pushed": pushed,
         }
+        if guard is not None:
+            info["guard"] = guard
+        return info
 
     def redact(self, text: str) -> str:
         return text.replace(self.token, "***") if self.token else text
@@ -94,47 +127,34 @@ def parse_git_config(
     if not present:
         return (None, None)
 
-    def _str(key: str) -> tuple[str | None, str | None]:
+    strings: dict[str, str | None] = {}
+    for key in _STRING_KEYS:
         value = present.get(key)
-        if value is None:
-            return (None, None)
-        if not isinstance(value, str):
+        if value is not None and not isinstance(value, str):
             return (None, f"runtime_config.{key} must be a non-empty string")
-        return (value.strip(), None)
-
-    def _bool(key: str) -> tuple[bool, str | None]:
+        strings[key] = value.strip() if isinstance(value, str) else None
+    flags: dict[str, bool] = {}
+    for key in _BOOL_KEYS:
         value = present.get(key, False)
         if not isinstance(value, bool):
-            return (False, f"runtime_config.{key} must be true or false")
-        return (value, None)
+            return (None, f"runtime_config.{key} must be true or false")
+        flags[key] = value
 
-    workspace, error = _str("workspace")
-    if error is None:
-        branch, error = _str("branch")
-    if error is None:
-        base, error = _str("base")
-    if error is None:
-        token_env, error = _str("token_env")
-    if error is None:
-        push, error = _bool("push")
-    if error is None:
-        force_with_lease, error = _bool("force_with_lease")
-    if error is not None:
-        return (None, error)
-
-    if push and branch is None:
-        return (None, "runtime_config.push requires runtime_config.branch")
-    if force_with_lease and not push:
-        return (None, "runtime_config.force_with_lease requires runtime_config.push")
+    branch = strings["branch"]
+    for key in ("push", "require_nonempty_diff", "append_only"):
+        if flags[key] and branch is None:
+            return (None, f"runtime_config.{key} requires runtime_config.branch")
+    for key in ("force_with_lease", "ancestry_guard"):
+        if flags[key] and not flags["push"]:
+            return (None, f"runtime_config.{key} requires runtime_config.push")
 
     return (
         GitWorkspaceConfig(
-            workspace=workspace,
+            workspace=strings["workspace"],
             branch=branch,
-            base=base or DEFAULT_BASE,
-            push=push,
-            force_with_lease=force_with_lease,
-            token_env=token_env,
+            base=strings["base"] or DEFAULT_BASE,
+            token_env=strings["token_env"],
+            **flags,
         ),
         None,
     )
@@ -280,14 +300,81 @@ async def _checkout(ws: GitWorkspace, branch: str) -> str | None:
 
 
 async def head_sha(ws: GitWorkspace) -> str | None:
-    return await _sha(ws, "HEAD")
+    """The branch's tip after the run (``HEAD`` only when no branch is configured)."""
+    branch = ws.config.branch
+    return await _sha(ws, f"refs/heads/{branch}" if branch else "HEAD")
+
+
+async def run_guards(ws: GitWorkspace) -> tuple[str | None, str | None]:
+    """Run the enabled guards. Returns ``(guard_name, error)`` for the first failure."""
+    branch = ws.config.branch
+    if branch is None:
+        return (None, None)
+    tip = await _sha(ws, f"refs/heads/{branch}")
+    if tip is None:
+        return ("branch", f"branch {branch} no longer exists after the run")
+    checks = (
+        ("append_only", ws.config.append_only, _append_only),
+        ("require_nonempty_diff", ws.config.require_nonempty_diff, _nonempty_diff),
+        ("ancestry_guard", ws.config.ancestry_guard, _ancestry),
+    )
+    for name, enabled, check in checks:
+        if enabled:
+            error = await check(ws, branch, tip)
+            if error is not None:
+                return (name, f"{name}: {error}")
+    return (None, None)
+
+
+async def _is_ancestor(ws: GitWorkspace, ancestor: str, tip: str) -> bool:
+    code, _, _ = await _git(ws, "merge-base", "--is-ancestor", ancestor, tip)
+    return code == 0
+
+
+async def _missing(ws: GitWorkspace, tip: str, other: str) -> str:
+    """Short shas reachable from ``other`` but not from ``tip`` (up to five)."""
+    _, out, _ = await _git(ws, "rev-list", "--max-count=5", f"{tip}..{other}")
+    return ", ".join(sha[:12] for sha in out.split()) or other[:12]
+
+
+async def _append_only(ws: GitWorkspace, branch: str, tip: str) -> str | None:
+    if ws.start_sha is None or await _is_ancestor(ws, ws.start_sha, tip):
+        return None
+    dropped = await _missing(ws, tip, ws.start_sha)
+    return f"the run rewrote existing history on {branch}; no longer on it: {dropped}"
+
+
+async def _nonempty_diff(ws: GitWorkspace, branch: str, tip: str) -> str | None:
+    if ws.start_sha is not None and tip != ws.start_sha:
+        return None
+    _, status, _ = await _git(ws, "status", "--porcelain")
+    if status and not ws.config.push:
+        return None
+    if status:
+        return (
+            f"the run left uncommitted changes but no new commit on {branch}; "
+            "uncommitted changes are not pushed"
+        )
+    return f"the run made no change on {branch}"
+
+
+async def _ancestry(ws: GitWorkspace, branch: str, tip: str) -> str | None:
+    code, _, stderr = await _git(ws, "fetch", "--quiet", REMOTE)
+    if code != 0:
+        return f"could not fetch {REMOTE} to check: {_tail(ws, stderr)}"
+    remote_tip = await _sha(ws, f"refs/remotes/{REMOTE}/{branch}")
+    if remote_tip is None or await _is_ancestor(ws, remote_tip, tip):
+        return None
+    foreign = await _missing(ws, tip, remote_tip)
+    return f"pushing would drop commits on {REMOTE}/{branch} that this run doesn't have: {foreign}"
 
 
 async def push_branch(ws: GitWorkspace) -> str | None:
     """Push HEAD to ``origin/<branch>``. Returns an error message, or ``None``."""
     branch = ws.config.branch
     assert branch is not None  # parse_git_config guarantees it when push is set
-    args = ["push", "--quiet", REMOTE, f"HEAD:refs/heads/{branch}"]
+    # Push the branch itself, not HEAD: the CLI may have left HEAD elsewhere.
+    args = ["push", "--quiet", REMOTE, f"refs/heads/{branch}:refs/heads/{branch}"]
     if ws.config.force_with_lease:
         # Expect the tip seen at checkout; an empty value means "must not exist yet".
         args.insert(1, f"--force-with-lease=refs/heads/{branch}:{ws.lease_sha or ''}")

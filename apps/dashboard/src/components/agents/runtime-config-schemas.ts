@@ -137,6 +137,30 @@ const GIT_WORKSPACE_FIELDS: RuntimeField[] = [
     visible: (config) => hasBranch(config) && config.push === true,
   },
   {
+    key: "require_nonempty_diff",
+    label: "Require a change",
+    kind: "boolean",
+    description:
+      "Fail the run if it added no commit to Branch (with Push on, uncommitted changes don't count: they wouldn't be pushed). Catches the run that looks green but did nothing.",
+    visible: hasBranch,
+  },
+  {
+    key: "append_only",
+    label: "Append-only history",
+    kind: "boolean",
+    description:
+      "Fail the run if it amended, rebased or reset commits that were on Branch before it started. Rewriting the run's own new commits is fine.",
+    visible: hasBranch,
+  },
+  {
+    key: "ancestry_guard",
+    label: "Never drop others' commits",
+    kind: "boolean",
+    description:
+      "Before pushing, fail if origin's Branch has commits this run doesn't, including ones already there at checkout, which force-with-lease can't see.",
+    visible: (config) => hasBranch(config) && config.push === true,
+  },
+  {
     key: "token_env",
     label: "Token env var name",
     kind: "text",

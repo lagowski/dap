@@ -14,6 +14,10 @@ const GIT_KEYS = [
   "push",
   "force_with_lease",
   "token_env",
+  // #923 guards
+  "require_nonempty_diff",
+  "append_only",
+  "ancestry_guard",
 ];
 const CLI_RUNTIMES = ["claude-code", "codex", "gemini-cli"];
 
@@ -49,6 +53,22 @@ describe("git workspace fields on CLI runtimes (#922)", () => {
 
   it("shows force_with_lease only when push is on", () => {
     const f = field("codex", "force_with_lease");
+    expect(f?.visible?.({ branch: "feat/x" })).toBe(false);
+    expect(f?.visible?.({ branch: "feat/x", push: true })).toBe(true);
+  });
+
+  it("shows the history guards once a branch is set (#923)", () => {
+    for (const key of ["require_nonempty_diff", "append_only"]) {
+      const f = field("codex", key);
+      expect(f?.kind).toBe("boolean");
+      expect(f?.visible?.({})).toBe(false);
+      expect(f?.visible?.({ branch: "feat/x" })).toBe(true);
+    }
+  });
+
+  it("shows ancestry_guard only when push is on (#923)", () => {
+    const f = field("codex", "ancestry_guard");
+    expect(f?.kind).toBe("boolean");
     expect(f?.visible?.({ branch: "feat/x" })).toBe(false);
     expect(f?.visible?.({ branch: "feat/x", push: true })).toBe(true);
   });
