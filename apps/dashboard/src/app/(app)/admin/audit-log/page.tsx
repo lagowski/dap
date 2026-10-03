@@ -263,9 +263,12 @@ export default function AdminAuditLogPage() {
                   {events.data.items.map((event) => {
                     const { short, full } = formatEventData(event.event_data);
                     return (
+                      // Clickable + keyboard-activatable, but deliberately
+                      // NOT role="button": that would strip the row role and
+                      // orphan its cells, so assistive tech no longer sees a
+                      // table (#870).
                       <tr
                         key={event.id}
-                        role="button"
                         tabIndex={0}
                         aria-label={`Inspect ${event.event_type} event`}
                         onClick={() => setSelectedEvent(event)}
