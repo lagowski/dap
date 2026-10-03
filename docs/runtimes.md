@@ -2,9 +2,12 @@
 
 A runtime adapter is what actually executes a node. The pipeline runner
 hands it a `RuntimeTask` (rendered XML prompt + working directory + timeout
-+ runtime config) and expects a `RuntimeResult` back. DAP ships with eight
++ runtime config) and expects a `RuntimeResult` back. DAP ships with nine
 adapters that follow the same shape: `api-call`, `bash`, `claude-code`,
-`gemini-cli`, `codex`, `aider`, `python-func`, and `http`.
+`gemini-cli`, `codex`, `aider`, `python-func`, `http`, and `github`.
+How to *use* `github`, and the git workspace config on the CLI code
+runtimes, is in [Built-in runtime reference](#built-in-runtime-reference)
+below.
 
 > Looking to **use** an existing provider (Claude / Gemini / GLM / Ollama
 > / …)? See [`providers.md`](providers.md) — that's the operator-facing
@@ -197,9 +200,10 @@ async def run(state: dict, config: dict) -> dict:
 ```
 
 DAP merges every key in the returned `dict` whose name matches a field in
-`PipelineState` into the live run state. Unknown keys are silently dropped
-(`extra="forbid"` is on `PipelineState`, so unrecognised fields never
-corrupt state — they just don't survive the merge).
+`PipelineState` into the live run state. Any other key is merged into
+`state.extensions` (so a node returning `{"plan": …}` is read downstream as
+`{{ state.extensions.plan }}`). `PipelineState` itself stays
+`extra="forbid"`; the unknown keys never become top-level fields.
 
 The `stdout` column in `node_execution_logs` stores `json.dumps(result)`
 (minus the `__audit` key). This is useful for debugging: query
@@ -214,8 +218,12 @@ at the end of the run depends on whether the pipeline opts in to
 
 | Pipeline setting | Residual `"running"` at end of run | Meaning |
 |---|---|---|
-| `requires_terminal_final_status = False` (default) | silently coerced to `"success"` | "no node raised = pipeline succeeded" — safe for simple pipelines that don't manage status explicitly |
-| `requires_terminal_final_status = True` | treated as **`"failed"`** with an operator-visible reason | any node that can end the run *must* set `final_status` explicitly |
+| `requires_terminal_final_status = False` | silently coerced to `"success"` | "no node raised = pipeline succeeded" — safe for simple pipelines that don't manage status explicitly |
+| `requires_terminal_final_status = True` (**default**, since #628) | treated as **`"failed"`** with an operator-visible reason | any node that can end the run *must* set `final_status` explicitly |
+
+A pipeline whose last node can't set `final_status` (e.g. a `bash`, `http`
+or `github` node) must set `"requires_terminal_final_status": false` in its
+`defaults`, or every run ends `failed` even when every node succeeded.
 
 **Rule**: if your pipeline sets `requires_terminal_final_status = true`,
 every node that can be the **last node in the graph** (i.e. routes to
@@ -246,10 +254,11 @@ If a node is not the last node (it has a successor in the graph), omitting
 
 ### When to enable `requires_terminal_final_status`
 
-Enable it when your pipeline contains nodes that **decide** the outcome —
-for example a merge node that may refuse to merge, or a verification node
-that can declare failure. Leaving it `false` is fine for simple linear
-pipelines where "ran without raising" reliably means "succeeded".
+Keep it on (the default) when your pipeline contains nodes that **decide**
+the outcome — for example a merge node that may refuse to merge, or a
+verification node that can declare failure. Turning it off is fine for
+simple linear pipelines where "ran without raising" reliably means
+"succeeded".
 
 The flag is set in the pipeline's `defaults` block:
 
@@ -282,3 +291,101 @@ LIMIT 5;
 `stdout` is `json.dumps(result)` — look for `"final_status"` in it. If
 it's absent or still `"running"`, add the explicit return value to that
 node.
+
+---
+
+## Built-in runtime reference
+
+How to configure the runtimes whose `runtime_config` goes beyond "pick a
+model" (for LLM providers see [`providers.md`](providers.md)). Everything
+below is plain agent config, editable in the agent editor.
+
+> **Tokens are always referenced by env var name, never pasted into
+> config.** `token_env: "GH_TOKEN"` names a variable; its value comes from
+> the engine env, instance env vars (`/settings/admin/env-vars`), project
+> env vars, or `runtime_config.env`, in increasing precedence. A token
+> string in a `runtime_config` would be exported with the pipeline.
+
+### `github`: GitHub operations as nodes (#920, #921)
+
+A node that talks to the GitHub REST API directly. No LLM, no shell.
+
+| `op` | Params | Writes into state (default key) |
+|---|---|---|
+| `read_issue` | `issue` | `github_issue`: `number`, `title`, `body`, `state`, `labels` (names), `url`, `is_pull_request` |
+| `read_pr` | `pr` | `github_pr`: `number`, `title`, `body`, `state`, `draft`, `merged`, `mergeable`, `mergeable_state`, `url`, `head`/`base` `{ref, sha}`, `files` (every changed path) |
+| `comment` | `issue`, `body` | `github_comment`: `id`, `url`, `issue` |
+| `update_issue_section` | `issue`, `section`, `content` | `github_issue_section`: `issue`, `section`, `changed` |
+| `create_branch` | `branch`, `base` | `github_branch`: `branch`, `sha`, `created` |
+| `open_pr` | `head`, `base`, `title`, optional `body`, `draft` | `github_opened_pr`: `number`, `url`, `created` |
+| `merge_pr` | `pr`, `expected_head_sha`, optional `method` | `github_merge`: `number`, `merged`, `sha` |
+
+Common keys: `repo` (`owner/name`, required), `token_env` (default
+`GH_TOKEN`), `state_key` (overrides the default key above), `api_url`
+(GitHub Enterprise; https only).
+
+**Templating.** Every text param may be a Jinja template over the run's
+state: `"repo": "{{ state.repo }}"`, `"issue": "{{ state.extensions.issue_number }}"`.
+Rendering is sandboxed and strict, so an undefined variable fails the node
+instead of calling GitHub with an empty value. Results land in
+`state.extensions.<state_key>` (they aren't `PipelineState` fields), so a
+later node reads `{{ state.extensions.github_issue.title }}`.
+
+**Behaviour worth knowing:**
+
+- `update_issue_section` replaces the text between
+  `<!-- dap:section:NAME -->` and `<!-- /dap:section:NAME -->`. It writes
+  nothing if the text is already there (`changed: false`), and fails if
+  the markers are missing, unclosed or duplicated. It never appends.
+- `create_branch` takes a branch name or a full sha as `base`. A branch
+  already at that sha is a no-op (`created: false`); one elsewhere fails.
+- `open_pr` returns the already-open PR for `head` (`created: false`)
+  instead of failing. A cross-fork head is `owner:branch`.
+- `merge_pr` **requires** `expected_head_sha`, the full sha of the head
+  that was reviewed (from a `read_pr` node: `{{ state.extensions.github_pr.head.sha }}`).
+  GitHub refuses the merge (409) if the PR moved since. `method`: `squash`
+  (default), `merge` or `rebase`.
+
+**Safety.** The token is sent only as an `Authorization` header and is
+scrubbed from every error. Pagination never follows a link off `api_url`.
+`repo` may not contain `.`/`..` segments, and branch names are limited to
+`A-Z a-z 0-9 . _ / : -`, because both go into request URLs. Every failure
+(bad config, missing token, 4xx/5xx, network) fails the node with a message;
+nothing is sent before the config validates.
+
+**Role-separated tokens.** Point each node at the least-privileged token:
+`"token_env": "CORTEX_GH_TOKEN_READ"` for reads, `…_ISSUES` for comments,
+`…_CODE` for branches and PRs, `…_MERGE` for `merge_pr`.
+
+Example: [`examples/pipelines/github-read-issue-comment.pipeline-bundle.json`](../examples/pipelines/github-read-issue-comment.pipeline-bundle.json),
+which reads an issue and comments on it.
+
+### Git workspace on the CLI code runtimes (#922, #923)
+
+`claude-code`, `codex` and `gemini-cli` accept these optional keys. With
+none set (or only `false` / empty values), nothing changes.
+
+| Key | Effect |
+|---|---|
+| `workspace` | Directory the CLI runs in: absolute, or relative to the project's working directory (the default). |
+| `branch` | Checked out **before** the CLI runs: an existing local branch as is, a remote-only one from `origin`'s tip, otherwise created from `base`. Refused if the workspace has uncommitted changes. |
+| `base` | Start point for a new `branch` (`origin/<base>` preferred). Default `develop`. |
+| `push` | After a **successful** run, push `branch` to `origin`. Fast-forward only. A failed run pushes nothing. |
+| `force_with_lease` | Allow replacing a rewritten `branch`, but only if `origin` still points where it did at checkout. Never a plain `--force`. Requires `push`. |
+| `token_env` | Env var holding the token git uses for github.com over HTTPS. It reaches git only via `GIT_CONFIG_*` env, never argv. |
+
+Guards, all off by default. They are checked after a successful run and
+**before** any push, so a failing guard never reaches the remote. A failure
+names the guard and lists the commits involved (`structured["git"]["guard"]`):
+
+| Guard | Fails the run when | Requires |
+|---|---|---|
+| `require_nonempty_diff` | The run added no commit to `branch`. Without `push`, uncommitted changes count too; with `push` they don't, since they wouldn't be pushed. | `branch` |
+| `append_only` | A commit that was on `branch` before the run is gone from its history (amend, rebase or reset over existing work). Rewriting the run's own new commits is fine. | `branch` |
+| `ancestry_guard` | `origin`'s `branch` (freshly fetched) has commits the push would drop, including ones already there at checkout, which `force_with_lease` can't see. | `push` |
+
+Everything after the run reads `refs/heads/<branch>`, never `HEAD`, so a
+CLI that ends its turn on another branch doesn't get the wrong commits
+judged or pushed. The result's `structured["git"]` carries `workspace`,
+`branch`, `base`, `start_sha`, `head_sha` and `pushed`.
+

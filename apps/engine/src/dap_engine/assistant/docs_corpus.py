@@ -31,6 +31,16 @@ An agent = a unit of work. Fields:
   for text tasks (classify, review, summarize). Needs the provider's API key as an instance env var.
 - claude-code: Anthropic Claude Code CLI (agentic coding, file edits). Heavier; good implementer.
 - gemini-cli: Google Gemini CLI. codex: OpenAI Codex CLI. aider: aider coding CLI.
+- claude-code / codex / gemini-cli also take optional git keys: branch (checked out before the
+  run), base (default develop), push (after a successful run; fast-forward only),
+  force_with_lease, workspace, token_env; and opt-in guards require_nonempty_diff, append_only,
+  ancestry_guard (checked before any push).
+- github: GitHub REST ops, no LLM. runtime_config: op (read_issue|read_pr|comment|
+  update_issue_section|create_branch|open_pr|merge_pr), repo (owner/name), plus the op's params
+  (issue, pr, body, section, content, branch, base, head, title, draft, expected_head_sha,
+  method). Params may be Jinja over state ({{ state.repo }}); results land in
+  state.extensions.<github_issue|github_pr|…>. merge_pr requires expected_head_sha. token_env
+  names the token's env var (default GH_TOKEN); never put a token in config.
 - bash: run a shell command (deterministic, free). runtime_config: command, shell, env.
 - http: call an HTTP endpoint. python-func: run a Python callable (runtime_config.callable_path
   = "module:func"); the package must be installed in the engine venv (e.g. dap-cortex).

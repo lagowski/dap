@@ -629,9 +629,9 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "expected_head_sha",
         label: "Expected head sha",
         kind: "text",
-        placeholder: "{{ state.github_pr.head.sha }}",
+        placeholder: "{{ state.extensions.github_pr.head.sha }}",
         description:
-          "Required. The full sha of the head that was reviewed (e.g. from a read_pr node: {{ state.github_pr.head.sha }}). GitHub refuses the merge if the PR has moved since.",
+          "Required. The full sha of the head that was reviewed (e.g. from a read_pr node: {{ state.extensions.github_pr.head.sha }}). GitHub refuses the merge if the PR has moved since.",
         visible: forOps("merge_pr"),
       },
       {

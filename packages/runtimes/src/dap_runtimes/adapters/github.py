@@ -23,7 +23,7 @@ Write operations:
   merge or rebase) → merges, but only if the PR's head is still exactly
   ``expected_head_sha`` (GitHub checks it atomically and answers 409 otherwise). The pin
   is required: merging whatever the head happens to be is what it exists to prevent.
-  ``read_pr`` puts the sha in state (``{{ state.github_pr.head.sha }}``).
+  ``read_pr`` puts the sha in state (``{{ state.extensions.github_pr.head.sha }}``).
 
 Each op returns the affected resource's number, URL or sha into state.
 

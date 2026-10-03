@@ -23,6 +23,41 @@ the DAG. Once imported, every agent becomes a real DB row editable from
 
 ## Available bundles
 
+### `github-read-issue-comment.pipeline-bundle.json`
+
+The smallest useful `github` runtime pipeline: read an issue, then comment on
+it using what was read. Two nodes, no LLM, no shell, no `python-func`.
+
+```
+__start__ → read_issue → comment → __end__
+```
+
+| Node | Runtime | What it does |
+|---|---|---|
+| `read_issue` | github (`op: read_issue`) | Reads `{{ state.extensions.issue_number }}` in `{{ state.repo }}`, writes `extensions.github_issue` |
+| `comment` | github (`op: comment`) | Posts "DAP read **<title>** (#N). Labels: …", rendered from `extensions.github_issue` |
+
+**Run it** with an initial state naming the repo and issue:
+
+```json
+{"repo": "owner/name", "branch": "main", "extensions": {"issue_number": 42}}
+```
+
+**Prerequisites:**
+
+- A token that can read the repo and comment on its issues, in an env var
+  named `GH_TOKEN`: in the engine env, as an instance env var
+  (`/settings/admin/env-vars`) or as a project env var. To use another
+  variable (e.g. a role token like `CORTEX_GH_TOKEN_ISSUES`), change both
+  agents' `token_env`. Never put the token itself in the bundle.
+
+**Why `requires_terminal_final_status: false`:** the last node is a `github`
+call, which can't set `final_status`. With the default (`true`, since #628)
+every run would end `failed` even though both nodes succeeded. See
+[`docs/runtimes.md`](../../docs/runtimes.md#the-final_status-contract).
+
+Every op, its params and outputs: [`docs/runtimes.md` → `github`](../../docs/runtimes.md#github-github-operations-as-nodes-920-921).
+
 ### `github-issue-triage.pipeline-bundle.json`
 
 Five-node linear pipeline that picks the most sensible open GitHub issue,

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`github` runtime and git workspace docs, plus an example pipeline (#919,
+  completes #810)** — `docs/runtimes.md` gains a built-in runtime
+  reference: every `github` op with its params and outputs, and the git
+  workspace keys and push guards on the CLI code runtimes.
+  `examples/pipelines/github-read-issue-comment.pipeline-bundle.json` reads
+  an issue and comments on it using only `github` nodes; a test imports it
+  and runs it through the real engine. The assistant corpus knows both.
 - **`github` runtime: write operations (#921, part of #810)** — `comment`,
   `update_issue_section` (replaces the text between
   `<!-- dap:section:NAME -->` markers; idempotent, and refuses missing or
@@ -126,6 +133,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude Code Pro subscription" deployments.
 
 ### Fixed
+- **Docs: `requires_terminal_final_status` defaults to `true` (#919)** —
+  `docs/runtimes.md` still said `false`, which leads to pipelines whose
+  runs all end `failed`. It also said unknown keys a node returns are
+  dropped; they're merged into `state.extensions`.
+- **`merge_pr` hint pointed at the wrong state path (#919)** — the
+  docstring and the agent editor suggested
+  `{{ state.github_pr.head.sha }}`; `read_pr` results land in
+  `state.extensions`, so the working template is
+  `{{ state.extensions.github_pr.head.sha }}`.
 - **CLI code runtimes push the configured branch, not `HEAD` (#923)** — if
   the CLI ended its turn on another branch, the #922 push sent that
   branch's commits under the configured branch's name. Every read after the
