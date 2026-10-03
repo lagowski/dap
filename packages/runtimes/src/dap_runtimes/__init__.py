@@ -5,6 +5,7 @@ from dap_runtimes.adapters.bash import BashAdapter
 from dap_runtimes.adapters.claude_code import ClaudeCodeAdapter
 from dap_runtimes.adapters.codex import CodexAdapter
 from dap_runtimes.adapters.gemini_cli import GeminiCliAdapter
+from dap_runtimes.adapters.github import GithubAdapter
 from dap_runtimes.adapters.http import HttpAdapter
 from dap_runtimes.adapters.python_func import PythonFuncAdapter
 from dap_runtimes.registry import RuntimeRegistry, create_default_registry
@@ -16,6 +17,7 @@ __all__ = [
     "ClaudeCodeAdapter",
     "CodexAdapter",
     "GeminiCliAdapter",
+    "GithubAdapter",
     "HttpAdapter",
     "PythonFuncAdapter",
     "RuntimeRegistry",

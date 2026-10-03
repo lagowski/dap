@@ -38,6 +38,7 @@ def test_runtimes_list(client: TestClient) -> None:
         "codex",
         "aider",
         "python-func",
+        "github",
     }
     for adapter in body:
         assert "displayName" in adapter

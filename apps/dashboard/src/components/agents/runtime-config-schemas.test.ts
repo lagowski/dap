@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AGENT_RUNTIME_IDS,
   RUNTIME_SCHEMAS,
   defaultRuntimeConfig,
   pruneRuntimeConfig,
@@ -77,5 +78,47 @@ describe("git workspace fields on CLI runtimes (#922)", () => {
     const f = field("codex", "token_env");
     expect(f?.kind).toBe("text");
     expect(f?.label.toLowerCase()).toContain("env var");
+  });
+});
+
+describe("github runtime (#920)", () => {
+  const schema = RUNTIME_SCHEMAS.github;
+  const gh = (key: string) => schema?.fields.find((f) => f.key === key);
+
+  it("is offered as an agent runtime", () => {
+    expect(AGENT_RUNTIME_IDS).toContain("github");
+    expect(schema?.runtime_id).toBe("github");
+  });
+
+  it("offers the read ops and requires op and repo", () => {
+    expect(gh("op")?.kind).toBe("select");
+    expect(gh("op")?.options?.map((o) => o.value)).toEqual(["read_issue", "read_pr"]);
+    expect(gh("op")?.required).toBe(true);
+    expect(gh("repo")?.required).toBe(true);
+  });
+
+  it("shows the number field that matches the op", () => {
+    expect(gh("issue")?.visible?.({ op: "read_issue" })).toBe(true);
+    expect(gh("issue")?.visible?.({ op: "read_pr" })).toBe(false);
+    expect(gh("pr")?.visible?.({ op: "read_pr" })).toBe(true);
+    expect(gh("pr")?.visible?.({ op: "read_issue" })).toBe(false);
+  });
+
+  it("asks for the token's env var name, never a token", () => {
+    expect(gh("token_env")?.label.toLowerCase()).toContain("env var");
+    const keys = schema?.fields.map((f) => f.key) ?? [];
+    expect(keys.some((k) => /^(token|password|secret)$/.test(k))).toBe(false);
+  });
+
+  it("keeps every github key on submit", () => {
+    const config = {
+      op: "read_pr",
+      repo: "{{ state.repo }}",
+      pr: "12",
+      token_env: "CORTEX_GH_TOKEN_READ",
+      state_key: "target",
+      api_url: "https://ghe.example.com/api/v3",
+    };
+    expect(pruneRuntimeConfig("github", config)).toEqual(config);
   });
 });

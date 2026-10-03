@@ -185,6 +185,7 @@ export const AGENT_RUNTIME_IDS = [
   "bash",
   "http",
   "python-func",
+  "github",
 ] as const;
 
 export type AgentRuntimeId = (typeof AGENT_RUNTIME_IDS)[number];
@@ -513,6 +514,69 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "binary_path",
         label: "Binary path",
         kind: "text",
+      },
+    ],
+  },
+
+  github: {
+    runtime_id: "github",
+    fields: [
+      {
+        key: "op",
+        label: "Operation",
+        kind: "select",
+        required: true,
+        default: "read_issue",
+        options: [
+          { value: "read_issue", label: "Read issue" },
+          { value: "read_pr", label: "Read pull request (incl. changed files)" },
+        ],
+      },
+      {
+        key: "repo",
+        label: "Repository",
+        kind: "text",
+        required: true,
+        placeholder: "owner/name or {{ state.repo }}",
+        description: "owner/name. Jinja over the run's state is allowed, e.g. {{ state.repo }}.",
+      },
+      {
+        key: "issue",
+        label: "Issue number",
+        kind: "text",
+        placeholder: "42 or {{ state.extensions.issue_number }}",
+        description: "A number, or Jinja over the run's state.",
+        visible: (config) => (config.op ?? "read_issue") === "read_issue",
+      },
+      {
+        key: "pr",
+        label: "Pull request number",
+        kind: "text",
+        placeholder: "12 or {{ state.extensions.pr_number }}",
+        description: "A number, or Jinja over the run's state.",
+        visible: (config) => config.op === "read_pr",
+      },
+      {
+        key: "token_env",
+        label: "Token env var name",
+        kind: "text",
+        placeholder: "GH_TOKEN",
+        description:
+          "Name of the env var (engine, instance or project env) holding the GitHub token. Defaults to GH_TOKEN. Enter the variable's name, never the token itself.",
+      },
+      {
+        key: "state_key",
+        label: "State key",
+        kind: "text",
+        placeholder: "github_issue / github_pr",
+        description: "Where the result is written in the run's state.",
+      },
+      {
+        key: "api_url",
+        label: "API URL",
+        kind: "text",
+        placeholder: "https://api.github.com",
+        description: "Set only for GitHub Enterprise (https only).",
       },
     ],
   },

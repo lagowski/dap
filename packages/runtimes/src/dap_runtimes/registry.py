@@ -8,6 +8,7 @@ from dap_runtimes.adapters.bash import BashAdapter
 from dap_runtimes.adapters.claude_code import ClaudeCodeAdapter
 from dap_runtimes.adapters.codex import CodexAdapter
 from dap_runtimes.adapters.gemini_cli import GeminiCliAdapter
+from dap_runtimes.adapters.github import GithubAdapter
 from dap_runtimes.adapters.http import HttpAdapter
 from dap_runtimes.adapters.python_func import PythonFuncAdapter
 
@@ -36,7 +37,7 @@ class RuntimeRegistry:
 
 
 def create_default_registry() -> RuntimeRegistry:
-    """Tworzy registry z 8 wbudowanymi adapterami (F0 = stuby).
+    """Tworzy registry z 9 wbudowanymi adapterami (F0 = stuby).
 
     Sync — adapter constructors nie wykonują I/O. Jeśli w przyszłości dojdzie
     plugin loading z dysku lub remote registry, zmieni się na async.
@@ -50,4 +51,5 @@ def create_default_registry() -> RuntimeRegistry:
     registry.register(CodexAdapter())
     registry.register(AiderAdapter())
     registry.register(PythonFuncAdapter())
+    registry.register(GithubAdapter())
     return registry
