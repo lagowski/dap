@@ -123,7 +123,12 @@ describe("github runtime (#920)", () => {
   });
 
   it("explains that merge_pr needs the reviewed head sha", () => {
-    expect(gh("expected_head_sha")?.description).toMatch(/head\.sha/);
+    // read_pr results are not PipelineState fields, so they land in state.extensions.
+    const f = gh("expected_head_sha");
+    for (const text of [f?.placeholder, f?.description]) {
+      expect(text).toContain("state.extensions.github_pr.head.sha");
+      expect(text).not.toMatch(/state\.github_pr/);
+    }
     expect(gh("method")?.options?.map((o) => o.value)).toEqual(["squash", "merge", "rebase"]);
   });
 
