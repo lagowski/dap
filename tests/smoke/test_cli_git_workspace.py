@@ -206,6 +206,7 @@ async def test_relative_workspace_resolves_against_the_working_directory(
 
     assert result.success, result.errors
     assert (repo["work"] / "where.txt").read_text().strip() == "feat/rel"
+    assert result.structured is not None
     assert result.structured["git"]["workspace"] == str(repo["work"])
 
 
