@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Git workspace config on CLI code runtimes (#922, part of #810)** — the
+  `claude-code`, `codex` and `gemini-cli` runtimes accept optional
+  `workspace`, `branch`, `base`, `push`, `force_with_lease` and
+  `token_env` keys. The branch is checked out before the CLI runs (refused
+  on uncommitted changes), and after a successful run it can be pushed
+  (fast-forward only, or `--force-with-lease` pinned to the tip seen at
+  checkout). The GitHub token is named by env var, reaches git only through
+  `GIT_CONFIG_*` env, and is scrubbed from every message. With none of the
+  keys set, behaviour is unchanged. The agent editor shows the new fields
+  and no longer drops them on save.
 - **Live run progress (#581, #592)** — the run view now streams
   per-node execution state while a pipeline runs: the currently
   executing node (with a spinner), a status timeline, the active

@@ -86,6 +86,66 @@ const isProvider =
   (config: Record<string, unknown>): boolean =>
     wanted.includes(String(config.provider ?? "anthropic"));
 
+const hasBranch = (config: Record<string, unknown>): boolean =>
+  typeof config.branch === "string" && config.branch.trim() !== "";
+
+/**
+ * Declarative git workspace (#922), shared by every CLI runtime built on the
+ * backend's ``_BaseCliAdapter``. No field has a default: an agent that never
+ * sets them runs exactly as before, and the backend treats ``false`` / ``""``
+ * left behind by a cleared input as unset too.
+ */
+const GIT_WORKSPACE_FIELDS: RuntimeField[] = [
+  {
+    key: "workspace",
+    label: "Workspace",
+    kind: "text",
+    placeholder: "repo",
+    description:
+      "Directory the CLI runs in: absolute, or relative to the project's working directory. Defaults to the project's working directory.",
+  },
+  {
+    key: "branch",
+    label: "Branch",
+    kind: "text",
+    placeholder: "feat/my-change",
+    description:
+      "Checked out before the CLI runs: an existing branch as is, otherwise created from Base. The run is refused if the workspace has uncommitted changes.",
+  },
+  {
+    key: "base",
+    label: "Base branch",
+    kind: "text",
+    placeholder: "develop",
+    description: "Start point for a new Branch (origin/<base> preferred). Defaults to develop.",
+    visible: hasBranch,
+  },
+  {
+    key: "push",
+    label: "Push after run",
+    kind: "boolean",
+    description:
+      "Push Branch to origin after a successful run. Fast-forward only unless force-with-lease is on. Nothing is pushed if the CLI fails.",
+    visible: hasBranch,
+  },
+  {
+    key: "force_with_lease",
+    label: "Force with lease",
+    kind: "boolean",
+    description:
+      "Allow replacing a rewritten Branch, but only if origin still points where it did at checkout. Never a plain --force.",
+    visible: (config) => hasBranch(config) && config.push === true,
+  },
+  {
+    key: "token_env",
+    label: "Token env var name",
+    kind: "text",
+    placeholder: "GH_TOKEN",
+    description:
+      "Name of the env var (engine, instance or project env) holding the GitHub token for fetch and push. Enter the variable's name, never the token itself.",
+  },
+];
+
 /**
  * Ordered list of runtime ids the form / Test panel surface in
  * dropdowns. Single source of truth — both ``AgentForm`` and the
@@ -259,6 +319,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
           'JSON array of strings appended to the claude CLI invocation. Example: ["--allowed-tools","Read,Edit,Bash"]',
         placeholder: '["--allowed-tools", "Read,Edit"]',
       },
+      ...GIT_WORKSPACE_FIELDS,
     ],
   },
 
@@ -287,6 +348,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         kind: "number",
         description: "Optional. Max tokens spent on internal reasoning.",
       },
+      ...GIT_WORKSPACE_FIELDS,
     ],
   },
 
@@ -317,6 +379,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
           'JSON array of strings appended to the codex CLI invocation. Example: ["--sandbox", "workspace-write"]',
         placeholder: '["--sandbox", "workspace-write"]',
       },
+      ...GIT_WORKSPACE_FIELDS,
     ],
   },
 

@@ -47,6 +47,13 @@ from typing import Any, Final
 
 from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
+from dap_runtimes.adapters._git_workspace import (
+    GitWorkspace,
+    head_sha,
+    parse_git_config,
+    prepare_workspace,
+    push_branch,
+)
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters._subprocess_stream import drain_subprocess_output
 from dap_runtimes.adapters.base import BaseAdapter
@@ -277,7 +284,7 @@ class _BaseCliAdapter(BaseAdapter):
     # Shared execute() pipeline
     # ------------------------------------------------------------------
 
-    async def execute(  # noqa: PLR0911
+    async def execute(  # noqa: PLR0911, PLR0912
         self,
         task: RuntimeTask,
         on_output: OutputCallback | None = None,
@@ -290,6 +297,12 @@ class _BaseCliAdapter(BaseAdapter):
         validation_error = self._validate_config(config)
         if validation_error is not None:
             return self._failed(validation_error, duration_ms=0)
+
+        # Optional declarative git workspace (#922). ``None`` when no git key is set,
+        # and then nothing below changes.
+        git_config, git_error = parse_git_config(config)
+        if git_error is not None:
+            return self._failed(git_error, duration_ms=0, model_id=config.get("model_id"))
 
         binary = self._resolve_binary(config)
         if shutil.which(binary) is None:
@@ -328,6 +341,19 @@ class _BaseCliAdapter(BaseAdapter):
         effective_timeout_ms = task.timeout_ms or 60_000
         cwd = task.working_directory or os.getcwd()
         timeout_seconds = max(effective_timeout_ms, 1) / MS_PER_SECOND
+
+        git_workspace: GitWorkspace | None = None
+        if git_config is not None:
+            git_workspace, git_error = await prepare_workspace(
+                git_config, working_directory=cwd, env=env
+            )
+            if git_workspace is None:
+                return self._failed(
+                    git_error or "git workspace preparation failed",
+                    duration_ms=0,
+                    model_id=config.get("model_id"),
+                )
+            cwd = git_workspace.path
 
         outcome = await self._run_subprocess(
             argv=argv,
@@ -393,7 +419,37 @@ class _BaseCliAdapter(BaseAdapter):
                 stderr=outcome.stderr,
             )
 
-        return self._parse_payload(payload, config, outcome)
+        result = self._parse_payload(payload, config, outcome)
+        if git_workspace is None:
+            return result
+        return await self._finish_git(git_workspace, result)
+
+    async def _finish_git(self, ws: GitWorkspace, result: RuntimeResult) -> RuntimeResult:
+        """Record the git outcome on a successful run, pushing first if asked to.
+
+        A failed run is returned untouched: nothing is pushed from a run the CLI itself
+        reported as failed.
+        """
+        if not result.success:
+            return result
+        pushed = False
+        push_error: str | None = None
+        if ws.config.push:
+            push_error = await push_branch(ws)
+            pushed = push_error is None
+        structured = {
+            **(result.structured or {}),
+            "git": ws.info(head_sha=await head_sha(ws), pushed=pushed),
+        }
+        if push_error is not None:
+            return result.model_copy(
+                update={
+                    "success": False,
+                    "errors": [*result.errors, push_error],
+                    "structured": structured,
+                }
+            )
+        return result.model_copy(update={"structured": structured})
 
     # ------------------------------------------------------------------
     # Internals — overridable when needed but rarely
