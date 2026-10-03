@@ -9,19 +9,15 @@ import { test, expect } from '@playwright/test';
 
 test('pipelines create — template import lands on /pipelines/<id>/edit', async ({ page }) => {
   await page.goto('/pipelines/new');
-  // The page itself has no <h1>; the template picker is the topmost heading.
-  await expect(page.getByRole('heading', { name: /Start from template/i })).toBeVisible();
+  // Two-step flow (#688): the page opens on a grouped template chooser. The
+  // page itself has no <h1>; the chooser's prompt is the topmost heading.
+  await expect(page.getByRole('heading', { name: 'How do you want to start?' })).toBeVisible();
 
-  // Each template card renders the template name as a <div> plus a "Use
-  // this template" <Button>. Scope by finding the deepest div that
-  // *contains* an exact-match name element (so a different card whose
-  // description coincidentally contains "Hello world — bash echo" as a
-  // substring can't match) *and* an import button — that's the card.
-  const card = page
-    .locator('div')
-    .filter({ has: page.getByText('Hello world — bash echo', { exact: true }) })
-    .filter({ has: page.getByRole('button', { name: /Use this template/i }) });
-  await card.last().getByRole('button', { name: /Use this template/i }).click();
+  // Each template is a single row <button> whose accessible name starts with
+  // the template name (followed by its tags and description). Anchoring the
+  // regex at the start means a different template whose *description*
+  // mentions "Hello world — bash echo" can't match.
+  await page.getByRole('button', { name: /^Hello world — bash echo / }).click();
 
   await page.waitForURL(/\/pipelines\/[^/]+\/edit$/, { timeout: 15_000 });
   // The toolbar Name input (placeholder "My pipeline") is pre-filled with the

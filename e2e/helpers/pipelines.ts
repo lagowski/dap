@@ -53,13 +53,23 @@ export async function createPipeline(
     nodes: [{ id: 'n1', agent_id: agent.id }],
     edges: [{ id: 'e1', source: 'n1', target: '__end__' }],
   };
+  // Since #628 PipelineDefaults.requires_terminal_final_status defaults to
+  // true: a run whose nodes never set state.final_status to a terminal value
+  // is finalized as "failed" ("pipeline finished without setting a terminal
+  // final_status"). The seeded `echo ok` / `sleep N` bash agent doesn't manage
+  // pipeline state, so opt out — exactly what the engine's own smoke tests
+  // (tests/smoke/*) do for the same kind of fixture pipeline. Without this,
+  // every seeded run ends "failed" instead of "success". The strict default
+  // itself stays covered by tests/smoke/test_run_terminal_status.py.
+  const defaults: Record<string, unknown> = { requires_terminal_final_status: false };
   if (overrides.gateNodes && overrides.gateNodes.length > 0) {
     // PipelineDefaults.approval_required_nodes drives the langgraph
     // runner's `interrupt_before` — the run pauses BEFORE executing
     // any listed node, hitting final_status="paused" for the
     // human-in-loop approval flow tested by gate specs.
-    payload.defaults = { approval_required_nodes: overrides.gateNodes };
+    defaults.approval_required_nodes = overrides.gateNodes;
   }
+  payload.defaults = defaults;
   const response = await request.post('/api/pipelines', { data: payload });
   if (!response.ok()) {
     throw new Error(

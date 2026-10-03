@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { confirmDestructive } from '../../../helpers/confirm';
 
 // Full CRUD now that the dashboard's catch-all proxy lets /auth/api-tokens
 // through (previous version was blocked, leaving an error banner on the
@@ -24,15 +25,11 @@ test('admin api-tokens — create via API, list, revoke via UI', async ({ page, 
   await expect(row).toBeVisible();
   await expect(row.getByText('active', { exact: true })).toBeVisible();
 
-  // Revoke button uses an aria-label like "Revoke <name> (<email>)".
-  // window.confirm() fires on click — accept before clicking so the
-  // mutation actually fires.
-  page.once('dialog', (dialog) => {
-    dialog.accept().catch(() => {
-      // dialog can race with the subsequent re-render
-    });
-  });
+  // Revoke button uses an aria-label like "Revoke <name> (<email>)" and
+  // opens the in-page ConfirmDestructiveDialog; the mutation only fires
+  // once its "Revoke" button is clicked.
   await row.getByRole('button', { name: new RegExp(`^Revoke ${tokenName}`) }).click();
+  await confirmDestructive(page, 'Revoke');
 
   // The row stays visible (default "Show revoked" is on) and the status
   // badge flips from "active" to "revoked".

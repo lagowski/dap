@@ -4,6 +4,8 @@ test('agents create — prompt template missing <agent_prompt> tag shows validat
   page,
 }) => {
   await page.goto('/agents/new');
+  // Two-step flow (#687): choose "Start from scratch" to reach the form.
+  await page.getByRole('button', { name: /^Start from scratch/ }).click();
   await page.locator('input[name="name"]').fill('e2e-bad-template-agent');
   await page.selectOption('select[name="role"]', 'implementer');
   await page.selectOption('select[name="runtime_id"]', 'bash');

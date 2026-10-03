@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createAgent } from '../../../helpers/agents';
+import { confirmDestructive } from '../../../helpers/confirm';
 
 test('agents delete (archive) — gone from active list after confirming dialog', async ({
   page,
@@ -12,13 +13,10 @@ test('agents delete (archive) — gone from active list after confirming dialog'
   await page.goto(`/agents/${agent.id}`);
   await expect(page.getByRole('heading', { name: agent.name })).toBeVisible();
 
-  // The Archive button triggers window.confirm() — accept it before clicking.
-  page.once('dialog', (dialog) => {
-    dialog.accept().catch(() => {
-      // dialogs can race with the next navigation; ignore late-accept errors
-    });
-  });
+  // Archive opens the in-page ConfirmDestructiveDialog, whose confirm
+  // button is also labelled "Archive".
   await page.getByRole('button', { name: 'Archive' }).click();
+  await confirmDestructive(page, 'Archive');
 
   await page.waitForURL(/\/agents\/?$/, { timeout: 10_000 });
   await expect(page.getByRole('link', { name: agent.name })).toHaveCount(0);

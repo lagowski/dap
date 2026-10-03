@@ -23,6 +23,12 @@ test('account change-password — current-password gate + login round-trip', asy
   await page.waitForURL((url) => !url.pathname.endsWith('/signup'), { timeout: 10_000 });
 
   await page.goto('/account');
+  // The form reads the email to re-verify from the /auth/me query; submitting
+  // before that query resolves short-circuits with "Couldn't read current
+  // session" instead of reaching the current-password check. Wait for the
+  // session to be on the page first (seen flaking locally on a cold dev
+  // server).
+  await expect(page.getByText(email).first()).toBeVisible();
 
   // Wrong current password is rejected client-side without touching
   // PATCH /users/me — the form drives a login-verify step first.

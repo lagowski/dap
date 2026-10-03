@@ -1,6 +1,7 @@
 import { test, expect } from '../../../test-fixtures';
 import { triggerRun, waitForRunStatus } from '../../../helpers/runs';
 import { createPipeline } from '../../../helpers/pipelines';
+import { confirmDestructive } from '../../../helpers/confirm';
 
 // Human-in-loop gate flow: pipelines whose
 // `defaults.approval_required_nodes` lists a node id drive the
@@ -54,13 +55,10 @@ test('gate abort — clicking Abort on a paused-at-gate run drives final_status 
 
   // Two Abort buttons exist when paused-at-gate: one from RunActions
   // (header) and one from GatePanel (amber card). Both call the same
-  // mutation against the same run id, so .first() is fine.
-  page.once('dialog', (d) => {
-    d.accept().catch(() => {
-      // dialog races with the subsequent state refresh
-    });
-  });
+  // mutation against the same run id, so .first() is fine. Either opens
+  // the in-page ConfirmDestructiveDialog.
   await page.getByRole('button', { name: 'Abort' }).first().click();
+  await confirmDestructive(page, 'Abort');
 
   const final = await waitForRunStatus(
     request,
