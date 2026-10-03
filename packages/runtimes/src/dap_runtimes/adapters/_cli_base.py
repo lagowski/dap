@@ -53,6 +53,7 @@ from dap_runtimes.adapters._git_workspace import (
     parse_git_config,
     prepare_workspace,
     push_branch,
+    run_guards,
 )
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters._subprocess_stream import drain_subprocess_output
@@ -432,6 +433,19 @@ class _BaseCliAdapter(BaseAdapter):
         """
         if not result.success:
             return result
+        # Guards (#923) run before the push, so a failing guard never reaches the remote.
+        guard, guard_error = await run_guards(ws)
+        if guard_error is not None:
+            return result.model_copy(
+                update={
+                    "success": False,
+                    "errors": [*result.errors, ws.redact(guard_error)],
+                    "structured": {
+                        **(result.structured or {}),
+                        "git": ws.info(head_sha=await head_sha(ws), pushed=False, guard=guard),
+                    },
+                }
+            )
         pushed = False
         push_error: str | None = None
         if ws.config.push:
