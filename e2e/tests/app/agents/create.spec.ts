@@ -12,6 +12,11 @@ test('agents create — fill form, submit, agent appears in list', async ({ page
   await page.goto('/agents/new');
   await expect(page.getByRole('heading', { name: 'New agent' })).toBeVisible();
 
+  // /agents/new is a two-step flow (#687): pick a template or "Start from
+  // scratch" first, then the form renders.
+  await expect(page.getByRole('heading', { name: 'How do you want to start?' })).toBeVisible();
+  await page.getByRole('button', { name: /^Start from scratch/ }).click();
+
   await page.locator('input[name="name"]').fill(name);
   await page.selectOption('select[name="role"]', 'implementer');
   await page.selectOption('select[name="runtime_id"]', 'bash');
