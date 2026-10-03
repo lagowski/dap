@@ -35,6 +35,7 @@ def test_dap_runtimes_importable() -> None:
         ClaudeCodeAdapter,
         CodexAdapter,
         GeminiCliAdapter,
+        GithubAdapter,
         HttpAdapter,
         RuntimeRegistry,
         create_default_registry,
@@ -51,6 +52,7 @@ def test_dap_runtimes_importable() -> None:
         GeminiCliAdapter(),
         CodexAdapter(),
         AiderAdapter(),
+        GithubAdapter(),
     ]
     for instance in instances:
         assert isinstance(instance.id, str) and instance.id
@@ -60,7 +62,7 @@ def test_dap_runtimes_importable() -> None:
     # Registry działa
     registry = create_default_registry()
     assert isinstance(registry, RuntimeRegistry)
-    assert len(registry.list()) == 8
+    assert len(registry.list()) == 9
 
 
 def test_dap_engine_importable() -> None:
