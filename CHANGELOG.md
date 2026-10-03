@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`github` runtime: read operations (#920, part of #810)** — a new runtime
+  for GitHub REST operations as pipeline nodes. `op: read_issue` returns an
+  issue's title, body, state, labels and URL; `op: read_pr` adds draft/merged
+  state, mergeability, head/base ref and sha, and every changed file
+  (paginated). `repo` and the number can be Jinja templates over the run's
+  state, and the result lands in state (default `github_issue` /
+  `github_pr`). The token is named by env var (`token_env`, default
+  `GH_TOKEN`), resolved through the usual env layering, sent only as an
+  `Authorization` header, and scrubbed from every message. Pagination never
+  follows a link off the configured API. `api_url` supports GitHub
+  Enterprise.
 - **Push guards on CLI code runtimes (#923, part of #810)** — three opt-in
   checks run after a successful run and before any push, so a failing guard
   never reaches the remote: `require_nonempty_diff` (the run must add a
