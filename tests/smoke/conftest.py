@@ -58,6 +58,7 @@ UNIT_FILES = frozenset(
         "test_gate_payload_warnings.py",
         "test_gemini_cli_adapter.py",
         "test_github_adapter.py",
+        "test_github_adapter_write.py",
         "test_http_adapter.py",
         "test_instance_env_vars_merge.py",
         "test_logging_config.py",

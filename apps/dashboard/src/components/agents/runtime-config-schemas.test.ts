@@ -92,16 +92,39 @@ describe("github runtime (#920)", () => {
 
   it("offers the read ops and requires op and repo", () => {
     expect(gh("op")?.kind).toBe("select");
-    expect(gh("op")?.options?.map((o) => o.value)).toEqual(["read_issue", "read_pr"]);
+    expect(gh("op")?.options?.map((o) => o.value)).toEqual([
+      "read_issue",
+      "read_pr",
+      "comment",
+      "update_issue_section",
+      "create_branch",
+      "open_pr",
+      "merge_pr",
+    ]);
     expect(gh("op")?.required).toBe(true);
     expect(gh("repo")?.required).toBe(true);
   });
 
-  it("shows the number field that matches the op", () => {
-    expect(gh("issue")?.visible?.({ op: "read_issue" })).toBe(true);
-    expect(gh("issue")?.visible?.({ op: "read_pr" })).toBe(false);
-    expect(gh("pr")?.visible?.({ op: "read_pr" })).toBe(true);
-    expect(gh("pr")?.visible?.({ op: "read_issue" })).toBe(false);
+  // #921: each write op shows exactly the params it takes.
+  const OP_FIELDS: Record<string, string[]> = {
+    read_issue: ["issue"],
+    read_pr: ["pr"],
+    comment: ["issue", "body"],
+    update_issue_section: ["issue", "section", "content"],
+    create_branch: ["branch", "base"],
+    open_pr: ["head", "base", "title", "body", "draft"],
+    merge_pr: ["pr", "expected_head_sha", "method"],
+  };
+  const OP_PARAMS = [...new Set(Object.values(OP_FIELDS).flat())];
+
+  it.each(Object.entries(OP_FIELDS))("%s shows exactly its params", (op, params) => {
+    const shown = OP_PARAMS.filter((key) => gh(key)?.visible?.({ op }));
+    expect(shown.sort()).toEqual([...params].sort());
+  });
+
+  it("explains that merge_pr needs the reviewed head sha", () => {
+    expect(gh("expected_head_sha")?.description).toMatch(/head\.sha/);
+    expect(gh("method")?.options?.map((o) => o.value)).toEqual(["squash", "merge", "rebase"]);
   });
 
   it("asks for the token's env var name, never a token", () => {
