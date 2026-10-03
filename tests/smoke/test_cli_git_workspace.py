@@ -417,3 +417,20 @@ def test_every_cli_runtime_on_the_shared_base_inherits_the_git_config() -> None:
     for adapter in (ClaudeCodeAdapter, CodexAdapter, GeminiCliAdapter):
         assert issubclass(adapter, _BaseCliAdapter)
         assert "execute" not in adapter.__dict__, adapter.__name__
+
+
+@pytest.mark.parametrize(
+    ("existing", "index"),
+    [({}, 0), ({"GIT_CONFIG_COUNT": "2"}, 2), ({"GIT_CONFIG_COUNT": "junk"}, 0)],
+)
+def test_auth_header_is_appended_to_git_config_env_without_touching_argv(
+    existing: dict[str, str], index: int
+) -> None:
+    from dap_runtimes.adapters._git_workspace import _auth_env
+
+    env = _auth_env({"PATH": "/bin", **existing}, TOKEN)
+
+    assert env["GIT_CONFIG_COUNT"] == str(index + 1)
+    assert env[f"GIT_CONFIG_KEY_{index}"] == "http.https://github.com/.extraheader"
+    assert env[f"GIT_CONFIG_VALUE_{index}"].startswith("AUTHORIZATION: basic ")
+    assert TOKEN not in env[f"GIT_CONFIG_VALUE_{index}"]  # base64-encoded, not raw

@@ -147,7 +147,10 @@ def _is_unset(value: Any) -> bool:
 def _auth_env(env: dict[str, str], token: str) -> dict[str, str]:
     """Add a github.com auth header through ``GIT_CONFIG_*``, keeping it out of argv."""
     out = dict(env)
-    index = int(out.get("GIT_CONFIG_COUNT", "0") or 0)
+    count = out.get("GIT_CONFIG_COUNT", "")
+    # Append after any entries the engine env already carries; git ignores a malformed
+    # count, so treat it as zero instead of raising mid-run.
+    index = int(count) if count.isdigit() else 0
     credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     out[f"GIT_CONFIG_KEY_{index}"] = "http.https://github.com/.extraheader"
     out[f"GIT_CONFIG_VALUE_{index}"] = f"AUTHORIZATION: basic {credentials}"
