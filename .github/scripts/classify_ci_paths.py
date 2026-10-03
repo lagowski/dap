@@ -133,6 +133,17 @@ def _is_e2e(path: str) -> bool:
     )
 
 
+def _is_e2e_full(path: str) -> bool:
+    """Paths whose changes the full Playwright suite exercises, not just smoke.
+
+    PRs used to run smoke only, so the full suite went unrun on every PR and rotted for
+    60+ nights before anyone noticed (#870). Docs under these trees don't count.
+    """
+    return not _is_docs(path) and (
+        _under(path, "apps/dashboard/") or _under(path, "apps/engine/") or _under(path, "e2e/")
+    )
+
+
 def _is_gemini_review(path: str) -> bool:
     return path in {
         ".github/workflows/gemini-review.yml",
@@ -155,6 +166,7 @@ def classify(paths: list[str]) -> dict[str, str]:
             "run_docker": "true",
             "run_bundle_wheel": "true",
             "run_e2e": "true",
+            "run_e2e_full": "true",
             "skip_ai_review": "false",
             "ai_review_reason": "No changed files were returned; running full review.",
         }
@@ -169,6 +181,7 @@ def classify(paths: list[str]) -> dict[str, str]:
     docker_changed = any(_is_docker(path) for path in paths)
     bundle_changed = any(_is_bundle_wheel(path) for path in paths)
     e2e_changed = any(_is_e2e(path) for path in paths)
+    e2e_full_changed = any(_is_e2e_full(path) for path in paths)
     gemini_changed = any(_is_gemini_review(path) for path in paths)
     unknown_changed = any(
         not (
@@ -209,6 +222,7 @@ def classify(paths: list[str]) -> dict[str, str]:
     run_docker = ci_policy_changed or unknown_changed or (docker_changed and not docs_only)
     run_bundle_wheel = ci_policy_changed or unknown_changed or (bundle_changed and not docs_only)
     run_e2e = ci_policy_changed or unknown_changed or (e2e_changed and not docs_only)
+    run_e2e_full = ci_policy_changed or unknown_changed or e2e_full_changed
 
     if docs_only:
         review_reason = "Docs-only PR - AI review skipped by path policy."
@@ -231,6 +245,7 @@ def classify(paths: list[str]) -> dict[str, str]:
         "run_docker": str(run_docker).lower(),
         "run_bundle_wheel": str(run_bundle_wheel).lower(),
         "run_e2e": str(run_e2e).lower(),
+        "run_e2e_full": str(run_e2e_full).lower(),
         "skip_ai_review": str(skip_ai_review).lower(),
         "ai_review_reason": review_reason,
     }

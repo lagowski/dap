@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_e2e: ${{ steps.paths.outputs.run_e2e }}
+      run_e2e_full: ${{ steps.paths.outputs.run_e2e_full }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -133,7 +134,16 @@ jobs:
   full:
     name: Playwright full
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    needs: classify
+    # Scheduled and manual runs always run the full suite. PRs run it when they touch
+    # the dashboard, the engine or the specs (run_e2e_full); smoke alone let the full
+    # suite rot for 60+ nights unnoticed (#870). If classification fails, run it.
+    if: >-
+      always() && (
+        github.event_name != 'pull_request' ||
+        needs.classify.result != 'success' ||
+        needs.classify.outputs.run_e2e_full == 'true'
+      )
 
     steps:
       - name: Checkout
