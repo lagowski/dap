@@ -15,7 +15,7 @@ on:
     paths-ignore:
       - '.github/workflows/copilot-comment-responder.yml'
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, "feature/**", "sprint/**"]
     paths-ignore:
       - '.github/workflows/copilot-comment-responder.yml'
   schedule:
