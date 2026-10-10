@@ -212,10 +212,17 @@ def _collect_unknown_fields(
     condition: EdgeCondition,
     known_fields: set[str],
 ) -> set[str]:
-    """Walk the condition tree and return field names not in known_fields."""
+    """Walk the condition tree and return fields whose root is not a known field.
+
+    A dot-path is judged by its first segment (#930): ``extensions.foo.bar``
+    is fine because ``extensions`` is a ``PipelineState`` field, and runtime
+    results land there under arbitrary keys. Empty segments never resolve,
+    so they still warn.
+    """
     unknown: set[str] = set()
     if isinstance(condition, ComparisonCondition):
-        if condition.field not in known_fields:
+        parts = condition.field.split(".")
+        if parts[0] not in known_fields or "" in parts:
             unknown.add(condition.field)
     elif isinstance(condition, LogicalCondition):
         for child in condition.children:

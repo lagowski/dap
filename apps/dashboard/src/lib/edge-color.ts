@@ -40,6 +40,14 @@ export function classifyCondition(condition: EdgeCondition): EdgeCategory {
     return "neutral";
   }
 
+  // Not: pass and fail swap. Retry / max-attempts have no clean inverse.
+  if (condition.type === "not") {
+    const inner = classifyCondition(condition.children[0]);
+    if (inner === "pass") return "fail";
+    if (inner === "fail") return "pass";
+    return "neutral";
+  }
+
   // Logical: classify children and return the first non-neutral result
   for (const child of condition.children) {
     const cat = classifyCondition(child);
