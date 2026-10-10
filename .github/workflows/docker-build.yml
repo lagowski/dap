@@ -7,7 +7,7 @@ name: Packaging
 
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, "feature/**", "sprint/**"]
   push:
     branches: [develop]
     paths:
