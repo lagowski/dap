@@ -88,4 +88,37 @@ describe("summarizeCondition", () => {
       }),
     ).toBe("a == true AND b > 1 …");
   });
+
+  it("prefixes a negated comparison with NOT (#930)", () => {
+    expect(
+      summarizeCondition({
+        type: "not",
+        children: [
+          {
+            type: "comparison",
+            field: "extensions.approved",
+            operator: "==",
+            value: true,
+          },
+        ],
+      }),
+    ).toBe("NOT approved == true");
+  });
+
+  it("parenthesises a negated compound condition (#930)", () => {
+    expect(
+      summarizeCondition({
+        type: "not",
+        children: [
+          {
+            type: "or",
+            children: [
+              { type: "comparison", field: "a", operator: "==", value: true },
+              { type: "comparison", field: "b", operator: ">", value: 1 },
+            ],
+          },
+        ],
+      }),
+    ).toBe("NOT (a == true OR b > 1)");
+  });
 });

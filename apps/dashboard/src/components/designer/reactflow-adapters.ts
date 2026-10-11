@@ -18,13 +18,20 @@ type EdgeCondition = NonNullable<PipelineEdge["condition"]>;
 /**
  * Short human label for an edge condition (#765) — so a conditional edge shows
  * *what* it branches on, not a bare "if". Comparison → ``field op value``;
- * logical → its comparisons joined with AND/OR (truncated). The ``extensions.``
+ * logical → its comparisons joined with AND/OR (truncated); ``not`` → ``NOT x``,
+ * parenthesised when ``x`` is compound (#930). The ``extensions.``
  * prefix is dropped for brevity.
  */
 export function summarizeCondition(condition: EdgeCondition): string {
   if (condition.type === "comparison") {
     const field = condition.field.replace(/^extensions\./, "");
     return `${field} ${condition.operator} ${String(condition.value)}`;
+  }
+  if (condition.type === "not") {
+    const [child] = condition.children;
+    if (!child) return "NOT";
+    const inner = summarizeCondition(child);
+    return child.type === "comparison" ? `NOT ${inner}` : `NOT (${inner})`;
   }
   const joiner = condition.type === "or" ? " OR " : " AND ";
   const parts = condition.children.slice(0, 2).map(summarizeCondition);
