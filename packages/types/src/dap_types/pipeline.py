@@ -125,6 +125,40 @@ class NodeOverrides(BaseModel):
     timeout_ms: int | None = None
 
 
+class RetryPolicy(BaseModel):
+    """Bounded retry loop declared on a node (#931; runtime routing is #932).
+
+    While retries remain, a failed attempt goes back to ``retry_to``; once
+    ``max_retries`` is spent the run goes to ``on_failure``. Range and
+    reference checks live in the engine's DAG validator so the designer gets
+    a readable error instead of a 422.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_retries: int = Field(description="Retries allowed after the first attempt (1-20).")
+    retry_to: str = Field(
+        description="Node to re-enter while retries remain; must be able to reach this node.",
+    )
+    on_failure: str = Field(
+        default="__end__",
+        description="Node id (or ``__end__``) to go to once ``max_retries`` is spent.",
+    )
+    feedback_into: str | None = Field(
+        default=None,
+        description="``state.extensions`` key that receives the failure reason.",
+    )
+    short_circuit_on: EdgeCondition | None = Field(
+        default=None,
+        description="Condition (edge-condition schema) that marks the attempt as failed.",
+    )
+
+    @field_validator("short_circuit_on", mode="before")
+    @classmethod
+    def _accept_legacy_condition_shape(cls, v: Any) -> Any:
+        return _normalize_legacy_condition(v)
+
+
 class PipelineNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -132,6 +166,7 @@ class PipelineNode(BaseModel):
     agent_id: str
     position: NodePosition = Field(default_factory=NodePosition)
     overrides: NodeOverrides | None = None
+    retry: RetryPolicy | None = None
 
 
 class PipelineEdge(BaseModel):
