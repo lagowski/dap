@@ -27,15 +27,19 @@ const STATE_FIELDS = [
 interface ConditionBuilderProps {
   condition: EdgeCondition | null;
   onChange: (condition: EdgeCondition | null) => void;
+  /** Copy shown while there's no condition; defaults to the edge wording. */
+  emptyHint?: string;
 }
 
-export function ConditionBuilder({ condition, onChange }: ConditionBuilderProps) {
+export function ConditionBuilder({
+  condition,
+  onChange,
+  emptyHint = "Edge has no condition (always taken). Add one to make it conditional.",
+}: ConditionBuilderProps) {
   if (condition === null) {
     return (
       <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Edge has no condition (always taken). Add one to make it conditional.
-        </p>
+        <p className="text-xs text-muted-foreground">{emptyHint}</p>
         <div className="flex gap-2">
           <Button
             type="button"

@@ -143,6 +143,13 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     example: "0 (first try) … 2",
   },
   {
+    name: "node_attempts",
+    type: "dict[str, int]",
+    group: "Execution loop",
+    description: "Per-node attempt counter for node retry loops (#931).",
+    example: '{"tester": 2}',
+  },
+  {
     name: "tests_passed",
     type: "bool",
     group: "Execution loop",

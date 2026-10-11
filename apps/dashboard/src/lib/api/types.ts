@@ -372,6 +372,20 @@ export interface LogicalCondition {
 
 export type EdgeCondition = ComparisonCondition | LogicalCondition;
 
+/** Per-node bounded retry loop (#931; runtime routing is #932). */
+export interface RetryPolicy {
+  /** Retries after the first attempt; the engine accepts 1-20. */
+  max_retries: number;
+  /** Node to re-enter while retries remain; must loop back to this node. */
+  retry_to: string;
+  /** Node id or ``__end__`` once retries are spent. */
+  on_failure: string;
+  /** Bare ``state.extensions`` key that receives the failure reason. */
+  feedback_into?: string | null;
+  /** Condition that marks the attempt as failed. */
+  short_circuit_on?: EdgeCondition | null;
+}
+
 export interface PipelineNode {
   id: string;
   agent_id: string;
@@ -381,6 +395,7 @@ export interface PipelineNode {
     budget_limit_usd?: number;
     timeout_ms?: number;
   } | null;
+  retry?: RetryPolicy | null;
 }
 
 export interface PipelineEdge {
@@ -432,6 +447,8 @@ export interface PipelineState {
   test_generation_errors: string[];
   max_attempts: number;
   attempt: number;
+  /** Per-node attempt counter for retry loops (#931). */
+  node_attempts?: Record<string, number>;
   tests_passed: boolean;
   last_test_output: string;
   modified_files: string[];

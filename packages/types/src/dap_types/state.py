@@ -33,6 +33,9 @@ class PipelineState(BaseModel):
     # ---- EXECUTION LOOP ----
     max_attempts: int = 3
     attempt: int = 0
+    # Per-node attempt counter for ``PipelineNode.retry`` loops (#931);
+    # defaults to empty so snapshots persisted before it existed still load.
+    node_attempts: dict[str, int] = Field(default_factory=dict)
     tests_passed: bool = False
     last_test_output: str = ""
 

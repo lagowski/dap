@@ -8,6 +8,7 @@ from dap_types.pipeline import (
     PipelineDefaults,
     PipelineEdge,
     PipelineNode,
+    RetryPolicy,
 )
 from dap_types.project import RECOMMENDED_PIPELINE_KINDS, Project
 from dap_types.role_outputs import (
@@ -50,6 +51,7 @@ __all__ = [
     "PipelineNode",
     "PipelineState",
     "Project",
+    "RetryPolicy",
     "Run",
     "RuntimeAdapter",
     "RuntimeKind",

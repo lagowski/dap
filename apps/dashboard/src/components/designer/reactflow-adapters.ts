@@ -11,7 +11,7 @@
 import { MarkerType } from "@xyflow/react";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 
-import type { PipelineEdge, PipelineNode } from "@/lib/api/types";
+import type { PipelineEdge, PipelineNode, RetryPolicy } from "@/lib/api/types";
 
 type EdgeCondition = NonNullable<PipelineEdge["condition"]>;
 
@@ -75,8 +75,22 @@ export function toReactFlowNode(n: PipelineNode): Node {
     id: n.id,
     type: "default",
     position: n.position,
-    data: { label: n.id, agentId: n.agent_id },
+    // ``retry`` rides in node data so a load → save keeps it (#931).
+    data: { label: n.id, agentId: n.agent_id, retry: n.retry ?? null },
   };
+}
+
+
+/** Inverse of ``toReactFlowNode``; ``retry`` is omitted when unset. */
+export function fromReactFlowNode(n: Node): PipelineNode {
+  const data = n.data as { agentId?: string; retry?: RetryPolicy | null } | undefined;
+  const node: PipelineNode = {
+    id: n.id,
+    agent_id: String(data?.agentId ?? ""),
+    position: { x: n.position.x, y: n.position.y },
+  };
+  if (data?.retry) node.retry = data.retry;
+  return node;
 }
 
 
