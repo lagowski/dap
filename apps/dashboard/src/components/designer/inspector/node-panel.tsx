@@ -16,13 +16,14 @@ import { ExternalLink, FlaskConical, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import type { Agent, PipelineEdge, PipelineNode } from "@/lib/api/types";
+import type { Agent, PipelineEdge, PipelineNode, RetryPolicy } from "@/lib/api/types";
 
 import type { DesignerNode } from "../types";
 
 import { Field } from "./shared";
 import { StateAfterNodeView, computeStateAfterNode } from "./state-after-node";
 import { NodeProfileSelect } from "./backend-profile-editor";
+import { RetryEditor } from "./retry-editor";
 import type { BackendProfiles } from "@/lib/backend-profile-assignments";
 
 
@@ -34,6 +35,7 @@ interface NodePanelProps {
   entryPoint: string;
   onSetEntryPoint: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
+  onUpdateRetry: (nodeId: string, retry: RetryPolicy | null) => void;
   backendProfiles: BackendProfiles | null;
   onBackendProfilesChange: (next: BackendProfiles) => void;
 }
@@ -49,6 +51,7 @@ export function NodePanel({
   entryPoint,
   onSetEntryPoint,
   onDelete,
+  onUpdateRetry,
   backendProfiles,
   onBackendProfilesChange,
 }: NodePanelProps) {
@@ -123,6 +126,15 @@ export function NodePanel({
       </Field>
 
       {agent ? <AgentDetailsCollapse agent={agent} /> : null}
+
+      <Field label="Retry">
+        <RetryEditor
+          nodeId={node.id}
+          nodeIds={allNodes.map((n) => n.id)}
+          retry={node.retry ?? null}
+          onChange={(retry) => onUpdateRetry(node.id, retry)}
+        />
+      </Field>
 
       <Field label="State after this node">
         <StateAfterNodeView fields={stateFields} />

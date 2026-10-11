@@ -43,6 +43,7 @@ import {
   EDGE_CONDITION_STROKE,
   EDGE_DEFAULT_STROKE,
   EDGE_WARNING_STROKE,
+  fromReactFlowNode,
 } from "./reactflow-adapters";
 import type { DesignerEdge, DesignerNode } from "./types";
 
@@ -86,11 +87,7 @@ export function usePipelineProjections({
   // Lifted from buildPayload so the Inspector can reuse the projections.
   const designerNodes = useMemo<PipelineNode[]>(
     () =>
-      nodes.map((n) => ({
-        id: n.id,
-        agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
-        position: { x: n.position.x, y: n.position.y },
-      })),
+      nodes.map(fromReactFlowNode),
     [nodes],
   );
   const designerEdges = useMemo<PipelineEdge[]>(
@@ -186,12 +183,7 @@ export function usePipelineProjections({
     if (selection.kind === "node") {
       const n = nodes.find((x) => x.id === selection.id);
       if (!n) return { kind: "none" };
-      const node: DesignerNode = {
-        id: n.id,
-        agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
-        position: { x: n.position.x, y: n.position.y },
-      };
-      return { kind: "node", node };
+      return { kind: "node", node: fromReactFlowNode(n) };
     }
     if (selection.kind === "edge") {
       const e = edges.find((x) => x.id === selection.id);

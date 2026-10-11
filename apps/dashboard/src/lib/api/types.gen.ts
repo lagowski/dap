@@ -2840,7 +2840,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Output"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -2883,7 +2883,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Input"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3025,7 +3025,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Input"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3073,7 +3073,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Output"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3131,13 +3131,24 @@ export interface components {
             schema_version: "pipeline-export/1" | "pipeline-export/2";
         };
         /** PipelineNode */
-        PipelineNode: {
+        "PipelineNode-Input": {
             /** Agent Id */
             agent_id: string;
             /** Id */
             id: string;
             overrides?: components["schemas"]["NodeOverrides"] | null;
             position?: components["schemas"]["NodePosition"];
+            retry?: components["schemas"]["RetryPolicy-Input"] | null;
+        };
+        /** PipelineNode */
+        "PipelineNode-Output": {
+            /** Agent Id */
+            agent_id: string;
+            /** Id */
+            id: string;
+            overrides?: components["schemas"]["NodeOverrides"] | null;
+            position?: components["schemas"]["NodePosition"];
+            retry?: components["schemas"]["RetryPolicy-Output"] | null;
         };
         /**
          * PipelineReadinessResponse
@@ -3199,6 +3210,10 @@ export interface components {
             max_attempts: number;
             /** Modified Files */
             modified_files?: string[];
+            /** Node Attempts */
+            node_attempts?: {
+                [key: string]: number;
+            };
             /** Repo */
             repo: string;
             /** Run Id */
@@ -3261,7 +3276,7 @@ export interface components {
             /** Name */
             name?: string | null;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Input"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3445,6 +3460,80 @@ export interface components {
             valid: boolean;
             /** Warnings */
             warnings?: string[];
+        };
+        /**
+         * RetryPolicy
+         * @description Bounded retry loop declared on a node (#931; runtime routing is #932).
+         *
+         *     While retries remain, a failed attempt goes back to ``retry_to``; once
+         *     ``max_retries`` is spent the run goes to ``on_failure``. Range and
+         *     reference checks live in the engine's DAG validator so the designer gets
+         *     a readable error instead of a 422.
+         */
+        "RetryPolicy-Input": {
+            /**
+             * Feedback Into
+             * @description ``state.extensions`` key that receives the failure reason.
+             */
+            feedback_into?: string | null;
+            /**
+             * Max Retries
+             * @description Retries allowed after the first attempt (1-20).
+             */
+            max_retries: number;
+            /**
+             * On Failure
+             * @description Node id (or ``__end__``) to go to once ``max_retries`` is spent.
+             * @default __end__
+             */
+            on_failure: string;
+            /**
+             * Retry To
+             * @description Node to re-enter while retries remain; must be able to reach this node.
+             */
+            retry_to: string;
+            /**
+             * Short Circuit On
+             * @description Condition (edge-condition schema) that marks the attempt as failed.
+             */
+            short_circuit_on?: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Input"]) | null;
+        };
+        /**
+         * RetryPolicy
+         * @description Bounded retry loop declared on a node (#931; runtime routing is #932).
+         *
+         *     While retries remain, a failed attempt goes back to ``retry_to``; once
+         *     ``max_retries`` is spent the run goes to ``on_failure``. Range and
+         *     reference checks live in the engine's DAG validator so the designer gets
+         *     a readable error instead of a 422.
+         */
+        "RetryPolicy-Output": {
+            /**
+             * Feedback Into
+             * @description ``state.extensions`` key that receives the failure reason.
+             */
+            feedback_into?: string | null;
+            /**
+             * Max Retries
+             * @description Retries allowed after the first attempt (1-20).
+             */
+            max_retries: number;
+            /**
+             * On Failure
+             * @description Node id (or ``__end__``) to go to once ``max_retries`` is spent.
+             * @default __end__
+             */
+            on_failure: string;
+            /**
+             * Retry To
+             * @description Node to re-enter while retries remain; must be able to reach this node.
+             */
+            retry_to: string;
+            /**
+             * Short Circuit On
+             * @description Condition (edge-condition schema) that marks the attempt as failed.
+             */
+            short_circuit_on?: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Output"]) | null;
         };
         /**
          * Run

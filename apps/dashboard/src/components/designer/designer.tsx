@@ -50,6 +50,7 @@ import type {
   Agent,
   EdgeCondition,
   Pipeline,
+  RetryPolicy,
 } from "@/lib/api/types";
 
 import { AgentPalette } from "./agent-palette";
@@ -288,6 +289,15 @@ export function PipelineDesigner({
     [],
   );
 
+  const handleUpdateNodeRetry = useCallback(
+    (nodeId: string, retry: RetryPolicy | null) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, retry } } : n)),
+      );
+    },
+    [],
+  );
+
   const handleUpdateEdgeLabel = useCallback(
     (edgeId: string, label: string) => {
       const trimmed = label.trim();
@@ -422,6 +432,7 @@ export function PipelineDesigner({
           entryPoint={entryPoint}
           onSetEntryPoint={setEntryPoint}
           onDeleteNode={handleDeleteNode}
+          onUpdateNodeRetry={handleUpdateNodeRetry}
           onDeleteEdge={handleDeleteEdge}
           onUpdateEdgeCondition={handleUpdateEdgeCondition}
           onUpdateEdgeLabel={handleUpdateEdgeLabel}
