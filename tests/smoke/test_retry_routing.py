@@ -140,7 +140,7 @@ def _pipeline(client: TestClient, retry: dict[str, Any] | None) -> str:
         {"id": "e1", "source": "coder", "target": "tester"},
         {"id": "e2", "source": "tester", "target": "__end__"},
     ]
-    if retry is not None:
+    if retry is not None and retry["on_failure"] == "escalate":
         nodes.append({"id": "escalate", "agent_id": escalate})
         edges.append({"id": "e3", "source": "escalate", "target": "__end__"})
     response = client.post(

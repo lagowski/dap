@@ -69,6 +69,7 @@ UNIT_FILES = frozenset(
         "test_repo_url_validation.py",
         "test_provider_openai.py",
         "test_python_func_adapter.py",
+        "test_retry_policy_routing_unit.py",
         "test_run_registry.py",
         "test_run_state_machine.py",
     }

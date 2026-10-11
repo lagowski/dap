@@ -27,11 +27,13 @@ from typing import Any
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
 from dap_types import OutputCallback, PipelineState, RuntimeResult, RuntimeTask
+from dap_types.pipeline import RetryPolicy
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from dap_engine.execution.interaction_recorder import record_node_interaction
 from dap_engine.execution.output_parser import parse_node_output
+from dap_engine.execution.retry_policy import apply_retry_policy
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import (
     AgentORM,
@@ -70,6 +72,7 @@ class NodeContext:
         project_working_directory: str | None = None,
         project_env_vars: dict[str, str] | None = None,
         instance_env_vars: dict[str, str] | None = None,
+        retry: RetryPolicy | None = None,
     ) -> None:
         self.run_id = run_id
         self.node_id = node_id
@@ -92,6 +95,9 @@ class NodeContext:
         # that flow into every run on top of the engine env. Captured
         # here once per graph build, immutable for the run's lifetime.
         self.instance_env_vars = instance_env_vars or {}
+        # The node's ``retry`` block (#932): each attempt's outcome is folded
+        # into the state diff before the snapshot so the runner can route it.
+        self.retry = retry
 
     @property
     def merged_runtime_config(self) -> dict[str, Any]:
@@ -280,6 +286,8 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
                 state_diff.update(parsed_diff)
                 state_diff = _route_extensions(state, state_diff)
 
+        state_diff = _apply_retry(ctx, state, state_diff)
+
         # 4. Record execution log + snapshot, then commit immediately.
         # Committing per-node rather than once at the end of the run means
         # logs survive a CancelledError (pause/abort) that would otherwise
@@ -333,14 +341,33 @@ def _record_failure(
         extra_data=None,
     )
     ctx.session.add(log)
-    state_diff = {
-        "final_status": "failed",
-        "verification_reason": f"Node {ctx.node_id}: {error}",
-    }
+    state_diff = _apply_retry(
+        ctx,
+        state,
+        {
+            "final_status": "failed",
+            "verification_reason": f"Node {ctx.node_id}: {error}",
+        },
+    )
     _save_snapshot(ctx=ctx, state=state.model_copy(update=state_diff))
     ctx.session.commit()
     logger.warning("node %s failed: %s", ctx.node_id, error)
     return state_diff
+
+
+def _apply_retry(
+    ctx: NodeContext,
+    state: PipelineState,
+    state_diff: dict[str, Any],
+) -> dict[str, Any]:
+    if ctx.retry is None:
+        return state_diff
+    return apply_retry_policy(
+        node_id=ctx.node_id,
+        policy=ctx.retry,
+        state=state,
+        state_diff=state_diff,
+    )
 
 
 def _audit_tokens(audit: dict[str, Any] | None) -> int | None:
