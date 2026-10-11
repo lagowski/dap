@@ -453,6 +453,10 @@ export interface PipelineState {
   last_test_output: string;
   modified_files: string[];
   implementation_notes: string | null;
+  /** What a code runtime run with a branch changed (#933). */
+  changed_files?: string[];
+  commits_since_base?: { sha: string; subject: string; author: string }[];
+  diff_stats?: Record<string, number>;
   verification_status: "pending" | "approved" | "rejected";
   verification_reason: string | null;
   final_status: FinalStatus;

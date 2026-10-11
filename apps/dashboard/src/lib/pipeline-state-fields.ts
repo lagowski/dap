@@ -179,6 +179,27 @@ export const PIPELINE_STATE_FIELDS: readonly PipelineStateField[] = [
     description: "Free-form notes the implementer leaves for the verifier.",
     example: '"Used asyncio.Lock for concurrency"',
   },
+  {
+    name: "changed_files",
+    type: "list[str]",
+    group: "Implementation",
+    description: "Files a code runtime run with a branch changed, this run only (#933).",
+    example: '["README", "src/api.py"]',
+  },
+  {
+    name: "commits_since_base",
+    type: "list[dict[str, str]]",
+    group: "Implementation",
+    description: "Commits on the run's branch since its base: sha, subject, author (#933).",
+    example: '[{"sha": "3f2a…", "subject": "add api", "author": "Coder"}]',
+  },
+  {
+    name: "diff_stats",
+    type: "dict[str, int]",
+    group: "Implementation",
+    description: "Size of the run's change: additions, deletions, files (#933).",
+    example: '{"additions": 12, "deletions": 3, "files": 2}',
+  },
 
   // ---- VERIFICATION ----
   {

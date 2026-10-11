@@ -35,6 +35,10 @@ failure never reaches the remote:
 Everything after the CLI runs reads ``refs/heads/<branch>``, never ``HEAD``: a CLI that ends
 its turn on another branch must not make us judge or push the wrong commits (cortex #815).
 
+A successful run with a ``branch`` also reports what it changed (#933): ``changed_files``,
+``commits_since_base`` and ``diff_stats`` (:func:`diff_fields`), as top-level
+``structured`` keys so the engine copies them into the matching ``PipelineState`` fields.
+
 With none of these keys set, :func:`parse_git_config` returns ``None`` and the adapter
 behaves exactly as before.
 
@@ -48,6 +52,7 @@ import asyncio
 import base64
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -367,6 +372,55 @@ async def _ancestry(ws: GitWorkspace, branch: str, tip: str) -> str | None:
         return None
     foreign = await _missing(ws, tip, remote_tip)
     return f"pushing would drop commits on {REMOTE}/{branch} that this run doesn't have: {foreign}"
+
+
+async def diff_fields(ws: GitWorkspace) -> dict[str, Any]:
+    """What the run changed on ``branch``, as top-level ``PipelineState`` fields (#933).
+
+    ``changed_files`` and ``diff_stats`` cover this run only (``start_sha..tip``);
+    ``commits_since_base`` reaches back to ``base`` (``origin/<base>`` preferred, else the
+    local one, else the run's start). Empty without a ``branch``, so the engine's merge
+    leaves state untouched for agents that don't use one.
+    """
+    branch = ws.config.branch
+    if branch is None or ws.start_sha is None:
+        return {}
+    tip = await _sha(ws, f"refs/heads/{branch}")
+    if tip is None:
+        return {}
+    base = ws.config.base
+    since = (
+        await _sha(ws, f"refs/remotes/{REMOTE}/{base}")
+        or await _sha(ws, f"refs/heads/{base}")
+        or ws.start_sha
+    )
+    _, names, _ = await _git(ws, "diff", "--name-only", f"{ws.start_sha}..{tip}")
+    _, log, _ = await _git(ws, "log", "--format=%H%x1f%s%x1f%an", f"{since}..{tip}")
+    _, shortstat, _ = await _git(ws, "diff", "--shortstat", f"{ws.start_sha}..{tip}")
+    rows = (line.split("\x1f") for line in log.splitlines())
+    commits = [
+        dict(zip(_COMMIT_FIELDS, row, strict=True))
+        for row in rows
+        if len(row) == len(_COMMIT_FIELDS)
+    ]
+    return {
+        "changed_files": names.splitlines(),
+        "commits_since_base": commits,
+        "diff_stats": _parse_shortstat(shortstat),
+    }
+
+
+_COMMIT_FIELDS: Final = ("sha", "subject", "author")
+_SHORTSTAT: Final = re.compile(r"(\d+) (files?|insertions?|deletions?)")
+_SHORTSTAT_KEYS: Final = {"file": "files", "insertion": "additions", "deletion": "deletions"}
+
+
+def _parse_shortstat(text: str) -> dict[str, int]:
+    """`` 2 files changed, 2 insertions(+), 1 deletion(-)`` -> the three counts."""
+    stats = {"additions": 0, "deletions": 0, "files": 0}
+    for count, word in _SHORTSTAT.findall(text):
+        stats[_SHORTSTAT_KEYS[word.rstrip("s")]] = int(count)
+    return stats
 
 
 async def push_branch(ws: GitWorkspace) -> str | None:

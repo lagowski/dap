@@ -3179,10 +3179,20 @@ export interface components {
             }[];
             /** Branch */
             branch: string;
+            /** Changed Files */
+            changed_files?: string[];
             /** Commit Sha */
             commit_sha?: string | null;
+            /** Commits Since Base */
+            commits_since_base?: {
+                [key: string]: string;
+            }[];
             /** Description */
             description?: string | null;
+            /** Diff Stats */
+            diff_stats?: {
+                [key: string]: number;
+            };
             /**
              * Extensions
              * @description Per-pipeline extra state. Keys are pipeline-defined. Values must be JSON-serializable. Reserved keys (engine-defined): ``auto_approve`` (bool, #389) — when True, the runner skips every ``interrupt_before`` approval gate so the run executes end-to-end without pausing. Operator-only flag, intentionally named to mirror Claude Code's ``--dangerously-skip-permissions``. ``execution_target`` (str, #611) — hostname or node label of the remote host that the Cortex executor node will SSH into to run commands. ``execution_commands`` (list[str], #611) — ordered list of shell commands to execute on the remote host. Must be a ``list`` when present; a bare string is rejected with 422. ``execution_env`` (dict[str, str], #611) — environment variables to export on the remote host before running ``execution_commands``.
