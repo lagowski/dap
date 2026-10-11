@@ -95,7 +95,9 @@ class Harness:
         self.registry = registry
         self.coder = RecordingAdapter("coder-stub")
         self.escalate = RecordingAdapter("escalate-stub")
+        self.mid = RecordingAdapter("mid-stub")
         registry.register(self.coder)
+        registry.register(self.mid)
         registry.register(self.escalate)
 
     def tester(self, script: list[RuntimeResult]) -> ScriptedAdapter:
@@ -127,8 +129,8 @@ def _agent(client: TestClient, name: str, runtime_id: str, template: str) -> str
     return str(response.json()["id"])
 
 
-def _pipeline(client: TestClient, retry: dict[str, Any] | None) -> str:
-    """coder → tester → __end__; escalate → __end__ is only reachable via on_failure."""
+def _pipeline(client: TestClient, retry: dict[str, Any] | None, *, mid: bool = False) -> str:
+    """coder → [mid →] tester → __end__; escalate → __end__ is only reachable via on_failure."""
     coder = _agent(client, "Coder", "coder-stub", CODER_TEMPLATE)
     tester = _agent(client, "Tester", "tester-stub", PLAIN_TEMPLATE)
     escalate = _agent(client, "Escalate", "escalate-stub", PLAIN_TEMPLATE)
@@ -136,10 +138,13 @@ def _pipeline(client: TestClient, retry: dict[str, Any] | None) -> str:
     if retry is not None:
         tester_node["retry"] = retry
     nodes: list[dict[str, Any]] = [{"id": "coder", "agent_id": coder}, tester_node]
-    edges: list[dict[str, Any]] = [
-        {"id": "e1", "source": "coder", "target": "tester"},
-        {"id": "e2", "source": "tester", "target": "__end__"},
-    ]
+    edges: list[dict[str, Any]] = [{"id": "e2", "source": "tester", "target": "__end__"}]
+    if mid:
+        nodes.append({"id": "mid", "agent_id": _agent(client, "Mid", "mid-stub", PLAIN_TEMPLATE)})
+        edges.append({"id": "e1", "source": "coder", "target": "mid"})
+        edges.append({"id": "e4", "source": "mid", "target": "tester"})
+    else:
+        edges.append({"id": "e1", "source": "coder", "target": "tester"})
     if retry is not None and retry["on_failure"] == "escalate":
         nodes.append({"id": "escalate", "agent_id": escalate})
         edges.append({"id": "e3", "source": "escalate", "target": "__end__"})
@@ -249,6 +254,26 @@ def test_tester_always_fails_routes_to_on_failure(harness: Harness) -> None:
     state = _last_state(client, run["id"])
     assert state["final_status"] == "failed"
     assert "still broken" in (state["verification_reason"] or "")
+
+
+def test_long_loop_with_max_retries_still_reaches_on_failure(harness: Harness) -> None:
+    # coder → mid → tester with 20 retries is 63 loop steps, past the default
+    # recursion limit: the runner must size the limit to the retry budget.
+    client = harness.client
+    tester = harness.tester([_fail("still broken")])
+    pipeline_id = _pipeline(client, _retry(max_retries=20), mid=True)
+    assert 3 * 21 > DEFAULT_RECURSION_LIMIT
+
+    run = _wait(client, _trigger(client, pipeline_id), {"success", "failed"})
+
+    assert len(tester.tasks) == 21
+    assert len(harness.mid.tasks) == 21
+    assert len(harness.coder.tasks) == 21
+    assert len(harness.escalate.tasks) == 1
+    assert run["final_status"] == "failed", run
+    state = _last_state(client, run["id"])
+    assert "still broken" in (state["verification_reason"] or "")
+    assert "GraphRecursionError" not in (state["verification_reason"] or "")
 
 
 def test_retries_spent_with_end_on_failure(harness: Harness) -> None:
