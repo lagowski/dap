@@ -262,7 +262,7 @@ def test_long_loop_with_max_retries_still_reaches_on_failure(harness: Harness) -
     client = harness.client
     tester = harness.tester([_fail("still broken")])
     pipeline_id = _pipeline(client, _retry(max_retries=20), mid=True)
-    assert 3 * 21 > DEFAULT_RECURSION_LIMIT
+    assert DEFAULT_RECURSION_LIMIT < 3 * 21
 
     run = _wait(client, _trigger(client, pipeline_id), {"success", "failed"})
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from dap_types import PipelineState
+from dap_types import Pipeline, PipelineState
 from dap_types.pipeline import RetryPolicy
 
 from dap_engine.execution.conditions import evaluate_condition
@@ -73,6 +73,24 @@ def retry_route(*, node_id: str, policy: RetryPolicy, state: PipelineState) -> R
     if failures <= policy.max_retries:
         return "retry"
     return "failure"
+
+
+def retry_recursion_limit(pipeline: Pipeline, base: int) -> int:
+    """LangGraph ``recursion_limit`` that lets every retry budget run out.
+
+    Without it a loop longer than a couple of nodes hits ``GraphRecursionError``
+    before ``on_failure`` runs. One pass through the graph is at most one step
+    per node, and each retry block can replay that pass ``max_retries`` more
+    times; nested loops multiply, so the bound is the product. One extra pass
+    covers the ``on_failure`` tail. Never lower than ``base``.
+    """
+    passes = 1
+    for node in pipeline.nodes:
+        if node.retry is not None:
+            passes *= node.retry.max_retries + 1
+    if passes == 1:
+        return base
+    return max(base, len(pipeline.nodes) * (passes + 1))
 
 
 def _failure_reason(node_id: str, state_diff: dict[str, Any]) -> str:

@@ -25,7 +25,7 @@ from dap_engine.execution.backend_profiles import (
 )
 from dap_engine.execution.conditions import evaluate_condition
 from dap_engine.execution.node_executor import NodeContext, make_node_fn
-from dap_engine.execution.retry_policy import retry_route
+from dap_engine.execution.retry_policy import retry_recursion_limit, retry_route
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
@@ -173,7 +173,9 @@ class PipelineRunner:
             instance_env_vars=instance_env_vars,
         )
 
-        config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        config: dict[str, Any] = {
+            "recursion_limit": retry_recursion_limit(pipeline, self.recursion_limit)
+        }
         if self.checkpointer is not None:
             config["configurable"] = {"thread_id": run_id}
 
@@ -390,7 +392,9 @@ class PipelineRunner:
             # a new branch tip from which the target node will run again.
             new_config = await graph.aupdate_state(target_config, values=None)
 
-        invoke_config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        invoke_config: dict[str, Any] = {
+            "recursion_limit": retry_recursion_limit(pipeline, self.recursion_limit)
+        }
         invoke_config["configurable"] = new_config["configurable"]
 
         try:
