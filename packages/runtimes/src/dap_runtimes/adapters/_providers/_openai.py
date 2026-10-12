@@ -30,6 +30,7 @@ from typing import Any, Final
 import openai
 from openai import AsyncOpenAI
 
+from dap_runtimes.adapters._error_category import category_for_status
 from dap_runtimes.adapters._providers._base import (
     ProviderError,
     ProviderResult,
@@ -164,11 +165,14 @@ async def call(
         label = "Out of credits / quota" if category == "out_of_credits" else "Rate limited"
         raise ProviderError(f"{label}: {exc}", category=category) from exc
     except openai.APITimeoutError as exc:
-        raise ProviderError(f"API timeout: {exc}") from exc
+        raise ProviderError(f"API timeout: {exc}", category="timeout") from exc
     except openai.APIConnectionError as exc:
-        raise ProviderError(f"Connection error: {exc}") from exc
+        raise ProviderError(f"Connection error: {exc}", category="unavailable") from exc
     except openai.APIStatusError as exc:
-        raise ProviderError(f"API error {exc.status_code}: {exc}") from exc
+        raise ProviderError(
+            f"API error {exc.status_code}: {exc}",
+            category=category_for_status(exc.status_code),
+        ) from exc
     finally:
         await client.close()
 

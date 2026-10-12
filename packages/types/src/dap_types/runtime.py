@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -61,6 +61,35 @@ class RuntimeResult(BaseModel):
     cost_usd: float | None = None
     duration_ms: int = 0
     errors: list[str] = Field(default_factory=list)
+
+
+# Why a failed result failed, when the backend is to blame (#934). Adapters set
+# ``structured[ERROR_CATEGORY_KEY]`` to one of these and leave it absent for
+# anything else — a config error, a 4xx validation error, a failed test — because
+# switching model or provider can't fix those.
+#
+# - ``rate_limit`` — transient throttling; may recover on retry.
+# - ``out_of_credits`` — quota / credit exhausted; won't recover on retry.
+# - ``timeout`` — the call or the subprocess ran past its time budget.
+# - ``unavailable`` — 5xx, connection refused / dropped, binary missing.
+BackendErrorCategory = Literal["rate_limit", "out_of_credits", "timeout", "unavailable"]
+BACKEND_ERROR_CATEGORIES: Final[frozenset[str]] = frozenset(get_args(BackendErrorCategory))
+ERROR_CATEGORY_KEY: Final = "error_category"
+
+
+def error_category(result: RuntimeResult) -> BackendErrorCategory | None:
+    """The backend error category of a failed result, or ``None``."""
+    if result.success or not result.structured:
+        return None
+    category = result.structured.get(ERROR_CATEGORY_KEY)
+    if isinstance(category, str) and category in BACKEND_ERROR_CATEGORIES:
+        return cast(BackendErrorCategory, category)
+    return None
+
+
+def is_backend_error(result: RuntimeResult) -> bool:
+    """True when the result failed for a reason another backend might not have."""
+    return error_category(result) is not None
 
 
 class HealthStatus(BaseModel):
