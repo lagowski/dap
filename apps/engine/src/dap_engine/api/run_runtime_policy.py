@@ -71,11 +71,13 @@ def pipeline_runtime_policy_error(
             base_runtime_id=version.runtime_id,
             base_runtime_config=version.runtime_config,
         )
-        denial = runtime_policy_error(
-            resolved.runtime_id,
-            is_admin=is_admin,
-            allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
-        )
-        if denial is not None:
-            return denial
+        # A fallback profile (#935) can switch the runtime, so check each one.
+        for backend in (resolved, *resolved.fallbacks):
+            denial = runtime_policy_error(
+                backend.runtime_id,
+                is_admin=is_admin,
+                allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+            )
+            if denial is not None:
+                return denial
     return None

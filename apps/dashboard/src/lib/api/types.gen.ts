@@ -2297,12 +2297,18 @@ export interface components {
         BackendProfilesInspectionResponse: {
             /** Default Profile */
             default_profile?: string | null;
+            /** Fallbacks */
+            fallbacks?: {
+                [key: string]: string[];
+            };
             /** Overrides */
             overrides?: {
                 [key: string]: string;
             };
             /** Profiles */
             profiles?: components["schemas"]["BackendProfileInspection"][];
+            /** Unknown Fallbacks */
+            unknown_fallbacks?: string[];
         };
         /**
          * BaseOAuthAccount

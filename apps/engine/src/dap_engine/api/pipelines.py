@@ -118,6 +118,7 @@ def _update_to_create_shape(payload: PipelineUpdate) -> PipelineCreate:
         nodes=payload.nodes,
         edges=payload.edges,
         defaults=payload.defaults,
+        backend_profiles=payload.backend_profiles,
     )
 
 

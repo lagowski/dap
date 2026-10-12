@@ -88,6 +88,66 @@ describe("mutators are immutable", () => {
   });
 });
 
+describe("object overrides with a fallback chain (#935)", () => {
+  const WITH_CHAIN: BackendProfiles = {
+    ...SAMPLE,
+    agent_assignments: {
+      default_profile: "anthropic",
+      overrides: {
+        coder: { profile: "openai", fallback: ["anthropic"] },
+        review: { fallback: ["openai"] },
+      },
+    },
+  };
+
+  it("reads the profile of an object entry", () => {
+    expect(getNodeOverride(WITH_CHAIN, "coder")).toBe("openai");
+    expect(resolveNodeProfile(WITH_CHAIN, "coder")).toBe("openai");
+  });
+
+  it("an object entry without a profile inherits the default", () => {
+    expect(getNodeOverride(WITH_CHAIN, "review")).toBeNull();
+    expect(resolveNodeProfile(WITH_CHAIN, "review")).toBe("anthropic");
+  });
+
+  it("setNodeOverride replaces the profile and keeps the fallback", () => {
+    const next = setNodeOverride(WITH_CHAIN, "coder", "anthropic");
+    expect(next.agent_assignments?.overrides?.coder).toEqual({
+      profile: "anthropic",
+      fallback: ["anthropic"],
+    });
+    const added = setNodeOverride(WITH_CHAIN, "review", "openai");
+    expect(added.agent_assignments?.overrides?.review).toEqual({
+      profile: "openai",
+      fallback: ["openai"],
+    });
+    // original untouched
+    expect(WITH_CHAIN.agent_assignments?.overrides?.coder).toEqual({
+      profile: "openai",
+      fallback: ["anthropic"],
+    });
+  });
+
+  it("clearing an object entry drops only its profile", () => {
+    const next = setNodeOverride(WITH_CHAIN, "coder", null);
+    expect(next.agent_assignments?.overrides?.coder).toEqual({ fallback: ["anthropic"] });
+    expect(resolveNodeProfile(next, "coder")).toBe("anthropic");
+  });
+
+  it("removeProfile drops the profile from object entries and fallback lists", () => {
+    const next = removeProfile(WITH_CHAIN, "openai");
+    expect(next.agent_assignments?.overrides).toEqual({
+      coder: { fallback: ["anthropic"] },
+    });
+  });
+
+  it("string entries behave exactly as before", () => {
+    const next = setNodeOverride(SAMPLE, "verify", "anthropic");
+    expect(next.agent_assignments?.overrides?.verify).toBe("anthropic");
+    expect(setNodeOverride(SAMPLE, "verify", null).agent_assignments?.overrides).toEqual({});
+  });
+});
+
 describe("profileSummary", () => {
   it("formats runtime + provider + model", () => {
     expect(profileSummary(SAMPLE.available!.anthropic)).toBe(

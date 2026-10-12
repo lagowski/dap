@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.contracts import PipelineCreate
+from dap_engine.execution.backend_profiles import fallback_chain_errors
 from dap_engine.persistence.models import AgentORM, AgentVersionORM
 
 START_SENTINEL: Final = "__start__"
@@ -86,6 +87,7 @@ def validate_pipeline_dag(payload: PipelineCreate, session: Session) -> Validati
     errors.extend(_check_edge_references(payload, node_id_set))
     errors.extend(_check_agents(payload, session))
     errors.extend(_check_retry_policies(payload, node_id_set))
+    errors.extend(fallback_chain_errors(payload.backend_profiles))
 
     # If structural errors, skip reachability — graph is bogus.
     if errors:

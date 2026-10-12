@@ -357,6 +357,8 @@ def test_v2_bundle_backend_profiles_inspection_absent_is_empty(
     assert response.json() == {
         "default_profile": None,
         "overrides": {},
+        "fallbacks": {},
+        "unknown_fallbacks": [],
         "profiles": [],
     }
 
