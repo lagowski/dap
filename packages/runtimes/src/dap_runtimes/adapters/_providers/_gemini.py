@@ -5,10 +5,14 @@ from __future__ import annotations
 import os
 from typing import Any, Final
 
+import httpx
 from google import genai
 from google.genai import errors as genai_errors
 
-from dap_runtimes.adapters._error_category import category_for_status
+from dap_runtimes.adapters._error_category import (
+    category_for_status,
+    category_for_transport_error,
+)
 from dap_runtimes.adapters._providers._base import (
     ProviderError,
     ProviderResult,
@@ -87,8 +91,16 @@ async def call(
         raise ProviderError(
             f"{prefix}: {exc}", category=category or category_for_status(status_code)
         ) from exc
+    except httpx.RequestError as exc:
+        # google-genai does not wrap transport failures in APIError: after its own
+        # retries, httpx timeouts and connection errors come through as-is (#934).
+        # Its aiohttp path is a known gap: aiohttp is not a dap dependency, so
+        # genai only takes that path when something else installs it.
+        raise ProviderError(
+            f"Gemini call failed: {exc}", category=category_for_transport_error(exc)
+        ) from exc
     except Exception as exc:
-        # Network / unexpected — surface generically.
+        # Unexpected — surface generically.
         raise ProviderError(f"Gemini call failed: {exc}") from exc
 
     output_text = response.text or ""

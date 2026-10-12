@@ -239,6 +239,33 @@ async def test_gemini_failures_carry_their_category(
     assert error_category(result) == expected
 
 
+_GEMINI_REQUEST = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/x")
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (httpx.ConnectTimeout("timed out", request=_GEMINI_REQUEST), "timeout"),
+        (httpx.ReadTimeout("timed out", request=_GEMINI_REQUEST), "timeout"),
+        (httpx.ConnectError("connection refused", request=_GEMINI_REQUEST), "unavailable"),
+        (httpx.UnsupportedProtocol("bad url", request=_GEMINI_REQUEST), None),
+        (RuntimeError("boom"), None),
+    ],
+)
+async def test_gemini_transport_failures_carry_their_category(
+    provider_keys: None, error: Exception, expected: str | None
+) -> None:
+    # google-genai lets httpx transport errors through unwrapped, after its own retries.
+    with patch(_GEMINI) as mock_cls:
+        client = MagicMock()
+        client.aio.models.generate_content = AsyncMock(side_effect=error)
+        mock_cls.return_value = client
+        result = await ApiCallAdapter().execute(_api_task("gemini", "gemini-3.0-flash"))
+    assert result.success is False
+    assert error_category(result) == expected
+    assert any("Gemini call failed:" in e for e in result.errors)
+
+
 # --------------------------------------------------------------------------- CLI base
 
 _SUBPROCESS = "dap_runtimes.adapters._cli_base.asyncio.create_subprocess_exec"
