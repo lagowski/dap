@@ -402,4 +402,6 @@ test `diff_stats.files > 0`:
 
 A run that changes nothing reports empty lists and zero counts. An agent
 without `branch`, a failed run, and non-git runtimes leave the fields as they were.
+Looping on these fields with a node `retry` block, and falling back to another
+backend: [`pipelines.md`](pipelines.md).
 
