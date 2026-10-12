@@ -37,6 +37,7 @@ from dap_runtimes.adapters._cli_base import (
     SubprocessOutcome,
     _BaseCliAdapter,
 )
+from dap_runtimes.adapters._providers._base import classify_provider_failure
 
 # Marker keys placed on the decoded payload when stream-json yields no
 # ``result`` event. ``--print`` mode treats this as a parse failure;
@@ -175,12 +176,14 @@ class ClaudeCodeAdapter(_BaseCliAdapter):
             )
 
         if payload.get("is_error") is True:
+            reported = payload.get("result") or "unknown"
             return self._failed(
-                f"Claude CLI reported an error: {payload.get('result') or 'unknown'}",
+                f"Claude CLI reported an error: {reported}",
                 duration_ms=outcome.duration_ms,
                 model_id=config["model_id"],
                 exit_code=outcome.exit_code,
                 stderr=outcome.stderr,
+                category=classify_provider_failure(str(reported)),
             )
 
         output_text = payload.get("result") or ""

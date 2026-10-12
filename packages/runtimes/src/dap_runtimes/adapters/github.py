@@ -59,10 +59,22 @@ import time
 from typing import Any, Final
 
 import httpx
-from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    BackendErrorCategory,
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
+from dap_runtimes.adapters._error_category import (
+    category_for_status,
+    category_for_transport_error,
+    with_category,
+)
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters.base import BaseAdapter
 
@@ -81,6 +93,7 @@ HTTP_UNAUTHORIZED: Final = 401
 HTTP_FORBIDDEN: Final = 403
 HTTP_NOT_FOUND: Final = 404
 HTTP_UNPROCESSABLE: Final = 422
+HTTP_TOO_MANY_REQUESTS: Final = 429
 _REPO_RE: Final = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 _SECTION_RE: Final = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -120,7 +133,15 @@ _OPS: Final[dict[str, _OpSpec]] = {
 
 
 class _Fail(Exception):
-    """Raised inside execute() to short-circuit to a failed result."""
+    """Raised inside execute() to short-circuit to a failed result.
+
+    ``category`` (#934) is set when GitHub itself is to blame: unreachable, a 5xx,
+    a timeout or a rate limit.
+    """
+
+    def __init__(self, message: str, *, category: BackendErrorCategory | None = None) -> None:
+        super().__init__(message)
+        self.category = category
 
 
 class GithubAdapter(BaseAdapter):
@@ -152,7 +173,7 @@ class GithubAdapter(BaseAdapter):
             token = _resolve_token(task, call.token_env)
             data = await self._run(call, token, task.timeout_ms)
         except _Fail as exc:
-            return _failed(_redact(str(exc), token), start)
+            return _failed(_redact(str(exc), token), start, exc.category)
 
         logger.info("github %s %s %s", call.op, call.repo, call.target)
         return RuntimeResult(
@@ -314,11 +335,17 @@ class _Api:
         try:
             response = await self._client.request(method, url, json=json_body, params=params)
         except httpx.TimeoutException as exc:
-            raise _Fail(f"GitHub request timed out for {where}") from exc
+            raise _Fail(f"GitHub request timed out for {where}", category="timeout") from exc
         except httpx.RequestError as exc:
-            raise _Fail(f"GitHub request failed for {where}: {exc}") from exc
+            raise _Fail(
+                f"GitHub request failed for {where}: {exc}",
+                category=category_for_transport_error(exc),
+            ) from exc
         if response.status_code >= HTTP_ERROR and response.status_code not in allow:
-            raise _Fail(_status_message(response, where, self._call.repo))
+            raise _Fail(
+                _status_message(response, where, self._call.repo),
+                category=_status_category(response),
+            )
         return response
 
 
@@ -400,7 +427,7 @@ async def _merge_pr(api: _Api, p: dict[str, Any]) -> dict[str, Any]:
     try:
         merged = _object(await api.request("PUT", path, json_body=payload), path)
     except _Fail as exc:
-        raise _Fail(f"{exc} (expected head {sha[:12]})") from exc
+        raise _Fail(f"{exc} (expected head {sha[:12]})", category=exc.category) from exc
     return {"number": pr, "merged": bool(merged.get("merged")), "sha": merged.get("sha")}
 
 
@@ -560,6 +587,17 @@ def _status_message(response: httpx.Response, where: str, repo: str) -> str:
     return f"GitHub returned {status} for {where} ({hint})" + (f": {detail}" if detail else "")
 
 
+def _status_category(response: httpx.Response) -> BackendErrorCategory | None:
+    """GitHub rate-limits with a 403 as well as a 429: an exhausted quota header or a
+    "secondary rate limit" message tells it apart from a plain permission error."""
+    if response.status_code in (HTTP_FORBIDDEN, HTTP_TOO_MANY_REQUESTS) and (
+        response.headers.get("x-ratelimit-remaining") == "0"
+        or "rate limit" in _error_details(response).lower()
+    ):
+        return "rate_limit"
+    return category_for_status(response.status_code)
+
+
 def _issue(body: dict[str, Any]) -> dict[str, Any]:
     labels = body.get("labels") or []
     return {
@@ -601,11 +639,13 @@ def _elapsed_ms(start: float) -> int:
     return int((time.monotonic() - start) * MS_PER_SECOND)
 
 
-def _failed(message: str, start: float) -> RuntimeResult:
+def _failed(
+    message: str, start: float, category: BackendErrorCategory | None = None
+) -> RuntimeResult:
     return RuntimeResult(
         success=False,
         output="",
         duration_ms=_elapsed_ms(start),
         errors=[message],
-        structured={"provider": "github"},
+        structured=with_category({"provider": "github"}, category),
     )

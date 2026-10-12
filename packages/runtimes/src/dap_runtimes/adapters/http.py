@@ -43,11 +43,23 @@ import time
 from typing import Any, Final
 
 import httpx
-from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    BackendErrorCategory,
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 from jsonpath_ng.ext import parse as jsonpath_parse
 
+from dap_runtimes.adapters._error_category import (
+    category_for_status,
+    category_for_transport_error,
+    with_category,
+)
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.http")
@@ -131,12 +143,14 @@ class HttpAdapter(BaseAdapter):
                     duration_ms=_elapsed_ms(start),
                     url=url,
                     timed_out=True,
+                    category="timeout",
                 )
             except httpx.RequestError as exc:
                 return _failed(
                     f"HTTP request failed: {exc}",
                     duration_ms=_elapsed_ms(start),
                     url=url,
+                    category=category_for_transport_error(exc),
                 )
 
         duration_ms = _elapsed_ms(start)
@@ -154,6 +168,7 @@ class HttpAdapter(BaseAdapter):
                 duration_ms=duration_ms,
                 url=url,
                 status_code=response.status_code,
+                category=category_for_status(response.status_code),
             )
 
         try:
@@ -485,6 +500,7 @@ def _failed(
     url: str | None = None,
     status_code: int | None = None,
     timed_out: bool = False,
+    category: BackendErrorCategory | None = None,
 ) -> RuntimeResult:
     structured: dict[str, Any] = {
         "provider": "http",
@@ -499,5 +515,5 @@ def _failed(
         output="",
         duration_ms=duration_ms,
         errors=[message],
-        structured=structured,
+        structured=with_category(structured, category),
     )

@@ -45,7 +45,16 @@ import time
 from dataclasses import dataclass
 from typing import Any, Final
 
-from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    BackendErrorCategory,
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
+
+from dap_runtimes.adapters._error_category import with_category
 
 from dap_runtimes.adapters._git_workspace import (
     GitWorkspace,
@@ -56,6 +65,7 @@ from dap_runtimes.adapters._git_workspace import (
     push_branch,
     run_guards,
 )
+from dap_runtimes.adapters._providers._base import classify_provider_failure
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
 from dap_runtimes.adapters._subprocess_stream import drain_subprocess_output
 from dap_runtimes.adapters.base import BaseAdapter
@@ -73,6 +83,7 @@ class SubprocessOutcome:
 
     - ``start_error`` set: the subprocess could not be spawned
       (``FileNotFoundError`` / ``OSError``); other fields are zero/empty.
+      ``binary_missing`` tells the first apart (#934).
     - ``timed_out=True``: the subprocess exceeded the configured
       timeout and was killed; ``stdout`` / ``stderr`` are empty.
     - Otherwise: the subprocess ran to completion; the fields hold
@@ -85,6 +96,7 @@ class SubprocessOutcome:
     duration_ms: int
     timed_out: bool = False
     start_error: str | None = None
+    binary_missing: bool = False
 
 
 def _normalise_extra_args(value: Any) -> tuple[list[str], str | None]:
@@ -312,6 +324,7 @@ class _BaseCliAdapter(BaseAdapter):
                 f"{self.display_label} binary not found: {binary}",
                 duration_ms=0,
                 model_id=config.get("model_id"),
+                category="unavailable",
             )
 
         extra_args, extra_args_error = _normalise_extra_args(config.get("extra_args"))
@@ -377,6 +390,7 @@ class _BaseCliAdapter(BaseAdapter):
                 outcome.start_error,
                 duration_ms=outcome.duration_ms,
                 model_id=model_id,
+                category="unavailable" if outcome.binary_missing else None,
             )
 
         if outcome.timed_out:
@@ -385,6 +399,7 @@ class _BaseCliAdapter(BaseAdapter):
                 duration_ms=outcome.duration_ms,
                 model_id=model_id,
                 timed_out=True,
+                category="timeout",
             )
 
         if outcome.exit_code != 0:
@@ -398,6 +413,9 @@ class _BaseCliAdapter(BaseAdapter):
                 model_id=model_id,
                 exit_code=outcome.exit_code,
                 stderr=outcome.stderr,
+                # Only the provider's quota / rate-limit wording is reliable enough
+                # to read off a CLI's stderr; any other exit stays uncategorised.
+                category=classify_provider_failure(outcome.stderr),
             )
 
         try:
@@ -523,6 +541,7 @@ class _BaseCliAdapter(BaseAdapter):
                 stderr="",
                 duration_ms=_elapsed_ms(start),
                 start_error=f"{self.display_label} binary not found: {binary} ({exc})",
+                binary_missing=True,
             )
         except OSError as exc:
             return SubprocessOutcome(
@@ -571,6 +590,7 @@ class _BaseCliAdapter(BaseAdapter):
         exit_code: int | None = None,
         stderr: str = "",
         timed_out: bool = False,
+        category: BackendErrorCategory | None = None,
     ) -> RuntimeResult:
         structured: dict[str, Any] = {
             "provider": self.provider_name,
@@ -587,7 +607,7 @@ class _BaseCliAdapter(BaseAdapter):
             output="",
             duration_ms=duration_ms,
             errors=[message],
-            structured=structured,
+            structured=with_category(structured, category),
         )
 
 

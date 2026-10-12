@@ -8,6 +8,7 @@ from typing import Any, Final
 from google import genai
 from google.genai import errors as genai_errors
 
+from dap_runtimes.adapters._error_category import category_for_status
 from dap_runtimes.adapters._providers._base import (
     ProviderError,
     ProviderResult,
@@ -72,9 +73,8 @@ async def call(
         # google-genai raises a single APIError class with a status code on it.
         # Gemini reports quota exhaustion as 429 RESOURCE_EXHAUSTED.
         status = getattr(exc, "code", None)
-        category = classify_provider_failure(
-            str(exc), status_code=status if isinstance(status, int) else None
-        )
+        status_code = status if isinstance(status, int) else None
+        category = classify_provider_failure(str(exc), status_code=status_code)
         prefix = (
             "Out of credits / quota"
             if category == "out_of_credits"
@@ -82,7 +82,11 @@ async def call(
             if category == "rate_limit"
             else f"Gemini API error {status}"
         )
-        raise ProviderError(f"{prefix}: {exc}", category=category) from exc
+        # A 5xx (503 UNAVAILABLE when the model is overloaded) is a backend error
+        # too (#934); the message keeps its generic prefix.
+        raise ProviderError(
+            f"{prefix}: {exc}", category=category or category_for_status(status_code)
+        ) from exc
     except Exception as exc:
         # Network / unexpected — surface generically.
         raise ProviderError(f"Gemini call failed: {exc}") from exc
