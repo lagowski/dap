@@ -7,8 +7,13 @@
  * Shape (intentionally loose JSON for bundle compatibility):
  *   {
  *     available: { <id>: { runtime_id?, runtime_config?, label?, requires_env? } },
- *     agent_assignments: { default_profile?: string, overrides?: { <nodeId>: <id> } }
+ *     agent_assignments: { default_profile?: string, overrides?: { <nodeId>: <override> } }
  *   }
+ *
+ * An override is a profile id, or ``{ profile?, fallback?: [id, ...] }`` (#935):
+ * the engine re-runs the node on each fallback profile after a backend error.
+ * An object without ``profile`` keeps the default profile. The designer only
+ * edits ``profile`` and leaves ``fallback`` as it found it.
  *
  * Every mutator returns a new object (immutable) so React state updates stay
  * predictable. ``null`` profile = "inherit default" (override removed).
@@ -22,11 +27,19 @@ export interface BackendProfile {
   requires_service?: string;
 }
 
+export interface NodeOverrideObject {
+  profile?: string;
+  fallback?: string[];
+  [key: string]: unknown;
+}
+
+export type NodeOverride = string | NodeOverrideObject;
+
 export interface BackendProfiles {
   available?: Record<string, BackendProfile>;
   agent_assignments?: {
     default_profile?: string;
-    overrides?: Record<string, string>;
+    overrides?: Record<string, NodeOverride>;
   };
   // Loose JSON for bundle compatibility — also makes the type assignable to
   // ``Record<string, unknown>`` at the API/save boundary.
@@ -58,8 +71,16 @@ export function getNodeOverride(
   bp: BackendProfiles | null | undefined,
   nodeId: string,
 ): string | null {
-  const value = bp?.agent_assignments?.overrides?.[nodeId];
+  return overrideProfile(bp?.agent_assignments?.overrides?.[nodeId]);
+}
+
+function overrideProfile(entry: NodeOverride | undefined): string | null {
+  const value = isOverrideObject(entry) ? entry.profile : entry;
   return typeof value === "string" && value ? value : null;
+}
+
+function isOverrideObject(entry: unknown): entry is NodeOverrideObject {
+  return typeof entry === "object" && entry !== null && !Array.isArray(entry);
 }
 
 /** What a node actually runs with: its override, else the pipeline default,
@@ -97,7 +118,17 @@ export function setNodeOverride(
   profileId: string | null,
 ): BackendProfiles {
   const overrides = { ...(bp?.agent_assignments?.overrides ?? {}) };
-  if (profileId) {
+  const current = overrides[nodeId];
+  if (isOverrideObject(current)) {
+    // Keep the fallback chain: only the profile is edited here.
+    const next = { ...current };
+    if (profileId) {
+      next.profile = profileId;
+    } else {
+      delete next.profile;
+    }
+    overrides[nodeId] = next;
+  } else if (profileId) {
     overrides[nodeId] = profileId;
   } else {
     delete overrides[nodeId];
@@ -119,8 +150,9 @@ export function addProfile(
   };
 }
 
-/** Remove a profile and every reference to it (default + node overrides), so we
- *  never leave a dangling assignment pointing at a deleted profile. */
+/** Remove a profile and every reference to it (default, node overrides and
+ *  fallback lists), so we never leave a dangling assignment pointing at a
+ *  deleted profile. */
 export function removeProfile(
   bp: BackendProfiles | null | undefined,
   id: string,
@@ -131,9 +163,20 @@ export function removeProfile(
   const assignments = { ...(bp?.agent_assignments ?? {}) };
   if (assignments.default_profile === id) delete assignments.default_profile;
   if (assignments.overrides) {
-    const overrides = Object.fromEntries(
-      Object.entries(assignments.overrides).filter(([, profileId]) => profileId !== id),
-    );
+    const overrides: Record<string, NodeOverride> = {};
+    for (const [nodeId, entry] of Object.entries(assignments.overrides)) {
+      if (!isOverrideObject(entry)) {
+        if (entry !== id) overrides[nodeId] = entry;
+        continue;
+      }
+      const next = { ...entry };
+      if (next.profile === id) delete next.profile;
+      if (Array.isArray(next.fallback)) {
+        next.fallback = next.fallback.filter((fallbackId) => fallbackId !== id);
+        if (next.fallback.length === 0) delete next.fallback;
+      }
+      if (next.profile !== undefined || next.fallback !== undefined) overrides[nodeId] = next;
+    }
     assignments.overrides = overrides;
   }
 
