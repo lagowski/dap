@@ -356,6 +356,28 @@ async def test_jsonpath_with_nested_response() -> None:
     assert result.tokens_used == 256
 
 
+async def test_jsonpath_filter_expression_uses_extended_syntax() -> None:
+    """Extractors accept jsonpath-ng's extended filter syntax (``[?...]``)."""
+    adapter = HttpAdapter()
+    response = _mock_response(
+        json_payload={
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "filtered answer"},
+            ]
+        }
+    )
+    client = _mock_client(response)
+
+    with patch(_PATCH_PATH, return_value=client):
+        result = await adapter.execute(
+            _task(response_extractor={"output": "$.messages[?role == 'assistant'].content"})
+        )
+
+    assert result.success is True
+    assert result.output == "filtered answer"
+
+
 async def test_non_string_output_match_is_json_stringified() -> None:
     adapter = HttpAdapter()
     response = _mock_response(json_payload={"data": [1, 2, 3]})
