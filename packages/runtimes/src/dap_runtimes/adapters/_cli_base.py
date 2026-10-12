@@ -55,7 +55,6 @@ from dap_types import (
 )
 
 from dap_runtimes.adapters._error_category import with_category
-
 from dap_runtimes.adapters._git_workspace import (
     GitWorkspace,
     diff_fields,

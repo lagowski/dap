@@ -35,7 +35,9 @@ from .conftest import build_subprocess_mock
 
 
 def _result(*, success: bool = False, structured: dict[str, Any] | None = None) -> RuntimeResult:
-    return RuntimeResult(success=success, output="", errors=[] if success else ["x"], structured=structured)
+    return RuntimeResult(
+        success=success, output="", errors=[] if success else ["x"], structured=structured
+    )
 
 
 def test_the_category_set_is_closed() -> None:
@@ -129,7 +131,9 @@ async def _run_anthropic(error: Exception) -> RuntimeResult:
         (anthropic.APITimeoutError(request=_anthropic_request()), "timeout"),
         (anthropic.APIConnectionError(request=_anthropic_request()), "unavailable"),
         (
-            anthropic.InternalServerError("overloaded", response=_anthropic_response(529), body=None),
+            anthropic.InternalServerError(
+                "overloaded", response=_anthropic_response(529), body=None
+            ),
             "unavailable",
         ),
         (
@@ -142,7 +146,9 @@ async def _run_anthropic(error: Exception) -> RuntimeResult:
             None,
         ),
         (
-            anthropic.BadRequestError("max_tokens too big", response=_anthropic_response(400), body=None),
+            anthropic.BadRequestError(
+                "max_tokens too big", response=_anthropic_response(400), body=None
+            ),
             None,
         ),
         (anthropic.NotFoundError("no model", response=_anthropic_response(404), body=None), None),
@@ -159,7 +165,9 @@ async def test_anthropic_failures_carry_their_category(
 
 async def test_api_call_keeps_its_error_message(provider_keys: None) -> None:
     result = await _run_anthropic(
-        anthropic.RateLimitError("Rate limit exceeded", response=_anthropic_response(429), body=None)
+        anthropic.RateLimitError(
+            "Rate limit exceeded", response=_anthropic_response(429), body=None
+        )
     )
     assert result.errors == ["Rate limited: Rate limit exceeded"]
 
@@ -260,7 +268,9 @@ def _cli_task(**config: Any) -> RuntimeTask:
     )
 
 
-async def _run_cli(proc: MagicMock | None = None, *, spawn_error: Exception | None = None) -> RuntimeResult:
+async def _run_cli(
+    proc: MagicMock | None = None, *, spawn_error: Exception | None = None
+) -> RuntimeResult:
     spawn = AsyncMock(side_effect=spawn_error) if spawn_error else AsyncMock(return_value=proc)
     with patch(_WHICH, return_value="/usr/local/bin/claude"), patch(_SUBPROCESS, spawn):
         result = await ClaudeCodeAdapter().execute(_cli_task())
@@ -349,7 +359,9 @@ def _http_task() -> RuntimeTask:
     )
 
 
-async def _run_http(*, response: httpx.Response | None = None, error: Exception | None = None) -> RuntimeResult:
+async def _run_http(
+    *, response: httpx.Response | None = None, error: Exception | None = None
+) -> RuntimeResult:
     client = MagicMock()
     client.request = AsyncMock(side_effect=error) if error else AsyncMock(return_value=response)
     client.__aenter__ = AsyncMock(return_value=client)
@@ -365,8 +377,16 @@ _REQ = httpx.Request("POST", "http://localhost:11434/api/generate")
 
 @pytest.mark.parametrize(
     ("status", "expected"),
-    [(429, "rate_limit"), (500, "unavailable"), (502, "unavailable"), (503, "unavailable"),
-     (400, None), (401, None), (404, None), (422, None)],
+    [
+        (429, "rate_limit"),
+        (500, "unavailable"),
+        (502, "unavailable"),
+        (503, "unavailable"),
+        (400, None),
+        (401, None),
+        (404, None),
+        (422, None),
+    ],
 )
 async def test_http_status_is_categorised(status: int, expected: str | None) -> None:
     result = await _run_http(response=httpx.Response(status, text="nope", request=_REQ))
@@ -384,7 +404,9 @@ async def test_http_status_is_categorised(status: int, expected: str | None) -> 
         (httpx.UnsupportedProtocol("ftp://", request=_REQ), None),
     ],
 )
-async def test_http_transport_errors_are_categorised(error: Exception, expected: str | None) -> None:
+async def test_http_transport_errors_are_categorised(
+    error: Exception, expected: str | None
+) -> None:
     result = await _run_http(error=error)
     assert error_category(result) == expected
 
@@ -493,7 +515,9 @@ async def test_github_config_error_has_no_category() -> None:
     ("error", "category"),
     [
         (
-            anthropic.RateLimitError("Rate limit exceeded", response=_anthropic_response(429), body=None),
+            anthropic.RateLimitError(
+                "Rate limit exceeded", response=_anthropic_response(429), body=None
+            ),
             "rate_limit",
         ),
         (
