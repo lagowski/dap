@@ -76,7 +76,7 @@ def test_short_circuit_without_reason_uses_generic_feedback() -> None:
 
 
 def _graph(*retries: int, nodes: int = 3) -> Pipeline:
-    node_list = [{"id": f"n{i}", "agent_id": "a"} for i in range(nodes)]
+    node_list: list[dict[str, object]] = [{"id": f"n{i}", "agent_id": "a"} for i in range(nodes)]
     for i, max_retries in enumerate(retries):
         node_list[i]["retry"] = {"max_retries": max_retries, "retry_to": "n0"}
     return Pipeline.model_validate(
