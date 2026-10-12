@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
+from dap_runtimes import RuntimeRegistry
 from dap_types import ERROR_CATEGORY_KEY, OutputCallback, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
@@ -90,7 +91,7 @@ class Harness:
     def __init__(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
         self.client = client
         self.monkeypatch = monkeypatch
-        self.registry = client.app.state.runtime_registry  # type: ignore[attr-defined]
+        self.registry: RuntimeRegistry = client.app.state.runtime_registry  # type: ignore[attr-defined]
 
     def script(self, runtime_id: str, results: list[RuntimeResult]) -> Script:
         script = Script(results)
