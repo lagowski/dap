@@ -1,0 +1,100 @@
+{
+  "schema_version": "pipeline-export/2",
+  "_comment": "Retry-driven tester -> coder loop (#811). The coder works on a git branch; the tester runs the test suite. The tester's retry block sends a failed attempt back to the coder with the failure reason in extensions.test_feedback, up to max_retries times, then goes to escalate. An attempt also counts as failed when the coder changed no files (not diff_stats.files > 0). The coder runs on Claude Code and falls back to Codex on a backend error (rate limit, out of credits, timeout, unavailable). Start a run with initial_state {\"repo\": \"owner/name\", \"branch\": \"develop\", \"description\": \"what to build\"}. Edit the tester's command, the coder's branch/base and the profiles before importing.",
+  "bundled_agents": {
+    "tpl_retry_coder": {
+      "name": "Retry loop: coder",
+      "role": "implementer",
+      "runtime_id": "claude-code",
+      "runtime_config": {
+        "branch": "dap/retry-example",
+        "base": "develop"
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <task>{{ (description or 'Make the test suite pass.') | e }}</task>\n  <rules>Commit your work on the current branch. The tester runs the test suite after you; it also fails the attempt when you changed no files.</rules>\n{% if extensions.test_feedback is defined %}  <feedback>The previous attempt failed: {{ extensions.test_feedback | e }}</feedback>\n{% endif %}</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["changed_files", "commits_since_base", "diff_stats"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 1800000
+    },
+    "tpl_retry_tester": {
+      "name": "Retry loop: tester",
+      "role": "verifier",
+      "runtime_id": "bash",
+      "runtime_config": {
+        "command": "pytest -q"
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 600000
+    },
+    "tpl_retry_escalate": {
+      "name": "Retry loop: escalate",
+      "role": "post_check",
+      "runtime_id": "bash",
+      "runtime_config": {
+        "command": "echo 'Tests still failing after every retry; see the run state verification_reason.' >&2"
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": [],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 30000
+    }
+  },
+  "backend_profiles": {
+    "available": {
+      "claude": {"label": "Claude Code", "runtime_id": "claude-code"},
+      "codex": {"label": "Codex", "runtime_id": "codex"}
+    },
+    "agent_assignments": {
+      "overrides": {
+        "coder": {"profile": "claude", "fallback": ["codex"]}
+      }
+    }
+  },
+  "pipeline": {
+    "name": "Tester -> coder retry loop",
+    "description": "The coder works on a branch, the tester runs the suite; failures loop back to the coder with feedback up to max_retries, then escalate (#811).",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "coder",
+    "nodes": [
+      {"id": "coder", "agent_id": "tpl_retry_coder", "position": {"x": 0, "y": 0}},
+      {
+        "id": "tester",
+        "agent_id": "tpl_retry_tester",
+        "position": {"x": 240, "y": 0},
+        "retry": {
+          "max_retries": 3,
+          "retry_to": "coder",
+          "on_failure": "escalate",
+          "feedback_into": "test_feedback",
+          "short_circuit_on": {
+            "type": "not",
+            "children": [
+              {"type": "comparison", "field": "diff_stats.files", "operator": ">", "value": 0}
+            ]
+          }
+        }
+      },
+      {"id": "escalate", "agent_id": "tpl_retry_escalate", "position": {"x": 240, "y": 160}}
+    ],
+    "edges": [
+      {"id": "e1", "source": "__start__", "target": "coder"},
+      {"id": "e2", "source": "coder", "target": "tester"},
+      {"id": "e3", "source": "tester", "target": "__end__"},
+      {"id": "e4", "source": "escalate", "target": "__end__"}
+    ],
+    "defaults": {
+      "max_attempts": 1,
+      "budget_limit_usd": 0,
+      "approval_required_nodes": [],
+      "requires_terminal_final_status": false
+    }
+  }
+}
