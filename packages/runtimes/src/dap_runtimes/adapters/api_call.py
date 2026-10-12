@@ -30,8 +30,16 @@ import os
 import time
 from typing import Final
 
-from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    BackendErrorCategory,
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 
+from dap_runtimes.adapters._error_category import with_category
 from dap_runtimes.adapters._providers import (
     PROVIDER_REGISTRY,
     ProviderError,
@@ -115,7 +123,7 @@ class ApiCallAdapter(BaseAdapter):
             result: ProviderResult = await provider.call(provider_id, config, task.prompt_xml)
         except ProviderError as exc:
             logger.warning("api-call provider=%s failed: %s", provider_id, exc)
-            return _failed(start=start, message=str(exc))
+            return _failed(start=start, message=str(exc), category=exc.category)
         except asyncio.CancelledError:
             # Cooperative cancellation must propagate so the runner can mark
             # the run aborted.
@@ -155,13 +163,20 @@ class ApiCallAdapter(BaseAdapter):
         )
 
 
-def _failed(*, start: float, message: str) -> RuntimeResult:
-    """Build a failed RuntimeResult with elapsed-since-start duration."""
+def _failed(
+    *, start: float, message: str, category: BackendErrorCategory | None = None
+) -> RuntimeResult:
+    """Build a failed RuntimeResult with elapsed-since-start duration.
+
+    ``category`` (#934) is the provider's backend error category; ``structured``
+    stays ``None`` without one, as before.
+    """
     return RuntimeResult(
         success=False,
         output="",
         duration_ms=int((time.monotonic() - start) * 1000),
         errors=[message],
+        structured=with_category({}, category) or None,
     )
 
 

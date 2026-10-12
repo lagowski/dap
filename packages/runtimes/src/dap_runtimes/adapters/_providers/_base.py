@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from dap_types import BackendErrorCategory
+
 TOKENS_PER_MILLION = 1_000_000
 _HTTP_TOO_MANY_REQUESTS = 429
 
@@ -40,17 +42,21 @@ class ProviderError(Exception):
     The api-call adapter catches this and surfaces ``str(error)`` in
     the ``RuntimeResult.errors`` list.
 
-    ``category`` (#692) classifies the failure so callers and the UI can
-    react to quota / credit exhaustion distinctly from a generic backend
-    error. One of:
+    ``category`` (#692, #934) classifies the failure so callers and the UI can
+    react to a backend failure distinctly from a config error. One of
+    ``dap_types.BackendErrorCategory``:
 
     - ``"out_of_credits"`` — quota / credit exhausted; will NOT recover on
       retry (top up or switch provider/runtime).
     - ``"rate_limit"`` — transient throttling; may recover on retry.
-    - ``None`` — anything else (auth, bad request, network, ...).
+    - ``"timeout"`` — the API call timed out.
+    - ``"unavailable"`` — connection error or a 5xx from the provider.
+    - ``None`` — anything else (auth, bad request, unknown model, ...).
+
+    The api-call adapter copies it to ``RuntimeResult.structured["error_category"]``.
     """
 
-    def __init__(self, message: str, *, category: str | None = None) -> None:
+    def __init__(self, message: str, *, category: BackendErrorCategory | None = None) -> None:
         super().__init__(message)
         self.category = category
 
@@ -59,7 +65,7 @@ def classify_provider_failure(
     text: str,
     *,
     status_code: int | None = None,
-) -> str | None:
+) -> BackendErrorCategory | None:
     """Best-effort category for a provider failure (#692).
 
     Keyed on the error *text* (plus an optional HTTP status) so it works

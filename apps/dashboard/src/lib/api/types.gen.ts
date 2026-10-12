@@ -2297,12 +2297,18 @@ export interface components {
         BackendProfilesInspectionResponse: {
             /** Default Profile */
             default_profile?: string | null;
+            /** Fallbacks */
+            fallbacks?: {
+                [key: string]: string[];
+            };
             /** Overrides */
             overrides?: {
                 [key: string]: string;
             };
             /** Profiles */
             profiles?: components["schemas"]["BackendProfileInspection"][];
+            /** Unknown Fallbacks */
+            unknown_fallbacks?: string[];
         };
         /**
          * BaseOAuthAccount
@@ -2658,7 +2664,10 @@ export interface components {
             /** User Id */
             user_id: string | null;
         };
-        /** LogicalCondition */
+        /**
+         * LogicalCondition
+         * @description ``and`` / ``or`` over any number of children; ``not`` over exactly one (#930).
+         */
         "LogicalCondition-Input": {
             /** Children */
             children: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Input"])[];
@@ -2666,9 +2675,12 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "and" | "or";
+            type: "and" | "not" | "or";
         };
-        /** LogicalCondition */
+        /**
+         * LogicalCondition
+         * @description ``and`` / ``or`` over any number of children; ``not`` over exactly one (#930).
+         */
         "LogicalCondition-Output": {
             /** Children */
             children: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Output"])[];
@@ -2676,7 +2688,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "and" | "or";
+            type: "and" | "not" | "or";
         };
         /**
          * NodeExecutionLog
@@ -2840,7 +2852,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Output"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -2883,7 +2895,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Input"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3025,7 +3037,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Input"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3073,7 +3085,7 @@ export interface components {
             /** Name */
             name: string;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Output"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3131,13 +3143,24 @@ export interface components {
             schema_version: "pipeline-export/1" | "pipeline-export/2";
         };
         /** PipelineNode */
-        PipelineNode: {
+        "PipelineNode-Input": {
             /** Agent Id */
             agent_id: string;
             /** Id */
             id: string;
             overrides?: components["schemas"]["NodeOverrides"] | null;
             position?: components["schemas"]["NodePosition"];
+            retry?: components["schemas"]["RetryPolicy-Input"] | null;
+        };
+        /** PipelineNode */
+        "PipelineNode-Output": {
+            /** Agent Id */
+            agent_id: string;
+            /** Id */
+            id: string;
+            overrides?: components["schemas"]["NodeOverrides"] | null;
+            position?: components["schemas"]["NodePosition"];
+            retry?: components["schemas"]["RetryPolicy-Output"] | null;
         };
         /**
          * PipelineReadinessResponse
@@ -3168,10 +3191,20 @@ export interface components {
             }[];
             /** Branch */
             branch: string;
+            /** Changed Files */
+            changed_files?: string[];
             /** Commit Sha */
             commit_sha?: string | null;
+            /** Commits Since Base */
+            commits_since_base?: {
+                [key: string]: string;
+            }[];
             /** Description */
             description?: string | null;
+            /** Diff Stats */
+            diff_stats?: {
+                [key: string]: number;
+            };
             /**
              * Extensions
              * @description Per-pipeline extra state. Keys are pipeline-defined. Values must be JSON-serializable. Reserved keys (engine-defined): ``auto_approve`` (bool, #389) — when True, the runner skips every ``interrupt_before`` approval gate so the run executes end-to-end without pausing. Operator-only flag, intentionally named to mirror Claude Code's ``--dangerously-skip-permissions``. ``execution_target`` (str, #611) — hostname or node label of the remote host that the Cortex executor node will SSH into to run commands. ``execution_commands`` (list[str], #611) — ordered list of shell commands to execute on the remote host. Must be a ``list`` when present; a bare string is rejected with 422. ``execution_env`` (dict[str, str], #611) — environment variables to export on the remote host before running ``execution_commands``.
@@ -3199,6 +3232,10 @@ export interface components {
             max_attempts: number;
             /** Modified Files */
             modified_files?: string[];
+            /** Node Attempts */
+            node_attempts?: {
+                [key: string]: number;
+            };
             /** Repo */
             repo: string;
             /** Run Id */
@@ -3261,7 +3298,7 @@ export interface components {
             /** Name */
             name?: string | null;
             /** Nodes */
-            nodes: components["schemas"]["PipelineNode"][];
+            nodes: components["schemas"]["PipelineNode-Input"][];
             /**
              * Schema Version
              * @default langgraph/1.0
@@ -3445,6 +3482,80 @@ export interface components {
             valid: boolean;
             /** Warnings */
             warnings?: string[];
+        };
+        /**
+         * RetryPolicy
+         * @description Bounded retry loop declared on a node (#931; runtime routing is #932).
+         *
+         *     While retries remain, a failed attempt goes back to ``retry_to``; once
+         *     ``max_retries`` is spent the run goes to ``on_failure``. Range and
+         *     reference checks live in the engine's DAG validator so the designer gets
+         *     a readable error instead of a 422.
+         */
+        "RetryPolicy-Input": {
+            /**
+             * Feedback Into
+             * @description ``state.extensions`` key that receives the failure reason.
+             */
+            feedback_into?: string | null;
+            /**
+             * Max Retries
+             * @description Retries allowed after the first attempt (1-20).
+             */
+            max_retries: number;
+            /**
+             * On Failure
+             * @description Node id (or ``__end__``) to go to once ``max_retries`` is spent.
+             * @default __end__
+             */
+            on_failure: string;
+            /**
+             * Retry To
+             * @description Node to re-enter while retries remain; must be able to reach this node.
+             */
+            retry_to: string;
+            /**
+             * Short Circuit On
+             * @description Condition (edge-condition schema) that marks the attempt as failed.
+             */
+            short_circuit_on?: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Input"]) | null;
+        };
+        /**
+         * RetryPolicy
+         * @description Bounded retry loop declared on a node (#931; runtime routing is #932).
+         *
+         *     While retries remain, a failed attempt goes back to ``retry_to``; once
+         *     ``max_retries`` is spent the run goes to ``on_failure``. Range and
+         *     reference checks live in the engine's DAG validator so the designer gets
+         *     a readable error instead of a 422.
+         */
+        "RetryPolicy-Output": {
+            /**
+             * Feedback Into
+             * @description ``state.extensions`` key that receives the failure reason.
+             */
+            feedback_into?: string | null;
+            /**
+             * Max Retries
+             * @description Retries allowed after the first attempt (1-20).
+             */
+            max_retries: number;
+            /**
+             * On Failure
+             * @description Node id (or ``__end__``) to go to once ``max_retries`` is spent.
+             * @default __end__
+             */
+            on_failure: string;
+            /**
+             * Retry To
+             * @description Node to re-enter while retries remain; must be able to reach this node.
+             */
+            retry_to: string;
+            /**
+             * Short Circuit On
+             * @description Condition (edge-condition schema) that marks the attempt as failed.
+             */
+            short_circuit_on?: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Output"]) | null;
         };
         /**
          * Run

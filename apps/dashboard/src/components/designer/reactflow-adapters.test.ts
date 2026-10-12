@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import type { PipelineNode } from "@/lib/api/types";
+
 import {
+  fromReactFlowNode,
   parseEdgeWaypoints,
   summarizeCondition,
   toReactFlowEdge,
+  toReactFlowNode,
 } from "./reactflow-adapters";
 
 describe("parseEdgeWaypoints", () => {
@@ -87,5 +91,65 @@ describe("summarizeCondition", () => {
         ],
       }),
     ).toBe("a == true AND b > 1 …");
+  });
+
+  it("prefixes a negated comparison with NOT (#930)", () => {
+    expect(
+      summarizeCondition({
+        type: "not",
+        children: [
+          {
+            type: "comparison",
+            field: "extensions.approved",
+            operator: "==",
+            value: true,
+          },
+        ],
+      }),
+    ).toBe("NOT approved == true");
+  });
+
+  it("parenthesises a negated compound condition (#930)", () => {
+    expect(
+      summarizeCondition({
+        type: "not",
+        children: [
+          {
+            type: "or",
+            children: [
+              { type: "comparison", field: "a", operator: "==", value: true },
+              { type: "comparison", field: "b", operator: ">", value: 1 },
+            ],
+          },
+        ],
+      }),
+    ).toBe("NOT (a == true OR b > 1)");
+  });
+});
+
+describe("toReactFlowNode / fromReactFlowNode", () => {
+  const retry = {
+    max_retries: 3,
+    retry_to: "coder",
+    on_failure: "__end__",
+    feedback_into: "test_feedback",
+    short_circuit_on: null,
+  };
+
+  it("round-trips a node's retry policy through React Flow data (#931)", () => {
+    const node: PipelineNode = {
+      id: "tester",
+      agent_id: "a1",
+      position: { x: 1, y: 2 },
+      retry,
+    };
+    expect(fromReactFlowNode(toReactFlowNode(node))).toEqual(node);
+  });
+
+  it("omits retry for a node without one", () => {
+    const node: PipelineNode = { id: "n1", agent_id: "a1", position: { x: 0, y: 0 } };
+    const back = fromReactFlowNode(toReactFlowNode(node));
+    expect(back).toEqual(node);
+    expect("retry" in back).toBe(false);
   });
 });

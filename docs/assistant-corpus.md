@@ -47,6 +47,25 @@ An agent = a unit of work. Fields:
 - Gates: approval_required_nodes lists nodes that pause for human approval (human gate) vs
   auto-gates that pass automatically. requires_terminal_final_status enforces a terminal status.
 - defaults: max_attempts, budget_limit_usd, approval_required_nodes.
+- Conditions: {type: comparison, field (dot path, e.g. diff_stats.files), operator, value} or
+  {type: and|or|not, children}; not takes exactly one child. A missing field compares false.
+- Node retry block (bounded loop, e.g. tester → coder): max_retries (1-20, required),
+  retry_to (node to go back to; must loop back to this node, required), on_failure (node or
+  __end__, default __end__), feedback_into (bare extensions key that gets the failure reason:
+  verification_reason, else last_test_output), short_circuit_on (condition that fails a node
+  that succeeded). Counter in state.node_attempts: 0 → normal edges, ≤ max_retries →
+  retry_to, more → on_failure. A failed attempt with retries left resets final_status to
+  running. Spent retries keep final_status failed; a short-circuited attempt leaves it
+  running, so make on_failure fail if the run must end failed. Escape feedback in prompts:
+  {{ extensions.test_feedback | e }}. Manual retry re-runs the node; skip clears its counter.
+- A claude-code / codex / gemini-cli run with a git branch writes changed_files (list),
+  commits_since_base ([{sha, subject, author}]) and diff_stats ({additions, deletions, files}).
+- backend_profiles: available {id: {runtime_id, runtime_config}}, agent_assignments
+  {default_profile, overrides {node id|agent id|name|role: id or {profile, fallback: [ids]}}}.
+  On a backend error (structured.error_category: rate_limit, out_of_credits, timeout,
+  unavailable) the node re-runs on the next fallback profile; other failures don't fall back.
+  Unknown fallback ids are rejected (422). Each attempt is logged as extra_data.backend_attempt.
+- Docs: docs/pipelines.md. Example: examples/pipelines/tester-coder-retry.pipeline-bundle.json.
 
 ## Providers / secrets
 - API keys live as INSTANCE ENV VARS (Settings → environment variables), encrypted at rest.

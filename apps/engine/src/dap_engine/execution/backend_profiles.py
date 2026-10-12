@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 _PROFILE_METADATA_KEYS = {
@@ -22,6 +22,9 @@ class ResolvedBackendProfile:
     runtime_id: str
     runtime_config: dict[str, Any]
     profile_id: str | None = None
+    # Profiles to re-run the node on, in order, when it fails with a backend
+    # error (#935). Each is resolved exactly like a primary; never nested.
+    fallbacks: tuple[ResolvedBackendProfile, ...] = field(default=())
 
 
 def resolve_backend_profile(
@@ -48,28 +51,66 @@ def resolve_backend_profile(
     - flat non-metadata keys on the profile also contribute runtime config.
     - ``agent_assignments.default_profile`` applies to every node.
     - ``agent_assignments.overrides`` can target node id, local agent id,
-      agent name, or role.
+      agent name, or role. An override is a profile id, or an object
+      ``{"profile": id, "fallback": [id, ...]}`` (#935); an object without
+      ``profile`` keeps the default profile and adds the fallback chain.
 
     Merge order preserves existing behaviour unless a profile is selected:
     agent version config < selected profile config. Node-level overrides are
     still applied later by ``NodeContext``.
     """
 
-    profile_id = _selected_profile_id(
+    profile_id, fallback_ids = _selected_assignment(
         backend_profiles=backend_profiles,
         node_id=node_id,
         agent_id=agent_id,
         agent_name=agent_name,
         agent_role=agent_role,
     )
-    if profile_id is None:
-        return ResolvedBackendProfile(
-            runtime_id=base_runtime_id,
-            runtime_config=dict(base_runtime_config),
-            profile_id=None,
+    if env_layers is None:
+        env_layers = merge_backend_profile_env_layers(
+            instance_env_vars=instance_env_vars,
+            project_env_vars=project_env_vars,
         )
+    primary = _resolve_profile(
+        backend_profiles,
+        profile_id,
+        base_runtime_id=base_runtime_id,
+        base_runtime_config=base_runtime_config,
+        env_layers=env_layers,
+    )
+    # An unknown fallback id is skipped: saves and imports reject it, so it
+    # can only reach a run through a row written before #935.
+    fallbacks = tuple(
+        _resolve_profile(
+            backend_profiles,
+            fallback_id,
+            base_runtime_id=base_runtime_id,
+            base_runtime_config=base_runtime_config,
+            env_layers=env_layers,
+        )
+        for fallback_id in fallback_ids
+        if _profile_by_id(backend_profiles, fallback_id) is not None
+    )
+    if not fallbacks:
+        return primary
+    return ResolvedBackendProfile(
+        runtime_id=primary.runtime_id,
+        runtime_config=primary.runtime_config,
+        profile_id=primary.profile_id,
+        fallbacks=fallbacks,
+    )
 
-    profile = _profile_by_id(backend_profiles, profile_id)
+
+def _resolve_profile(
+    backend_profiles: dict[str, Any] | None,
+    profile_id: str | None,
+    *,
+    base_runtime_id: str,
+    base_runtime_config: dict[str, Any],
+    env_layers: dict[str, str],
+) -> ResolvedBackendProfile:
+    profile = _profile_by_id(backend_profiles, profile_id) if profile_id is not None else None
     if profile is None:
         return ResolvedBackendProfile(
             runtime_id=base_runtime_id,
@@ -81,11 +122,6 @@ def resolve_backend_profile(
     if not isinstance(runtime_id, str) or not runtime_id.strip():
         runtime_id = base_runtime_id
 
-    if env_layers is None:
-        env_layers = merge_backend_profile_env_layers(
-            instance_env_vars=instance_env_vars,
-            project_env_vars=project_env_vars,
-        )
     profile_config = _profile_runtime_config(profile, env_layers)
     profile_config = _with_required_env(
         profile_config,
@@ -100,30 +136,83 @@ def resolve_backend_profile(
     )
 
 
-def _selected_profile_id(
+def _selected_assignment(
     *,
     backend_profiles: dict[str, Any] | None,
     node_id: str,
     agent_id: str,
     agent_name: str,
     agent_role: str,
-) -> str | None:
+) -> tuple[str | None, list[str]]:
+    """The profile id and fallback ids assigned to a node."""
     if not isinstance(backend_profiles, dict):
-        return None
+        return None, []
 
     assignments = backend_profiles.get("agent_assignments")
     if not isinstance(assignments, dict):
-        return None
+        return None, []
+
+    default_profile = assignments.get("default_profile")
+    if not isinstance(default_profile, str) or not default_profile:
+        default_profile = None
 
     overrides = assignments.get("overrides")
     if isinstance(overrides, dict):
         for key in (node_id, agent_id, agent_name, agent_role):
-            profile_id = overrides.get(key)
-            if isinstance(profile_id, str) and profile_id:
-                return profile_id
+            override = overrides.get(key)
+            if isinstance(override, str) and override:
+                return override, []
+            if isinstance(override, dict):
+                profile_id = override.get("profile")
+                if not isinstance(profile_id, str) or not profile_id:
+                    profile_id = default_profile
+                return profile_id, _string_list(override.get("fallback"))
 
-    default_profile = assignments.get("default_profile")
-    return default_profile if isinstance(default_profile, str) and default_profile else None
+    return default_profile, []
+
+
+def override_profile_id(override: Any) -> str | None:
+    """The profile id of one ``overrides`` entry, string or object form."""
+    if isinstance(override, str):
+        return override
+    if isinstance(override, dict):
+        profile_id = override.get("profile")
+        return profile_id if isinstance(profile_id, str) else None
+    return None
+
+
+def fallback_chain_errors(backend_profiles: dict[str, Any] | None) -> list[str]:
+    """Validation errors for the ``fallback`` lists in ``agent_assignments.overrides``.
+
+    A fallback must be a list of ids declared in ``available`` (#935). Used by
+    pipeline save/import, the run trigger and the backend inspection endpoint.
+    """
+    if not isinstance(backend_profiles, dict):
+        return []
+    assignments = backend_profiles.get("agent_assignments")
+    if not isinstance(assignments, dict):
+        return []
+    overrides = assignments.get("overrides")
+    if not isinstance(overrides, dict):
+        return []
+
+    available = backend_profiles.get("available")
+    known = set(available) if isinstance(available, dict) else set()
+    errors: list[str] = []
+    for key, override in overrides.items():
+        if not isinstance(override, dict) or "fallback" not in override:
+            continue
+        where = f"backend_profiles.agent_assignments.overrides.{key}.fallback"
+        fallback = override["fallback"]
+        if not isinstance(fallback, list) or not all(isinstance(i, str) for i in fallback):
+            errors.append(f"{where}: must be a list of profile ids")
+            continue
+        errors.extend(
+            f"{where}: unknown profile id {profile_id!r}"
+            for profile_id in fallback
+            if profile_id not in known
+        )
+    return errors
 
 
 def _profile_by_id(

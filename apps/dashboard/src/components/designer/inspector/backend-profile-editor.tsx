@@ -8,6 +8,7 @@ import { Trash2 } from "lucide-react";
 import {
   addProfile,
   getDefaultProfile,
+  getNodeOverride,
   listProfiles,
   profileSummary,
   removeProfile,
@@ -60,7 +61,7 @@ export function NodeProfileSelect({
   onChange: (next: BackendProfiles) => void;
 }) {
   const profiles = listProfiles(backendProfiles);
-  const override = backendProfiles?.agent_assignments?.overrides?.[nodeId] ?? "";
+  const override = getNodeOverride(backendProfiles, nodeId) ?? "";
   const resolved = resolveNodeProfile(backendProfiles, nodeId);
 
   if (profiles.length === 0) {
@@ -147,7 +148,7 @@ export function BackendProfilePanel({
               <div className="flex-1">
                 <ProfileSelect
                   ariaLabel={`Backend profile for ${node.label}`}
-                  value={backendProfiles?.agent_assignments?.overrides?.[node.id] ?? ""}
+                  value={getNodeOverride(backendProfiles, node.id) ?? ""}
                   profiles={profiles}
                   defaultLabel={defaultProfile ?? "none"}
                   onChange={(profileId) =>

@@ -13,6 +13,7 @@ Run via `validate_pipeline_dag(payload, session)`. Used by Pipeline Designer
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections import deque
 from graphlib import CycleError, TopologicalSorter
 from typing import Any, Final
@@ -30,11 +31,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dap_engine.contracts import PipelineCreate
+from dap_engine.execution.backend_profiles import fallback_chain_errors
 from dap_engine.persistence.models import AgentORM, AgentVersionORM
 
 START_SENTINEL: Final = "__start__"
 END_SENTINEL: Final = "__end__"
 SENTINEL_NODES: Final = frozenset({START_SENTINEL, END_SENTINEL})
+
+# Bounds on ``PipelineNode.retry.max_retries`` (#931).
+MIN_RETRIES: Final = 1
+MAX_RETRIES: Final = 20
+# ``retry.feedback_into`` names a bare ``state.extensions`` key.
+_EXTENSIONS_KEY_RE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _load_referenced_agents(payload: PipelineCreate, session: Session) -> dict[str, AgentORM]:
@@ -78,6 +86,8 @@ def validate_pipeline_dag(payload: PipelineCreate, session: Session) -> Validati
     errors.extend(_check_entry_point(payload, node_id_set))
     errors.extend(_check_edge_references(payload, node_id_set))
     errors.extend(_check_agents(payload, session))
+    errors.extend(_check_retry_policies(payload, node_id_set))
+    errors.extend(fallback_chain_errors(payload.backend_profiles))
 
     # If structural errors, skip reachability — graph is bogus.
     if errors:
@@ -86,6 +96,7 @@ def validate_pipeline_dag(payload: PipelineCreate, session: Session) -> Validati
     errors.extend(_check_ambiguous_routing(payload))
     errors.extend(_check_reachability(payload))
     warnings.extend(_check_condition_fields(payload))
+    warnings.extend(_check_retry_condition_fields(payload))
 
     # Cohesion checks (#59) need the structural graph + agent contracts.
     # Skipped silently when a structural problem already broke the run.
@@ -159,13 +170,60 @@ def _check_ambiguous_routing(payload: PipelineCreate) -> list[str]:
     return out
 
 
+def _check_retry_policies(payload: PipelineCreate, node_id_set: set[str]) -> list[str]:
+    """Reference, range and loop checks for every node's ``retry`` block (#931)."""
+    out: list[str] = []
+    forward_adj: dict[str, set[str]] = {}
+    for edge in payload.edges:
+        forward_adj.setdefault(edge.source, set()).add(edge.target)
+
+    for node in payload.nodes:
+        retry = node.retry
+        if retry is None:
+            continue
+        prefix = f"Node '{node.id}' retry"
+        if not MIN_RETRIES <= retry.max_retries <= MAX_RETRIES:
+            out.append(
+                f"{prefix}.max_retries must be {MIN_RETRIES}-{MAX_RETRIES}, "
+                f"got {retry.max_retries}",
+            )
+        if retry.retry_to not in node_id_set:
+            out.append(f"{prefix}.retry_to '{retry.retry_to}' is not a known node")
+        elif node.id not in _bfs(forward_adj, retry.retry_to):
+            out.append(
+                f"{prefix}.retry_to '{retry.retry_to}' cannot reach '{node.id}' again — "
+                f"a retry target must loop back to the retrying node",
+            )
+        if retry.on_failure not in node_id_set | {END_SENTINEL}:
+            out.append(f"{prefix}.on_failure '{retry.on_failure}' is not a known node or __end__")
+        if retry.feedback_into is not None and not _EXTENSIONS_KEY_RE.match(retry.feedback_into):
+            out.append(
+                f"{prefix}.feedback_into '{retry.feedback_into}' must be a bare "
+                f"state.extensions key (letters, digits, underscores; no 'extensions.' prefix)",
+            )
+    return out
+
+
+def _retry_targets(payload: PipelineCreate) -> list[tuple[str, str]]:
+    """``(node, target)`` pairs a ``retry`` block can route to (``retry_to`` + ``on_failure``)."""
+    pairs: list[tuple[str, str]] = []
+    for node in payload.nodes:
+        if node.retry is not None:
+            pairs.append((node.id, node.retry.retry_to))
+            pairs.append((node.id, node.retry.on_failure))
+    return pairs
+
+
 def _check_reachability(payload: PipelineCreate) -> list[str]:
     out: list[str] = []
     forward_adj: dict[str, set[str]] = {}
     reverse_adj: dict[str, set[str]] = {}
-    for edge in payload.edges:
-        forward_adj.setdefault(edge.source, set()).add(edge.target)
-        reverse_adj.setdefault(edge.target, set()).add(edge.source)
+    # Retry routes count as edges: an escalation node reached only through
+    # ``on_failure`` is reachable, not dead.
+    links = [(e.source, e.target) for e in payload.edges] + _retry_targets(payload)
+    for source, target in links:
+        forward_adj.setdefault(source, set()).add(target)
+        reverse_adj.setdefault(target, set()).add(source)
 
     # Implicit edge START → entry_point
     forward_adj.setdefault(START_SENTINEL, set()).add(payload.entry_point)
@@ -195,6 +253,21 @@ def _check_condition_fields(payload: PipelineCreate) -> list[str]:
     return out
 
 
+def _check_retry_condition_fields(payload: PipelineCreate) -> list[str]:
+    out: list[str] = []
+    state_fields = set(PipelineState.model_fields.keys())
+    for node in payload.nodes:
+        if node.retry is None or node.retry.short_circuit_on is None:
+            continue
+        unknown = _collect_unknown_fields(node.retry.short_circuit_on, state_fields)
+        for field in sorted(unknown):
+            out.append(
+                f"Node '{node.id}' retry.short_circuit_on references unknown "
+                f"PipelineState field: '{field}'",
+            )
+    return out
+
+
 def _bfs(adjacency: dict[str, set[str]], start: str) -> set[str]:
     """Return set of nodes reachable from `start` in the given adjacency map."""
     visited = {start}
@@ -212,10 +285,17 @@ def _collect_unknown_fields(
     condition: EdgeCondition,
     known_fields: set[str],
 ) -> set[str]:
-    """Walk the condition tree and return field names not in known_fields."""
+    """Walk the condition tree and return fields whose root is not a known field.
+
+    A dot-path is judged by its first segment (#930): ``extensions.foo.bar``
+    is fine because ``extensions`` is a ``PipelineState`` field, and runtime
+    results land there under arbitrary keys. Empty segments never resolve,
+    so they still warn.
+    """
     unknown: set[str] = set()
     if isinstance(condition, ComparisonCondition):
-        if condition.field not in known_fields:
+        parts = condition.field.split(".")
+        if parts[0] not in known_fields or "" in parts:
             unknown.add(condition.field)
     elif isinstance(condition, LogicalCondition):
         for child in condition.children:

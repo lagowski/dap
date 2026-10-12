@@ -13,6 +13,7 @@ from dap_engine.api.schemas import (
     BackendProfilesInspectionResponse,
     PipelineImportRequest,
 )
+from dap_engine.execution.backend_profiles import override_profile_id
 from dap_engine.persistence import repository as repo
 
 _SERVICE_COMMAND_ALIASES = {
@@ -37,11 +38,14 @@ def inspect_backend_profiles(
     if not isinstance(backend_profiles, dict):
         return BackendProfilesInspectionResponse()
 
+    fallbacks = _fallbacks(backend_profiles)
     available = backend_profiles.get("available")
     if not isinstance(available, dict):
         return BackendProfilesInspectionResponse(
             default_profile=_default_profile(backend_profiles),
             overrides=_overrides(backend_profiles),
+            fallbacks=fallbacks,
+            unknown_fallbacks=_unknown_fallbacks(fallbacks, set()),
         )
 
     required_env = _required_env_keys(available)
@@ -54,6 +58,8 @@ def inspect_backend_profiles(
     return BackendProfilesInspectionResponse(
         default_profile=_default_profile(backend_profiles),
         overrides=_overrides(backend_profiles),
+        fallbacks=fallbacks,
+        unknown_fallbacks=_unknown_fallbacks(fallbacks, set(available)),
         profiles=inspections,
     )
 
@@ -135,11 +141,38 @@ def _overrides(backend_profiles: dict[str, Any]) -> dict[str, str]:
     if not isinstance(overrides, dict):
         return {}
 
+    profile_ids = {
+        agent_id: override_profile_id(override)
+        for agent_id, override in overrides.items()
+        if isinstance(agent_id, str)
+    }
     return {
         agent_id: profile_id
-        for agent_id, profile_id in overrides.items()
-        if isinstance(agent_id, str) and isinstance(profile_id, str)
+        for agent_id, profile_id in profile_ids.items()
+        if profile_id is not None
     }
+
+
+def _fallbacks(backend_profiles: dict[str, Any]) -> dict[str, list[str]]:
+    assignments = backend_profiles.get("agent_assignments")
+    if not isinstance(assignments, dict):
+        return {}
+
+    overrides = assignments.get("overrides")
+    if not isinstance(overrides, dict):
+        return {}
+
+    return {
+        agent_id: [item for item in override["fallback"] if isinstance(item, str)]
+        for agent_id, override in overrides.items()
+        if isinstance(agent_id, str)
+        and isinstance(override, dict)
+        and isinstance(override.get("fallback"), list)
+    }
+
+
+def _unknown_fallbacks(fallbacks: dict[str, list[str]], known: set[str]) -> list[str]:
+    return sorted({item for chain in fallbacks.values() for item in chain} - known)
 
 
 def _string_list(value: Any) -> list[str]:

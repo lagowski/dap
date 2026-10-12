@@ -33,12 +33,20 @@ class PipelineState(BaseModel):
     # ---- EXECUTION LOOP ----
     max_attempts: int = 3
     attempt: int = 0
+    # Per-node attempt counter for ``PipelineNode.retry`` loops (#931);
+    # defaults to empty so snapshots persisted before it existed still load.
+    node_attempts: dict[str, int] = Field(default_factory=dict)
     tests_passed: bool = False
     last_test_output: str = ""
 
     # ---- IMPLEMENTATION ----
     modified_files: list[str] = Field(default_factory=list)
     implementation_notes: str | None = None
+    # What a code runtime run with a ``branch`` changed (#933), reported by the
+    # git workspace after the run. Empty defaults so older snapshots still load.
+    changed_files: list[str] = Field(default_factory=list)
+    commits_since_base: list[dict[str, str]] = Field(default_factory=list)
+    diff_stats: dict[str, int] = Field(default_factory=dict)
 
     # ---- VERIFICATION ----
     verification_status: VerificationStatus = "pending"

@@ -11,20 +11,27 @@
 import { MarkerType } from "@xyflow/react";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 
-import type { PipelineEdge, PipelineNode } from "@/lib/api/types";
+import type { PipelineEdge, PipelineNode, RetryPolicy } from "@/lib/api/types";
 
 type EdgeCondition = NonNullable<PipelineEdge["condition"]>;
 
 /**
  * Short human label for an edge condition (#765) — so a conditional edge shows
  * *what* it branches on, not a bare "if". Comparison → ``field op value``;
- * logical → its comparisons joined with AND/OR (truncated). The ``extensions.``
+ * logical → its comparisons joined with AND/OR (truncated); ``not`` → ``NOT x``,
+ * parenthesised when ``x`` is compound (#930). The ``extensions.``
  * prefix is dropped for brevity.
  */
 export function summarizeCondition(condition: EdgeCondition): string {
   if (condition.type === "comparison") {
     const field = condition.field.replace(/^extensions\./, "");
     return `${field} ${condition.operator} ${String(condition.value)}`;
+  }
+  if (condition.type === "not") {
+    const [child] = condition.children;
+    if (!child) return "NOT";
+    const inner = summarizeCondition(child);
+    return child.type === "comparison" ? `NOT ${inner}` : `NOT (${inner})`;
   }
   const joiner = condition.type === "or" ? " OR " : " AND ";
   const parts = condition.children.slice(0, 2).map(summarizeCondition);
@@ -75,8 +82,22 @@ export function toReactFlowNode(n: PipelineNode): Node {
     id: n.id,
     type: "default",
     position: n.position,
-    data: { label: n.id, agentId: n.agent_id },
+    // ``retry`` rides in node data so a load → save keeps it (#931).
+    data: { label: n.id, agentId: n.agent_id, retry: n.retry ?? null },
   };
+}
+
+
+/** Inverse of ``toReactFlowNode``; ``retry`` is omitted when unset. */
+export function fromReactFlowNode(n: Node): PipelineNode {
+  const data = n.data as { agentId?: string; retry?: RetryPolicy | null } | undefined;
+  const node: PipelineNode = {
+    id: n.id,
+    agent_id: String(data?.agentId ?? ""),
+    position: { x: n.position.x, y: n.position.y },
+  };
+  if (data?.retry) node.retry = data.retry;
+  return node;
 }
 
 

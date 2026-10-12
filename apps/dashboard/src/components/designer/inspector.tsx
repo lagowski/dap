@@ -20,7 +20,7 @@
  * Pre-split this file was 545 LOC; post-split it stays under 80.
  */
 
-import type { Agent, EdgeCondition } from "@/lib/api/types";
+import type { Agent, EdgeCondition, RetryPolicy } from "@/lib/api/types";
 import type { EdgeAnnotation } from "@/lib/edge-annotations";
 
 import { EdgePanel } from "./inspector/edge-panel";
@@ -46,6 +46,7 @@ interface InspectorProps {
   entryPoint: string;
   onSetEntryPoint: (nodeId: string) => void;
   onDeleteNode: (nodeId: string) => void;
+  onUpdateNodeRetry: (nodeId: string, retry: RetryPolicy | null) => void;
   onDeleteEdge: (edgeId: string) => void;
   onUpdateEdgeCondition: (edgeId: string, condition: EdgeCondition | null) => void;
   onUpdateEdgeLabel: (edgeId: string, label: string) => void;
@@ -84,6 +85,7 @@ export function Inspector(props: InspectorProps) {
             entryPoint={props.entryPoint}
             onSetEntryPoint={props.onSetEntryPoint}
             onDelete={props.onDeleteNode}
+            onUpdateRetry={props.onUpdateNodeRetry}
             backendProfiles={props.backendProfiles as BackendProfiles | null}
             onBackendProfilesChange={props.onBackendProfilesChange}
           />

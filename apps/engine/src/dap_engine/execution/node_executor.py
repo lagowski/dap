@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable, Coroutine
@@ -26,12 +27,22 @@ from typing import Any
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
-from dap_types import OutputCallback, PipelineState, RuntimeResult, RuntimeTask
+from dap_types import (
+    OutputCallback,
+    PipelineState,
+    RuntimeResult,
+    RuntimeTask,
+    error_category,
+    is_backend_error,
+)
+from dap_types.pipeline import RetryPolicy
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
+from dap_engine.execution.backend_profiles import ResolvedBackendProfile
 from dap_engine.execution.interaction_recorder import record_node_interaction
 from dap_engine.execution.output_parser import parse_node_output
+from dap_engine.execution.retry_policy import apply_retry_policy
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import (
     AgentORM,
@@ -70,6 +81,9 @@ class NodeContext:
         project_working_directory: str | None = None,
         project_env_vars: dict[str, str] | None = None,
         instance_env_vars: dict[str, str] | None = None,
+        retry: RetryPolicy | None = None,
+        profile_id: str | None = None,
+        fallbacks: tuple[ResolvedBackendProfile, ...] = (),
     ) -> None:
         self.run_id = run_id
         self.node_id = node_id
@@ -92,6 +106,22 @@ class NodeContext:
         # that flow into every run on top of the engine env. Captured
         # here once per graph build, immutable for the run's lifetime.
         self.instance_env_vars = instance_env_vars or {}
+        # The node's ``retry`` block (#932): each attempt's outcome is folded
+        # into the state diff before the snapshot so the runner can route it.
+        self.retry = retry
+        # The backend profile this context runs on, and the profiles to re-run
+        # the node on when it fails with a backend error (#935).
+        self.profile_id = profile_id
+        self.fallbacks = fallbacks
+
+    def with_backend(self, backend: ResolvedBackendProfile) -> NodeContext:
+        """A copy of this context that runs the node on ``backend`` instead."""
+        attempt = copy.copy(self)
+        attempt.runtime_id = backend.runtime_id
+        attempt.base_runtime_config = dict(backend.runtime_config)
+        attempt.profile_id = backend.profile_id
+        attempt.fallbacks = ()
+        return attempt
 
     @property
     def merged_runtime_config(self) -> dict[str, Any]:
@@ -180,113 +210,120 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
     """
 
     async def node_fn(state: PipelineState) -> dict[str, Any]:
-        started_at = datetime.now(UTC)
-        execution_id = str(uuid.uuid4())
+        # A backend error (#934) re-runs the node on the next fallback profile
+        # (#935); any other outcome, or the last profile, ends the node.
+        attempts = [ctx, *(ctx.with_backend(backend) for backend in ctx.fallbacks)]
+        for number, attempt in enumerate(attempts, start=1):
+            state_diff = await _run_attempt(
+                attempt,
+                state,
+                number=number,
+                chain_length=len(attempts),
+            )
+            if state_diff is not None:
+                return state_diff
+        msg = f"node {ctx.node_id}: no backend attempt finished"
+        raise RuntimeError(msg)
 
-        # 1. Render prompt — scoped to declared inputs when the agent
-        # version carries a contract (v0.5+); legacy dict-shaped or
-        # missing schemas pass through with full state visibility.
-        # python-func callables receive state directly via runtime_config;
-        # they have no prompt template, so skip XML build/validation entirely.
-        if ctx.runtime_id == "python-func":
-            prompt_xml = ""
-        else:
-            raw_input_schema = ctx.agent_version.input_schema
-            input_schema = list(raw_input_schema) if isinstance(raw_input_schema, list) else None
-            try:
-                build_result = build_prompt(
-                    ctx.agent_version.prompt_template,
-                    state.model_dump(),
-                    input_schema=input_schema,
-                    # Auto-inject agent identity (#113) so templates can use
-                    # ``{{ role }}`` without forcing every agent to declare
-                    # ``role`` as an input. ``PipelineState`` doesn't carry
-                    # it; ``role`` lives on the parent ``AgentORM`` (not
-                    # the version row, which is per-revision data).
-                    agent_metadata={"role": ctx.agent.role},
-                )
-            except PromptBuildError as exc:
-                return _record_failure(
-                    ctx=ctx,
-                    started_at=started_at,
-                    execution_id=execution_id,
-                    prompt_xml="",
-                    error=f"Prompt build failed: {exc}",
-                    state=state,
-                )
+    return node_fn
 
-            if not build_result.valid:
-                return _record_failure(
-                    ctx=ctx,
-                    started_at=started_at,
-                    execution_id=execution_id,
-                    prompt_xml=build_result.xml,
-                    error=f"Invalid prompt XML: {'; '.join(build_result.errors)}",
-                    state=state,
-                )
 
-            prompt_xml = build_result.xml
+async def _run_attempt(
+    ctx: NodeContext,
+    state: PipelineState,
+    *,
+    number: int,
+    chain_length: int,
+) -> dict[str, Any] | None:
+    """Run the node once on ``ctx``'s backend.
 
-        # 2. Build RuntimeTask. ``working_directory`` defaults to the
-        # project's ``working_directory`` when bound (#65), falling back
-        # to the legacy ``"."`` for ad-hoc runs.
-        task = RuntimeTask(
-            execution_id=execution_id,
-            prompt_xml=prompt_xml,
-            working_directory=ctx.project_working_directory or ".",
-            timeout_ms=ctx.timeout_ms,
-            # Inject full pipeline state so python-func callables can access
-            # top-level and extensions fields without a separate state fetch.
-            runtime_config={
-                **ctx.merged_runtime_config,
-                "__pipeline_state": state.model_dump(mode="json"),
-            },
-            instance_env_vars=ctx.instance_env_vars,
-            project_env_vars=ctx.project_env_vars,
-        )
+    Returns the state diff, or ``None`` when the attempt failed with a backend
+    error and a later profile in the chain should run the node instead.
+    """
+    started_at = datetime.now(UTC)
+    execution_id = str(uuid.uuid4())
 
-        # 3. Call adapter — stream its stdout into node_output_chunks so the
-        #    SSE endpoint can emit live ``node_log`` events (#662 Phase 3b-2b).
-        adapter = ctx.registry.get(ctx.runtime_id)
-        async with _stream_node_output(ctx, execution_id) as on_output:
-            result: RuntimeResult = await adapter.execute(task, on_output=on_output)
-        ended_at = datetime.now(UTC)
+    # 1. Render prompt — scoped to declared inputs when the agent
+    # version carries a contract (v0.5+); legacy dict-shaped or
+    # missing schemas pass through with full state visibility.
+    # python-func callables receive state directly via runtime_config;
+    # they have no prompt template, so skip XML build/validation entirely.
+    if ctx.runtime_id == "python-func":
+        prompt_xml = ""
+    else:
+        raw_input_schema = ctx.agent_version.input_schema
+        input_schema = list(raw_input_schema) if isinstance(raw_input_schema, list) else None
+        try:
+            build_result = build_prompt(
+                ctx.agent_version.prompt_template,
+                state.model_dump(),
+                input_schema=input_schema,
+                # Auto-inject agent identity (#113) so templates can use
+                # ``{{ role }}`` without forcing every agent to declare
+                # ``role`` as an input. ``PipelineState`` doesn't carry
+                # it; ``role`` lives on the parent ``AgentORM`` (not
+                # the version row, which is per-revision data).
+                agent_metadata={"role": ctx.agent.role},
+            )
+        except PromptBuildError as exc:
+            return _record_failure(
+                ctx=ctx,
+                started_at=started_at,
+                execution_id=execution_id,
+                prompt_xml="",
+                error=f"Prompt build failed: {exc}",
+                state=state,
+            )
 
-        if not result.success:
-            error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
-            state_diff: dict[str, Any] = {
-                "final_status": "failed",
-                "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
-            }
-        else:
-            # python-func adapter wraps the callable's return dict in
-            # structured["state_delta"]. When that key is present, route the
-            # full delta through _route_extensions so Cortex-specific keys
-            # (task_assignments, decisions, issue_comments, …) land in
-            # extensions instead of being silently dropped by
-            # _merge_structured_into_state (which only keeps PipelineState
-            # top-level fields).
-            #
-            # Other adapters (bash, claude_code, api-call) put state-shaped
-            # keys directly at the top level of structured — use the existing
-            # merge + per-role parse path for those.
-            state_delta = (result.structured or {}).get("state_delta")
-            if state_delta is not None:
-                state_diff = _route_extensions(state, state_delta)
-            else:
-                # Adapter-supplied structured fields + per-role output parse.
-                state_diff = _merge_structured_into_state(result.structured)
-                parsed_diff = _parse_agent_output(ctx, result.output)
-                state_diff.update(parsed_diff)
-                state_diff = _route_extensions(state, state_diff)
+        if not build_result.valid:
+            return _record_failure(
+                ctx=ctx,
+                started_at=started_at,
+                execution_id=execution_id,
+                prompt_xml=build_result.xml,
+                error=f"Invalid prompt XML: {'; '.join(build_result.errors)}",
+                state=state,
+            )
 
-        # 4. Record execution log + snapshot, then commit immediately.
-        # Committing per-node rather than once at the end of the run means
-        # logs survive a CancelledError (pause/abort) that would otherwise
-        # roll back the bg_session before it could commit (#162).
-        # expire_on_commit=False (set on the session factory) ensures the
-        # in-memory pipeline/agent objects remain usable after the commit.
-        merged_state = state.model_copy(update=state_diff)
+        prompt_xml = build_result.xml
+
+    # 2. Build RuntimeTask. ``working_directory`` defaults to the
+    # project's ``working_directory`` when bound (#65), falling back
+    # to the legacy ``"."`` for ad-hoc runs.
+    task = RuntimeTask(
+        execution_id=execution_id,
+        prompt_xml=prompt_xml,
+        working_directory=ctx.project_working_directory or ".",
+        timeout_ms=ctx.timeout_ms,
+        # Inject full pipeline state so python-func callables can access
+        # top-level and extensions fields without a separate state fetch.
+        runtime_config={
+            **ctx.merged_runtime_config,
+            "__pipeline_state": state.model_dump(mode="json"),
+        },
+        instance_env_vars=ctx.instance_env_vars,
+        project_env_vars=ctx.project_env_vars,
+    )
+
+    # 3. Call adapter — stream its stdout into node_output_chunks so the
+    #    SSE endpoint can emit live ``node_log`` events (#662 Phase 3b-2b).
+    adapter = ctx.registry.get(ctx.runtime_id)
+    async with _stream_node_output(ctx, execution_id) as on_output:
+        result: RuntimeResult = await adapter.execute(task, on_output=on_output)
+    ended_at = datetime.now(UTC)
+
+    # Audit trail (#935): only a node with a fallback chain records which
+    # profile each attempt ran on, so other nodes' logs are unchanged.
+    backend_attempt = (
+        {
+            "attempt": number,
+            "profile_id": ctx.profile_id,
+            "error_category": error_category(result),
+        }
+        if chain_length > 1
+        else None
+    )
+    if number < chain_length and is_backend_error(result):
         _save_execution_log(
             ctx=ctx,
             execution_id=execution_id,
@@ -294,13 +331,67 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             ended_at=ended_at,
             prompt_xml=prompt_xml,
             result=result,
+            backend_attempt=backend_attempt,
         )
-        _save_snapshot(ctx=ctx, state=merged_state)
         ctx.session.commit()
+        logger.warning(
+            "node %s: profile %s failed with %s, falling back",
+            ctx.node_id,
+            ctx.profile_id,
+            error_category(result),
+        )
+        return None
 
-        return state_diff
+    if not result.success:
+        error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
+        state_diff: dict[str, Any] = {
+            "final_status": "failed",
+            "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
+        }
+    else:
+        # python-func adapter wraps the callable's return dict in
+        # structured["state_delta"]. When that key is present, route the
+        # full delta through _route_extensions so Cortex-specific keys
+        # (task_assignments, decisions, issue_comments, …) land in
+        # extensions instead of being silently dropped by
+        # _merge_structured_into_state (which only keeps PipelineState
+        # top-level fields).
+        #
+        # Other adapters (bash, claude_code, api-call) put state-shaped
+        # keys directly at the top level of structured — use the existing
+        # merge + per-role parse path for those.
+        state_delta = (result.structured or {}).get("state_delta")
+        if state_delta is not None:
+            state_diff = _route_extensions(state, state_delta)
+        else:
+            # Adapter-supplied structured fields + per-role output parse.
+            state_diff = _merge_structured_into_state(result.structured)
+            parsed_diff = _parse_agent_output(ctx, result.output)
+            state_diff.update(parsed_diff)
+            state_diff = _route_extensions(state, state_diff)
 
-    return node_fn
+    state_diff = _apply_retry(ctx, state, state_diff)
+
+    # 4. Record execution log + snapshot, then commit immediately.
+    # Committing per-node rather than once at the end of the run means
+    # logs survive a CancelledError (pause/abort) that would otherwise
+    # roll back the bg_session before it could commit (#162).
+    # expire_on_commit=False (set on the session factory) ensures the
+    # in-memory pipeline/agent objects remain usable after the commit.
+    merged_state = state.model_copy(update=state_diff)
+    _save_execution_log(
+        ctx=ctx,
+        execution_id=execution_id,
+        started_at=started_at,
+        ended_at=ended_at,
+        prompt_xml=prompt_xml,
+        result=result,
+        backend_attempt=backend_attempt,
+    )
+    _save_snapshot(ctx=ctx, state=merged_state)
+    ctx.session.commit()
+
+    return state_diff
 
 
 def _record_failure(
@@ -333,14 +424,33 @@ def _record_failure(
         extra_data=None,
     )
     ctx.session.add(log)
-    state_diff = {
-        "final_status": "failed",
-        "verification_reason": f"Node {ctx.node_id}: {error}",
-    }
+    state_diff = _apply_retry(
+        ctx,
+        state,
+        {
+            "final_status": "failed",
+            "verification_reason": f"Node {ctx.node_id}: {error}",
+        },
+    )
     _save_snapshot(ctx=ctx, state=state.model_copy(update=state_diff))
     ctx.session.commit()
     logger.warning("node %s failed: %s", ctx.node_id, error)
     return state_diff
+
+
+def _apply_retry(
+    ctx: NodeContext,
+    state: PipelineState,
+    state_diff: dict[str, Any],
+) -> dict[str, Any]:
+    if ctx.retry is None:
+        return state_diff
+    return apply_retry_policy(
+        node_id=ctx.node_id,
+        policy=ctx.retry,
+        state=state,
+        state_diff=state_diff,
+    )
 
 
 def _audit_tokens(audit: dict[str, Any] | None) -> int | None:
@@ -408,6 +518,7 @@ def _save_execution_log(
     ended_at: datetime,
     prompt_xml: str,
     result: RuntimeResult,
+    backend_attempt: dict[str, Any] | None = None,
 ) -> None:
     # ``audit`` stores domain-specific metadata produced by python-func
     # adapters.  A python-func node signals audit data by including an
@@ -442,7 +553,11 @@ def _save_execution_log(
         duration_ms=result.duration_ms,
         status="success" if result.success else "failed",
         error_message="; ".join(result.errors) if result.errors else None,
-        extra_data=audit,
+        extra_data=(
+            {**(audit or {}), "backend_attempt": backend_attempt}
+            if backend_attempt is not None
+            else audit
+        ),
     )
     ctx.session.add(log)
 

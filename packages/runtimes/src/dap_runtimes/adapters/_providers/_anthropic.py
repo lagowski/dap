@@ -8,6 +8,7 @@ from typing import Any, Final
 import anthropic
 from anthropic import AsyncAnthropic
 
+from dap_runtimes.adapters._error_category import category_for_status
 from dap_runtimes.adapters._providers._base import (
     ProviderError,
     ProviderResult,
@@ -95,11 +96,14 @@ async def call(
         label = "Out of credits" if category == "out_of_credits" else "Rate limited"
         raise ProviderError(f"{label}: {exc.message}", category=category) from exc
     except anthropic.APITimeoutError as exc:
-        raise ProviderError(f"API timeout: {exc}") from exc
+        raise ProviderError(f"API timeout: {exc}", category="timeout") from exc
     except anthropic.APIConnectionError as exc:
-        raise ProviderError(f"Connection error: {exc}") from exc
+        raise ProviderError(f"Connection error: {exc}", category="unavailable") from exc
     except anthropic.APIStatusError as exc:
-        raise ProviderError(f"API error {exc.status_code}: {exc.message}") from exc
+        raise ProviderError(
+            f"API error {exc.status_code}: {exc.message}",
+            category=category_for_status(exc.status_code),
+        ) from exc
     finally:
         await client.close()
 

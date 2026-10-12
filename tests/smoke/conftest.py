@@ -45,6 +45,7 @@ UNIT_FILES = frozenset(
         "test_agent_schema_validation.py",
         "test_api_call_adapter.py",
         "test_api_validation_helpers.py",
+        "test_backend_error_category.py",
         "test_claude_code_adapter.py",
         "test_cli_base_streaming.py",
         "test_cli_cortex_auth.py",
@@ -69,6 +70,7 @@ UNIT_FILES = frozenset(
         "test_repo_url_validation.py",
         "test_provider_openai.py",
         "test_python_func_adapter.py",
+        "test_retry_policy_routing_unit.py",
         "test_run_registry.py",
         "test_run_state_machine.py",
     }

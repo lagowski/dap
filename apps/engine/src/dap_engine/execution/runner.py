@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from dap_runtimes import RuntimeRegistry
 from dap_types import Pipeline, PipelineState
-from dap_types.pipeline import PipelineEdge
+from dap_types.pipeline import PipelineEdge, RetryPolicy
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ from dap_engine.execution.backend_profiles import (
 )
 from dap_engine.execution.conditions import evaluate_condition
 from dap_engine.execution.node_executor import NodeContext, make_node_fn
+from dap_engine.execution.retry_policy import retry_recursion_limit, retry_route
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
@@ -172,7 +173,9 @@ class PipelineRunner:
             instance_env_vars=instance_env_vars,
         )
 
-        config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        config: dict[str, Any] = {
+            "recursion_limit": retry_recursion_limit(pipeline, self.recursion_limit)
+        }
         if self.checkpointer is not None:
             config["configurable"] = {"thread_id": run_id}
 
@@ -359,9 +362,11 @@ class PipelineRunner:
         # Find the most recent checkpoint where `target_node` is the next
         # step to execute. aget_state_history yields newest-first.
         target_config: dict[str, Any] | None = None
+        target_values: Any = None
         async for snapshot in graph.aget_state_history(base_config):
             if target_node in (snapshot.next or ()):
                 target_config = snapshot.config
+                target_values = snapshot.values
                 break
 
         if target_config is None:
@@ -374,13 +379,22 @@ class PipelineRunner:
         # Branch from the historical checkpoint: aupdate_state writes a new
         # checkpoint and returns its config; subsequent ainvoke runs from it.
         if mode == REWIND_SKIP:
-            new_config = await graph.aupdate_state(target_config, values={}, as_node=target_node)
+            # A skipped node counts as passed: clear its retry counter (#932)
+            # so its router follows the normal edges, not retry_to.
+            skip_values: dict[str, Any] = {}
+            if any(n.id == target_node and n.retry is not None for n in pipeline.nodes):
+                skip_values["node_attempts"] = _without_node_attempts(target_values, target_node)
+            new_config = await graph.aupdate_state(
+                target_config, values=skip_values, as_node=target_node
+            )
         else:  # retry
             # values=None + no as_node → no logical change, but we still get
             # a new branch tip from which the target node will run again.
             new_config = await graph.aupdate_state(target_config, values=None)
 
-        invoke_config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        invoke_config: dict[str, Any] = {
+            "recursion_limit": retry_recursion_limit(pipeline, self.recursion_limit)
+        }
         invoke_config["configurable"] = new_config["configurable"]
 
         try:
@@ -429,20 +443,22 @@ class PipelineRunner:
                 base_runtime_config=version.runtime_config,
                 env_layers=backend_profile_env_layers,
             )
-            try:
-                ensure_runtime_allowed(
-                    resolved_backend.runtime_id,
-                    is_admin=self.actor_is_admin,
-                    allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
-                )
-            except RuntimePolicyError as exc:
-                self._record_runtime_policy_denial(
-                    run_id=run_id,
-                    runtime_id=resolved_backend.runtime_id,
-                    reason=str(exc),
-                    surface="runner.build_graph",
-                )
-                raise RunnerError("Runtime policy denied for pipeline node") from exc
+            # Every runtime the node may fall back to (#935) must be allowed too.
+            for backend in (resolved_backend, *resolved_backend.fallbacks):
+                try:
+                    ensure_runtime_allowed(
+                        backend.runtime_id,
+                        is_admin=self.actor_is_admin,
+                        allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
+                    )
+                except RuntimePolicyError as exc:
+                    self._record_runtime_policy_denial(
+                        run_id=run_id,
+                        runtime_id=backend.runtime_id,
+                        reason=str(exc),
+                        surface="runner.build_graph",
+                    )
+                    raise RunnerError("Runtime policy denied for pipeline node") from exc
             ctx = NodeContext(
                 run_id=run_id,
                 node_id=node.id,
@@ -459,6 +475,9 @@ class PipelineRunner:
                 ),
                 project_env_vars=project_env_overlay,
                 instance_env_vars=dict(instance_overlay),
+                retry=node.retry,
+                profile_id=resolved_backend.profile_id,
+                fallbacks=resolved_backend.fallbacks,
             )
             builder.add_node(node.id, make_node_fn(ctx))  # type: ignore[call-overload]
 
@@ -473,9 +492,17 @@ class PipelineRunner:
         for edge in pipeline.edges:
             edges_by_source.setdefault(edge.source, []).append(edge)
 
+        # A node with a ``retry`` block (#932) gets a router that picks
+        # between its normal edges, ``retry_to`` and ``on_failure``.
+        retry_policies = {n.id: n.retry for n in pipeline.nodes if n.retry is not None}
+        for node_id, policy in retry_policies.items():
+            _add_retry_edges(builder, node_id, policy, edges_by_source.get(node_id, []))
+
         for source, edges in edges_by_source.items():
             if source in (START, "__start__"):
                 continue  # entry edge already handled above
+            if source in retry_policies:
+                continue  # wired by _add_retry_edges above
             if all(e.condition is None for e in edges):
                 # Single straight edge per source. Multiple unconditional edges
                 # would be ambiguous — pick the first.
@@ -700,13 +727,16 @@ def _read_auto_approve_from_run(session: Session, run_id: str) -> bool:
     return extensions.get("auto_approve") is True
 
 
-def _add_conditional_edges(
-    builder: StateGraph[PipelineState, None, PipelineState, PipelineState],
-    source: str,
-    edges: list[PipelineEdge],
-) -> None:
-    """Wire conditional edges from `source` based on EdgeCondition matching."""
+def _without_node_attempts(values: Any, node_id: str) -> dict[str, int]:
+    """``node_attempts`` from a checkpoint's values, minus ``node_id``."""
+    raw = values.get("node_attempts") if isinstance(values, dict) else None
+    if raw is None:
+        raw = getattr(values, "node_attempts", None) or {}
+    return {k: v for k, v in raw.items() if k != node_id}
 
+
+def _edge_chooser(edges: list[PipelineEdge]) -> tuple[Any, set[str]]:
+    """Return ``(chooser, targets)`` for a source's edges, matched in order."""
     # Pre-extract for closure capture.
     edge_specs = [(e.condition, _resolve_target(e.target)) for e in edges]
 
@@ -719,8 +749,39 @@ def _add_conditional_edges(
 
     # LangGraph's add_conditional_edges needs a path_map. Build the union of
     # possible targets so the framework knows the node graph topology.
-    targets = {target for _, target in edge_specs}
-    targets.add(END)
-    path_map = {t: t for t in targets}
+    targets = {str(target) for _, target in edge_specs}
+    targets.add(str(END))
+    return chooser, targets
 
-    builder.add_conditional_edges(source, chooser, path_map)
+
+def _add_conditional_edges(
+    builder: StateGraph[PipelineState, None, PipelineState, PipelineState],
+    source: str,
+    edges: list[PipelineEdge],
+) -> None:
+    """Wire conditional edges from `source` based on EdgeCondition matching."""
+    chooser, targets = _edge_chooser(edges)
+    builder.add_conditional_edges(source, chooser, {t: t for t in targets})
+
+
+def _add_retry_edges(
+    builder: StateGraph[PipelineState, None, PipelineState, PipelineState],
+    source: str,
+    policy: RetryPolicy,
+    edges: list[PipelineEdge],
+) -> None:
+    """Route `source` by its retry counter: normal edges, ``retry_to`` or ``on_failure``."""
+    normal, targets = _edge_chooser(edges)
+    retry_to = str(_resolve_target(policy.retry_to))
+    on_failure = str(_resolve_target(policy.on_failure))
+
+    def chooser(state: PipelineState) -> str:
+        route = retry_route(node_id=source, policy=policy, state=state)
+        if route == "retry":
+            return retry_to
+        if route == "failure":
+            return on_failure
+        return str(normal(state))
+
+    targets |= {retry_to, on_failure}
+    builder.add_conditional_edges(source, chooser, {t: t for t in targets})
