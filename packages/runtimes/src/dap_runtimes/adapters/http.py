@@ -46,9 +46,20 @@ import httpx
 from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
-from jsonpath_ng.ext import parse as jsonpath_parse
+from jsonpath_ng import JSONPath
+from jsonpath_ng.ext.parser import ExtendedJsonPathParser
 
 from dap_runtimes.adapters.base import BaseAdapter
+
+
+def jsonpath_parse(expr: str) -> JSONPath:
+    """Parse a JSONPath expression with jsonpath-ng's extended (filter) syntax.
+
+    Goes through ``ExtendedJsonPathParser`` rather than ``jsonpath_ng.ext.parse``:
+    jsonpath-ng >= 1.10 ships ``py.typed`` and that module-level helper is untyped.
+    """
+    return ExtendedJsonPathParser().parse(expr)
+
 
 logger = logging.getLogger("dap.runtimes.http")
 
