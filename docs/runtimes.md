@@ -389,3 +389,17 @@ CLI that ends its turn on another branch doesn't get the wrong commits
 judged or pushed. The result's `structured["git"]` carries `workspace`,
 `branch`, `base`, `start_sha`, `head_sha` and `pushed`.
 
+A successful run with a `branch` also reports what it changed (#933), as
+top-level `structured` keys that land in the matching `PipelineState` fields,
+so a later prompt can use `{{ changed_files | join(", ") }}` and an edge can
+test `diff_stats.files > 0`:
+
+| Field | Value |
+|---|---|
+| `changed_files` | `git diff --name-only <start>..<branch>`: files this run changed. |
+| `commits_since_base` | `git log <base>..<branch>`, newest first, as `{sha, subject, author}`. `<base>` is `origin/<base>`, else the local `<base>`, else the run's start. |
+| `diff_stats` | `{additions, deletions, files}` from `git diff --shortstat <start>..<branch>`. |
+
+A run that changes nothing reports empty lists and zero counts. An agent
+without `branch`, a failed run, and non-git runtimes leave the fields as they were.
+

@@ -235,7 +235,9 @@ source of truth. Categories:
   `test_generation_errors`.
 - **Execution loop** — `max_attempts`, `attempt`, `tests_passed`,
   `last_test_output`.
-- **Implementation** — `modified_files`, `implementation_notes`.
+- **Implementation** — `modified_files`, `implementation_notes`,
+  `changed_files`, `commits_since_base`, `diff_stats` (set by a code run
+  with a git `branch`, #933).
 - **Verification** — `verification_status`, `verification_reason`.
 - **Final output** — `final_status` (`running` | `success` | `failed` |
   `aborted` | `paused`).

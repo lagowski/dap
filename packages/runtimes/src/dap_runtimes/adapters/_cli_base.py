@@ -49,6 +49,7 @@ from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, 
 
 from dap_runtimes.adapters._git_workspace import (
     GitWorkspace,
+    diff_fields,
     head_sha,
     parse_git_config,
     prepare_workspace,
@@ -463,6 +464,9 @@ class _BaseCliAdapter(BaseAdapter):
                     "structured": structured,
                 }
             )
+        # Top-level keys, not ``state_delta``: the engine merges them into state and
+        # still runs the per-role output parse (#933).
+        structured.update(await diff_fields(ws))
         return result.model_copy(update={"structured": structured})
 
     # ------------------------------------------------------------------

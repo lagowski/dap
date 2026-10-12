@@ -42,6 +42,11 @@ class PipelineState(BaseModel):
     # ---- IMPLEMENTATION ----
     modified_files: list[str] = Field(default_factory=list)
     implementation_notes: str | None = None
+    # What a code runtime run with a ``branch`` changed (#933), reported by the
+    # git workspace after the run. Empty defaults so older snapshots still load.
+    changed_files: list[str] = Field(default_factory=list)
+    commits_since_base: list[dict[str, str]] = Field(default_factory=list)
+    diff_stats: dict[str, int] = Field(default_factory=dict)
 
     # ---- VERIFICATION ----
     verification_status: VerificationStatus = "pending"
