@@ -58,6 +58,43 @@ every run would end `failed` even though both nodes succeeded. See
 
 Every op, its params and outputs: [`docs/runtimes.md` → `github`](../../docs/runtimes.md#github-github-operations-as-nodes-920-921).
 
+### `tester-coder-retry.pipeline-bundle.json`
+
+A retry-driven **tester → coder** loop (#811). The coder works on a git branch;
+the tester runs the suite. A failed attempt goes back to the coder with the
+failure in its prompt, up to 3 retries, then to `escalate`.
+
+```
+__start__ → coder → tester → __end__
+              ↑        │ retry (≤ 3, feedback in extensions.test_feedback)
+              └────────┤
+                       └ retries spent → escalate → __end__
+```
+
+| Node | Runtime | What it does |
+|---|---|---|
+| `coder` | claude-code (`branch: dap/retry-example`), falls back to codex | Implements `description`; from the second attempt on, its prompt carries the tester's failure |
+| `tester` | bash (`pytest -q`) | Fails the attempt on a non-zero exit, or when the coder changed no files (`not diff_stats.files > 0`) |
+| `escalate` | bash | Reached only through `retry.on_failure`; exits 1 so the run ends `failed` |
+
+**Run it** with:
+
+```json
+{"repo": "owner/name", "branch": "develop", "description": "Make the failing test in tests/test_x.py pass"}
+```
+
+**Prerequisites:**
+
+- The `claude` CLI (and `codex`, for the fallback) on the engine host, and the
+  target repo as the engine's working directory or the project's.
+- An admin triggers the run, or the engine has
+  `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1`: the tester and escalate are `bash`.
+- Edit the tester's `command`, the coder's `branch`/`base` and the backend
+  profiles to fit the repo.
+
+Every key it uses (`retry`, `diff_stats`, `not`, `fallback`):
+[`docs/pipelines.md`](../../docs/pipelines.md).
+
 ### `github-issue-triage.pipeline-bundle.json`
 
 Five-node linear pipeline that picks the most sensible open GitHub issue,

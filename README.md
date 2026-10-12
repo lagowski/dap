@@ -199,6 +199,7 @@ The `bash` runtime needs no provider key but **runs commands with the engine's p
 - [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
 - [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
 - [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
+- [`docs/pipelines.md`](docs/pipelines.md) — retry loops, workspace diff state, `not` conditions and backend fallback chains; runnable tester → coder example in [`examples/pipelines/`](examples/pipelines/).
 - [`docs/python-func-pipelines.md`](docs/python-func-pipelines.md) — building a pipeline whose nodes run your own Python code (the Cortex pattern); runnable example in [`examples/python-func-pipeline/`](examples/python-func-pipeline/).
 - [`docs/database-migrations.md`](docs/database-migrations.md) — legacy migration freeze, Alembic policy, and developer workflow for new schema changes.
 - [`docs/database-indexes.md`](docs/database-indexes.md) — query-shape notes for indexes that support hot API paths.
