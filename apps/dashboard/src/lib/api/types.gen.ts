@@ -2301,6 +2301,12 @@ export interface components {
             overrides?: {
                 [key: string]: string;
             };
+            /** Fallbacks */
+            fallbacks?: {
+                [key: string]: string[];
+            };
+            /** Unknown Fallbacks */
+            unknown_fallbacks?: string[];
             /** Profiles */
             profiles?: components["schemas"]["BackendProfileInspection"][];
         };

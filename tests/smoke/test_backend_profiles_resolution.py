@@ -213,8 +213,7 @@ def test_unknown_fallback_ids_are_reported() -> None:
     }
 
     assert fallback_chain_errors(profiles) == [
-        "backend_profiles.agent_assignments.overrides.coder.fallback: "
-        "unknown profile id 'nope'",
+        "backend_profiles.agent_assignments.overrides.coder.fallback: unknown profile id 'nope'",
         "backend_profiles.agent_assignments.overrides.tester.fallback: "
         "unknown profile id 'also-missing'",
     ]

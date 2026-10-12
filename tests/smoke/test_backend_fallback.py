@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
+from dap_engine.persistence.models import PipelineVersionORM
 from dap_runtimes import RuntimeRegistry
 from dap_types import (
     ERROR_CATEGORY_KEY,
@@ -27,6 +28,7 @@ from dap_types import (
     RuntimeTask,
 )
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from tests.smoke._auth import authed_test_client
 
@@ -307,3 +309,26 @@ def test_inspection_reports_fallbacks_and_unknown_ids(harness: Harness) -> None:
     assert body["overrides"] == {"coder": "primary"}
     assert body["fallbacks"] == {"coder": ["secondary", "ghost"]}
     assert body["unknown_fallbacks"] == ["ghost"]
+
+
+def test_trigger_rejects_a_stored_unknown_fallback_id(harness: Harness) -> None:
+    # A version saved before #935 validated fallbacks can still name a ghost id.
+    primary = harness.adapter("primary-stub", _ok())
+    pipeline_id = _pipeline(harness.client, _profiles("primary"))
+    session_factory = harness.client.app.state.session_factory  # type: ignore[attr-defined]
+    with session_factory() as session:
+        version = session.scalar(
+            select(PipelineVersionORM).where(PipelineVersionORM.pipeline_id == pipeline_id)
+        )
+        assert version is not None
+        version.backend_profiles = _profiles({"profile": "primary", "fallback": ["ghost"]})
+        session.commit()
+
+    response = harness.client.post(
+        "/runs",
+        json={"pipeline_id": pipeline_id, "initial_state": {"repo": "demo", "branch": "main"}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "unknown profile id 'ghost'" in response.json()["detail"]
+    assert primary.tasks == []

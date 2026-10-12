@@ -189,6 +189,10 @@ class BackendProfilesInspectionResponse(BaseModel):
 
     default_profile: str | None = None
     overrides: dict[str, str] = Field(default_factory=dict)
+    # Per override key, the profile ids to fall back to on a backend error
+    # (#935), and the ones among them that ``available`` doesn't declare.
+    fallbacks: dict[str, list[str]] = Field(default_factory=dict)
+    unknown_fallbacks: list[str] = Field(default_factory=list)
     profiles: list[BackendProfileInspection] = Field(default_factory=list)
 
 

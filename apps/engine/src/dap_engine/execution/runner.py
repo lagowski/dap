@@ -443,20 +443,22 @@ class PipelineRunner:
                 base_runtime_config=version.runtime_config,
                 env_layers=backend_profile_env_layers,
             )
-            try:
-                ensure_runtime_allowed(
-                    resolved_backend.runtime_id,
-                    is_admin=self.actor_is_admin,
-                    allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
-                )
-            except RuntimePolicyError as exc:
-                self._record_runtime_policy_denial(
-                    run_id=run_id,
-                    runtime_id=resolved_backend.runtime_id,
-                    reason=str(exc),
-                    surface="runner.build_graph",
-                )
-                raise RunnerError("Runtime policy denied for pipeline node") from exc
+            # Every runtime the node may fall back to (#935) must be allowed too.
+            for backend in (resolved_backend, *resolved_backend.fallbacks):
+                try:
+                    ensure_runtime_allowed(
+                        backend.runtime_id,
+                        is_admin=self.actor_is_admin,
+                        allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
+                    )
+                except RuntimePolicyError as exc:
+                    self._record_runtime_policy_denial(
+                        run_id=run_id,
+                        runtime_id=backend.runtime_id,
+                        reason=str(exc),
+                        surface="runner.build_graph",
+                    )
+                    raise RunnerError("Runtime policy denied for pipeline node") from exc
             ctx = NodeContext(
                 run_id=run_id,
                 node_id=node.id,
@@ -474,6 +476,8 @@ class PipelineRunner:
                 project_env_vars=project_env_overlay,
                 instance_env_vars=dict(instance_overlay),
                 retry=node.retry,
+                profile_id=resolved_backend.profile_id,
+                fallbacks=resolved_backend.fallbacks,
             )
             builder.add_node(node.id, make_node_fn(ctx))  # type: ignore[call-overload]
 

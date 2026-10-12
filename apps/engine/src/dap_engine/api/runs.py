@@ -52,6 +52,7 @@ from dap_engine.execution import (
     RunRegistry,
     execute_run_background,
 )
+from dap_engine.execution.backend_profiles import fallback_chain_errors
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import PipelineVersionORM, UserORM
 
@@ -263,6 +264,15 @@ async def trigger_run(
         )
         session.commit()
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=denial)
+
+    # A fallback chain naming a profile the version doesn't declare (#935) —
+    # only a row saved before save/import validated it can get here.
+    fallback_errors = fallback_chain_errors(pipeline_version.backend_profiles)
+    if fallback_errors:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="; ".join(fallback_errors),
+        )
 
     # Fail-fast preflight (#710): resolve every python-func node's callable
     # before the run starts. A missing package (e.g. dap-cortex) is a clean
