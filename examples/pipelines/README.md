@@ -90,7 +90,9 @@ __start__ → coder → tester → __end__
 - An admin triggers the run, or the engine has
   `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1`: the tester and escalate are `bash`.
 - Edit the tester's `command`, the coder's `branch`/`base` and the backend
-  profiles to fit the repo.
+  profiles to fit the repo. Each profile's `model_id` (`claude-opus-4-7`,
+  `gpt-5-codex`) is a placeholder for the model you run; both CLI runtimes
+  require one.
 
 Every key it uses (`retry`, `diff_stats`, `not`, `fallback`):
 [`docs/pipelines.md`](../../docs/pipelines.md).

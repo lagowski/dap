@@ -20,7 +20,8 @@ from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
-from dap_runtimes import RuntimeRegistry
+from dap_engine.execution.backend_profiles import ResolvedBackendProfile, resolve_backend_profile
+from dap_runtimes import ClaudeCodeAdapter, CodexAdapter, RuntimeRegistry
 from dap_types import ERROR_CATEGORY_KEY, OutputCallback, RuntimeResult, RuntimeTask
 from fastapi.testclient import TestClient
 
@@ -174,6 +175,35 @@ def test_bundle_declares_the_retry_loop_and_the_fallback_chain() -> None:
     assert coder_agent["runtime_config"]["branch"]
     coder_assignment = bundle["backend_profiles"]["agent_assignments"]["overrides"]["coder"]
     assert coder_assignment == {"profile": "claude", "fallback": ["codex"]}
+
+
+def test_coder_config_passes_each_runtimes_own_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The scripted adapters below never validate runtime_config, so check the
+    # coder's resolved config, primary and every fallback, against the real
+    # adapter: a profile without model_id fails its first real run.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")  # codex also validates its key
+    bundle = json.loads(BUNDLE.read_text())
+    coder_node = next(n for n in bundle["pipeline"]["nodes"] if n["id"] == "coder")
+    coder_agent = bundle["bundled_agents"][coder_node["agent_id"]]
+    resolved = resolve_backend_profile(
+        backend_profiles=bundle["backend_profiles"],
+        node_id="coder",
+        agent_id=coder_node["agent_id"],
+        agent_name=coder_agent["name"],
+        agent_role=coder_agent["role"],
+        base_runtime_id=coder_agent["runtime_id"],
+        base_runtime_config=coder_agent["runtime_config"],
+    )
+    adapters = {a.id: a for a in (ClaudeCodeAdapter(), CodexAdapter())}
+    chain: list[ResolvedBackendProfile] = [resolved, *resolved.fallbacks]
+
+    assert [p.profile_id for p in chain] == ["claude", "codex"]
+    for profile in chain:
+        error = adapters[profile.runtime_id]._validate_config(profile.runtime_config)
+        assert error is None, f"profile {profile.profile_id}: {error}"
+        assert profile.runtime_config["branch"] == "dap/retry-example"
 
 
 def test_failed_tests_loop_back_with_feedback_then_pass(harness: Harness) -> None:

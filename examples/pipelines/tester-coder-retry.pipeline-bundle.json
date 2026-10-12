@@ -1,6 +1,6 @@
 {
   "schema_version": "pipeline-export/2",
-  "_comment": "Retry-driven tester -> coder loop (#811). The coder works on a git branch; the tester runs the test suite. The tester's retry block sends a failed attempt back to the coder with the failure reason in extensions.test_feedback, up to max_retries times, then goes to escalate, which fails the run. An attempt also counts as failed when the coder changed no files (not diff_stats.files > 0). The coder runs on Claude Code and falls back to Codex on a backend error (rate limit, out of credits, timeout, unavailable). Start a run with initial_state {\"repo\": \"owner/name\", \"branch\": \"develop\", \"description\": \"what to build\"}. Edit the tester's command, the coder's branch/base and the profiles before importing.",
+  "_comment": "Retry-driven tester -> coder loop (#811). The coder works on a git branch; the tester runs the test suite. The tester's retry block sends a failed attempt back to the coder with the failure reason in extensions.test_feedback, up to max_retries times, then goes to escalate, which fails the run. An attempt also counts as failed when the coder changed no files (not diff_stats.files > 0). The coder runs on Claude Code and falls back to Codex on a backend error (rate limit, out of credits, timeout, unavailable). Start a run with initial_state {\"repo\": \"owner/name\", \"branch\": \"develop\", \"description\": \"what to build\"}. Edit the tester's command, the coder's branch/base and the profiles before importing; each profile's model_id (claude-opus-4-7, gpt-5-codex) is a placeholder for the model you run.",
   "bundled_agents": {
     "tpl_retry_coder": {
       "name": "Retry loop: coder",
@@ -48,8 +48,16 @@
   },
   "backend_profiles": {
     "available": {
-      "claude": {"label": "Claude Code", "runtime_id": "claude-code"},
-      "codex": {"label": "Codex", "runtime_id": "codex"}
+      "claude": {
+        "label": "Claude Code",
+        "runtime_id": "claude-code",
+        "runtime_config": {"model_id": "claude-opus-4-7"}
+      },
+      "codex": {
+        "label": "Codex",
+        "runtime_id": "codex",
+        "runtime_config": {"model_id": "gpt-5-codex"}
+      }
     },
     "agent_assignments": {
       "overrides": {

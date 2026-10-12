@@ -169,8 +169,8 @@ the node.
 ```json
 "backend_profiles": {
   "available": {
-    "claude": {"runtime_id": "claude-code"},
-    "codex": {"runtime_id": "codex"}
+    "claude": {"runtime_id": "claude-code", "runtime_config": {"model_id": "claude-opus-4-7"}},
+    "codex": {"runtime_id": "codex", "runtime_config": {"model_id": "gpt-5-codex"}}
   },
   "agent_assignments": {
     "default_profile": "claude",
@@ -188,6 +188,10 @@ the node.
 - Each fallback is resolved like a primary profile, so the agent's own
   `runtime_config` (a coder's `branch`, for example) still applies under it.
   The chain is the one list on the assignment, tried in order.
+- A node's `runtime_overrides` apply on top of every profile in the chain,
+  fallbacks included. Put `model_id` on the profiles, not on the node: a
+  node-level `model_id` is sent to a fallback on another runtime too, so a
+  Claude model id would reach codex.
 - Every id in `fallback` must be in `available`. Saving, importing and
   triggering the pipeline reject an unknown id with a 422.
 
@@ -241,7 +245,9 @@ __start__ → coder → tester ─pass→ __end__
   Each test failure is in the tester's node logs.
 
 Before importing, edit the tester's `command`, the coder's `branch` and
-`base`, and the profiles. The `bash` nodes need an admin to trigger the run,
+`base`, and the profiles. Each profile's `model_id` (`claude-opus-4-7` on
+`claude`, `gpt-5-codex` on `codex`) is a placeholder: set the model you run.
+Both CLI runtimes reject a config without one. The `bash` nodes need an admin to trigger the run,
 or `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1` on the engine. Run it with:
 
 ```json
@@ -251,4 +257,6 @@ or `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1` on the engine. Run it with:
 `tests/smoke/test_example_retry_bundle.py` imports the bundle and runs it
 through the engine with scripted coder and tester adapters. It covers one
 retry then a pass, an empty diff, spent retries (both ways) and a
-rate-limit fallback.
+rate-limit fallback. It also checks the coder's resolved config, on the
+primary profile and on each fallback, against that runtime's real config
+validation.
