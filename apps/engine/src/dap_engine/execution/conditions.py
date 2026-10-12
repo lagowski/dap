@@ -29,6 +29,9 @@ def evaluate_condition(condition: EdgeCondition, state: PipelineState) -> bool:
             return all(evaluate_condition(c, state) for c in condition.children)
         if condition.type == "or":
             return any(evaluate_condition(c, state) for c in condition.children)
+        if condition.type == "not":
+            # A missing path compares False, so ``not`` of it is True.
+            return not evaluate_condition(condition.children[0], state)
         msg = f"Unknown logical operator: {condition.type}"
         raise ValueError(msg)
     msg = f"Unknown condition type: {type(condition).__name__}"

@@ -2658,7 +2658,10 @@ export interface components {
             /** User Id */
             user_id: string | null;
         };
-        /** LogicalCondition */
+        /**
+         * LogicalCondition
+         * @description ``and`` / ``or`` over any number of children; ``not`` over exactly one (#930).
+         */
         "LogicalCondition-Input": {
             /** Children */
             children: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Input"])[];
@@ -2666,9 +2669,12 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "and" | "or";
+            type: "and" | "not" | "or";
         };
-        /** LogicalCondition */
+        /**
+         * LogicalCondition
+         * @description ``and`` / ``or`` over any number of children; ``not`` over exactly one (#930).
+         */
         "LogicalCondition-Output": {
             /** Children */
             children: (components["schemas"]["ComparisonCondition"] | components["schemas"]["LogicalCondition-Output"])[];
@@ -2676,7 +2682,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "and" | "or";
+            type: "and" | "not" | "or";
         };
         /**
          * NodeExecutionLog

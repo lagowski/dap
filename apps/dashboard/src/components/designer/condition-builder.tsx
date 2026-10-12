@@ -6,6 +6,7 @@ import type {
   ComparisonOperator,
   EdgeCondition,
   LogicalCondition,
+  LogicalOperator,
 } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,26 @@ const STATE_FIELDS = [
   "selected_issue_ids",
   "modified_files",
 ] as const;
+
+const DEFAULT_COMPARISON: ComparisonCondition = {
+  type: "comparison",
+  field: "tests_passed",
+  operator: "==",
+  value: true,
+};
+
+/**
+ * Change a logical group's operator. ``not`` takes exactly one child (#930),
+ * so switching to it keeps the first child, or adds a default one.
+ */
+export function withLogicalType(
+  condition: LogicalCondition,
+  type: LogicalOperator,
+): LogicalCondition {
+  if (type !== "not") return { ...condition, type };
+  const [first] = condition.children;
+  return { type, children: [first ?? DEFAULT_COMPARISON] };
+}
 
 interface ConditionBuilderProps {
   condition: EdgeCondition | null;
@@ -45,14 +66,7 @@ export function ConditionBuilder({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() =>
-              onChange({
-                type: "comparison",
-                field: "tests_passed",
-                operator: "==",
-                value: true,
-              })
-            }
+            onClick={() => onChange(DEFAULT_COMPARISON)}
           >
             <Plus className="h-3 w-3 mr-1" />
             Comparison
@@ -73,6 +87,15 @@ export function ConditionBuilder({
           >
             <Plus className="h-3 w-3 mr-1" />
             AND/OR
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onChange({ type: "not", children: [DEFAULT_COMPARISON] })}
+          >
+            <Plus className="h-3 w-3 mr-1" />
+            NOT
           </Button>
         </div>
       </div>
@@ -227,6 +250,7 @@ interface LogicalGroupProps {
 }
 
 function LogicalGroup({ condition, onChange, depth }: LogicalGroupProps) {
+  const isNot = condition.type === "not";
   return (
     <div
       className="rounded-md border bg-muted/20 p-2 space-y-2"
@@ -237,12 +261,13 @@ function LogicalGroup({ condition, onChange, depth }: LogicalGroupProps) {
         <select
           value={condition.type}
           onChange={(e) =>
-            onChange({ ...condition, type: e.target.value as "and" | "or" })
+            onChange(withLogicalType(condition, e.target.value as LogicalOperator))
           }
           className="h-8 rounded border border-input bg-background px-2 text-xs uppercase font-bold"
         >
           <option value="and">AND</option>
           <option value="or">OR</option>
+          <option value="not">NOT</option>
         </select>
       </div>
       <div className="space-y-2">
@@ -257,43 +282,40 @@ function LogicalGroup({ condition, onChange, depth }: LogicalGroupProps) {
               }}
               depth={depth + 1}
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                const newChildren = condition.children.filter((_, i) => i !== idx);
-                onChange({ ...condition, children: newChildren });
-              }}
-              className="h-7 w-7 shrink-0"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
+            {!isNot && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Remove child"
+                onClick={() => {
+                  const newChildren = condition.children.filter((_, i) => i !== idx);
+                  onChange({ ...condition, children: newChildren });
+                }}
+                className="h-7 w-7 shrink-0"
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            )}
           </div>
         ))}
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() =>
-          onChange({
-            ...condition,
-            children: [
-              ...condition.children,
-              {
-                type: "comparison",
-                field: "tests_passed",
-                operator: "==",
-                value: true,
-              },
-            ],
-          })
-        }
-      >
-        <Plus className="h-3 w-3 mr-1" />
-        Add child
-      </Button>
+      {!isNot && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            onChange({
+              ...condition,
+              children: [...condition.children, DEFAULT_COMPARISON],
+            })
+          }
+        >
+          <Plus className="h-3 w-3 mr-1" />
+          Add child
+        </Button>
+      )}
     </div>
   );
 }

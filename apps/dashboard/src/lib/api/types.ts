@@ -365,8 +365,11 @@ export interface ComparisonCondition {
   value: string | number | boolean | null;
 }
 
+export type LogicalOperator = "and" | "or" | "not";
+
+/** ``and``/``or`` take any number of children; ``not`` takes exactly one (#930). */
 export interface LogicalCondition {
-  type: "and" | "or";
+  type: LogicalOperator;
   children: EdgeCondition[];
 }
 

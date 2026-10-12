@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ComparisonOperator = Literal["==", "!=", "<", "<=", ">", ">="]
 
@@ -31,7 +31,7 @@ def _normalize_legacy_condition(value: Any) -> Any:
 
     DAP's strict shape (the canonical one validators expect):
       Comparison: {"type": "comparison", "field": ..., "operator": ..., "value": ...}
-      Logical:    {"type": "and"|"or", "children": [<EdgeCondition>, ...]}
+      Logical:    {"type": "and"|"or"|"not", "children": [<EdgeCondition>, ...]}
 
     Cortex's legacy shape (shipped via cortex bundles pre-2026-06 schema migration):
       Comparison: {"field": ..., "op": ..., "value": ...}
@@ -100,10 +100,19 @@ class ComparisonCondition(BaseModel):
 
 
 class LogicalCondition(BaseModel):
+    """``and`` / ``or`` over any number of children; ``not`` over exactly one (#930)."""
+
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["and", "or"]
+    type: Literal["and", "or", "not"]
     children: list[EdgeCondition]
+
+    @model_validator(mode="after")
+    def _not_has_one_child(self) -> LogicalCondition:
+        if self.type == "not" and len(self.children) != 1:
+            msg = f"'not' takes exactly one child, got {len(self.children)}"
+            raise ValueError(msg)
+        return self
 
 
 EdgeCondition = Annotated[
