@@ -1,6 +1,6 @@
 {
   "schema_version": "pipeline-export/2",
-  "_comment": "Retry-driven tester -> coder loop (#811). The coder works on a git branch; the tester runs the test suite. The tester's retry block sends a failed attempt back to the coder with the failure reason in extensions.test_feedback, up to max_retries times, then goes to escalate. An attempt also counts as failed when the coder changed no files (not diff_stats.files > 0). The coder runs on Claude Code and falls back to Codex on a backend error (rate limit, out of credits, timeout, unavailable). Start a run with initial_state {\"repo\": \"owner/name\", \"branch\": \"develop\", \"description\": \"what to build\"}. Edit the tester's command, the coder's branch/base and the profiles before importing.",
+  "_comment": "Retry-driven tester -> coder loop (#811). The coder works on a git branch; the tester runs the test suite. The tester's retry block sends a failed attempt back to the coder with the failure reason in extensions.test_feedback, up to max_retries times, then goes to escalate, which fails the run. An attempt also counts as failed when the coder changed no files (not diff_stats.files > 0). The coder runs on Claude Code and falls back to Codex on a backend error (rate limit, out of credits, timeout, unavailable). Start a run with initial_state {\"repo\": \"owner/name\", \"branch\": \"develop\", \"description\": \"what to build\"}. Edit the tester's command, the coder's branch/base and the profiles before importing.",
   "bundled_agents": {
     "tpl_retry_coder": {
       "name": "Retry loop: coder",
@@ -36,7 +36,7 @@
       "role": "post_check",
       "runtime_id": "bash",
       "runtime_config": {
-        "command": "echo 'Tests still failing after every retry; see the run state verification_reason.' >&2"
+        "command": "echo 'Tests still failing after every retry; see the tester logs.' >&2; exit 1"
       },
       "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n</agent_prompt>",
       "input_schema": [],

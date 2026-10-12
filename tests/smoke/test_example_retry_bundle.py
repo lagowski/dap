@@ -97,20 +97,23 @@ class Harness:
         self.monkeypatch.setattr(self.registry.get(runtime_id), "execute", script)
         return script
 
-    def bash(self, tester: list[RuntimeResult]) -> tuple[Script, Script]:
-        """The tester and escalate nodes both run on ``bash``; split by command."""
+    def bash(self, tester: list[RuntimeResult]) -> tuple[Script, list[RuntimeTask]]:
+        """Script the tester's ``pytest -q``; run the shipped escalate command for real."""
         tester_script = Script(tester)
-        escalate_script = Script([RuntimeResult(success=True, output="", duration_ms=1)])
+        escalated: list[RuntimeTask] = []
+        adapter = self.registry.get("bash")
+        real_execute = adapter.execute
 
         async def execute(
             task: RuntimeTask, on_output: OutputCallback | None = None
         ) -> RuntimeResult:
             if task.runtime_config.get("command") == "pytest -q":
                 return await tester_script(task)
-            return await escalate_script(task)
+            escalated.append(task)
+            return await real_execute(task, on_output)
 
-        self.monkeypatch.setattr(self.registry.get("bash"), "execute", execute)
-        return tester_script, escalate_script
+        self.monkeypatch.setattr(adapter, "execute", execute)
+        return tester_script, escalated
 
 
 @pytest.fixture
@@ -181,7 +184,7 @@ def test_failed_tests_loop_back_with_feedback_then_pass(harness: Harness) -> Non
     assert run["final_status"] == "success", run
     assert len(coder.tasks) == 2
     assert len(tester.tasks) == 2
-    assert escalate.tasks == []
+    assert escalate == []
     # The first attempt had no feedback; the retry carries the tester's
     # failure, escaped so the prompt stays valid XML.
     assert _feedback(coder.tasks[0]) == ""
@@ -204,7 +207,7 @@ def test_an_empty_diff_counts_as_a_failed_attempt(harness: Harness) -> None:
     assert run["final_status"] == "success", run
     assert len(coder.tasks) == 2
     assert len(tester.tasks) == 2
-    assert escalate.tasks == []
+    assert escalate == []
     assert "short_circuit_on" in _feedback(coder.tasks[1])
     assert state["diff_stats"]["files"] == 2
 
@@ -218,9 +221,26 @@ def test_spent_retries_go_to_escalate(harness: Harness) -> None:
     # First attempt + max_retries (3), then on_failure.
     assert len(tester.tasks) == 4
     assert len(coder.tasks) == 4
-    assert len(escalate.tasks) == 1
+    assert len(escalate) == 1
     assert run["final_status"] == "failed", run
-    assert "still red" in (state["verification_reason"] or "")
+    logs = harness.client.get(f"/runs/{run['id']}/nodes").json()
+    tester_errors = [log["error_message"] for log in logs if log["node_id"] == "tester"]
+    assert len(tester_errors) == 4
+    assert "still red" in (tester_errors[-1] or "")
+    assert "after every retry" in (state["verification_reason"] or "")
+
+
+def test_a_coder_that_never_changes_anything_fails_the_run(harness: Harness) -> None:
+    # Short-circuited attempts never set final_status; escalate must fail the
+    # run itself, or it would end "success" with nothing done.
+    coder = harness.script("claude-code", [_committed(files=0)])
+    _, escalate = harness.bash([_tests(True)])
+
+    run, _ = _import_and_run(harness.client)
+
+    assert len(coder.tasks) == 4
+    assert len(escalate) == 1
+    assert run["final_status"] == "failed", run
 
 
 def test_rate_limited_coder_falls_back_to_codex(harness: Harness) -> None:
@@ -242,4 +262,4 @@ def test_rate_limited_coder_falls_back_to_codex(harness: Harness) -> None:
         {"attempt": 2, "profile_id": "codex", "error_category": None},
     ]
     assert len(tester.tasks) == 1
-    assert escalate.tasks == []
+    assert escalate == []
