@@ -5,6 +5,7 @@ import { LoadingState } from "@/components/ui/spinner";
 import { Play } from "lucide-react";
 import { useApproveGate, usePipelinesList, useProject, useProjectsList, useRunsList } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
+import { useHasMounted } from "@/lib/use-has-mounted";
 import {
   TriggerRunPageDialog,
   useHasPipelines,
@@ -48,6 +49,9 @@ function RunsPageContent() {
     filters.runFilters,
     { enabled: isHydrated },
   );
+  // Client-only state (the active project from localStorage, react-query's
+  // fetch status) stays out of the hydration render (#917).
+  const hasMounted = useHasMounted();
   const { hasPipelines } = useHasPipelines();
   const approveGate = useApproveGate();
   usePausedRunToasts(data?.items);
@@ -57,7 +61,7 @@ function RunsPageContent() {
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h1 className="text-2xl font-semibold">Runs</h1>
-          {activeProjectId !== null ? (
+          {hasMounted && activeProjectId !== null ? (
             <Badge variant="secondary" className="font-normal">
               {activeProject?.name ?? "scoped"}
             </Badge>
@@ -65,7 +69,7 @@ function RunsPageContent() {
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm text-muted-foreground">
-            {isFetching ? "Refreshing…" : data ? `${data.total} total` : null}
+            {!hasMounted ? null : isFetching ? "Refreshing…" : data ? `${data.total} total` : null}
           </p>
           {hasPipelines && (
             <TriggerRunPageDialog>
