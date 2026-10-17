@@ -20,7 +20,7 @@ const GIT_KEYS = [
   "append_only",
   "ancestry_guard",
 ];
-const CLI_RUNTIMES = ["claude-code", "codex", "gemini-cli"];
+const CLI_RUNTIMES = ["claude-code", "codex", "gemini-cli", "aider"];
 
 const field = (runtime: string, key: string) =>
   RUNTIME_SCHEMAS[runtime].fields.find((f) => f.key === key);
@@ -78,6 +78,22 @@ describe("git workspace fields on CLI runtimes (#922)", () => {
     const f = field("codex", "token_env");
     expect(f?.kind).toBe("text");
     expect(f?.label.toLowerCase()).toContain("env var");
+  });
+});
+
+describe("aider runtime (#929)", () => {
+  const aider = (key: string) => field("aider", key);
+
+  it("requires a model and offers the binary and extra args", () => {
+    expect(aider("model_id")?.required).toBe(true);
+    expect(aider("binary_path")?.kind).toBe("text");
+    expect(aider("extra_args")?.kind).toBe("json");
+  });
+
+  it("keeps aider's auto-commits on by default", () => {
+    expect(aider("auto_commits")?.kind).toBe("boolean");
+    expect(defaultRuntimeConfig("aider")).toEqual({ auto_commits: true });
+    expect(aider("auto_commits")?.description).toContain("push");
   });
 });
 
