@@ -170,6 +170,16 @@ async def test_provider_key_in_runtime_config_env_satisfies_validation() -> None
     assert result.success is True, result.errors
 
 
+@pytest.mark.parametrize("layer", ["project_env_vars", "instance_env_vars"])
+async def test_provider_key_from_project_or_instance_env_satisfies_validation(
+    layer: str,
+) -> None:
+    """The key reaches aider through any env layer, so the check reads the merged env."""
+    task = _task(model_id="gpt-5").model_copy(update={layer: {"OPENAI_API_KEY": "sk-x"}})
+    result, _, _ = await _execute(task)
+    assert result.success is True, result.errors
+
+
 async def test_model_without_a_known_provider_key_is_not_rejected() -> None:
     """Local / unknown providers (ollama, custom litellm routes) carry no key to check."""
     result, _, _ = await _execute(_task(model_id="ollama_chat/llama3"))
@@ -235,8 +245,16 @@ async def test_argv_is_non_interactive_and_reads_the_prompt_from_stdin(
         "--no-show-model-warnings",
         "--no-gitignore",
         "--no-dirty-commits",
+        # Nothing aider or the repo's config suggests runs as a command (#929 review).
+        "--no-suggest-shell-commands",
+        "--no-auto-test",
+        "--no-auto-lint",
+        "--no-analytics",
     ):
         assert flag in argv, flag
+    # History files stay out of the workspace: they hold the whole prompt and reply.
+    assert argv[argv.index("--chat-history-file") + 1] == "/dev/null"
+    assert argv[argv.index("--input-history-file") + 1] == "/dev/null"
     # Auto-commits are kept by default (the git guards and push rely on commits).
     assert "--no-auto-commits" not in argv
     sent = process.stdin.write.call_args.args[0].decode("utf-8")

@@ -86,3 +86,38 @@ async def test_nonempty_diff_fails_an_aider_run_that_committed_nothing(
     assert any("require_nonempty_diff" in e for e in result.errors)
     assert result.structured["git"]["pushed"] is False
     assert _remote_sha(remote, "feat/empty") is None
+
+
+_ARTIFACTS = (
+    "mkdir -p .aider.tags.cache.v4 && echo x > .aider.tags.cache.v4/cache.db\n"
+    "echo history > .aider.chat.history.md\n"
+)
+
+
+async def test_aider_files_do_not_dirty_the_workspace_for_the_next_run(
+    git_repo: dict[str, Path],
+) -> None:
+    """aider's cache is ignored locally, so the next branch checkout isn't refused."""
+    work = git_repo["work"]
+    binary = _aider(git_repo["tmp"], _ARTIFACTS + _commit_body())
+
+    first = await _run(git_repo, binary, branch="feat/one")
+    second = await _run(git_repo, binary, branch="feat/two")
+
+    assert first.success, first.errors
+    assert second.success, second.errors
+    assert (work / ".aider.tags.cache.v4" / "cache.db").exists()
+    assert _git(work, "status", "--porcelain") == ""
+    assert ".gitignore" not in _git(work, "ls-files")
+
+
+async def test_aider_files_alone_do_not_satisfy_nonempty_diff(
+    git_repo: dict[str, Path],
+) -> None:
+    """Without push, uncommitted changes count; aider's own cache must not be one."""
+    binary = _aider(git_repo["tmp"], _ARTIFACTS)
+
+    result = await _run(git_repo, binary, branch="feat/cache", require_nonempty_diff=True)
+
+    assert result.success is False
+    assert any("require_nonempty_diff" in e for e in result.errors)
