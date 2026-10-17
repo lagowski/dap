@@ -33,6 +33,7 @@ passed through and fail in aider if misconfigured.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from typing import Any, Final
@@ -126,10 +127,9 @@ def parse_aider_usage(text: str) -> dict[str, Any]:
         output_tokens += _count(tokens["received"])
         session = _SESSION_COST_RE.search(line)
         if session is not None:
-            try:
+            # ``[\d.]+`` also matches a malformed "1.2.3"; keep the last good figure.
+            with contextlib.suppress(ValueError):
                 cost = float(session["cost"])
-            except ValueError:
-                pass
     return {"input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost}
 
 

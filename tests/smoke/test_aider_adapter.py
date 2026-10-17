@@ -205,9 +205,7 @@ async def test_auto_commits_must_be_boolean(with_api_key: None) -> None:
 
 async def test_auto_commits_off_with_push_is_rejected(with_api_key: None) -> None:
     """With auto-commits off the edits stay uncommitted, so a push would send nothing."""
-    result, create_mock, _ = await _execute(
-        _task(auto_commits=False, branch="feat/x", push=True)
-    )
+    result, create_mock, _ = await _execute(_task(auto_commits=False, branch="feat/x", push=True))
     assert result.success is False
     assert any("auto_commits" in e and "push" in e for e in result.errors)
     create_mock.assert_not_called()
