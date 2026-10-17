@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`aider` runtime (#929, follow-up to #810)** — `aider` is no longer a
+  stub. It runs on the shared CLI base like `codex` and `gemini-cli`, so the
+  git workspace keys and guards (#922, #923) apply to it. The prompt reaches
+  aider through `--message-file /dev/stdin`; output is aider's text, with
+  tokens and session cost read from its `Tokens:` lines. Auto-commits stay
+  on by default; `auto_commits: false` adds `--no-auto-commits` and is
+  refused together with `push`. The model's provider key is checked before
+  the run. The dashboard shows the aider fields with the git workspace
+  fields.
 - **`github` runtime and git workspace docs, plus an example pipeline (#919,
   completes #810)** — `docs/runtimes.md` gains a built-in runtime
   reference: every `github` op with its params and outputs, and the git

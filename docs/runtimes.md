@@ -362,7 +362,7 @@ which reads an issue and comments on it.
 
 ### Git workspace on the CLI code runtimes (#922, #923)
 
-`claude-code`, `codex` and `gemini-cli` accept these optional keys. With
+`claude-code`, `codex`, `gemini-cli` and `aider` accept these optional keys. With
 none set (or only `false` / empty values), nothing changes.
 
 | Key | Effect |
@@ -404,4 +404,42 @@ A run that changes nothing reports empty lists and zero counts. An agent
 without `branch`, a failed run, and non-git runtimes leave the fields as they were.
 Looping on these fields with a node `retry` block, and falling back to another
 backend: [`pipelines.md`](pipelines.md).
+
+### `aider`: the aider coding CLI (#929)
+
+Runs `aider` for one non-interactive message. The rendered prompt goes
+through stdin and aider reads it with `--message-file /dev/stdin` (a
+`--message` argument would hit Linux's 128 KiB per-argument limit), so the
+runtime is POSIX-only. The adapter always passes `--yes-always --no-pretty
+--no-stream --no-fancy-input --no-check-update --no-show-model-warnings
+--no-gitignore --no-dirty-commits`.
+
+| Key | Effect |
+|---|---|
+| `model_id` | Required. Any model aider accepts: `claude-sonnet-4-5`, `gpt-5`, `gemini/gemini-2.5-pro`, `openrouter/…`, aliases such as `sonnet`. |
+| `auto_commits` | Default `true`: aider commits each edit it applies. `false` passes `--no-auto-commits`. |
+| `binary_path` | Defaults to `aider` on `PATH`. |
+| `extra_args` | List of strings appended last, e.g. `["--edit-format", "whole"]`. |
+| git workspace keys | As above: `workspace`, `branch`, `base`, `push`, `force_with_lease`, `token_env` and the guards. |
+
+**Auto-commits stay on** because the git config depends on commits:
+`require_nonempty_diff` counts the commits the run added, `push` sends
+them, and `append_only` holds because aider only appends. With
+`auto_commits: false` the edits stay uncommitted, so that combined with
+`push: true` is refused before aider starts. Use it only when a later
+node commits. `--no-dirty-commits` keeps aider from committing changes
+that were already in the workspace under its name, and `--no-gitignore`
+keeps it from committing a `.gitignore` edit that would make an empty
+run look like it changed something.
+
+The provider key is checked before the run for models whose provider
+can be told from the name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`), from the
+engine env or `runtime_config.env`. Other models (`ollama_chat/…`) are
+passed through. The healthcheck needs the binary on `PATH` and at least
+one of those keys.
+
+aider prints text, not JSON: the result's `output` is its stdout. Tokens
+are summed from its `Tokens: … sent, … received.` lines, and `cost_usd`
+is the last `$… session` figure, or empty when aider printed none.
 

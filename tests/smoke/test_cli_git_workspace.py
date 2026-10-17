@@ -3,7 +3,7 @@
 ``workspace`` / ``branch`` / ``base`` / ``push`` / ``force_with_lease`` / ``token_env``
 on ``runtime_config`` let a pipeline say "run the coder on branch X off develop, then
 push" without a python-func node. They live in the shared ``_BaseCliAdapter``, so every
-CLI runtime built on it (claude-code, codex, gemini-cli) gets them.
+CLI runtime built on it (claude-code, codex, gemini-cli, aider) gets them.
 
 Everything here runs against a REAL git setup — a bare "remote" and a clone of it — and
 a real executable standing in for the CLI: a shell script that reads the prompt, does
