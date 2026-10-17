@@ -1,18 +1,9 @@
 /**
  * Per-runtime config field schemas for the AgentForm UI.
  *
- * Two truth sources today:
- *
- * - **api-call**, **bash**, **claude-code**, **codex**, **gemini-cli**,
- *   **http** are fully implemented in the engine. Their schemas mirror
- *   the adapters' real `validate_config`. Required fields here match
- *   what the adapter rejects.
- * - **aider** is an F0 stub whose `execute()` raises
- *   `NotImplementedError`. Its schema below is *aspirational* —
- *   it documents the shape a future PR will implement. To avoid
- *   blocking agent creation in the UI before the engine accepts those
- *   configs, stub-runtime fields are NOT marked `required`. Tighten
- *   them once the corresponding adapter lands.
+ * Every runtime below is implemented in the engine. The schemas mirror
+ * the adapters' real `validate_config`: required fields here match what
+ * the adapter rejects.
  *
  * Adding a runtime: drop a new entry below. The form picks it up
  * automatically and renders the right inputs.
@@ -504,8 +495,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
-  // STUB — aider adapter is F0-stub. No issue tracked yet — fields are
-  // a placeholder so users can still pick the runtime in the form.
   aider: {
     runtime_id: "aider",
     fields: [
@@ -513,14 +502,35 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
+        required: true,
+        placeholder: "claude-sonnet-4-5",
         description:
-          "Aspirational schema — adapter is a stub. Fields not enforced yet.",
+          "Required. Any model aider accepts (e.g. claude-sonnet-4-5, gpt-5, gemini/gemini-2.5-pro, openrouter/…). Aider reads the provider's key (ANTHROPIC_API_KEY, OPENAI_API_KEY, …) from the environment.",
       },
       {
         key: "binary_path",
         label: "Binary path",
         kind: "text",
+        placeholder: "/home/me/.local/bin/aider",
+        description: "Defaults to `aider` on PATH.",
       },
+      {
+        key: "auto_commits",
+        label: "Auto-commit edits",
+        kind: "boolean",
+        default: true,
+        description:
+          "Aider commits each edit it applies. Keep on with push or require_nonempty_diff: with it off the edits stay uncommitted, so push is refused.",
+      },
+      {
+        key: "extra_args",
+        label: "Extra CLI args",
+        kind: "json",
+        description:
+          'JSON array of strings appended to the aider invocation. Example: ["--edit-format", "whole"]',
+        placeholder: '["--edit-format", "whole"]',
+      },
+      ...GIT_WORKSPACE_FIELDS,
     ],
   },
 

@@ -29,7 +29,7 @@ the engine.
                 ┌──────────────────────┐
                 │  Runtime adapters    │   api-call (6 providers), bash,
                 │  (RuntimeAdapter     │   claude-code, gemini-cli, codex,
-                │   Protocol)          │   python-func, http (aider: stub)
+                │   Protocol)          │   aider, python-func, http
                 └──────────────────────┘
 ```
 

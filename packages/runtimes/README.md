@@ -19,7 +19,7 @@ on.
 | `gemini-cli` | ✅ Implemented |
 | `http` | ✅ Implemented |
 | `python-func` | ✅ Implemented |
-| `aider` | 🚧 Stub (lands later) |
+| `aider` | ✅ Implemented |
 
 ## Installation
 
