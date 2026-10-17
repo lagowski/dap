@@ -344,10 +344,11 @@ async def test_token_never_appears_in_the_result_or_logs(
 
 
 def test_every_cli_runtime_on_the_shared_base_inherits_the_git_config() -> None:
+    from dap_runtimes.adapters.aider import AiderAdapter
     from dap_runtimes.adapters.claude_code import ClaudeCodeAdapter
     from dap_runtimes.adapters.gemini_cli import GeminiCliAdapter
 
-    for adapter in (ClaudeCodeAdapter, CodexAdapter, GeminiCliAdapter):
+    for adapter in (AiderAdapter, ClaudeCodeAdapter, CodexAdapter, GeminiCliAdapter):
         assert issubclass(adapter, _BaseCliAdapter)
         assert "execute" not in adapter.__dict__, adapter.__name__
 
