@@ -43,6 +43,7 @@ POLL_TIMEOUT_S = 10.0
 UNIT_FILES = frozenset(
     {
         "test_agent_schema_validation.py",
+        "test_aider_adapter.py",
         "test_api_call_adapter.py",
         "test_api_validation_helpers.py",
         "test_backend_error_category.py",
