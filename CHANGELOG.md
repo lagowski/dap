@@ -14,8 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aider through `--message-file /dev/stdin`; output is aider's text, with
   tokens and session cost read from its `Tokens:` lines. Auto-commits stay
   on by default; `auto_commits: false` adds `--no-auto-commits` and is
-  refused together with `push`. The model's provider key is checked before
-  the run. The dashboard shows the aider fields with the git workspace
+  refused together with `push`. aider never runs suggested shell commands,
+  tests or lint commands, keeps its history out of the workspace, and its
+  cache is excluded locally so it can't dirty the tree for the guards. The
+  model's provider key is checked against the merged env before the run. The dashboard shows the aider fields with the git workspace
   fields.
 - **`github` runtime and git workspace docs, plus an example pipeline (#919,
   completes #810)** — `docs/runtimes.md` gains a built-in runtime

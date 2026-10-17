@@ -412,7 +412,13 @@ through stdin and aider reads it with `--message-file /dev/stdin` (a
 `--message` argument would hit Linux's 128 KiB per-argument limit), so the
 runtime is POSIX-only. The adapter always passes `--yes-always --no-pretty
 --no-stream --no-fancy-input --no-check-update --no-show-model-warnings
---no-gitignore --no-dirty-commits`.
+--no-gitignore --no-dirty-commits --no-suggest-shell-commands --no-auto-test
+--no-auto-lint --no-analytics`, and sends the chat and input history to
+`/dev/null`. `--yes-always` would otherwise approve any shell command the
+model suggests, run with the run's env and able to push past the guards.
+Flags on the command line win over a repo's `.aider.conf.yml`, but aider
+still reads that file and the repo's `.env`, so run it only on
+repositories you trust, as with the other CLI runtimes.
 
 | Key | Effect |
 |---|---|
@@ -430,14 +436,17 @@ them, and `append_only` holds because aider only appends. With
 node commits. `--no-dirty-commits` keeps aider from committing changes
 that were already in the workspace under its name, and `--no-gitignore`
 keeps it from committing a `.gitignore` edit that would make an empty
-run look like it changed something.
+run look like it changed something. Instead, `.aider*` goes into the
+repo's local `.git/info/exclude`, so aider's repo-map cache neither blocks
+the next run's branch checkout nor counts as a change for
+`require_nonempty_diff`.
 
 The provider key is checked before the run for models whose provider
 can be told from the name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`), from the
-engine env or `runtime_config.env`. Other models (`ollama_chat/…`) are
+merged env (engine, instance, project and `runtime_config.env`). Other models (`ollama_chat/…`) are
 passed through. The healthcheck needs the binary on `PATH` and at least
-one of those keys.
+one of those keys in the engine env.
 
 aider prints text, not JSON: the result's `output` is its stdout. Tokens
 are summed from its `Tokens: … sent, … received.` lines, and `cost_usd`

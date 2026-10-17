@@ -256,6 +256,22 @@ class _BaseCliAdapter(BaseAdapter):
         """Assemble the CLI argv (``[binary, *flags, *extra_args]``)."""
         raise NotImplementedError
 
+    def _validate_env(self, config: dict[str, Any], env: dict[str, str]) -> str | None:
+        """Check the merged subprocess env before anything runs. Return error or None.
+
+        Runs after the env layers are merged, so a key from instance or project env
+        counts. Default no-op.
+        """
+        del config, env
+        return None
+
+    async def _before_run(self, cwd: str, env: dict[str, str]) -> None:
+        """Last step before the CLI is spawned in ``cwd`` (after any git checkout).
+
+        Default no-op.
+        """
+        del cwd, env
+
     def _decode_stdout(self, stdout: str) -> dict[str, Any]:
         """Parse subprocess stdout into a payload dict.
 
@@ -348,6 +364,9 @@ class _BaseCliAdapter(BaseAdapter):
                 duration_ms=0,
                 model_id=config.get("model_id"),
             )
+        env_error = self._validate_env(config, env)
+        if env_error is not None:
+            return self._failed(env_error, duration_ms=0, model_id=config.get("model_id"))
 
         # Resolve effective timeout once and reuse in both the wait_for budget
         # and any "timed out after Xms" message — RuntimeTask.timeout_ms is
@@ -369,6 +388,7 @@ class _BaseCliAdapter(BaseAdapter):
                 )
             cwd = git_workspace.path
 
+        await self._before_run(cwd, env)
         outcome = await self._run_subprocess(
             argv=argv,
             stdin=task.prompt_xml.encode("utf-8"),

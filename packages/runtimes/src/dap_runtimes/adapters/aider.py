@@ -33,9 +33,13 @@ passed through and fail in aider if misconfigured.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import logging
 import os
 import re
+import subprocess
+from pathlib import Path
 from typing import Any, Final
 
 from dap_types import HealthStatus, RuntimeResult
@@ -87,6 +91,9 @@ _TOKENS_RE: Final = re.compile(
 )
 _SESSION_COST_RE: Final = re.compile(r"\$(?P<cost>[\d.]+) session")
 _SUFFIX: Final = {"k": 1_000, "m": 1_000_000}
+_EXCLUDE_PATTERN: Final = ".aider*"
+
+logger = logging.getLogger("dap.runtimes.aider")
 
 
 def provider_key_for(model_id: str) -> str | None:
@@ -107,6 +114,41 @@ def _count(text: str) -> int:
         return round(float(number) * multiplier)
     except ValueError:
         return 0
+
+
+def _exclude_aider_files(cwd: str, env: dict[str, str]) -> None:
+    """Add ``.aider*`` to the repo's local ``info/exclude``, never to ``.gitignore``.
+
+    aider leaves its repo-map cache (``.aider.tags.cache.v4/``) in the workspace.
+    Untracked, it would make the next run's branch checkout refuse a dirty tree and
+    count as a change for ``require_nonempty_diff``. Best effort: outside a git repo,
+    or if the file can't be written, the run goes ahead unchanged.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--git-path", "info/exclude"],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    if out.returncode != 0 or not out.stdout.strip():
+        return
+    exclude = Path(cwd, out.stdout.strip())
+    try:
+        current = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+        if _EXCLUDE_PATTERN in current.splitlines():
+            return
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        separator = "" if not current or current.endswith("\n") else "\n"
+        with exclude.open("a", encoding="utf-8") as handle:
+            handle.write(f"{separator}{_EXCLUDE_PATTERN}\n")
+    except OSError:
+        logger.warning("could not add %s to %s", _EXCLUDE_PATTERN, exclude, exc_info=True)
 
 
 def parse_aider_usage(text: str) -> dict[str, Any]:
@@ -175,17 +217,18 @@ class AiderAdapter(_BaseCliAdapter):
                 "aider's edits would stay uncommitted and nothing would be pushed"
             )
 
+        return None
+
+    def _validate_env(self, config: dict[str, Any], env: dict[str, str]) -> str | None:
+        # The merged env, so a key from instance or project env vars counts too.
+        model_id = config["model_id"]
         key = provider_key_for(model_id)
-        if key is not None and not self._key_is_set(key, config):
+        if key is not None and not env.get(key):
             return f"{key} env var not set (aider needs it for model '{model_id}')"
         return None
 
-    @staticmethod
-    def _key_is_set(key: str, config: dict[str, Any]) -> bool:
-        if os.environ.get(key):
-            return True
-        env = config.get("env")
-        return isinstance(env, dict) and bool(env.get(key))
+    async def _before_run(self, cwd: str, env: dict[str, str]) -> None:
+        await asyncio.to_thread(_exclude_aider_files, cwd, env)
 
     def _build_argv(
         self,
@@ -207,6 +250,17 @@ class AiderAdapter(_BaseCliAdapter):
             "--no-show-model-warnings",
             "--no-gitignore",
             "--no-dirty-commits",
+            # Nothing the model or a repo's .aider.conf.yml suggests runs as a command:
+            # it would run with the run's env and could push past the git guards.
+            "--no-suggest-shell-commands",
+            "--no-auto-test",
+            "--no-auto-lint",
+            "--no-analytics",
+            # The history holds the whole prompt and reply; keep it out of the workspace.
+            "--chat-history-file",
+            "/dev/null",
+            "--input-history-file",
+            "/dev/null",
         ]
         if config.get("auto_commits", True) is False:
             argv.append("--no-auto-commits")
