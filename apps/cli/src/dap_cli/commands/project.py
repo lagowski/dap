@@ -148,7 +148,6 @@ def cmd_state(
         typer.Option(
             "--format",
             help="Output format: table (default) or json",
-            click_type=__import__("click").Choice(["table", "json"], case_sensitive=False),
         ),
     ] = "table",
     token: _TokenOption = None,
@@ -163,4 +162,9 @@ def cmd_state(
     if pipeline != "cortex":
         typer.echo(f"Unknown pipeline type: {pipeline!r}. Supported: cortex", err=True)
         raise typer.Exit(1)
+    # Validated here, not via click_type: typer >= 0.29 no longer builds on click.
+    fmt = fmt.lower()
+    if fmt not in ("table", "json"):
+        typer.echo(f"Invalid --format {fmt!r}. Choose: table, json", err=True)
+        raise typer.Exit(2)
     _cortex.cortex_state(run_id=run_id, engine_url=engine, fmt=fmt, token=token)
