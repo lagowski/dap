@@ -155,4 +155,4 @@ Routes visited: X / 22.  Elements exercised: N.  Not exercised (destructive): M.
 Work through the routes **in order**, top to bottom. Don't stop at the first bug —
 complete the full sweep, then deliver one consolidated report. If the tunnel
 drops (connection refused) at any point, stop and tell the operator how to restore
-it (`ssh -N -L 3000:localhost:3000 -p 2222 dixter@192.168.1.100`).
+it (`ssh -N -L 3000:localhost:3000 -p <ssh-port> <user>@<execution-host>`).
