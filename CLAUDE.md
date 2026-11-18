@@ -56,7 +56,10 @@ Branch from `develop` (`issue/<n>-<slug>`, `fix/…`, `chore/…`, `docs/…`), 
 - **AI review gate:** `.github/workflows/gemini-review.yml` (the public-repo variant rendered by
   lagowski/pr-review-gate, owner 2026-11-04; "do not hand-edit", refreshed by the `chore: sync AI review gate`
   PRs) reviews PRs into `develop`/`main` and posts the `gemini-review` check. It is not one of the required
-  status checks above. A fork PR is reviewed only after a maintainer adds the `safe-to-review` label.
+  status checks above, and it posts a check without the verdict markers the auto-merge approver reads: so the
+  approver keeps dap in `no_gate` and approves on the required checks alone (decided by the auto-merge tab for the
+  owner 2026-11-18; making it gate = make the check required or teach the approver to read it, open for the owner).
+  A fork PR is reviewed only after a maintainer adds the `safe-to-review` label.
 - Also running: three `Python smoke integration` shards (not required, but a red shard blocks a merge all the
   same), CodeQL, `build` / `bundle-wheel` packaging, a daily CVE scan, Dependabot auto-merge (patch/minor are
   approved by `github-actions[bot]` and squash-merged; majors wait for a human).
