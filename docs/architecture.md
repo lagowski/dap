@@ -67,7 +67,7 @@ The engine should not depend on dashboard code. It may depend on
 `packages/types`, `packages/runtimes`, `packages/prompt-dsl`, and
 `packages/database`.
 
-### `apps/dashboard` — Next.js 15
+### `apps/dashboard` — Next.js 16
 
 App-router single-page app. Generated OpenAPI types mirror the engine's
 FastAPI contracts; a small handwritten typed fetch client wraps those
@@ -142,10 +142,12 @@ models, query shapes, and migrations stay in `apps/engine`.
 
 ### `packages/code-review-council` — automated review helper
 
-Small package used by CI review workflows to coordinate model-backed review
-output. It is not part of the engine runtime path and should not import
-engine internals. Changes here should be validated through package tests and
-the GitHub Actions workflow that invokes it.
+Multi-agent PR reviewer (specialists plus an arbiter). It is not part of the
+engine runtime path and should not import engine internals. No workflow in
+this repository runs it at present: the `gemini-review` check comes from the
+review engine of `lagowski/pr-review-gate`
+(`.github/workflows/gemini-review.yml`). Validate changes here through the
+package tests.
 
 ## Ownership Boundaries
 
@@ -378,4 +380,7 @@ CI check names that matter for normal PRs:
   lint, tests, and Next.js build.
 - `Playwright smoke` — browser-level smoke coverage.
 - `build` / `bundle-wheel` — packaging sanity.
-- `review` / `gemini-review` — automated review council output.
+- `Playwright full` — the whole browser suite, on PRs that touch the
+  dashboard, the engine or the specs, and nightly.
+- `review` / `gemini-review` — the AI review gate
+  (`.github/workflows/gemini-review.yml`).

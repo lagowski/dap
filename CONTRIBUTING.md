@@ -13,7 +13,7 @@ main     ←── PR ──   develop   ←── PR ──   issue/<number>-<s
 
 1. **Nigdy nie commituj bezpośrednio do `main` ani `develop`.**
 2. **Każda zmiana zaczyna się od Issue.** Branch tworzysz z `develop`, nazywasz od numeru issue.
-3. **Merge do `develop` tylko przez Pull Request** z feature/issue branch. Minimum 1 review (w single-user projekcie: self-review + CI green).
+3. **Merge do `develop` tylko przez Pull Request** z feature/issue branch. Wymagany 1 approve od innego konta niż autor PR-a i autor ostatniego pusha oraz zielone wymagane checki (patrz „Remote branch protection”).
 4. **Merge do `main` tylko przez Pull Request z `develop`.** Reprezentuje to release.
 5. **Force push do `main` / `develop` — zabronione.**
 6. **Squash merge lub rebase merge** preferowane (zachowaj liniową historię); merge commits tylko dla release'ów `develop → main`.
@@ -75,7 +75,7 @@ PR template wypełni się automatycznie (patrz `.github/PULL_REQUEST_TEMPLATE.md
 
 **Definition of Done** dla PR do `develop`:
 - ✅ Wszystkie commity Conventional Commits
-- ✅ **CI green** — `.github/workflows/ci.yml` wymaga: ruff check, ruff format, mypy, pytest
+- ✅ **CI green** — `.github/workflows/ci.yml` (ruff check, ruff format, mypy, pytest, smoke integration, pip-audit, dashboard) oraz `.github/workflows/e2e.yml` (Playwright)
 - ✅ `uv run ruff check apps packages tests` clean
 - ✅ `uv run ruff format --check apps packages tests` clean
 - ✅ `uv run mypy apps packages tests` clean
@@ -174,30 +174,26 @@ Pierwsze `pre-commit run --all-files` zbuduje izolowane środowiska dla hooków 
 
 ## Remote branch protection (GitHub)
 
-Po podłączeniu remote do GitHub, wymagane są **branch protection rules**:
+Stan faktyczny (2026-11-18); źródłem prawdy są ustawienia repo na GitHubie:
+
+### `develop` (default branch)
+- Tylko przez pull request.
+- 1 approve; wymagany review od Code Owners dla plików z `.github/CODEOWNERS`; konto, które zrobiło
+  ostatni push, nie może zatwierdzić (autor PR-a też nie).
+- Wymagane status checki: `Python (ruff + pytest)`, `Dashboard (typecheck + build)`,
+  `Playwright smoke`, `Python deps CVE scan`, `Playwright full`.
+- Dodatkowo na każdym PR-ze do `develop` / `main` działa AI review
+  (`.github/workflows/gemini-review.yml`, check `gemini-review`). PR z forka jest recenzowany dopiero
+  po dodaniu przez maintainera etykiety `safe-to-review`.
 
 ### `main`
-- Require a pull request before merging
-- Require approvals: 1 (lub review from Code Owners)
-- Restrict who can push: nobody (w tym admins)
-- Allow force pushes: ❌
-- Allow deletions: ❌
-- Require status checks: `build`, `typecheck`, `test` (CI)
-- Restrict merges: **tylko z `develop`** (enforced via CODEOWNERS + linear history)
-
-### `develop`
-- Require a pull request before merging
-- Require approvals: 1 (self-review OK w single-user)
-- Allow force pushes: ❌
-- Allow deletions: ❌
-- Require status checks: `build`, `typecheck`, `test`
-
-Komendy `gh` do konfiguracji dostępne w `docs/github-setup.md` (TBD).
+- Tylko przez pull request z `develop` (wymusza to `.github/workflows/enforce-main-source.yml`).
+  Taki PR to release.
 
 ## Konwencje dodatkowe
 
 - **Język kodu:** Python 3.13 (strict ruff/mypy); dashboard w TypeScript strict
 - **Język komentarzy i commitów:** angielski
-- **Język dokumentacji user-facing** (README, CONTRIBUTING): polski (zgodnie z preferencją projektu)
+- **Język dokumentacji:** README i `docs/` po angielsku; CONTRIBUTING po polsku
 - **Issue w repo:** polski OK, angielski też OK
 - **Imports:** ruff isort konfiguracja w `pyproject.toml` — używaj `uv run ruff format`

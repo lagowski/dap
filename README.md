@@ -8,7 +8,7 @@
 [![codecov](https://codecov.io/gh/lagowski/dap/branch/develop/graph/badge.svg)](https://codecov.io/gh/lagowski/dap)
 [![CodeQL](https://github.com/lagowski/dap/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/lagowski/dap/actions/workflows/codeql.yml)
 
-> **Project status (2026-11-03):** active development. The latest tagged release is
+> **Project status (2026-11-18):** active development. The latest tagged release is
 > **v0.3.0** (2026-05-12, on PyPI as `dap-cli` and on GHCR as `ghcr.io/lagowski/dap`).
 > `develop` is well ahead of that tag: projects and the `dap project` terminal workflow,
 > backend profiles and fallback chains, retry loops and workspace state, the `github` and
@@ -422,7 +422,6 @@ Open work is tracked in [GitHub issues](https://github.com/lagowski/dap/issues):
   with less reliance on `python-func`. Next slice: a tool-loop `agent` runtime that uses the
   built-in runtimes as tools (#813).
 - **Project-bootstrap bundle** (#797): import and run-verify it end to end.
-- **Code review council** (#633, tracking): evaluate a line-by-line code-style specialist.
 - **Next release**: tag what is on `develop` (everything after v0.3.0). The release pipeline
   is described in [docs/release.md](docs/release.md).
 
@@ -437,6 +436,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full rules. In short:
 - CI (`.github/workflows/ci.yml`) runs ruff (lint and format), mypy, pytest with coverage,
   three smoke shards, a pip-audit CVE scan, and the dashboard's API-type drift check,
   typecheck, lint, tests and build. CodeQL and e2e run in their own workflows.
+- An AI review (`.github/workflows/gemini-review.yml`, check `gemini-review`) runs on PRs
+  into `develop` and `main`. A PR from a fork is reviewed after a maintainer adds the
+  `safe-to-review` label.
 
 Run the same checks locally:
 

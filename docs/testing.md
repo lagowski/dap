@@ -30,15 +30,21 @@ fast required gate through `-m "not integration"`.
 
 ## CI Gates
 
-- `Python (ruff + pytest)`: required branch-protection check. Runs Ruff,
-  Mypy, and the fast Python pytest gate.
+- `Python (ruff + pytest)`: required. Runs Ruff, Mypy, and the fast
+  Python pytest gate.
 - `Python smoke integration (1/3..3/3)`: sharded smoke integration jobs.
   These run on pull requests and pushes to `develop`/`main`.
-- `Python deps CVE scan`: dependency audit for the locked Python env.
-- `Dashboard (typecheck + build)`: generated API type check, dashboard
-  typecheck, lint, test, and build.
+- `Python deps CVE scan`: required. Dependency audit for the locked
+  Python env.
+- `Dashboard (typecheck + build)`: required. Generated API type check,
+  dashboard typecheck, lint, test, and build.
+- `Playwright smoke`: required. Browser smoke specs (`e2e/`,
+  `npm run test:smoke`).
+- `Playwright full`: required. The whole Playwright suite; runs on pull
+  requests that touch the dashboard, the engine or the specs, on a
+  nightly schedule, and on manual dispatch (`.github/workflows/e2e.yml`).
 
 Full Python coverage for normal CI is the union of `Python (ruff +
-pytest)` and the three `Python smoke integration` shards. A failing smoke
-shard must be treated as a merge blocker even before the repository's
-branch-protection settings are updated to require the new check names.
+pytest)` and the three `Python smoke integration` shards. The smoke
+shards are not in the branch-protection list of required checks, but a
+failing shard must be treated as a merge blocker all the same.
