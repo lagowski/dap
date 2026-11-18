@@ -56,10 +56,7 @@ Branch from `develop` (`issue/<n>-<slug>`, `fix/…`, `chore/…`, `docs/…`), 
 - **AI review gate:** `.github/workflows/gemini-review.yml` (the public-repo variant rendered by
   lagowski/pr-review-gate, owner 2026-11-04; "do not hand-edit", refreshed by the `chore: sync AI review gate`
   PRs) reviews PRs into `develop`/`main` and posts the `gemini-review` check. It is not one of the required
-  status checks above, and it posts a check without the verdict markers the auto-merge approver reads: so the
-  approver keeps dap in `no_gate` and approves on the required checks alone (decided by the auto-merge tab for the
-  owner 2026-11-18; making it gate = make the check required or teach the approver to read it, open for the owner).
-  A fork PR is reviewed only after a maintainer adds the `safe-to-review` label.
+  status checks above. A fork PR is reviewed only after a maintainer adds the `safe-to-review` label.
 - Also running: three `Python smoke integration` shards (not required, but a red shard blocks a merge all the
   same), CodeQL, `build` / `bundle-wheel` packaging, a daily CVE scan, Dependabot auto-merge (patch/minor are
   approved by `github-actions[bot]` and squash-merged; majors wait for a human).
@@ -122,7 +119,7 @@ REST core is **5000 calls/hour per USER**, shared by every token and every sessi
 - For repeated reads, use `gh api --cache 60s`.
 - Every waiter or watcher has an **iteration cap** and **stops on a 403 / "rate limit exceeded"**. Don't retry; report it.
 - Never leave a background loop running past its purpose: kill it when the PR merges or the task ends. A 23.7 h orphan loop was found.
-- On DIXTER and dixter-pc, `gh` **reads** go out as rafeekpro via a shim; writes stay on your account. Don't work around it.
+- On the maintainers' machines, `gh` **reads** go out as rafeekpro via a shim; writes stay on your account. Don't work around it.
 
 ## Operator Context (Authorized Contributors Only)
 
@@ -139,15 +136,15 @@ This repo runs in production against a private infrastructure that is **NOT** de
 - Read code, run tests locally, open PRs, comment on issues.
 - **Do not** push to `main` / `develop`, do not run `cortex` commands, do not trigger DAP engine runs against production projects, do not modify `instance_env_vars`, do not touch the PostgreSQL pod referenced below.
 
-### Canonical infrastructure facts (NOT secrets — safe to keep in-repo)
+### Canonical infrastructure facts (no hosts or addresses: this repo is public; those are in the vault)
 
 | Fact | Value | Note |
 |---|---|---|
-| Execution host | `dixter-pc` — 192.168.1.100, SSH port 2222 | Self-hosted runner for the AI-review gate also lives here. |
-| DAP engine | `http://dixter-pc:7333` | systemd user unit `dap-engine`. |
-| DAP dashboard | `http://dixter-pc:3000` (typically accessed as `http://localhost:3001` via SSH `LocalForward`) | systemd user unit `dap-dashboard`. |
-| Postgres pod | Postgres deployment in the `database` namespace on the k3s node 10.0.0.5 | Specific pod identity, image, and PVC are operational details that live in the vault, not in this public repo. **Canonical persistent store — never recreate the deployment or the PVC.** |
-| Postgres NodePort | `10.0.0.5:30432` → the pod above | All DAP-related databases live here. |
+| Execution host | the maintainers' execution host (name, address and SSH port are in the private vault) | Self-hosted runner for the AI-review gate also lives here. |
+| DAP engine | port `7333` on the execution host | systemd user unit `dap-engine`. |
+| DAP dashboard | port `3000` on the execution host (typically accessed as `http://localhost:3001` via SSH `LocalForward`) | systemd user unit `dap-dashboard`. |
+| Postgres pod | Postgres deployment in the `database` namespace on the maintainers' k3s cluster | Pod identity, image, PVC, node address and NodePort are operational details that live in the vault, not in this public repo. **Canonical persistent store — never recreate the deployment or the PVC.** |
+| Postgres access | the k3s Postgres NodePort (see the vault) → the pod above | All DAP-related databases live here. |
 | Review gate check name | `gemini-review` | Posted by `.github/workflows/gemini-review.yml` on PRs into `develop`/`main`. Stable across engine swaps. |
 
 ### The four secrets-handling rules
@@ -163,7 +160,7 @@ Anything beyond the table and four rules above — actual host credentials, the 
 
 ## Deploying the private instance
 
-Merging to `develop` deploys nothing: the instance on dixter-pc is a checkout of `develop` that is updated by
+Merging to `develop` deploys nothing: the instance on the execution host is a checkout of `develop` that is updated by
 hand. Tagged releases (PyPI, GHCR, GitHub Release) go through `.github/workflows/release.yml`; see docs/release.md.
 
 - **A release to the instance needs the owner's OK each time, only when no engine runs are active, and with a
@@ -183,7 +180,7 @@ hand. Tagged releases (PyPI, GHCR, GitHub Release) go through `.github/workflows
 
 - `develop` = `833f0c8`. Since the 2026-11-03 README refresh (#973) it has only received dependency bumps
   (#984–#988, #992–#995) and AI-gate syncs (#974–#997). No open PRs.
-- The private instance was last released on 2026-11-03 at `072c338` (per the tab's hand-off of 2026-11-09);
+- The private instance was last released on 2026-11-03 at `072c338` (as of 2026-11-09, not re-checked);
   everything after it is unreleased and waits for the owner's OK. `google-genai` 3.0 (#988) is a runtime major:
   smoke-test the gemini adapter at that release.
 - Open issues: #776 (tracking: native declarative runtimes), #813 (its slice 3, `needs-split`), #797 (`not-code`).

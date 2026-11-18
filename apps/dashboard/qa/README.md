@@ -13,7 +13,7 @@ Chrome extension** (Claude-in-Chrome). Files:
 1. **Bring up the dashboard locally** (it lives on the production host; reach it
    over an SSH tunnel from your machine):
    ```bash
-   ssh -N -L 3000:localhost:3000 -p 2222 dixter@192.168.1.100
+   ssh -N -L 3000:localhost:3000 -p <ssh-port> <user>@<execution-host>
    ```
    Leave that running, then open `http://localhost:3000` in Chrome.
    If you ever see `net::ERR_CONNECTION_REFUSED`, the tunnel dropped — re-run it.

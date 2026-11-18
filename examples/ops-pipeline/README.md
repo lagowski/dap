@@ -60,13 +60,13 @@ curl -X POST http://localhost:8000/runs \
       "repo": "owner/repo",
       "branch": "main",
       "extensions": {
-        "execution_target": "dixter-pc",
+        "execution_target": "build-host",
         "execution_commands": [
-          "cd /home/dixter/Projects/news-sentiment && python benchmark.py",
+          "cd /srv/news-sentiment && python benchmark.py",
           "alembic upgrade head"
         ],
         "execution_env": {
-          "PYTHONPATH": "/home/dixter/Projects/news-sentiment",
+          "PYTHONPATH": "/srv/news-sentiment",
           "GITHUB_ISSUE_URL": "https://github.com/owner/repo/issues/42"
         }
       }
