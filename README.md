@@ -8,15 +8,12 @@
 [![codecov](https://codecov.io/gh/lagowski/dap/branch/develop/graph/badge.svg)](https://codecov.io/gh/lagowski/dap)
 [![CodeQL](https://github.com/lagowski/dap/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/lagowski/dap/actions/workflows/codeql.yml)
 
-> **Project status (2026-11-18):** active development. The latest tagged release is
-> **v0.3.0** (2026-05-12, on PyPI as `dap-cli` and on GHCR as `ghcr.io/lagowski/dap`).
-> `develop` is well ahead of that tag: projects and the `dap project` terminal workflow,
-> backend profiles and fallback chains, retry loops and workspace state, the `github` and
-> `aider` runtimes, the instance env-var store and the interaction log are all merged, but
-> not yet in a tagged release (see [CHANGELOG.md](CHANGELOG.md) → *Unreleased*).
+> **Project status:** active development. The latest tagged release is **v0.3.0** (on PyPI as
+> `dap-cli` and on GHCR as `ghcr.io/lagowski/dap`); `develop` is well ahead of that tag (see
+> [CHANGELOG.md](CHANGELOG.md) → *Unreleased* and the release map in
+> [docs/architecture.md](docs/architecture.md#what-has-been-built)).
 > **DAP is self-hosted only. There is no public hosted service.** You run the engine and
-> dashboard on your own machine or server. The maintainers run a private instance of
-> `develop` for their own pipelines.
+> dashboard on your own machine or server.
 
 ## Description
 
@@ -29,34 +26,6 @@ retry and skip, live progress for each node, and human approval gates. The desig
 anti-emergent: the state machine decides what runs next, never the model.
 
 ## Visuals
-
-### What has been built
-
-```mermaid
-flowchart LR
-  subgraph R1["v0.0.1 — single-user"]
-    a1[Engine: FastAPI + LangGraph + SQLite]
-    a2[Next.js dashboard + React Flow designer]
-    a3[prompt-dsl: Jinja → XML]
-  end
-  subgraph R3["v0.3.0 — multi-user (2026-05-12)"]
-    b1[A: auth + ownership]
-    b2[B: dashboard login flow]
-    b3[C: admin panel — users, audit log, API tokens]
-    b4[D: PyPI wheel + Docker image]
-    b5[E: auto-migration from 0.0.1]
-  end
-  subgraph DEV["develop — unreleased"]
-    c1[Projects + dap project CLI]
-    c2[Live run progress, finalize → gate routing]
-    c3[Backend profiles, private template registry]
-    c4[Postgres + Alembic, instance env-var store, interaction log]
-    c5["#810: git workspace + push guards, github runtime"]
-    c6["#811: retry loops, workspace diff state, fallback chains"]
-    c7["#929: aider runtime"]
-  end
-  R1 --> R3 --> DEV
-```
 
 ### How the parts fit together
 
@@ -130,23 +99,10 @@ When it finishes, edit `.env.local` and add at least one provider key (see
 
 ### Upgrading from 0.0.1
 
-v0.3.0 adds multi-user auth on top of the existing engine. The first time it starts against
-a pre-v0.3 `.dap/state.db`, the auto-migration creates a `legacy-admin@local` admin and
-**prints the generated password once, on stdout**:
-
-```
-Migrated single-user install. Bootstrap admin: legacy-admin@local
-with password=<random>. Change immediately at /admin/users.
-```
-
-Copy the password from the engine log on first boot. If you missed it, run
-`dap init --force --admin-email=legacy-admin@local --admin-password=<new>`: it gives the
-existing admin row the new password. Existing pipelines, agents, projects and runs are kept
-and owned by the legacy admin. Reassign them from `/admin/users` as your team joins.
-
-Scripts that call `localhost:7333` without auth now need an API token: mint one at
-`/admin/api-tokens`, then send `Authorization: Bearer dap_*`. See
-[docs/auth.md](docs/auth.md#api-tokens) for the token lifecycle.
+v0.3.0 adds multi-user auth. The first start against a pre-v0.3 `.dap/state.db` creates a
+`legacy-admin@local` admin and prints its generated password **once**, on stdout; scripts
+that called `localhost:7333` without auth then need an API token. The steps are in
+[docs/self-hosting.md](docs/self-hosting.md#upgrading-from-001).
 
 ## Usage
 
@@ -195,158 +151,29 @@ This bundle needs `gh auth login` on the host, `GLM_API_KEY` in `.env.local`, an
 runtime), `tester-coder-retry` (retry loops), `team-collaboration` and
 `cortex-github-issue`. Everything stays editable from the dashboard once it's imported.
 
-### Agents
+### Agents, pipelines and logs
 
-Each agent has:
+An agent is a runtime plus a prompt template, input/output schemas and a role; a pipeline
+wires agents into a DAG in the React Flow designer (`/pipelines/new`), with conditional
+edges, retry loops, approval gates and fallback chains. Every node execution is logged with
+its exact prompt, output, tokens and cost. From a terminal, `dap project run`, `approve`,
+`reject` and `state` drive a run.
 
-- A **runtime**: `api-call` for SDK calls; `claude-code`, `gemini-cli`, `codex` or `aider`
-  for agentic CLIs; `github` for declarative GitHub reads and writes (read issue/PR,
-  comment, update an issue section, create a branch, open a PR, merge a PR pinned to its
-  head sha); `bash` for shell; `python-func` for an in-process Python callable; `http` for
-  any REST call.
-- A **prompt template** (Jinja → XML, validated against `PipelineState`).
-- An **`input_schema`** and **`output_schema`** that declare which `PipelineState` fields it
-  reads and writes.
-- A **role** (`task_selector`, `prompt_builder`, `test_author`, `implementer`, `verifier`,
-  `post_check`, or any custom string).
-
-**Test panel (dry run).** On `/agents/<id>/edit` or `/agents/new`, the **Test** panel runs
-the agent against sample state without saving anything: no `Run` row, no
-`NodeExecutionLog`, no state-machine effects. It shows the rendered XML prompt, the runtime's
-real output, and a soft check of that output against `output_schema`. Each dry run is capped
-by `DAP_DRY_RUN_BUDGET_USD` (default $0.50). `POST /agents/dry-run` does the same from code.
-
-**Render preview.** `POST /agents/<id>/render-preview` compiles the prompt against sample
-state and returns the XML without calling the runtime. It catches Jinja errors and undefined
-variables before you spend tokens.
-
-**Archive.** `/agents` has an **Archive** action. The engine refuses with HTTP 409 while any
-non-archived pipeline still uses the agent, and lists those pipelines. Archiving is soft:
-run history keeps the reference, and the agent leaves the pickers and the active list.
-
-**Versions.** Every save bumps the agent's version, and `/agents/<id>/versions` lists them.
-A pipeline pins the agent's current version when you save the pipeline.
-
-### Pipelines
-
-`/pipelines/new` and `/pipelines/<id>/edit` open the React Flow designer:
-
-- Drag agents from the picker onto the canvas and wire edges. Conditional edges support
-  `field == value`, `field != value`, `is_null`, `not`, and more, against `PipelineState`.
-- The Inspector (right side) shows the agent's prompt, schemas and runtime config, plus a
-  **State after this node** view: the combined `output_schema` of every upstream agent.
-- **Validate** checks that every declared `input_schema` field is written by some upstream
-  node.
-- Retry loops, workspace diff state and backend fallback chains are covered in
-  [docs/pipelines.md](docs/pipelines.md).
-
-**Run a pipeline.** From `/pipelines`, **Run** opens a dialog for optional `initial_state`
-JSON, starts the run and redirects to `/runs/<id>`. That page shows live progress (the
-running node, a status timeline for each node, the current phase) by polling
-`GET /runs/<id>`. You can **Pause**, **Resume** or **Abort** a running run. On a failed,
-paused or aborted run, click a node and pick **Retry** (run it again) or **Skip** (mark it
-done and move on).
-
-From a terminal, `dap project run cortex <issue-url>` starts a pipeline run for a GitHub
-issue (`cortex` is currently the only pipeline type), and `dap project approve`, `reject`
-and `state` drive it from there. They take `--engine` (or `DAP_ENGINE_URL`)
-and an API token (or `DAP_AUTH_TOKEN`). See [docs/projects.md](docs/projects.md).
-
-**Approval gates.** A pipeline can mark nodes as needing human approval
-(`defaults.approval_required_nodes`). When a run reaches one, it pauses and shows the gate
-payload inline (task assignments, the spec, and any non-blocking `finalize_warnings`), so you
-can **Approve** or **Reject** without reading logs. A finalize node that emits "READY" goes
-to a gate that can be auto-approved; "NEEDS_WORK" goes to one that needs a human. A pipeline
-that sets `defaults.requires_terminal_final_status` is marked failed, not successful, if it
-ends without reaching a terminal state.
-
-### Logs
-
-Every node execution writes a row to `node_execution_logs` (in `./.dap/state.db`, or in
-Postgres when `DAP_DATABASE_URL` is set):
-
-| Column | Content |
-|---|---|
-| `prompt_xml` | The exact prompt sent to the runtime (after Jinja) |
-| `stdout` / `stderr` | Raw runtime output |
-| `output_json` | The parsed `<output>{…}</output>` block |
-| `tokens_used` / `cost_usd` / `duration_ms` | Telemetry |
-| `status` / `error_message` | success / failed / timeout / abort |
-
-Inspect them in the dashboard (`/runs/<id>`, click a node), through the API
-(`GET /runs/<id>/nodes/<node_id>`), or directly with
-`sqlite3 .dap/state.db "select * from node_execution_logs where run_id = '<id>';"`.
-State snapshots after each node are in `state_snapshots`, and the run summary is in
-`runs.node_statuses`. The engine API reference is at `http://127.0.0.1:7333/docs` while the
-engine runs.
+- [docs/usage.md](docs/usage.md): agents (test panel, render preview, archive, versions),
+  pipelines (designer, running, approval gates) and logs.
+- [docs/pipelines.md](docs/pipelines.md): retry loops, workspace diff state, fallback chains.
+- [docs/projects.md](docs/projects.md): projects and the `dap project` workflow.
 
 ## Configuration
 
 The engine reads its settings from the process environment at startup only, so restart it
-after a change. `scripts/dev` loads `.env.local`. [`.env.example`](.env.example) has the
-commented template, and [docs/self-hosting.md](docs/self-hosting.md) explains each setting
-for production.
-
-### Engine
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `DAP_ENGINE_HOST` | `127.0.0.1` | Listen address. Use `0.0.0.0` in containers. |
-| `DAP_ENGINE_PORT` | `7333` | Listen port. |
-| `DAP_LOG_LEVEL` | `INFO` | Engine log level. An unknown name stops startup. |
-| `DAP_DB_PATH` | `./.dap/state.db` | SQLite file. Its directory is created if missing. |
-| `DAP_DATABASE_URL` | unset | `postgresql+asyncpg://…` switches to Postgres and overrides `DAP_DB_PATH`. Migrations run at startup. |
-| `DAP_PG_POOL_MIN_SIZE` / `DAP_PG_POOL_MAX_SIZE` | `4` / `10` | Postgres checkpointer pool size. |
-| `DAP_PG_POOL_RECONNECT_TIMEOUT` | `300` | Seconds the Postgres pool keeps trying to reconnect. |
-| `DAP_CORS_ORIGINS` | local dev origins | Comma-separated origins allowed to call the engine. **Set in production.** |
-| `DAP_DRY_RUN_BUDGET_USD` | `0.50` | Cost cap for each dry run in the agent Test panel. |
-| `DAP_BASH_SHELL` | `/bin/bash` | Shell for the `bash` runtime (agents can override with `runtime_config.shell`). |
-| `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN` | off | `1` lets non-admin users run `bash` agents. These run with the engine's privileges. |
-| `DAP_PYTHON_FUNC_MAX_WORKERS` | `10` | Worker threads for the `python-func` runtime. |
-| `DAP_INSTANCE_ENV_VARS_KEY` | unset | Fernet key for the encrypted instance env-var store (`/admin` settings). Without it, writing an env var returns 503. Must stay the same across restarts. |
-| `DAP_INTERACTION_LOG_ENABLED` | `1` | Records model interactions in `interaction_log`. `0` turns it off. |
-| `DAP_INTERACTION_LOG_RETENTION_DAYS` | `90` | Days kept; purged at startup. `0` or negative keeps them forever. |
-| `DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS` | empty (off) | Comma-separated hosts that `POST /pipelines/import-from-url` may fetch bundles from. |
-| `DAP_TEMPLATE_REGISTRY_AUTH_TOKEN` | unset | Bearer token sent with those fetches. |
-| `DAP_ASSISTANT_PROVIDER` / `DAP_ASSISTANT_MODEL` | first provider with a key | Provider and model for the configuration assistant. `claude-code` uses the host's `claude` login. `ASSISTANT_PROVIDER` / `ASSISTANT_MODEL` also work as instance env vars. |
-
-### Auth
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `DAP_AUTH_JWT_SECRET` | random per process | Signs dashboard session tokens. **Required** for anything that restarts or has more than one replica (`openssl rand -hex 32`). API tokens don't depend on it. |
-| `DAP_AUTH_ACCESS_TTL_SECONDS` | `900` | Session token lifetime. |
-| `DAP_AUTH_LOG_RESET_TOKENS` | off | `1` logs password-reset tokens, for installs without email. Keep it off in production. |
-| `DAP_AUTH_OAUTH_REDIRECT_URL` | unset | After OAuth, the browser is redirected here with `?token=` (for example `http://localhost:3000/api/auth/oauth/callback`). Unset returns JSON. |
-| `DAP_OAUTH_GITHUB_CLIENT_ID` / `_SECRET` | unset | Turns on GitHub login when both are set. |
-| `DAP_OAUTH_GOOGLE_CLIENT_ID` / `_SECRET` | unset | Turns on Google login when both are set. |
-
-### Provider keys
-
-You only need keys for the providers you call:
-
-| Provider | Env var | Used by |
-|---|---|---|
-| Anthropic | `ANTHROPIC_API_KEY` | `api-call` (provider=`anthropic`), `claude-code` CLI fallback |
-| OpenAI | `OPENAI_API_KEY` | `api-call` (provider=`openai`), `codex` CLI |
-| Google Gemini | `GEMINI_API_KEY` (or `GOOGLE_API_KEY` for the CLI) | `api-call` (provider=`gemini`), `gemini-cli` |
-| Z.AI GLM | `GLM_API_KEY` | `api-call` (provider=`glm`) |
-| OpenRouter | `OPENROUTER_API_KEY` | `api-call` (provider=`openrouter`), slash-namespaced model ids |
-
-The `claude-code` and `gemini-cli` runtimes can also use their own logins (`claude` on a
-Pro/Max plan, `gemini auth login`) instead of an API key. For any other OpenAI-compatible
-provider (Together, internal proxies, Ollama), use `api-call` with `provider=openai-compat`,
-set `api_key_env` and `base_url` in the agent's `runtime_config`, and export that env var.
-See [docs/providers.md](docs/providers.md). The `bash` runtime needs no key, but **it runs
-commands with the engine's privileges**. See the security note in
-[packages/runtimes/README.md](packages/runtimes/README.md).
-
-### CLI
-
-| Variable | Purpose |
-|---|---|
-| `DAP_ENGINE_URL` | Engine base URL for `dap project …` (same as `--engine`). |
-| `DAP_AUTH_TOKEN` | API token for `dap project …`. |
+after a change. `scripts/dev` loads `.env.local`; [`.env.example`](.env.example) has the
+commented template. To start you need one provider key for the providers you call
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GLM_API_KEY` or
+`OPENROUTER_API_KEY`), and `DAP_AUTH_JWT_SECRET` for anything that restarts or has more than
+one replica. Every engine, auth, provider and CLI variable with its default is in
+[docs/configuration.md](docs/configuration.md); [docs/self-hosting.md](docs/self-hosting.md)
+explains the production settings.
 
 ## Repository layout
 
@@ -400,6 +227,8 @@ e2e/           Playwright browser e2e (see e2e/COVERAGE.md for scope)
   reverse-proxy hardening, what's out of scope.
 - [docs/architecture.md](docs/architecture.md): packages, service layer, state schema, run
   lifecycle, LangGraph checkpoints.
+- [docs/usage.md](docs/usage.md): agents, pipelines, approval gates and logs in the dashboard.
+- [docs/configuration.md](docs/configuration.md): every environment variable with its default.
 - [docs/projects.md](docs/projects.md): projects, workflow kinds, env layering.
 - [docs/providers.md](docs/providers.md) and [docs/runtimes.md](docs/runtimes.md): the
   provider matrix, and how to add a runtime adapter.
@@ -416,14 +245,8 @@ e2e/           Playwright browser e2e (see e2e/COVERAGE.md for scope)
 
 ## Roadmap
 
-Open work is tracked in [GitHub issues](https://github.com/lagowski/dap/issues):
-
-- **Native declarative runtimes** (#776, tracking): express cortex-class pipelines as JSON
-  with less reliance on `python-func`. Next slice: a tool-loop `agent` runtime that uses the
-  built-in runtimes as tools (#813).
-- **Project-bootstrap bundle** (#797): import and run-verify it end to end.
-- **Next release**: tag what is on `develop` (everything after v0.3.0). The release pipeline
-  is described in [docs/release.md](docs/release.md).
+Open work is tracked in [GitHub issues](https://github.com/lagowski/dap/issues); the release
+pipeline is described in [docs/release.md](docs/release.md).
 
 ## Contributing
 
