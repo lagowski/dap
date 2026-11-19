@@ -384,3 +384,31 @@ CI check names that matter for normal PRs:
   dashboard, the engine or the specs, and nightly.
 - `review` / `gemini-review` — the AI review gate
   (`.github/workflows/gemini-review.yml`).
+
+## What has been built
+
+```mermaid
+flowchart LR
+  subgraph R1["v0.0.1 — single-user"]
+    a1[Engine: FastAPI + LangGraph + SQLite]
+    a2[Next.js dashboard + React Flow designer]
+    a3[prompt-dsl: Jinja → XML]
+  end
+  subgraph R3["v0.3.0 — multi-user (2026-05-12)"]
+    b1[A: auth + ownership]
+    b2[B: dashboard login flow]
+    b3[C: admin panel — users, audit log, API tokens]
+    b4[D: PyPI wheel + Docker image]
+    b5[E: auto-migration from 0.0.1]
+  end
+  subgraph DEV["develop — unreleased"]
+    c1[Projects + dap project CLI]
+    c2[Live run progress, finalize → gate routing]
+    c3[Backend profiles, private template registry]
+    c4[Postgres + Alembic, instance env-var store, interaction log]
+    c5["#810: git workspace + push guards, github runtime"]
+    c6["#811: retry loops, workspace diff state, fallback chains"]
+    c7["#929: aider runtime"]
+  end
+  R1 --> R3 --> DEV
+```

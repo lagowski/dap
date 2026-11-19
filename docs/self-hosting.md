@@ -182,6 +182,26 @@ your operator account to admin. Existing data is owned by a synthetic
 `system@local` account created during the migration; reassign ownership
 via the admin UI if needed.
 
+### Upgrading from 0.0.1
+
+v0.3.0 adds multi-user auth on top of the existing engine. The first time it starts against
+a pre-v0.3 `.dap/state.db`, the auto-migration creates a `legacy-admin@local` admin and
+**prints the generated password once, on stdout**:
+
+```
+Migrated single-user install. Bootstrap admin: legacy-admin@local
+with password=<random>. Change immediately at /admin/users.
+```
+
+Copy the password from the engine log on first boot. If you missed it, run
+`dap init --force --admin-email=legacy-admin@local --admin-password=<new>`: it gives the
+existing admin row the new password. Existing pipelines, agents, projects and runs are kept
+and owned by the legacy admin. Reassign them from `/admin/users` as your team joins.
+
+Scripts that call `localhost:7333` without auth now need an API token: mint one at
+`/admin/api-tokens`, then send `Authorization: Bearer dap_*`. See
+[docs/auth.md](auth.md#api-tokens) for the token lifecycle.
+
 ## Where to find things
 
 - **Engine API docs**: `http://<engine>/docs` (FastAPI Swagger).
