@@ -124,13 +124,13 @@ def test_execution_target_keys_survive_round_trip(
     pipeline_id = _create_pipeline(client, agent_id)
 
     extensions = {
-        "execution_target": "dixter-pc",
+        "execution_target": "example-host",
         "execution_commands": [
-            "cd /home/dixter/Projects/news-sentiment && python benchmark.py",
+            "cd /opt/example/project && python benchmark.py",
             "alembic upgrade head",
         ],
         "execution_env": {
-            "PYTHONPATH": "/home/dixter/Projects/news-sentiment",
+            "PYTHONPATH": "/opt/example/project",
         },
     }
 
@@ -153,20 +153,20 @@ def test_execution_target_keys_survive_round_trip(
 
     # extensions must survive persistence via initial_state on the run record
     stored_extensions: dict[str, Any] = completed["initial_state"].get("extensions") or {}
-    assert stored_extensions["execution_target"] == "dixter-pc"
+    assert stored_extensions["execution_target"] == "example-host"
     assert stored_extensions["execution_commands"] == [
-        "cd /home/dixter/Projects/news-sentiment && python benchmark.py",
+        "cd /opt/example/project && python benchmark.py",
         "alembic upgrade head",
     ]
     assert stored_extensions["execution_env"] == {
-        "PYTHONPATH": "/home/dixter/Projects/news-sentiment",
+        "PYTHONPATH": "/opt/example/project",
     }
 
     # Also verify they appear in the state snapshot history
     history = client.get(f"/runs/{run_id}/state/history").json()
     assert len(history) >= 1
     first_snapshot_extensions: dict[str, Any] = history[0].get("state", {}).get("extensions") or {}
-    assert first_snapshot_extensions["execution_target"] == "dixter-pc"
+    assert first_snapshot_extensions["execution_target"] == "example-host"
 
 
 def test_execution_target_key_alone_accepted(

@@ -450,19 +450,19 @@
     "summary": "Install dap-cortex package in DAP engine venv, set env vars, import bundle.",
     "steps": [
       "1. Install: pip install dap-cortex  (or: uv add dap-cortex)  — source: https://github.com/Dixter999/cortex-project",
-      "2. Set env vars in dap-engine .env.local — see LAGOVALUT/dap/!env.md for token list",
+      "2. Set env vars in dap-engine .env.local — see your secrets store for the token list",
       "3. Start dap-engine with DAP_DATABASE_URL pointing at the dap PostgreSQL database",
       "4. Import bundle: POST /pipelines/import with this JSON as body",
       "5. Create a run: POST /projects/{cortex_project_id}/run/github-issue with {\"issue_url\": \"https://github.com/owner/repo/issues/N\"} in extensions",
       "6. Approve gates: POST /runs/{id}/resume after each phase completes"
     ],
     "env_vars": [
-      "DAP_DATABASE_URL=postgresql+asyncpg://dap:...@10.0.0.5:30432/dap",
+      "DAP_DATABASE_URL=postgresql+asyncpg://dap:...@example.internal:30432/dap",
       "CORTEX_GH_TOKEN_READ=ghp_...",
       "CORTEX_GH_TOKEN_ISSUES=ghp_...",
       "CORTEX_GH_TOKEN_CODE=ghp_...",
       "CORTEX_GH_TOKEN_MERGE=ghp_...",
-      "CORTEX_DATABASE_URL=postgresql://cortex_project:...@10.0.0.5:30432/cortex_project"
+      "CORTEX_DATABASE_URL=postgresql://cortex_project:...@example.internal:30432/cortex_project"
     ],
     "known_gaps": [
       "State adapter: Cortex nodes read state['repo'], state['issue_number'] etc. directly. When running inside DAP, these must come from state['extensions']. cortex.state_adapter (Cortex #225) handles this — verify it's wired.",
