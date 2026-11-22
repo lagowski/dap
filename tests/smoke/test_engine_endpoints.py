@@ -36,6 +36,7 @@ def test_runtimes_list(client: TestClient) -> None:
         "claude-code",
         "gemini-cli",
         "codex",
+        "agent",
         "aider",
         "python-func",
         "github",
