@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dap_types import RuntimeAdapter
 
+from dap_runtimes.adapters.agent import AgentAdapter
 from dap_runtimes.adapters.aider import AiderAdapter
 from dap_runtimes.adapters.api_call import ApiCallAdapter
 from dap_runtimes.adapters.bash import BashAdapter
@@ -37,7 +38,7 @@ class RuntimeRegistry:
 
 
 def create_default_registry() -> RuntimeRegistry:
-    """Tworzy registry z 9 wbudowanymi adapterami (F0 = stuby).
+    """Tworzy registry z 10 wbudowanymi adapterami (F0 = stuby).
 
     Sync — adapter constructors nie wykonują I/O. Jeśli w przyszłości dojdzie
     plugin loading z dysku lub remote registry, zmieni się na async.
@@ -52,4 +53,7 @@ def create_default_registry() -> RuntimeRegistry:
     registry.register(AiderAdapter())
     registry.register(PythonFuncAdapter())
     registry.register(GithubAdapter())
+    # The agent's tools are the other adapters of this registry, looked up
+    # when a run declares them (#813).
+    registry.register(AgentAdapter(registry.get))
     return registry

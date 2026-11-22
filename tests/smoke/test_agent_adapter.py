@@ -1,0 +1,226 @@
+"""Tests for the tool-loop ``agent`` runtime (#813, slice 1).
+
+The Anthropic client is a scripted fake; tools are real ``RuntimeAdapter``
+objects (a recording stub), so the loop, the tool dispatch and the halting
+bounds are exercised without network.
+"""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from dap_runtimes.adapters._providers._base import ProviderError
+from dap_runtimes.adapters.agent import (
+    AgentAdapter,
+    AgentHaltError,
+    BudgetExhaustedError,
+    MaxTurnsExhaustedError,
+)
+from dap_runtimes.registry import create_default_registry
+from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+
+
+class _StubTool:
+    id = "github"
+    display_name = "stub github"
+    kind: RuntimeKind = "http"
+
+    def __init__(self, result: RuntimeResult | None = None) -> None:
+        self.tasks: list[RuntimeTask] = []
+        self.result = result or RuntimeResult(
+            success=True, output='{"title": "Bug"}', structured={"issue": {"number": 7}}
+        )
+
+    async def healthcheck(self) -> HealthStatus:
+        return HealthStatus(available=True)
+
+    async def execute(self, task: RuntimeTask, on_output: Any = None) -> RuntimeResult:
+        self.tasks.append(task)
+        return self.result
+
+
+def _usage(input_tokens: int = 1000, output_tokens: int = 100) -> SimpleNamespace:
+    return SimpleNamespace(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+
+
+def _tool_use(n: int, tool_input: dict[str, Any] | None = None) -> SimpleNamespace:
+    block = SimpleNamespace(
+        type="tool_use", id=f"tu_{n}", name="github", input=tool_input or {"op": "read_issue"}
+    )
+    return SimpleNamespace(content=[block], stop_reason="tool_use", usage=_usage())
+
+
+def _final(text: str = "done") -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=text)],
+        stop_reason="end_turn",
+        usage=_usage(),
+    )
+
+
+class _FakeClient:
+    def __init__(self, responses: list[SimpleNamespace]) -> None:
+        self._responses = list(responses)
+        self.requests: list[dict[str, Any]] = []
+        self.messages = SimpleNamespace(create=self._create)
+        self.closed = False
+
+    async def _create(self, **kwargs: Any) -> SimpleNamespace:
+        # Snapshot: the loop keeps appending to the same messages list.
+        self.requests.append(json.loads(json.dumps(kwargs, default=str)))
+        if not self._responses:
+            return _tool_use(99)
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _task(**overrides: Any) -> RuntimeTask:
+    config: dict[str, Any] = {
+        "provider": "anthropic",
+        "model_id": "claude-haiku-4-5",
+        "system_prompt": "You are a triage agent.",
+        "tools": [
+            {
+                "runtime_id": "github",
+                "description": "Read GitHub issues",
+                "config": {"repo": "acme/widgets"},
+            }
+        ],
+        "max_turns": 5,
+    }
+    config.update(overrides)
+    return RuntimeTask(
+        execution_id="exec-agent",
+        prompt_xml="<task>Read issue 7</task>",
+        working_directory="/tmp",
+        runtime_config=config,
+    )
+
+
+def _adapter(client: _FakeClient, tool: _StubTool) -> AgentAdapter:
+    return AgentAdapter(tools={"github": tool}, client_factory=lambda: client)
+
+
+def test_agent_registered_in_default_registry() -> None:
+    registry = create_default_registry()
+    assert registry.has("agent")
+    adapter = registry.get("agent")
+    assert isinstance(adapter, AgentAdapter)
+    # Tools resolve from the same registry.
+    assert adapter.resolve_tool("github") is registry.get("github")
+
+
+async def test_agent_dispatches_tool_call_to_runtime() -> None:
+    tool = _StubTool()
+    client = _FakeClient([_tool_use(1, {"op": "read_issue", "issue": 7}), _final("triaged")])
+
+    result = await _adapter(client, tool).execute(_task())
+
+    assert result.success, result.errors
+    assert result.output == "triaged"
+    # The tool ran with its static config overlaid by the model's input.
+    assert len(tool.tasks) == 1
+    assert tool.tasks[0].runtime_config == {
+        "repo": "acme/widgets",
+        "op": "read_issue",
+        "issue": 7,
+    }
+    assert tool.tasks[0].execution_id == "exec-agent"
+    # First request declared the tool; second carried the tool_result back.
+    first, second = client.requests
+    assert first["system"] == "You are a triage agent."
+    assert first["tools"][0]["name"] == "github"
+    assert first["tools"][0]["input_schema"]["type"] == "object"
+    tool_result = second["messages"][-1]["content"][0]
+    assert tool_result["type"] == "tool_result"
+    assert tool_result["tool_use_id"] == "tu_1"
+    assert tool_result["is_error"] is False
+    assert json.loads(tool_result["content"])["structured"] == {"issue": {"number": 7}}
+    assert result.structured is not None
+    assert result.structured["turns"] == 2
+    assert result.structured["tool_calls"][0]["tool"] == "github"
+    assert result.tokens_used == 2 * 1100
+    assert client.closed
+
+
+async def test_agent_failed_tool_is_reported_as_error_result() -> None:
+    tool = _StubTool(RuntimeResult(success=False, output="", errors=["404 not found"]))
+    client = _FakeClient([_tool_use(1), _final("gave up")])
+
+    result = await _adapter(client, tool).execute(_task())
+
+    assert result.success
+    tool_result = client.requests[1]["messages"][-1]["content"][0]
+    assert tool_result["is_error"] is True
+    assert "404 not found" in tool_result["content"]
+
+
+async def test_agent_halts_with_max_turns_exhausted() -> None:
+    tool = _StubTool()
+    client = _FakeClient([_tool_use(n) for n in range(10)])
+
+    result = await _adapter(client, tool).execute(_task(max_turns=3))
+
+    assert not result.success
+    assert result.structured is not None
+    assert result.structured["halt_reason"] == "max_turns_exhausted"
+    assert result.structured["error_type"] == "MaxTurnsExhaustedError"
+    assert result.structured["turns"] == 3
+    assert len(client.requests) == 3
+    # The third turn's tool request was not executed: the bound stops it.
+    assert len(tool.tasks) == 2
+    assert "max_turns" in result.errors[0]
+    assert issubclass(MaxTurnsExhaustedError, AgentHaltError)
+    assert issubclass(AgentHaltError, ProviderError)
+
+
+async def test_agent_budget_exhausted() -> None:
+    tool = _StubTool()
+    # claude-haiku-4-5: 1000 in * $1/M + 100 out * $5/M = $0.0015 per turn.
+    client = _FakeClient([_tool_use(n) for n in range(10)])
+
+    result = await _adapter(client, tool).execute(_task(budget_usd=0.004, max_turns=20))
+
+    assert not result.success
+    assert result.structured is not None
+    assert result.structured["halt_reason"] == "budget_exhausted"
+    assert result.structured["error_type"] == "BudgetExhaustedError"
+    assert len(client.requests) == 3  # 0.0045 >= 0.004 after turn 3
+    assert result.cost_usd == pytest.approx(0.0045)
+    assert issubclass(BudgetExhaustedError, AgentHaltError)
+
+
+async def test_agent_final_answer_within_budget_is_not_a_halt() -> None:
+    client = _FakeClient([_final("ok")])
+    result = await _adapter(client, _StubTool()).execute(_task(budget_usd=0.000001))
+    assert result.success
+    assert result.output == "ok"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"provider": "openai"}, "not supported"),
+        ({"model_id": None}, "model_id is required"),
+        ({"max_turns": 0}, "max_turns"),
+        ({"budget_usd": -1}, "budget_usd"),
+        ({"tools": [{"runtime_id": "nope"}]}, "not available"),
+        ({"tools": [{"runtime_id": "agent"}]}, "own tool"),
+    ],
+)
+async def test_agent_rejects_bad_config(overrides: dict[str, Any], message: str) -> None:
+    client = _FakeClient([_final()])
+    result = await _adapter(client, _StubTool()).execute(_task(**overrides))
+    assert not result.success
+    assert message in result.errors[0]
+    assert client.requests == []
