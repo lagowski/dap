@@ -1,8 +1,8 @@
-"""Tests for the tool-loop ``agent`` runtime (#813, slice 1).
+"""Tests for the tool-loop ``agent`` runtime (#813, slices 1-2).
 
-The Anthropic client is a scripted fake; tools are real ``RuntimeAdapter``
-objects (a recording stub), so the loop, the tool dispatch and the halting
-bounds are exercised without network.
+The provider clients (Anthropic, OpenAI, OpenRouter) are scripted fakes;
+tools are real ``RuntimeAdapter`` objects (a recording stub), so the loop,
+the tool dispatch and the halting bounds are exercised without network.
 """
 
 from __future__ import annotations
@@ -210,7 +210,7 @@ async def test_agent_final_answer_within_budget_is_not_a_halt() -> None:
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"provider": "openai"}, "not supported"),
+        ({"provider": "gemini"}, "not supported"),
         ({"model_id": None}, "model_id is required"),
         ({"max_turns": 0}, "max_turns"),
         ({"budget_usd": -1}, "budget_usd"),
@@ -224,3 +224,189 @@ async def test_agent_rejects_bad_config(overrides: dict[str, Any], message: str)
     assert not result.success
     assert message in result.errors[0]
     assert client.requests == []
+
+
+# --- openai / openrouter (slice 2): Chat Completions function calling ---------
+
+
+def _oa_usage(cost: float | None = None) -> SimpleNamespace:
+    usage = SimpleNamespace(
+        prompt_tokens=1000,
+        completion_tokens=100,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=200),
+    )
+    if cost is not None:
+        usage.cost = cost
+    return usage
+
+
+def _oa_tool_call(n: int, arguments: str = '{"op": "read_issue", "issue": 7}') -> SimpleNamespace:
+    call = SimpleNamespace(
+        id=f"call_{n}",
+        type="function",
+        function=SimpleNamespace(name="github", arguments=arguments),
+    )
+    message = SimpleNamespace(content=None, tool_calls=[call])
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="tool_calls")],
+        usage=_oa_usage(),
+    )
+
+
+def _oa_final(text: str = "done", cost: float | None = None) -> SimpleNamespace:
+    message = SimpleNamespace(content=text, tool_calls=None)
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=_oa_usage(cost),
+    )
+
+
+class _FakeOpenAIClient(_FakeClient):
+    def __init__(self, responses: list[SimpleNamespace]) -> None:
+        super().__init__(responses)
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create_oa))
+
+    async def _create_oa(self, **kwargs: Any) -> SimpleNamespace:
+        self.requests.append(json.loads(json.dumps(kwargs, default=str)))
+        if not self._responses:
+            return _oa_tool_call(99)
+        return self._responses.pop(0)
+
+
+async def test_agent_openai_dispatches_tool_call_to_runtime() -> None:
+    tool = _StubTool()
+    client = _FakeOpenAIClient([_oa_tool_call(1), _oa_final("triaged")])
+
+    result = await _adapter(client, tool).execute(_task(provider="openai", model_id="gpt-5-mini"))
+
+    assert result.success, result.errors
+    assert result.output == "triaged"
+    assert tool.tasks[0].runtime_config == {"repo": "acme/widgets", "op": "read_issue", "issue": 7}
+    first, second = client.requests
+    assert first["model"] == "gpt-5-mini"
+    assert first["max_completion_tokens"] == 4096
+    assert "max_tokens" not in first
+    assert first["messages"][0] == {"role": "system", "content": "You are a triage agent."}
+    assert first["messages"][1] == {"role": "user", "content": "<task>Read issue 7</task>"}
+    function = first["tools"][0]
+    assert function["type"] == "function"
+    assert function["function"]["name"] == "github"
+    assert function["function"]["parameters"]["type"] == "object"
+    # The assistant's tool_calls are echoed, then one role=tool message per call.
+    assistant, tool_msg = second["messages"][-2:]
+    assert assistant["role"] == "assistant"
+    assert assistant["tool_calls"][0]["id"] == "call_1"
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["tool_call_id"] == "call_1"
+    assert json.loads(tool_msg["content"])["structured"] == {"issue": {"number": 7}}
+    assert result.structured is not None
+    assert result.structured["provider"] == "openai"
+    assert result.structured["turns"] == 2
+    # 1000 prompt (200 of them cached, counted once) + 100 completion per turn.
+    assert result.tokens_used == 2 * 1100
+    # gpt-5-mini: 1000 in * $0.25/M + 100 out * $1/M per turn.
+    assert result.cost_usd == pytest.approx(2 * 0.00035)
+    assert client.closed
+
+
+async def test_agent_openai_budget_exhausted() -> None:
+    client = _FakeOpenAIClient([_oa_tool_call(n) for n in range(10)])
+
+    result = await _adapter(client, _StubTool()).execute(
+        _task(provider="openai", model_id="gpt-5-mini", budget_usd=0.001, max_turns=20)
+    )
+
+    assert not result.success
+    assert result.structured is not None
+    assert result.structured["halt_reason"] == "budget_exhausted"
+    assert len(client.requests) == 3  # 0.00105 >= 0.001 after turn 3
+
+
+async def test_agent_openai_halts_with_max_turns_exhausted() -> None:
+    tool = _StubTool()
+    client = _FakeOpenAIClient([_oa_tool_call(n) for n in range(10)])
+
+    result = await _adapter(client, tool).execute(
+        _task(provider="openai", model_id="gpt-5-mini", max_turns=2)
+    )
+
+    assert not result.success
+    assert result.structured is not None
+    assert result.structured["halt_reason"] == "max_turns_exhausted"
+    assert len(tool.tasks) == 1
+
+
+async def test_agent_openai_bad_tool_arguments_are_an_error_result() -> None:
+    tool = _StubTool()
+    client = _FakeOpenAIClient([_oa_tool_call(1, arguments="{not json"), _oa_final("ok")])
+
+    result = await _adapter(client, tool).execute(_task(provider="openai", model_id="gpt-5"))
+
+    assert result.success
+    assert tool.tasks == []  # the tool never ran on undecodable input
+    tool_msg = client.requests[1]["messages"][-1]
+    assert tool_msg["content"].startswith("ERROR: tool arguments are not valid JSON")
+    assert result.structured is not None
+    assert result.structured["tool_calls"][0]["success"] is False
+
+
+async def test_agent_openrouter_uses_reported_cost_for_budget() -> None:
+    tool = _StubTool()
+    turns = [_oa_tool_call(n) for n in range(10)]
+    for turn in turns:
+        turn.usage.cost = 0.02  # OpenRouter usage accounting, USD
+    client = _FakeOpenAIClient(turns)
+
+    result = await _adapter(client, tool).execute(
+        _task(
+            provider="openrouter",
+            model_id="deepseek/deepseek-v3",
+            budget_usd=0.05,
+            max_turns=20,
+        )
+    )
+
+    first = client.requests[0]
+    assert first["max_tokens"] == 4096
+    assert first["extra_body"] == {"usage": {"include": True}}
+    assert not result.success
+    assert result.structured is not None
+    assert result.structured["provider"] == "openrouter"
+    assert result.structured["halt_reason"] == "budget_exhausted"
+    assert len(client.requests) == 3  # 0.06 >= 0.05 after turn 3
+    assert result.cost_usd == pytest.approx(0.06)
+
+
+@pytest.mark.parametrize(
+    ("provider", "env_var"),
+    [
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+        ("openrouter", "OPENROUTER_API_KEY"),
+    ],
+)
+async def test_agent_missing_provider_key_is_a_config_error(
+    provider: str, env_var: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(env_var, raising=False)
+    adapter = AgentAdapter(tools={"github": _StubTool()})
+
+    result = await adapter.execute(_task(provider=provider, model_id="m"))
+
+    assert not result.success
+    assert f"{env_var} env var not set" in result.errors[0]
+
+
+async def test_agent_healthcheck_reports_ready_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    adapter = AgentAdapter()
+
+    health = await adapter.healthcheck()
+    assert not health.available
+    assert health.missing is not None and len(health.missing) == 3
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    health = await adapter.healthcheck()
+    assert health.available
+    assert health.version == "openrouter"

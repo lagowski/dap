@@ -24,8 +24,13 @@ tools, or halts with :class:`MaxTurnsExhaustedError` /
 Adapters never raise to the engine (#211): a halt becomes a failed
 ``RuntimeResult`` whose ``structured["halt_reason"]`` names the limit.
 
-Slice 1 scope: ``anthropic`` provider only. Other providers, the dashboard
-tools panel, the #785 audit trail, docs and the example bundle follow.
+Providers: ``anthropic`` (Messages API tool use) and, since slice 2,
+``openai`` and ``openrouter`` (Chat Completions function calling, the same
+SDK and endpoints as ``api-call``). Each provider is a small *dialect* that
+builds the request, parses tool calls and appends tool results in its own
+wire shape; the loop, the tool dispatch and the bounds are shared. Gemini,
+the dashboard tools panel, the #785 audit trail, docs and the example bundle
+follow.
 """
 
 from __future__ import annotations
@@ -36,9 +41,11 @@ import logging
 import os
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Final
 
 import anthropic
+import openai
 from dap_types import (
     BackendErrorCategory,
     HealthStatus,
@@ -53,11 +60,22 @@ from dap_runtimes.adapters._error_category import category_for_status, with_cate
 from dap_runtimes.adapters._providers._anthropic import DEFAULT_ENV_VAR as ANTHROPIC_ENV_VAR
 from dap_runtimes.adapters._providers._anthropic import _calculate_cost
 from dap_runtimes.adapters._providers._base import ProviderError, classify_provider_failure
+from dap_runtimes.adapters._providers._openai import (
+    DEFAULT_ENV_VAR as OPENAI_ENV_VAR,
+)
+from dap_runtimes.adapters._providers._openai import (
+    OPENROUTER_BASE_URL,
+    OPENROUTER_ENV_VAR,
+    OPENROUTER_HEADERS,
+)
+from dap_runtimes.adapters._providers._openai import (
+    _calculate_cost as _openai_cost,
+)
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.agent")
 
-SUPPORTED_PROVIDERS: Final = frozenset({"anthropic"})
+SUPPORTED_PROVIDERS: Final = frozenset({"anthropic", "openai", "openrouter"})
 DEFAULT_PROVIDER: Final = "anthropic"
 DEFAULT_MAX_TURNS: Final = 20
 DEFAULT_MAX_TOKENS: Final = 4096
@@ -123,9 +141,14 @@ class AgentAdapter(BaseAdapter):
         self._client_factory = client_factory
 
     async def healthcheck(self) -> HealthStatus:
-        if not os.environ.get(ANTHROPIC_ENV_VAR):
-            return HealthStatus(available=False, missing=[f"{ANTHROPIC_ENV_VAR} (Anthropic SDK)"])
-        return HealthStatus(available=True, version="anthropic")
+        """Available when at least one provider has its API key set."""
+        ready = sorted(p for p, d in _DIALECTS.items() if os.environ.get(d.env_var))
+        if not ready:
+            return HealthStatus(
+                available=False,
+                missing=[f"{d.env_var} ({p})" for p, d in sorted(_DIALECTS.items())],
+            )
+        return HealthStatus(available=True, version=", ".join(ready))
 
     async def execute(
         self,
@@ -175,10 +198,10 @@ class AgentAdapter(BaseAdapter):
                 pass
         raise _ConfigError(f"tool runtime '{runtime_id}' is not available")
 
-    def new_client(self) -> Any:
+    def new_client(self, dialect: _Dialect) -> Any:
         if self._client_factory is not None:
             return self._client_factory()
-        return anthropic.AsyncAnthropic()
+        return dialect.new_client()
 
 
 class _Loop:
@@ -198,6 +221,7 @@ class _Loop:
         self.max_turns = DEFAULT_MAX_TURNS
         self.budget_usd: float | None = None
         self.model_id = ""
+        self.dialect: _Dialect = _DIALECTS[DEFAULT_PROVIDER]
 
     def prepare(self) -> None:
         cfg = self.config
@@ -207,6 +231,7 @@ class _Loop:
                 f"agent provider '{provider}' is not supported yet; "
                 f"supported: {sorted(SUPPORTED_PROVIDERS)}"
             )
+        self.dialect = _DIALECTS[provider]
         model_id = cfg.get("model_id") or cfg.get("model")
         if not isinstance(model_id, str) or not model_id:
             raise _ConfigError("runtime_config.model_id is required (e.g. 'claude-haiku-4-5')")
@@ -255,51 +280,38 @@ class _Loop:
 
     async def run(self) -> tuple[str, str | None]:
         cfg = self.config
-        messages: list[dict[str, Any]] = [{"role": "user", "content": self.task.prompt_xml}]
-        request: dict[str, Any] = {
-            "model": self.model_id,
-            "max_tokens": cfg.get("max_tokens", DEFAULT_MAX_TOKENS),
-        }
         system_prompt = cfg.get("system_prompt")
-        if isinstance(system_prompt, str) and system_prompt:
-            request["system"] = system_prompt
-        if self.tool_specs:
-            request["tools"] = self.tool_specs
+        system = system_prompt if isinstance(system_prompt, str) and system_prompt else None
+        dialect = self.dialect
+        request, messages = dialect.build_request(
+            model_id=self.model_id,
+            max_tokens=cfg.get("max_tokens", DEFAULT_MAX_TOKENS),
+            system=system,
+            prompt=self.task.prompt_xml,
+            tool_specs=self.tool_specs,
+        )
 
-        client = self.adapter.new_client()
+        client = self.adapter.new_client(dialect)
         try:
             while True:
-                response = await _create(client, {**request, "messages": messages})
+                response = await dialect.create(client, {**request, "messages": messages})
                 self.turns += 1
-                self._account(response)
-                content = list(response.content)
-                tool_uses = [b for b in content if getattr(b, "type", None) == "tool_use"]
-                if response.stop_reason != "tool_use" or not tool_uses:
-                    text = "".join(b.text for b in content if getattr(b, "type", None) == "text")
-                    return text, response.stop_reason
+                turn = dialect.parse(response)
+                self._account(turn.usage)
+                if not turn.tool_calls:
+                    return turn.text, turn.stop_reason
                 self._check_bounds()
-                messages.append({"role": "assistant", "content": [_block(b) for b in content]})
-                results = [await self._call_tool(b) for b in tool_uses]
-                messages.append({"role": "user", "content": results})
+                messages.extend(dialect.assistant_messages(response))
+                results = [(call, *await self._call_tool(call)) for call in turn.tool_calls]
+                messages.extend(dialect.tool_result_messages(results))
         finally:
             close = getattr(client, "close", None)
             if close is not None:
                 await close()
 
-    def _account(self, response: Any) -> None:
-        usage = response.usage
-        input_tokens = getattr(usage, "input_tokens", 0) or 0
-        output_tokens = getattr(usage, "output_tokens", 0) or 0
-        cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-        self.tokens += input_tokens + output_tokens + cache_creation + cache_read
-        cost = _calculate_cost(
-            model_id=self.model_id,
-            input_tokens=input_tokens,
-            cache_creation_tokens=cache_creation,
-            cache_read_tokens=cache_read,
-            output_tokens=output_tokens,
-        )
+    def _account(self, usage: _Usage) -> None:
+        self.tokens += usage.total
+        cost = self.dialect.cost(self.model_id, usage)
         if cost is None:
             self.cost_known = False
         else:
@@ -322,14 +334,18 @@ class _Loop:
                 cost_usd=self.cost_usd,
             )
 
-    async def _call_tool(self, block: Any) -> dict[str, Any]:
-        name = block.name
-        tool_input = block.input if isinstance(block.input, dict) else {}
+    async def _call_tool(self, call: _ToolCall) -> tuple[str, bool]:
+        """Run one tool call; returns the result text and whether it failed."""
+        name = call.name
+        tool_input = call.input
         record: dict[str, Any] = {"turn": self.turns, "tool": name, "input": tool_input}
         self.tool_calls.append(record)
+        if call.input_error is not None:
+            record["success"] = False
+            return call.input_error, True
         if name not in self.tools:
             record["success"] = False
-            return _tool_result(block.id, f"unknown tool '{name}'", is_error=True)
+            return f"unknown tool '{name}'", True
         adapter, base = self.tools[name]
         sub_task = self.task.model_copy(
             update={
@@ -344,7 +360,7 @@ class _Loop:
         except Exception as exc:
             logger.exception("agent tool %s raised", name)
             record["success"] = False
-            return _tool_result(block.id, f"{type(exc).__name__}: {exc}", is_error=True)
+            return f"{type(exc).__name__}: {exc}", True
         record["success"] = result.success
         if result.cost_usd:
             self.cost_usd += result.cost_usd
@@ -356,11 +372,11 @@ class _Loop:
         text = json.dumps(payload, default=str)
         if len(text) > MAX_TOOL_RESULT_CHARS:
             text = text[:MAX_TOOL_RESULT_CHARS] + "...[truncated]"
-        return _tool_result(block.id, text, is_error=not result.success)
+        return text, not result.success
 
     def summary(self) -> dict[str, Any]:
         return {
-            "provider": DEFAULT_PROVIDER,
+            "provider": self.dialect.provider,
             "model": self.model_id,
             "turns": self.turns,
             "max_turns": self.max_turns,
@@ -389,31 +405,386 @@ class _Loop:
         )
 
 
-async def _create(client: Any, request: dict[str, Any]) -> Any:
-    """One Messages API call; SDK errors become ProviderError like api-call."""
+@dataclass(frozen=True)
+class _Usage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
+    # Cost the provider reported itself (OpenRouter usage accounting).
+    reported_cost_usd: float | None = None
+
+    @property
+    def total(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_creation_tokens
+            + self.cache_read_tokens
+        )
+
+
+@dataclass(frozen=True)
+class _ToolCall:
+    id: str
+    name: str
+    input: dict[str, Any]
+    # Set when the model's arguments could not be decoded; fed back as an error.
+    input_error: str | None = None
+
+
+@dataclass(frozen=True)
+class _Turn:
+    text: str
+    tool_calls: list[_ToolCall]
+    stop_reason: str | None
+    usage: _Usage
+
+
+class _Dialect:
+    """One provider's wire shape for the tool loop."""
+
+    provider: str = ""
+    env_var: str = ""
+
+    def new_client(self) -> Any:
+        raise NotImplementedError
+
+    def build_request(
+        self,
+        *,
+        model_id: str,
+        max_tokens: int,
+        system: str | None,
+        prompt: str,
+        tool_specs: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        raise NotImplementedError
+
+    async def create(self, client: Any, request: dict[str, Any]) -> Any:
+        raise NotImplementedError
+
+    def parse(self, response: Any) -> _Turn:
+        raise NotImplementedError
+
+    def assistant_messages(self, response: Any) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def tool_result_messages(
+        self, results: list[tuple[_ToolCall, str, bool]]
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def cost(self, model_id: str, usage: _Usage) -> float | None:
+        return usage.reported_cost_usd
+
+    def _require_key(self) -> str:
+        key = os.environ.get(self.env_var)
+        if not key:
+            raise _ConfigError(f"{self.env_var} env var not set (agent provider '{self.provider}')")
+        return key
+
+
+class _AnthropicDialect(_Dialect):
+    """Messages API: ``tool_use`` blocks out, ``tool_result`` blocks back."""
+
+    provider = "anthropic"
+    env_var = ANTHROPIC_ENV_VAR
+
+    def new_client(self) -> Any:
+        self._require_key()
+        return anthropic.AsyncAnthropic()
+
+    def build_request(
+        self,
+        *,
+        model_id: str,
+        max_tokens: int,
+        system: str | None,
+        prompt: str,
+        tool_specs: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        request: dict[str, Any] = {"model": model_id, "max_tokens": max_tokens}
+        if system:
+            request["system"] = system
+        if tool_specs:
+            request["tools"] = tool_specs
+        return request, [{"role": "user", "content": prompt}]
+
+    async def create(self, client: Any, request: dict[str, Any]) -> Any:
+        """One Messages API call; SDK errors become ProviderError like api-call."""
+        try:
+            return await client.messages.create(**request)
+        except anthropic.AuthenticationError as exc:
+            raise ProviderError(f"Authentication failed: {exc.message}") from exc
+        except anthropic.BadRequestError as exc:
+            category = classify_provider_failure(exc.message, status_code=400)
+            raise ProviderError(f"Bad request: {exc.message}", category=category) from exc
+        except anthropic.RateLimitError as exc:
+            category = classify_provider_failure(exc.message, status_code=429)
+            raise ProviderError(f"Rate limited: {exc.message}", category=category) from exc
+        except anthropic.APITimeoutError as exc:
+            raise ProviderError(f"API timeout: {exc}", category="timeout") from exc
+        except anthropic.APIConnectionError as exc:
+            raise ProviderError(f"Connection error: {exc}", category="unavailable") from exc
+        except anthropic.APIStatusError as exc:
+            raise ProviderError(
+                f"API error {exc.status_code}: {exc.message}",
+                category=category_for_status(exc.status_code),
+            ) from exc
+
+    def parse(self, response: Any) -> _Turn:
+        content = list(response.content)
+        calls: list[_ToolCall] = []
+        if response.stop_reason == "tool_use":
+            calls = [
+                _ToolCall(
+                    id=b.id,
+                    name=b.name,
+                    input=b.input if isinstance(b.input, dict) else {},
+                )
+                for b in content
+                if getattr(b, "type", None) == "tool_use"
+            ]
+        text = "".join(b.text for b in content if getattr(b, "type", None) == "text")
+        usage = response.usage
+        return _Turn(
+            text=text,
+            tool_calls=calls,
+            stop_reason=response.stop_reason,
+            usage=_Usage(
+                input_tokens=getattr(usage, "input_tokens", 0) or 0,
+                output_tokens=getattr(usage, "output_tokens", 0) or 0,
+                cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+            ),
+        )
+
+    def assistant_messages(self, response: Any) -> list[dict[str, Any]]:
+        return [{"role": "assistant", "content": [_block(b) for b in response.content]}]
+
+    def tool_result_messages(
+        self, results: list[tuple[_ToolCall, str, bool]]
+    ) -> list[dict[str, Any]]:
+        blocks = [
+            {"type": "tool_result", "tool_use_id": call.id, "content": text, "is_error": is_error}
+            for call, text, is_error in results
+        ]
+        return [{"role": "user", "content": blocks}]
+
+    def cost(self, model_id: str, usage: _Usage) -> float | None:
+        return _calculate_cost(
+            model_id=model_id,
+            input_tokens=usage.input_tokens,
+            cache_creation_tokens=usage.cache_creation_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
+            output_tokens=usage.output_tokens,
+        )
+
+
+class _OpenAIDialect(_Dialect):
+    """Chat Completions: ``tool_calls`` out, one ``role: tool`` message per result."""
+
+    provider = "openai"
+    env_var = OPENAI_ENV_VAR
+    # Native OpenAI reasoning models (gpt-5, o-series) reject ``max_tokens``.
+    max_tokens_field = "max_completion_tokens"
+
+    def new_client(self) -> Any:
+        return openai.AsyncOpenAI(api_key=self._require_key())
+
+    def build_request(
+        self,
+        *,
+        model_id: str,
+        max_tokens: int,
+        system: str | None,
+        prompt: str,
+        tool_specs: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        request: dict[str, Any] = {"model": model_id, self.max_tokens_field: max_tokens}
+        if tool_specs:
+            request["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": spec["name"],
+                        "description": spec["description"],
+                        "parameters": spec["input_schema"],
+                    },
+                }
+                for spec in tool_specs
+            ]
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        return request, messages
+
+    async def create(self, client: Any, request: dict[str, Any]) -> Any:
+        """One Chat Completions call; SDK errors become ProviderError like api-call."""
+        try:
+            return await client.chat.completions.create(**request)
+        except openai.AuthenticationError as exc:
+            raise ProviderError(f"Authentication failed: {exc}") from exc
+        except openai.PermissionDeniedError as exc:
+            raise ProviderError(f"Permission denied: {exc}") from exc
+        except openai.NotFoundError as exc:
+            raise ProviderError(f"Model not found: {exc}") from exc
+        except openai.BadRequestError as exc:
+            category = classify_provider_failure(str(exc), status_code=400)
+            label = "Out of credits / quota" if category == "out_of_credits" else "Bad request"
+            raise ProviderError(f"{label}: {exc}", category=category) from exc
+        except openai.RateLimitError as exc:
+            category = classify_provider_failure(str(exc), status_code=429)
+            label = "Out of credits / quota" if category == "out_of_credits" else "Rate limited"
+            raise ProviderError(f"{label}: {exc}", category=category) from exc
+        except openai.APITimeoutError as exc:
+            raise ProviderError(f"API timeout: {exc}", category="timeout") from exc
+        except openai.APIConnectionError as exc:
+            raise ProviderError(f"Connection error: {exc}", category="unavailable") from exc
+        except openai.APIStatusError as exc:
+            raise ProviderError(
+                f"API error {exc.status_code}: {exc}",
+                category=category_for_status(exc.status_code),
+            ) from exc
+
+    def parse(self, response: Any) -> _Turn:
+        choice = response.choices[0]
+        message = choice.message
+        calls = [_openai_tool_call(tc) for tc in (getattr(message, "tool_calls", None) or [])]
+        usage = response.usage
+        cache_read = 0
+        details = getattr(usage, "prompt_tokens_details", None)
+        if details is not None:
+            cache_read = getattr(details, "cached_tokens", 0) or 0
+        prompt_tokens = (getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+        reported = getattr(usage, "cost", None) if usage else None
+        return _Turn(
+            text=message.content or "",
+            tool_calls=calls,
+            stop_reason=choice.finish_reason,
+            usage=_Usage(
+                # OpenAI counts cached tokens inside prompt_tokens; split them
+                # out so the token total isn't counted twice.
+                input_tokens=prompt_tokens - cache_read,
+                output_tokens=(getattr(usage, "completion_tokens", 0) or 0) if usage else 0,
+                cache_read_tokens=cache_read,
+                reported_cost_usd=(
+                    float(reported)
+                    if isinstance(reported, int | float) and not isinstance(reported, bool)
+                    else None
+                ),
+            ),
+        )
+
+    def assistant_messages(self, response: Any) -> list[dict[str, Any]]:
+        message = response.choices[0].message
+        return [
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in message.tool_calls or []
+                ],
+            }
+        ]
+
+    def tool_result_messages(
+        self, results: list[tuple[_ToolCall, str, bool]]
+    ) -> list[dict[str, Any]]:
+        # Chat Completions has no is_error flag: an error is marked in the text.
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": f"ERROR: {text}" if is_error else text,
+            }
+            for call, text, is_error in results
+        ]
+
+    def cost(self, model_id: str, usage: _Usage) -> float | None:
+        return _openai_cost(
+            model_id, usage.input_tokens + usage.cache_read_tokens, usage.output_tokens
+        )
+
+
+class _OpenRouterDialect(_OpenAIDialect):
+    """OpenRouter: the OpenAI shape on its gateway; cost comes from its usage accounting."""
+
+    provider = "openrouter"
+    env_var = OPENROUTER_ENV_VAR
+    max_tokens_field = "max_tokens"
+
+    def new_client(self) -> Any:
+        return openai.AsyncOpenAI(
+            api_key=self._require_key(),
+            base_url=OPENROUTER_BASE_URL,
+            default_headers=OPENROUTER_HEADERS,
+        )
+
+    def build_request(
+        self,
+        *,
+        model_id: str,
+        max_tokens: int,
+        system: str | None,
+        prompt: str,
+        tool_specs: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        request, messages = super().build_request(
+            model_id=model_id,
+            max_tokens=max_tokens,
+            system=system,
+            prompt=prompt,
+            tool_specs=tool_specs,
+        )
+        # Ask OpenRouter to report the USD cost of each call in ``usage.cost``,
+        # so budget_usd is enforced for any model on the gateway.
+        request["extra_body"] = {"usage": {"include": True}}
+        return request, messages
+
+    def cost(self, model_id: str, usage: _Usage) -> float | None:
+        return usage.reported_cost_usd
+
+
+_DIALECTS: Final[dict[str, _Dialect]] = {
+    d.provider: d for d in (_AnthropicDialect(), _OpenAIDialect(), _OpenRouterDialect())
+}
+
+
+def _openai_tool_call(tool_call: Any) -> _ToolCall:
+    function = tool_call.function
+    raw = function.arguments or "{}"
     try:
-        return await client.messages.create(**request)
-    except anthropic.AuthenticationError as exc:
-        raise ProviderError(f"Authentication failed: {exc.message}") from exc
-    except anthropic.BadRequestError as exc:
-        category = classify_provider_failure(exc.message, status_code=400)
-        raise ProviderError(f"Bad request: {exc.message}", category=category) from exc
-    except anthropic.RateLimitError as exc:
-        category = classify_provider_failure(exc.message, status_code=429)
-        raise ProviderError(f"Rate limited: {exc.message}", category=category) from exc
-    except anthropic.APITimeoutError as exc:
-        raise ProviderError(f"API timeout: {exc}", category="timeout") from exc
-    except anthropic.APIConnectionError as exc:
-        raise ProviderError(f"Connection error: {exc}", category="unavailable") from exc
-    except anthropic.APIStatusError as exc:
-        raise ProviderError(
-            f"API error {exc.status_code}: {exc.message}",
-            category=category_for_status(exc.status_code),
-        ) from exc
+        decoded = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return _ToolCall(
+            id=tool_call.id,
+            name=function.name,
+            input={},
+            input_error=f"tool arguments are not valid JSON: {exc}",
+        )
+    if not isinstance(decoded, dict):
+        return _ToolCall(
+            id=tool_call.id,
+            name=function.name,
+            input={},
+            input_error="tool arguments must be a JSON object",
+        )
+    return _ToolCall(id=tool_call.id, name=function.name, input=decoded)
 
 
 def _block(block: Any) -> dict[str, Any]:
-    """Serialize a response content block for the next request."""
+    """Serialize an Anthropic response content block for the next request."""
     dump = getattr(block, "model_dump", None)
     if callable(dump):
         data = dump(exclude_none=True)
@@ -424,15 +795,6 @@ def _block(block: Any) -> dict[str, Any]:
     if block.type == "text":
         return {"type": "text", "text": block.text}
     return {"type": block.type}
-
-
-def _tool_result(tool_use_id: str, content: str, *, is_error: bool) -> dict[str, Any]:
-    return {
-        "type": "tool_result",
-        "tool_use_id": tool_use_id,
-        "content": content,
-        "is_error": is_error,
-    }
 
 
 def _tool_name(raw: str) -> str:
