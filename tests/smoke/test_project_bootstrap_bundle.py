@@ -98,6 +98,19 @@ def _route(pipeline: Pipeline, source: str, state: dict[str, Any]) -> str:
     return str(chooser(PipelineState.model_validate(full)))
 
 
+def test_cortex_min_dap_version_is_refused(client: TestClient) -> None:
+    """Why the vendored copy lowers ``min_dap_version``: cortex's ``0.8.0`` is refused."""
+    bundle = json.loads(BUNDLE.read_text())
+    assert "_comment" not in bundle
+    assert "install_instructions" not in bundle
+    bundle["min_dap_version"] = "0.8.0"
+
+    response = client.post("/pipelines/import", json=bundle)
+
+    assert response.status_code == 422, response.text
+    assert "Bundle requires DAP >= 0.8.0" in response.text
+
+
 def test_project_bootstrap_bundle_imports_with_five_interrupt_gates(
     client: TestClient,
 ) -> None:

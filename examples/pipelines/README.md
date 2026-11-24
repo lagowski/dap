@@ -112,7 +112,8 @@ Vendored from cortex `cortex/dap_bundles/project-bootstrap.pipeline-bundle.json`
 with `_comment` and `install_instructions` removed and three changes for DAP:
 
 - `min_dap_version` is `0.3.0`; the cortex copy asks for `0.8.0`, which no DAP
-  release has, so the import was refused.
+  release has, so the import was refused (`422 Bundle requires DAP >= 0.8.0,
+  but this instance is 0.3.0`).
 - The edge conditions read `extensions.gate_*_approved`. A node's return keys
   that are not `PipelineState` fields are stored under `extensions`, so a bare
   `gate_*_approved` never matched and every gate ended the run.
