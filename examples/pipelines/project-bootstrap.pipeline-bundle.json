@@ -1,0 +1,476 @@
+{
+  "schema_version": "pipeline-export/2",
+  "pipeline": {
+    "name": "Project Bootstrap — arena verdict to scaffolded, cortex-managed project",
+    "description": "Gate-supervised pipeline that bootstraps a new project from an idea-arena verdict: validate params, scope the MVP slice (LLM), create + seed the GitHub repo, wire the PR-review-gate, provision a dedicated database, register the project under cortex, then decompose the MVP into INVEST-sized GitHub issues for issue-implementer. Five human approval gates separate the irreversible steps.",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "BootstrapState.v1",
+    "entry_point": "validate_params",
+    "nodes": [
+      {
+        "id": "validate_params",
+        "agent_id": "pb_validate_params",
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate_params",
+        "agent_id": "pb_gate_params",
+        "position": {
+          "x": 100,
+          "y": 0
+        }
+      },
+      {
+        "id": "scope_mvp",
+        "agent_id": "pb_scope_mvp",
+        "position": {
+          "x": 200,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate_scope",
+        "agent_id": "pb_gate_scope",
+        "position": {
+          "x": 300,
+          "y": 0
+        }
+      },
+      {
+        "id": "scaffold_repo",
+        "agent_id": "pb_scaffold_repo",
+        "position": {
+          "x": 400,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate_scaffold",
+        "agent_id": "pb_gate_scaffold",
+        "position": {
+          "x": 500,
+          "y": 0
+        }
+      },
+      {
+        "id": "wire_gate",
+        "agent_id": "pb_wire_gate",
+        "position": {
+          "x": 600,
+          "y": 0
+        }
+      },
+      {
+        "id": "provision_db",
+        "agent_id": "pb_provision_db",
+        "position": {
+          "x": 700,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate_provision",
+        "agent_id": "pb_gate_provision",
+        "position": {
+          "x": 800,
+          "y": 0
+        }
+      },
+      {
+        "id": "register_project",
+        "agent_id": "pb_register_project",
+        "position": {
+          "x": 900,
+          "y": 0
+        }
+      },
+      {
+        "id": "decompose_issues",
+        "agent_id": "pb_decompose_issues",
+        "position": {
+          "x": 1000,
+          "y": 0
+        }
+      },
+      {
+        "id": "gate_decompose",
+        "agent_id": "pb_gate_decompose",
+        "position": {
+          "x": 1100,
+          "y": 0
+        }
+      },
+      {
+        "id": "finalize",
+        "agent_id": "pb_finalize",
+        "position": {
+          "x": 1200,
+          "y": 0
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "validate_params",
+        "target": "gate_params"
+      },
+      {
+        "id": "e2",
+        "source": "gate_params",
+        "target": "scope_mvp",
+        "condition": {
+          "field": "extensions.gate_params_approved",
+          "op": "eq",
+          "value": true
+        }
+      },
+      {
+        "id": "e3",
+        "source": "gate_params",
+        "target": "__end__",
+        "condition": {
+          "field": "extensions.gate_params_approved",
+          "op": "eq",
+          "value": false
+        }
+      },
+      {
+        "id": "e4",
+        "source": "scope_mvp",
+        "target": "gate_scope"
+      },
+      {
+        "id": "e5",
+        "source": "gate_scope",
+        "target": "scaffold_repo",
+        "condition": {
+          "field": "extensions.gate_scope_approved",
+          "op": "eq",
+          "value": true
+        }
+      },
+      {
+        "id": "e6",
+        "source": "gate_scope",
+        "target": "__end__",
+        "condition": {
+          "field": "extensions.gate_scope_approved",
+          "op": "eq",
+          "value": false
+        }
+      },
+      {
+        "id": "e7",
+        "source": "scaffold_repo",
+        "target": "gate_scaffold"
+      },
+      {
+        "id": "e8",
+        "source": "gate_scaffold",
+        "target": "wire_gate"
+      },
+      {
+        "id": "e9",
+        "source": "wire_gate",
+        "target": "provision_db"
+      },
+      {
+        "id": "e10",
+        "source": "provision_db",
+        "target": "gate_provision"
+      },
+      {
+        "id": "e11",
+        "source": "gate_provision",
+        "target": "register_project",
+        "condition": {
+          "field": "extensions.gate_provision_approved",
+          "op": "eq",
+          "value": true
+        }
+      },
+      {
+        "id": "e12",
+        "source": "gate_provision",
+        "target": "__end__",
+        "condition": {
+          "field": "extensions.gate_provision_approved",
+          "op": "eq",
+          "value": false
+        }
+      },
+      {
+        "id": "e13",
+        "source": "register_project",
+        "target": "decompose_issues"
+      },
+      {
+        "id": "e14",
+        "source": "decompose_issues",
+        "target": "gate_decompose",
+        "condition": {
+          "type": "not",
+          "children": [
+            {
+              "type": "comparison",
+              "field": "extensions.gate_decompose_approved",
+              "operator": "==",
+              "value": true
+            }
+          ]
+        }
+      },
+      {
+        "id": "e15",
+        "source": "decompose_issues",
+        "target": "finalize",
+        "condition": {
+          "field": "extensions.gate_decompose_approved",
+          "op": "eq",
+          "value": true
+        }
+      },
+      {
+        "id": "e16",
+        "source": "gate_decompose",
+        "target": "decompose_issues",
+        "condition": {
+          "field": "extensions.gate_decompose_approved",
+          "op": "eq",
+          "value": true
+        }
+      },
+      {
+        "id": "e17",
+        "source": "gate_decompose",
+        "target": "__end__",
+        "condition": {
+          "field": "extensions.gate_decompose_approved",
+          "op": "eq",
+          "value": false
+        }
+      },
+      {
+        "id": "e18",
+        "source": "finalize",
+        "target": "__end__"
+      }
+    ],
+    "defaults": {
+      "max_attempts": 3,
+      "budget_limit_usd": 25.0,
+      "approval_required_nodes": [
+        "gate_params",
+        "gate_scope",
+        "gate_scaffold",
+        "gate_provision",
+        "gate_decompose"
+      ]
+    }
+  },
+  "bundled_agents": {
+    "pb_validate_params": {
+      "name": "Project Bootstrap — Validate Params",
+      "role": "setup",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_validate_params"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 30000
+    },
+    "pb_gate_params": {
+      "name": "Project Bootstrap — Gate 1 (params)",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "pb_scope_mvp": {
+      "name": "Project Bootstrap — Scope MVP (LLM)",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_scope_mvp"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 300000
+    },
+    "pb_gate_scope": {
+      "name": "Project Bootstrap — Gate 2 (scope)",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "pb_scaffold_repo": {
+      "name": "Project Bootstrap — Scaffold Repo",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_scaffold_repo"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "pb_gate_scaffold": {
+      "name": "Project Bootstrap — Gate 3 (scaffold)",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "pb_wire_gate": {
+      "name": "Project Bootstrap — Wire PR-review-gate (bridge)",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_wire_gate"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 300000
+    },
+    "pb_provision_db": {
+      "name": "Project Bootstrap — Provision DB (bridge)",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_provision_db"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 300000
+    },
+    "pb_gate_provision": {
+      "name": "Project Bootstrap — Gate 4 (provision)",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "pb_register_project": {
+      "name": "Project Bootstrap — Register Project (cortex init + k8s tokens)",
+      "role": "side_effect",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_register_project"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 120000
+    },
+    "pb_decompose_issues": {
+      "name": "Project Bootstrap — Decompose Issues (LLM gen + file)",
+      "role": "executor",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_decompose_issues"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 300000
+    },
+    "pb_gate_decompose": {
+      "name": "Project Bootstrap — Gate 5 (decompose)",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.dap_steps.human_gate:noop"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    },
+    "pb_finalize": {
+      "name": "Project Bootstrap — Finalize",
+      "role": "post_check",
+      "runtime_id": "python-func",
+      "runtime_config": {
+        "callable_path": "cortex.pipelines.project_bootstrap.nodes:_finalize"
+      },
+      "prompt_template": "",
+      "input_schema": [],
+      "output_schema": [],
+      "timeout_ms": 60000
+    }
+  },
+  "min_dap_version": "0.3.0",
+  "backend_profiles": {
+    "available": {
+      "claude-subscription": {
+        "label": "Claude Code (subscription)",
+        "description": "Uses claude CLI subprocess. No API cost. Requires claude CLI installed and authenticated.",
+        "requires_env": [],
+        "requires_service": "claude-cli"
+      },
+      "claude-api": {
+        "label": "Claude API (pay-per-token ~$3/MTok)",
+        "description": "Direct Anthropic API. Fast, no CLI needed.",
+        "requires_env": [
+          "ANTHROPIC_API_KEY"
+        ],
+        "requires_service": null
+      },
+      "claude-subscription-alt": {
+        "label": "Claude stdin-pipe (subscription, zero API cost)",
+        "description": "Interactive stdin backend. Draws from subscription, not $200 credit.",
+        "requires_env": [],
+        "requires_service": "claude-cli"
+      },
+      "local-gemma": {
+        "label": "Local Ollama (gemma4:e2b)",
+        "description": "Fully local, free, slower. Needs Ollama running at OLLAMA_BASE_URL.",
+        "requires_env": [],
+        "requires_service": "ollama"
+      },
+      "deepseek-api": {
+        "label": "DeepSeek API (~$0.14/MTok)",
+        "description": "Cheap OpenAI-compatible API. Good for Phase 1 enrichment.",
+        "requires_env": [
+          "DEEPSEEK_API_KEY"
+        ],
+        "requires_service": null
+      }
+    },
+    "agent_assignments": {
+      "default_profile": "claude-subscription-alt",
+      "overrides": {}
+    }
+  }
+}
