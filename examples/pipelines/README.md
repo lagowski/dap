@@ -97,6 +97,41 @@ __start__ → coder → tester → __end__
 Every key it uses (`retry`, `diff_stats`, `not`, `fallback`):
 [`docs/pipelines.md`](../../docs/pipelines.md).
 
+### `project-bootstrap.pipeline-bundle.json`
+
+Cortex's project-bootstrap pipeline (cortex epic #749): it turns an idea-arena
+verdict into a scaffolded, cortex-managed project (repo, PR-review gate, database,
+cortex registration, MVP issues). 13 `python-func` nodes calling
+`cortex.pipelines.project_bootstrap.nodes`, with five human gates paused by
+`interrupt_before`: `gate_params`, `gate_scope`, `gate_scaffold`,
+`gate_provision`, `gate_decompose`. `gate_scaffold` always continues;
+`decompose_issues` runs twice, once to draft the issues before `gate_decompose`
+and once to file them after it.
+
+Vendored from cortex `cortex/dap_bundles/project-bootstrap.pipeline-bundle.json`
+with `_comment` and `install_instructions` removed and three changes for DAP:
+
+- `min_dap_version` is `0.3.0`; the cortex copy asks for `0.8.0`, which no DAP
+  release has, so the import was refused (`422 Bundle requires DAP >= 0.8.0,
+  but this instance is 0.3.0`).
+- The edge conditions read `extensions.gate_*_approved`. A node's return keys
+  that are not `PipelineState` fields are stored under `extensions`, so a bare
+  `gate_*_approved` never matched and every gate ended the run.
+- `decompose_issues → gate_decompose` is `not (extensions.gate_decompose_approved == true)`.
+  The flag is unset on the first pass, and a missing field never equals `false`.
+
+**Run it** with the inputs under `extensions` (top-level keys are rejected):
+
+```json
+{"extensions": {"project_slug": "demo-app", "repo_layout": "single", "stack": "python", "db_choice": "postgres", "arena_verdict": "go"}}
+```
+
+**Prerequisites:** the `cortex` package importable by the engine (`POST /runs`
+refuses a callable it cannot import), and the GitHub and k8s credentials the
+`wire_gate`, `provision_db` and `register_project` nodes use.
+`tests/smoke/test_project_bootstrap_bundle.py` checks the import, the routing and
+a dry run that pauses at `gate_params`, without cortex installed.
+
 ### `github-issue-triage.pipeline-bundle.json`
 
 Five-node linear pipeline that picks the most sensible open GitHub issue,
