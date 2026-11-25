@@ -1,4 +1,4 @@
-"""Tool-loop ``agent`` runtime (#813, slice 1).
+"""Tool-loop ``agent`` runtime (#813, slices 1-3a).
 
 An LLM node that runs an agentic tool-use loop. Its tools are other DAP
 runtime adapters, declared in ``runtime_config.tools``::
@@ -24,18 +24,20 @@ tools, or halts with :class:`MaxTurnsExhaustedError` /
 Adapters never raise to the engine (#211): a halt becomes a failed
 ``RuntimeResult`` whose ``structured["halt_reason"]`` names the limit.
 
-Providers: ``anthropic`` (Messages API tool use) and, since slice 2,
-``openai`` and ``openrouter`` (Chat Completions function calling, the same
-SDK and endpoints as ``api-call``). Each provider is a small *dialect* that
-builds the request, parses tool calls and appends tool results in its own
-wire shape; the loop, the tool dispatch and the bounds are shared. Gemini,
-the dashboard tools panel, the #785 audit trail, docs and the example bundle
+Providers: ``anthropic`` (Messages API tool use); since slice 2, ``openai``
+and ``openrouter`` (Chat Completions function calling, the same SDK and
+endpoints as ``api-call``); since slice 3a, ``gemini`` (Google Gen AI SDK
+function calling, key from ``GEMINI_API_KEY``). Each provider is a small
+*dialect* that builds the request, parses tool calls and appends tool results
+in its own wire shape; the loop, the tool dispatch and the bounds are shared.
+The dashboard tools panel, the #785 audit trail, docs and the example bundle
 follow.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -45,6 +47,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 import anthropic
+import httpx
 import openai
 from dap_types import (
     BackendErrorCategory,
@@ -55,11 +58,19 @@ from dap_types import (
     RuntimeResult,
     RuntimeTask,
 )
+from google import genai
+from google.genai import errors as genai_errors
 
-from dap_runtimes.adapters._error_category import category_for_status, with_category
+from dap_runtimes.adapters._error_category import (
+    category_for_status,
+    category_for_transport_error,
+    with_category,
+)
 from dap_runtimes.adapters._providers._anthropic import DEFAULT_ENV_VAR as ANTHROPIC_ENV_VAR
 from dap_runtimes.adapters._providers._anthropic import _calculate_cost
 from dap_runtimes.adapters._providers._base import ProviderError, classify_provider_failure
+from dap_runtimes.adapters._providers._gemini import _calculate_cost as _gemini_cost
+from dap_runtimes.adapters._providers._gemini import env_var_for as _gemini_env_var_for
 from dap_runtimes.adapters._providers._openai import (
     DEFAULT_ENV_VAR as OPENAI_ENV_VAR,
 )
@@ -75,7 +86,7 @@ from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.agent")
 
-SUPPORTED_PROVIDERS: Final = frozenset({"anthropic", "openai", "openrouter"})
+SUPPORTED_PROVIDERS: Final = frozenset({"anthropic", "openai", "openrouter", "gemini"})
 DEFAULT_PROVIDER: Final = "anthropic"
 DEFAULT_MAX_TURNS: Final = 20
 DEFAULT_MAX_TOKENS: Final = 4096
@@ -305,9 +316,7 @@ class _Loop:
                 results = [(call, *await self._call_tool(call)) for call in turn.tool_calls]
                 messages.extend(dialect.tool_result_messages(results))
         finally:
-            close = getattr(client, "close", None)
-            if close is not None:
-                await close()
+            await dialect.close(client)
 
     def _account(self, usage: _Usage) -> None:
         self.tokens += usage.total
@@ -477,6 +486,13 @@ class _Dialect:
 
     def cost(self, model_id: str, usage: _Usage) -> float | None:
         return usage.reported_cost_usd
+
+    async def close(self, client: Any) -> None:
+        close = getattr(client, "close", None)
+        if close is not None:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
 
     def _require_key(self) -> str:
         key = os.environ.get(self.env_var)
@@ -756,9 +772,181 @@ class _OpenRouterDialect(_OpenAIDialect):
         return usage.reported_cost_usd
 
 
+class _GeminiDialect(_Dialect):
+    """Gen AI SDK: ``function_call`` parts out, ``function_response`` parts back."""
+
+    provider = "gemini"
+    env_var = _gemini_env_var_for({})
+
+    def new_client(self) -> Any:
+        return genai.Client(api_key=self._require_key())
+
+    def build_request(
+        self,
+        *,
+        model_id: str,
+        max_tokens: int,
+        system: str | None,
+        prompt: str,
+        tool_specs: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        config: dict[str, Any] = {"max_output_tokens": max_tokens}
+        if system:
+            config["system_instruction"] = system
+        if tool_specs:
+            # parameters_json_schema takes full JSON Schema (additionalProperties
+            # included), which the OpenAPI-subset ``parameters`` field rejects.
+            config["tools"] = [
+                {
+                    "function_declarations": [
+                        {
+                            "name": spec["name"],
+                            "description": spec["description"],
+                            "parameters_json_schema": spec["input_schema"],
+                        }
+                        for spec in tool_specs
+                    ]
+                }
+            ]
+            # The loop runs the tools itself: no SDK automatic function calling.
+            config["automatic_function_calling"] = {"disable": True}
+        request: dict[str, Any] = {"model": model_id, "config": config}
+        return request, [{"role": "user", "parts": [{"text": prompt}]}]
+
+    async def create(self, client: Any, request: dict[str, Any]) -> Any:
+        """One generate_content call; SDK errors become ProviderError like api-call."""
+        payload = dict(request)
+        contents = payload.pop("messages")
+        try:
+            return await client.aio.models.generate_content(contents=contents, **payload)
+        except genai_errors.APIError as exc:
+            status = getattr(exc, "code", None)
+            status_code = status if isinstance(status, int) else None
+            category = classify_provider_failure(str(exc), status_code=status_code)
+            prefix = (
+                "Out of credits / quota"
+                if category == "out_of_credits"
+                else "Rate limited"
+                if category == "rate_limit"
+                else f"Gemini API error {status}"
+            )
+            raise ProviderError(
+                f"{prefix}: {exc}", category=category or category_for_status(status_code)
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ProviderError(
+                f"Gemini call failed: {exc}", category=category_for_transport_error(exc)
+            ) from exc
+
+    def parse(self, response: Any) -> _Turn:
+        parts = _gemini_parts(response)
+        calls = [
+            _gemini_tool_call(part.function_call)
+            for part in parts
+            if getattr(part, "function_call", None) is not None
+        ]
+        text = "".join(
+            part.text
+            for part in parts
+            if isinstance(getattr(part, "text", None), str) and not getattr(part, "thought", None)
+        )
+        usage = getattr(response, "usage_metadata", None)
+        prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+        cache_read = getattr(usage, "cached_content_token_count", 0) or 0
+        # Thinking tokens are billed as output.
+        output = (getattr(usage, "candidates_token_count", 0) or 0) + (
+            getattr(usage, "thoughts_token_count", 0) or 0
+        )
+        candidates = getattr(response, "candidates", None) or []
+        reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        return _Turn(
+            text=text,
+            tool_calls=calls,
+            stop_reason=None if reason is None else str(getattr(reason, "value", reason)),
+            usage=_Usage(
+                # prompt_token_count includes the cached tokens; split them out
+                # so the token total isn't counted twice.
+                input_tokens=prompt_tokens - cache_read,
+                output_tokens=output,
+                cache_read_tokens=cache_read,
+            ),
+        )
+
+    def assistant_messages(self, response: Any) -> list[dict[str, Any]]:
+        content = response.candidates[0].content
+        dump = getattr(content, "model_dump", None)
+        if callable(dump):
+            # Keeps thought signatures, which Gemini 3 requires on the echo.
+            data = dump(exclude_none=True)
+            if isinstance(data, dict):
+                return [data]
+        parts: list[dict[str, Any]] = []
+        for part in _gemini_parts(response):
+            call = getattr(part, "function_call", None)
+            if call is not None:
+                fc: dict[str, Any] = {"name": call.name, "args": call.args}
+                if getattr(call, "id", None):
+                    fc["id"] = call.id
+                parts.append({"function_call": fc})
+            elif isinstance(getattr(part, "text", None), str):
+                parts.append({"text": part.text})
+        return [{"role": "model", "parts": parts}]
+
+    def tool_result_messages(
+        self, results: list[tuple[_ToolCall, str, bool]]
+    ) -> list[dict[str, Any]]:
+        parts: list[dict[str, Any]] = []
+        for call, text, is_error in results:
+            # Gemini's convention: "output" for a result, "error" for a failure.
+            function_response: dict[str, Any] = {
+                "name": call.name,
+                "response": {"error": text} if is_error else {"output": text},
+            }
+            if call.id:
+                function_response["id"] = call.id
+            parts.append({"function_response": function_response})
+        return [{"role": "user", "parts": parts}]
+
+    def cost(self, model_id: str, usage: _Usage) -> float | None:
+        return _gemini_cost(
+            model_id, usage.input_tokens + usage.cache_read_tokens, usage.output_tokens
+        )
+
+    async def close(self, client: Any) -> None:
+        aio = getattr(client, "aio", None)
+        aclose = getattr(aio, "aclose", None)
+        if callable(aclose):
+            await aclose()
+        await super().close(client)
+
+
 _DIALECTS: Final[dict[str, _Dialect]] = {
-    d.provider: d for d in (_AnthropicDialect(), _OpenAIDialect(), _OpenRouterDialect())
+    d.provider: d
+    for d in (_AnthropicDialect(), _OpenAIDialect(), _OpenRouterDialect(), _GeminiDialect())
 }
+
+
+def _gemini_parts(response: Any) -> list[Any]:
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        return []
+    content = getattr(candidates[0], "content", None)
+    return list(getattr(content, "parts", None) or [])
+
+
+def _gemini_tool_call(function_call: Any) -> _ToolCall:
+    # The Gemini Developer API may omit call ids; the id is then left empty and
+    # the function_response is matched by name and order.
+    call_id = getattr(function_call, "id", None) or ""
+    name = function_call.name or ""
+    args = function_call.args
+    if args is None:
+        return _ToolCall(id=call_id, name=name, input={})
+    if not isinstance(args, dict):
+        return _ToolCall(
+            id=call_id, name=name, input={}, input_error="tool arguments must be an object"
+        )
+    return _ToolCall(id=call_id, name=name, input=dict(args))
 
 
 def _openai_tool_call(tool_call: Any) -> _ToolCall:
