@@ -1,6 +1,6 @@
-"""Tests for the tool-loop ``agent`` runtime (#813, slices 1-2).
+"""Tests for the tool-loop ``agent`` runtime (#813, slices 1-3a).
 
-The provider clients (Anthropic, OpenAI, OpenRouter) are scripted fakes;
+The provider clients (Anthropic, OpenAI, OpenRouter, Gemini) are scripted fakes;
 tools are real ``RuntimeAdapter`` objects (a recording stub), so the loop,
 the tool dispatch and the halting bounds are exercised without network.
 """
@@ -210,7 +210,7 @@ async def test_agent_final_answer_within_budget_is_not_a_halt() -> None:
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"provider": "gemini"}, "not supported"),
+        ({"provider": "bedrock"}, "not supported"),
         ({"model_id": None}, "model_id is required"),
         ({"max_turns": 0}, "max_turns"),
         ({"budget_usd": -1}, "budget_usd"),
@@ -383,6 +383,7 @@ async def test_agent_openrouter_uses_reported_cost_for_budget() -> None:
         ("anthropic", "ANTHROPIC_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
         ("openrouter", "OPENROUTER_API_KEY"),
+        ("gemini", "GEMINI_API_KEY"),
     ],
 )
 async def test_agent_missing_provider_key_is_a_config_error(
@@ -398,15 +399,153 @@ async def test_agent_missing_provider_key_is_a_config_error(
 
 
 async def test_agent_healthcheck_reports_ready_providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"):
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     adapter = AgentAdapter()
 
     health = await adapter.healthcheck()
     assert not health.available
-    assert health.missing is not None and len(health.missing) == 3
+    assert health.missing is not None and len(health.missing) == 4
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     health = await adapter.healthcheck()
     assert health.available
     assert health.version == "openrouter"
+
+
+# --- gemini (slice 3a): Gen AI SDK function calling ---------------------------
+
+
+def _gm_usage() -> SimpleNamespace:
+    return SimpleNamespace(
+        prompt_token_count=1000,
+        candidates_token_count=100,
+        cached_content_token_count=200,
+        thoughts_token_count=0,
+    )
+
+
+def _gm_response(parts: list[SimpleNamespace], finish: str = "STOP") -> SimpleNamespace:
+    content = SimpleNamespace(role="model", parts=parts)
+    candidate = SimpleNamespace(content=content, finish_reason=SimpleNamespace(value=finish))
+    return SimpleNamespace(candidates=[candidate], usage_metadata=_gm_usage())
+
+
+def _gm_tool_call(n: int, args: Any = None) -> SimpleNamespace:
+    call = SimpleNamespace(
+        id=f"fc_{n}", name="github", args={"op": "read_issue", "issue": 7} if args is None else args
+    )
+    return _gm_response([SimpleNamespace(text=None, thought=None, function_call=call)])
+
+
+def _gm_final(text: str = "done") -> SimpleNamespace:
+    return _gm_response([SimpleNamespace(text=text, thought=None, function_call=None)])
+
+
+class _FakeGeminiClient(_FakeClient):
+    def __init__(self, responses: list[SimpleNamespace]) -> None:
+        super().__init__(responses)
+        self.aio = SimpleNamespace(models=SimpleNamespace(generate_content=self._create_gm))
+
+    async def _create_gm(self, **kwargs: Any) -> SimpleNamespace:
+        self.requests.append(json.loads(json.dumps(kwargs, default=str)))
+        if not self._responses:
+            return _gm_tool_call(99)
+        return self._responses.pop(0)
+
+
+def _gm_task(**overrides: Any) -> RuntimeTask:
+    return _task(**{"provider": "gemini", "model_id": "gemini-2.5-flash", **overrides})
+
+
+async def test_agent_gemini_dispatches_tool_call_to_runtime() -> None:
+    tool = _StubTool()
+    client = _FakeGeminiClient([_gm_tool_call(1), _gm_final("triaged")])
+
+    result = await _adapter(client, tool).execute(_gm_task())
+
+    assert result.success, result.errors
+    assert result.output == "triaged"
+    assert tool.tasks[0].runtime_config == {"repo": "acme/widgets", "op": "read_issue", "issue": 7}
+    first, second = client.requests
+    assert first["model"] == "gemini-2.5-flash"
+    assert first["config"]["system_instruction"] == "You are a triage agent."
+    assert first["config"]["max_output_tokens"] == 4096
+    declaration = first["config"]["tools"][0]["function_declarations"][0]
+    assert declaration["name"] == "github"
+    assert declaration["description"] == "Read GitHub issues"
+    assert declaration["parameters_json_schema"]["type"] == "object"
+    assert first["contents"] == [{"role": "user", "parts": [{"text": "<task>Read issue 7</task>"}]}]
+    # The model turn is echoed, then one function_response part per call.
+    model_turn, responses = second["contents"][-2:]
+    assert model_turn["role"] == "model"
+    assert model_turn["parts"][0]["function_call"]["name"] == "github"
+    assert responses["role"] == "user"
+    function_response = responses["parts"][0]["function_response"]
+    assert function_response["id"] == "fc_1"
+    assert function_response["name"] == "github"
+    output = json.loads(function_response["response"]["output"])
+    assert output["structured"] == {"issue": {"number": 7}}
+    assert result.structured is not None
+    assert result.structured["provider"] == "gemini"
+    assert result.structured["turns"] == 2
+    assert result.structured["stop_reason"] == "STOP"
+    # 1000 prompt (200 of them cached, counted once) + 100 candidates per turn.
+    assert result.tokens_used == 2 * 1100
+    # gemini-2.5-flash: 1000 in * $0.30/M + 100 out * $2.50/M per turn.
+    assert result.cost_usd == pytest.approx(2 * 0.00055)
+    assert client.closed
+
+
+async def test_agent_gemini_failed_tool_is_reported_as_error_response() -> None:
+    tool = _StubTool(RuntimeResult(success=False, output="", errors=["404 not found"]))
+    client = _FakeGeminiClient([_gm_tool_call(1), _gm_final("gave up")])
+
+    result = await _adapter(client, tool).execute(_gm_task())
+
+    assert result.success
+    response = client.requests[1]["contents"][-1]["parts"][0]["function_response"]["response"]
+    assert "output" not in response
+    assert "404 not found" in response["error"]
+    assert result.structured is not None
+    assert result.structured["tool_calls"][0]["success"] is False
+
+
+async def test_agent_gemini_non_object_args_are_an_error_response() -> None:
+    tool = _StubTool()
+    client = _FakeGeminiClient([_gm_tool_call(1, args=["x"]), _gm_final("ok")])
+
+    result = await _adapter(client, tool).execute(_gm_task())
+
+    assert result.success
+    assert tool.tasks == []
+    response = client.requests[1]["contents"][-1]["parts"][0]["function_response"]["response"]
+    assert "must be an object" in response["error"]
+
+
+async def test_agent_gemini_halts_with_max_turns_exhausted() -> None:
+    tool = _StubTool()
+    client = _FakeGeminiClient([_gm_tool_call(n) for n in range(10)])
+
+    result = await _adapter(client, tool).execute(_gm_task(max_turns=3))
+
+    assert not result.success
+    assert result.structured is not None
+    assert result.structured["halt_reason"] == "max_turns_exhausted"
+    assert result.structured["error_type"] == "MaxTurnsExhaustedError"
+    assert result.structured["turns"] == 3
+    assert len(client.requests) == 3
+    assert len(tool.tasks) == 2
+
+
+async def test_agent_gemini_budget_exhausted() -> None:
+    client = _FakeGeminiClient([_gm_tool_call(n) for n in range(10)])
+
+    result = await _adapter(client, _StubTool()).execute(_gm_task(budget_usd=0.0015, max_turns=20))
+
+    assert not result.success
+    assert result.structured is not None
+    assert result.structured["halt_reason"] == "budget_exhausted"
+    assert result.structured["error_type"] == "BudgetExhaustedError"
+    assert len(client.requests) == 3  # 0.00165 >= 0.0015 after turn 3
+    assert result.cost_usd == pytest.approx(3 * 0.00055)
