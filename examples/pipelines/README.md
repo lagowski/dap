@@ -251,5 +251,25 @@ Cortex executor prerequisites.
 
 ## Publishing a bundle as a hub tutorial
 
-`dap pipeline export <bundle> --hub <slug> [--out DIR]` writes `DIR/<slug>/page/page.json`. It is a tutorial page (schema 1, `kind: pipeline`, English) with a `graph` field (`entry`, `nodes` with id/title/runtime/inputs/outputs/x/y, `edges` with from/to/optional label), which a read-only canvas can draw.
+`dap pipeline export <bundle> --hub <slug> --tagline5 "<text>" --io <in>:<out> [--out DIR]` writes `DIR/<slug>/page/page.json`. It is a tutorial page (schema 1, `kind: pipeline`, English) with a `graph` field (`entry`, `nodes` with id/title/runtime/inputs/outputs/x/y, `edges` with from/to/optional label), which a read-only canvas can draw.
 Only structural facts are copied: the name, the description, the node and agent names, the runtimes, the input/output field names, the positions, the edge conditions and the run defaults. Prompts, `runtime_config`, env var names and backend profiles are never read. If a URL, IP address, email, absolute path, token or private host name is still in the output, the export is refused (exit 2) and no file is written.
+
+The hub card needs two more values, and both options are required with `--hub`:
+
+- `--tagline5 "<text>"`: the card line. After trimming it must be 3-6 words, at most 60 characters, on one line, in plain text, with no `...` or `…`, no markup and no link or path. It is written as `tagline5`.
+- `--io <in>:<out>`: the card icons, written as `io_icons: {in, out}`. Each name must be one of `bulb scale repo issue merge docs post search report script clapperboard blocks pipeline list fanout comment`.
+
+If either value breaks a rule, the export is refused (exit 2). Each graph node also gets a `type`: `gate` for a node in `defaults.approval_required_nodes`, `llm` for a node whose agent runs on an LLM runtime (`api-call`, `agent`, `claude-code`, `codex`, `gemini-cli`, `aider`), and the runtime id for any other node. A node gets a one-line `purpose` (at most 90 characters) only when its bundled agent has a description with no link or path in it.
+
+Card values for the exported examples (en):
+
+| Bundle | `--tagline5` | `--io` |
+|---|---|---|
+| `github-read-issue-comment` | Read an issue, then comment | `issue:comment` |
+| `github-issue-triage` | Pick and enrich the next issue | `list:issue` |
+| `team-collaboration` | Turn a problem into a brief | `comment:report` |
+
+```bash
+dap pipeline export examples/pipelines/github-read-issue-comment.pipeline-bundle.json \
+  --hub github-read-issue-comment --tagline5 "Read an issue, then comment" --io issue:comment --out hub/
+```
