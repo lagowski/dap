@@ -87,6 +87,8 @@ AuditEventType = Literal[
     # so the audit query can spot externally-sourced pipelines without
     # joining other tables. Same shape as the standard verbs.
     "pipeline.imported_from_url",
+    # Prompt-box generation (cortex#1774 S5): who asked for a generated bundle.
+    "pipeline.generated",
     "project.created",
     "project.updated",
     "project.archived",
