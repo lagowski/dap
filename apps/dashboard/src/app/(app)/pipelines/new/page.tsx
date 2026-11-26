@@ -7,11 +7,14 @@ import { ArrowLeft } from "lucide-react";
 import { PipelineDesigner } from "@/components/designer/designer";
 import { PipelineTemplatePicker } from "@/components/designer/pipeline-template-picker";
 import { BackendProfileImportDialog } from "@/components/pipelines/backend-profile-import-dialog";
+import { PipelinePromptBox } from "@/components/pipelines/pipeline-prompt-box";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  useGeneratePipeline,
   useImportPipeline,
   useInspectPipelineImportBackends,
   usePipeline,
+  usePipelineGeneratorStatus,
 } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import type {
@@ -49,6 +52,8 @@ function NewPipelinePageContent() {
   const sourceQuery = usePipeline(fromId);
   const importPipeline = useImportPipeline();
   const inspectBackends = useInspectPipelineImportBackends();
+  const generatorStatus = usePipelineGeneratorStatus();
+  const generatePipeline = useGeneratePipeline();
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [backendDialog, setBackendDialog] =
@@ -63,6 +68,20 @@ function NewPipelinePageContent() {
     router.push(`/pipelines/${created.id}/edit`);
   };
 
+  // Shared by templates and the prompt box: a bundle with backend
+  // profiles goes through the configuration dialog first, anything else
+  // is imported straight away and opened in the Designer.
+  const startImport = async (bundle: PipelineExport) => {
+    if (bundleHasBackendProfiles(bundle)) {
+      const inspection = await inspectBackends.mutateAsync(bundle);
+      if (hasInspectableProfiles(inspection)) {
+        setBackendDialog({ bundle, inspection });
+        return;
+      }
+    }
+    await importBundle(bundle);
+  };
+
   const handleUseTemplate = async (template: PipelineTemplate) => {
     // Guard at the top of the handler: ``importPipeline.isPending``
     // doesn't flip true until React commits the mutation's state
@@ -74,14 +93,7 @@ function NewPipelinePageContent() {
     setTemplateError(null);
     setPendingTemplateId(template.id);
     try {
-      if (bundleHasBackendProfiles(template.bundle)) {
-        const inspection = await inspectBackends.mutateAsync(template.bundle);
-        if (hasInspectableProfiles(inspection)) {
-          setBackendDialog({ bundle: template.bundle, inspection });
-          return;
-        }
-      }
-      await importBundle(template.bundle);
+      await startImport(template.bundle);
     } catch (err) {
       setTemplateError(formatApiError(err));
     } finally {
@@ -128,7 +140,14 @@ function NewPipelinePageContent() {
     <div className="flex flex-col h-full">
       {showChooser ? (
         <div className="flex-1 min-h-0 w-full overflow-y-auto p-6">
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-3xl space-y-6">
+            {generatorStatus.data?.enabled ? (
+              <PipelinePromptBox
+                generate={(prompt) => generatePipeline.mutateAsync(prompt)}
+                onOpenInCanvas={startImport}
+                disabled={pendingTemplateId !== null || backendDialog !== null}
+              />
+            ) : null}
             {templateError ? (
               <p className="text-sm text-destructive mb-3" role="alert">
                 Template import failed: {templateError}

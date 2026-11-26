@@ -26,6 +26,8 @@ for production.
 | `DAP_INTERACTION_LOG_RETENTION_DAYS` | `90` | Days kept; purged at startup. `0` or negative keeps them forever. |
 | `DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS` | empty (off) | Comma-separated hosts that `POST /pipelines/import-from-url` may fetch bundles from. |
 | `DAP_TEMPLATE_REGISTRY_AUTH_TOKEN` | unset | Bearer token sent with those fetches. |
+| `DAP_PIPELINE_GENERATOR_COMMAND` | unset (off) | Command behind the prompt box on New pipeline, e.g. `cortex pipeline new --json --out /srv/dap-generated`. The engine appends the prompt as the last argument (no shell) and reads one JSON object with a `bundle` key from stdout; exit 2 means refused. Unset hides the box and `POST /pipelines/generate` answers 503. |
+| `DAP_PIPELINE_GENERATOR_TIMEOUT_SECONDS` | `600` | Kill the generator after this many seconds (504). |
 | `DAP_ASSISTANT_PROVIDER` / `DAP_ASSISTANT_MODEL` | first provider with a key | Provider and model for the configuration assistant. `claude-code` uses the host's `claude` login. `ASSISTANT_PROVIDER` / `ASSISTANT_MODEL` also work as instance env vars. |
 
 ## Auth

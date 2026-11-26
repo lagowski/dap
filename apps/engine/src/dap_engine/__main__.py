@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 
 import uvicorn
 
@@ -22,6 +23,14 @@ def main() -> None:
         host=os.environ.get("DAP_ENGINE_HOST", "127.0.0.1"),
         port=int(os.environ.get("DAP_ENGINE_PORT", "7333")),
         dry_run_budget_usd=float(os.environ.get("DAP_DRY_RUN_BUDGET_USD", "0.50")),
+        # Prompt-box generator (cortex#1774 S5): e.g.
+        # ``cortex pipeline new --json --out /srv/dap-generated``. Unset → off.
+        pipeline_generator_command=(
+            shlex.split(os.environ.get("DAP_PIPELINE_GENERATOR_COMMAND", "")) or None
+        ),
+        pipeline_generator_timeout_seconds=float(
+            os.environ.get("DAP_PIPELINE_GENERATOR_TIMEOUT_SECONDS", "600")
+        ),
         # PG checkpointer pool sizing — only used when DAP_DATABASE_URL is set.
         pg_pool_min_size=int(os.environ.get("DAP_PG_POOL_MIN_SIZE", "4")),
         pg_pool_max_size=int(os.environ.get("DAP_PG_POOL_MAX_SIZE", "10")),

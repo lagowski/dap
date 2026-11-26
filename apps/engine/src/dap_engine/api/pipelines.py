@@ -20,6 +20,13 @@ from dap_engine.api.pipeline_bundles import (
     fetch_pipeline_import_request_from_url,
     materialise_pipeline_import,
 )
+from dap_engine.api.pipeline_generator import (
+    GeneratedPipeline,
+    GeneratePipelineRequest,
+    PipelineGeneratorError,
+    PipelineGeneratorStatus,
+    run_generator,
+)
 from dap_engine.api.run_callable_preflight import inspect_pipeline_callables
 from dap_engine.api.schemas import (
     BackendProfilesInspectionResponse,
@@ -284,6 +291,62 @@ def import_pipeline_from_url(
         logger.exception("audit-log write failed for imported pipeline %s", pipeline.id)
 
     return pipeline
+
+
+# ---------------------------------------------------------------------------
+# Prompt box — generate a bundle from a prompt (cortex#1774 S5)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/generate", response_model=PipelineGeneratorStatus)
+def pipeline_generator_status(
+    request: Request,
+    _user: UserORM = Depends(current_active_user),
+) -> PipelineGeneratorStatus:
+    """Whether this engine has a pipeline generator configured (the prompt box shows if so)."""
+    return PipelineGeneratorStatus(
+        enabled=bool(request.app.state.config.server.pipeline_generator_command)
+    )
+
+
+@router.post("/generate", response_model=GeneratedPipeline)
+def generate_pipeline(
+    payload: GeneratePipelineRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> GeneratedPipeline:
+    """Turn a prompt into a pipeline bundle with the operator's generator.
+
+    Returns the bundle only; nothing is imported. The dashboard imports it with
+    ``POST /pipelines/import`` (so the usual import checks apply) or offers it
+    as a JSON download. 503 = no generator configured, 422 = the generator
+    refused the prompt, 502 = it failed or returned something that is not a
+    valid bundle, 504 = it timed out.
+    """
+    server = request.app.state.config.server
+    try:
+        generated = run_generator(
+            server.pipeline_generator_command,
+            payload.prompt,
+            server.pipeline_generator_timeout_seconds,
+        )
+    except PipelineGeneratorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    try:
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type="pipeline.generated",
+            event_data={
+                "name": generated.name,
+                "nodes": generated.nodes,
+                "prompt_chars": len(payload.prompt),
+            },
+        )
+    except Exception:
+        logger.exception("audit-log write failed for generated pipeline %s", generated.name)
+    return generated
 
 
 @router.get("/{pipeline_id}", response_model=Pipeline)
