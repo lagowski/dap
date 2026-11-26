@@ -132,6 +132,10 @@ _OPS: Final[dict[str, _OpSpec]] = {
 }
 
 
+# JSON types the agent tool schema gives each param kind (#1020); the rest are strings.
+_KIND_JSON_TYPES: Final[dict[str, str]] = {"number": "integer", "bool": "boolean"}
+
+
 class _Fail(Exception):
     """Raised inside execute() to short-circuit to a failed result.
 
@@ -158,6 +162,27 @@ class GithubAdapter(BaseAdapter):
     async def healthcheck(self) -> HealthStatus:
         """Always available: repo access and the token are checked per call."""
         return HealthStatus(available=True, version=f"httpx {httpx.__version__}")
+
+    def tool_input_schema(self) -> dict[str, Any]:
+        """The input an agent model may give this runtime as a tool (#1020).
+
+        ``op`` plus ``repo`` and the op params. ``api_url``, ``token_env`` and
+        ``state_key`` stay out, and ``additionalProperties`` is false, so a
+        model can't redirect the token or steer where the result lands.
+        """
+        properties: dict[str, Any] = {
+            "op": {"type": "string", "enum": list(_OPS), "description": "The GitHub operation"},
+            "repo": {"type": "string", "description": "owner/name"},
+        }
+        for spec in _OPS.values():
+            for key, kind in (*spec.required.items(), *spec.optional.items()):
+                properties.setdefault(key, {"type": _KIND_JSON_TYPES.get(kind, "string")})
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": ["op"],
+            "additionalProperties": False,
+        }
 
     async def execute(
         self,

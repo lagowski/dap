@@ -1,4 +1,4 @@
-"""Tool-loop ``agent`` runtime (#813, slices 1-3a).
+"""Tool-loop ``agent`` runtime (#813, slices 1-3b).
 
 An LLM node that runs an agentic tool-use loop. Its tools are other DAP
 runtime adapters, declared in ``runtime_config.tools``::
@@ -18,8 +18,14 @@ runtime adapters, declared in ``runtime_config.tools``::
 Each turn sends the conversation to the provider. When the model asks for a
 tool, the adapter builds a ``RuntimeTask`` for the named runtime (the tool's
 static ``config`` overlaid with the model's input), executes it and returns
-the result as a ``tool_result``. The loop ends when the model stops asking for
-tools, or halts with :class:`MaxTurnsExhaustedError` /
+the result as a ``tool_result``. The model's input is checked first (#1020):
+keys starting with ``__`` are always refused, and when the tool's schema sets
+``additionalProperties: false`` so is any key outside its ``properties``. A
+tool's schema is the entry's ``input_schema``, else the runtime's own
+``tool_input_schema()`` (the github runtime lists its ops and params, never
+``api_url`` / ``token_env``), else :data:`DEFAULT_INPUT_SCHEMA`. A refused call
+is a failed tool result naming the keys; the tool doesn't run. The loop ends
+when the model stops asking for tools, or halts with :class:`MaxTurnsExhaustedError` /
 :class:`BudgetExhaustedError` when ``max_turns`` / ``budget_usd`` run out.
 Adapters never raise to the engine (#211): a halt becomes a failed
 ``RuntimeResult`` whose ``structured["halt_reason"]`` names the limit.
@@ -93,9 +99,9 @@ DEFAULT_MAX_TOKENS: Final = 4096
 # A tool result fed back to the model is capped so one verbose tool can't
 # blow the context window.
 MAX_TOOL_RESULT_CHARS: Final = 20_000
-# Generic tool input schema: the tool's runtime_config overrides. Per-runtime
-# schemas arrive with the dashboard tools panel; a tool entry may set its own
-# ``input_schema`` meanwhile.
+# Generic tool input schema: the tool's runtime_config overrides. Used for a
+# runtime without a ``tool_input_schema()`` of its own when the tool entry sets
+# no ``input_schema``. Keys starting with ``__`` are refused even here (#1020).
 DEFAULT_INPUT_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",
     "description": "runtime_config fields for this runtime (merged over the tool's config)",
@@ -227,7 +233,7 @@ class _Loop:
         self.cost_usd = 0.0
         self.cost_known = True
         self.tool_calls: list[dict[str, Any]] = []
-        self.tools: dict[str, tuple[RuntimeAdapter, dict[str, Any]]] = {}
+        self.tools: dict[str, tuple[RuntimeAdapter, dict[str, Any], dict[str, Any]]] = {}
         self.tool_specs: list[dict[str, Any]] = []
         self.max_turns = DEFAULT_MAX_TURNS
         self.budget_usd: float | None = None
@@ -280,12 +286,16 @@ class _Loop:
             base = entry.get("config") or {}
             if not isinstance(base, dict):
                 raise _ConfigError(f"tool '{name}' config must be a mapping")
-            self.tools[name] = (self.adapter.resolve_tool(runtime_id), base)
+            tool = self.adapter.resolve_tool(runtime_id)
+            schema = entry.get("input_schema") or _runtime_schema(tool) or DEFAULT_INPUT_SCHEMA
+            if not isinstance(schema, dict):
+                raise _ConfigError(f"tool '{name}' input_schema must be a mapping")
+            self.tools[name] = (tool, base, schema)
             self.tool_specs.append(
                 {
                     "name": name,
                     "description": str(entry.get("description") or f"The {runtime_id} runtime"),
-                    "input_schema": entry.get("input_schema") or DEFAULT_INPUT_SCHEMA,
+                    "input_schema": schema,
                 }
             )
 
@@ -355,7 +365,14 @@ class _Loop:
         if name not in self.tools:
             record["success"] = False
             return f"unknown tool '{name}'", True
-        adapter, base = self.tools[name]
+        adapter, base, schema = self.tools[name]
+        refused = _refused_keys(tool_input, schema)
+        if refused:
+            record["success"] = False
+            return (
+                f"refused tool input keys for '{name}': {', '.join(refused)} "
+                "(not allowed by the tool's input schema)"
+            ), True
         sub_task = self.task.model_copy(
             update={
                 "runtime_config": {**base, **tool_input},
@@ -983,6 +1000,25 @@ def _block(block: Any) -> dict[str, Any]:
     if block.type == "text":
         return {"type": "text", "text": block.text}
     return {"type": block.type}
+
+
+def _runtime_schema(tool: RuntimeAdapter) -> dict[str, Any] | None:
+    """The runtime's own tool input schema, if it declares one (#1020)."""
+    method = getattr(tool, "tool_input_schema", None)
+    if not callable(method):
+        return None
+    schema = method()
+    return schema if isinstance(schema, dict) else None
+
+
+def _refused_keys(tool_input: dict[str, Any], schema: dict[str, Any]) -> list[str]:
+    """Input keys the tool may not take: ``__``-prefixed always, unlisted ones
+    when the schema is closed (``additionalProperties: false``)."""
+    refused = [key for key in tool_input if key.startswith("__")]
+    if schema.get("additionalProperties") is False:
+        allowed = schema.get("properties") or {}
+        refused += [key for key in tool_input if key not in allowed and key not in refused]
+    return sorted(refused)
 
 
 def _tool_name(raw: str) -> str:

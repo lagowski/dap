@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
@@ -29,6 +30,14 @@ class BaseAdapter(ABC):
         accept-and-ignore it for now. ``on_output=None`` (the default, and what
         real runs pass today) is the unchanged, non-streaming path.
         """
+
+    def tool_input_schema(self) -> dict[str, Any] | None:
+        """JSON schema of the input an agent model may give this runtime as a tool (#1020).
+
+        ``None`` (the default) means the runtime has no schema of its own and the
+        agent runtime advertises its generic one.
+        """
+        return None
 
     def _not_implemented(self, method: str) -> None:
         raise NotImplementedError(
