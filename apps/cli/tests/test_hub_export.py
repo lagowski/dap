@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[3]
 EXAMPLES = sorted((REPO / "examples" / "pipelines").glob("*.pipeline-bundle.json"))
 FIRST_HUB_SLUGS = ("github-read-issue-comment", "github-issue-triage", "team-collaboration")
 GENERATED = "2026-11-26"
-CARD = {"tagline5": "Run this example pipeline", "io": "pipeline:report"}
+CARD: dict[str, Any] = {"tagline5": "Run this example pipeline", "io": "pipeline:report"}
 # The card values for the first three hub bundles (issue #1016).
 FIRST_HUB_CARDS = {
     "github-read-issue-comment": ("Read an issue, then comment", "issue:comment"),
@@ -92,6 +92,40 @@ HUB_REQUIRED = {
     "io_icons",
 }
 HUB_SLUG = re.compile(r"^(?!g\d+-)[a-z0-9][a-z0-9-]{2,62}$")
+# The hub importer's node keys: the canvas ones plus the optional detail-panel ones (round 5).
+DETAIL_KEYS = {"agent", "prompt", "tools", "output_fields", "gate_rule", "retries", "max_loops"}
+NODE_KEYS = {"id", "title", "type", "purpose", "inputs", "outputs", "x", "y"} | DETAIL_KEYS
+
+
+def _text(value: Any, limit: int) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= limit
+
+
+def assert_node_detail_valid(node: dict[str, Any]) -> None:
+    """The hub's limits on the optional detail keys; a present key is never an empty placeholder."""
+    if "agent" in node:
+        agent = node["agent"]
+        assert set(agent) <= {"name", "model", "provider"} and "name" in agent
+        assert all(_text(v, 200) for v in agent.values()), agent
+    if "prompt" in node:
+        prompt = node["prompt"]
+        assert prompt and set(prompt) <= {"system", "user"}
+        assert all(_text(v, 8000) for v in prompt.values())
+    if "tools" in node:
+        assert 0 < len(node["tools"]) <= 30 and all(_text(t, 80) for t in node["tools"])
+    if "output_fields" in node:
+        fields = node["output_fields"]
+        assert 0 < len(fields) <= 40
+        for field in fields:
+            assert set(field) <= {"name", "type", "description"} and _text(field["name"], 200)
+            assert "description" not in field or _text(field["description"], 200)
+            assert "type" not in field or _text(field["type"], 200)
+    if "gate_rule" in node:
+        assert node["type"] == "gate" and _text(node["gate_rule"], 300)
+    if "retries" in node:
+        assert isinstance(node["retries"], int) and 0 <= node["retries"] <= 20
+    if "max_loops" in node:
+        assert isinstance(node["max_loops"], int) and 0 <= node["max_loops"] <= 50
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -127,9 +161,10 @@ def assert_hub_valid(page: dict[str, Any]) -> None:
     assert page["tagline5"] == page["tagline5"].strip()
     assert set(page["io_icons"]) == {"in", "out"} and set(page["io_icons"].values()) <= IO_VOCAB
     for node in page["graph"]["nodes"]:
-        assert set(node) <= {"id", "title", "type", "purpose", "inputs", "outputs", "x", "y"}
+        assert set(node) <= NODE_KEYS, set(node) - NODE_KEYS
         if "purpose" in node:
             assert 0 < len(node["purpose"]) <= 90 and "\n" not in node["purpose"]
+        assert_node_detail_valid(node)
     note = page.get("source_note", "")
     assert len(note) <= 160
     assert not re.search(
@@ -163,7 +198,8 @@ def test_graph_mirrors_the_pipeline_without_start_and_end() -> None:
         "create_branch",
     ]
     first = graph["nodes"][0]
-    assert first == {
+    assert set(first) - DETAIL_KEYS == {"id", "title", "type", "inputs", "outputs", "x", "y"}
+    assert {k: v for k, v in first.items() if k not in DETAIL_KEYS} == {
         "id": "fetch_issues",
         "title": "GH Issue Fetcher",
         "type": "bash",
@@ -195,16 +231,196 @@ def test_conditional_edge_keeps_its_label_or_derives_one() -> None:
     } in derived["edges"]
 
 
-def test_no_prompt_or_runtime_config_reaches_the_bundle() -> None:
+def test_only_model_and_provider_are_read_from_runtime_config() -> None:
     bundle = _example("github-issue-triage")
     text = json.dumps(to_hub_bundle(bundle, "github-issue-triage", **CARD, generated=GENERATED))
     for agent in bundle["bundled_agents"].values():
-        assert agent["prompt_template"][:60] not in text
-        for value in agent.get("runtime_config", {}).values():
-            if isinstance(value, str) and len(value) > 3:
-                assert value not in text, value
-    assert "gh issue list" not in text
-    assert "glm-4.5" not in text
+        for key, value in agent.get("runtime_config", {}).items():
+            if key not in {"model_id", "provider"} and isinstance(value, str) and len(value) > 3:
+                assert value not in text, key
+    # the bash node's command is its prompt_template, exported as prompt.user (#1016 round 5)
+    assert "gh issue list" in _node(json.loads(text), "fetch_issues")["prompt"]["user"]
+
+
+def _node(page: dict[str, Any], node_id: str) -> dict[str, Any]:
+    node: dict[str, Any] = next(n for n in page["graph"]["nodes"] if n["id"] == node_id)
+    return node
+
+
+def _one_agent_bundle(**agent: Any) -> dict[str, Any]:
+    """A one-node bundle whose agent carries ``agent`` (on top of a minimal api-call agent)."""
+    base = {
+        "name": "Brief Drafter",
+        "role": "custom",
+        "runtime_id": "api-call",
+        "runtime_config": {"provider": "anthropic", "model_id": "claude-sonnet-4-5"},
+        "prompt_template": "Summarise {{ issue_title }}.",
+        "input_schema": ["issue_title"],
+        "output_schema": ["summary"],
+    }
+    return {
+        "schema_version": 1,
+        "bundled_agents": {"a1": base | agent},
+        "pipeline": {
+            "name": "One node",
+            "description": "One agent.",
+            "entry_point": "write",
+            "nodes": [{"id": "write", "agent_id": "a1", "position": {"x": 0, "y": 0}}],
+            "edges": [],
+        },
+    }
+
+
+def _export(bundle: dict[str, Any], **kw: Any) -> dict[str, Any]:
+    return to_hub_bundle(bundle, "one-node", **CARD, generated=GENERATED, **kw)
+
+
+def test_a_planted_client_name_in_a_prompt_becomes_client() -> None:
+    bundle = _one_agent_bundle(prompt_template="Summarise the issue for Acme Logistics")
+    prompt = _node(_export(bundle), "write")["prompt"]
+    assert prompt == {"user": "Summarise the issue for client"}
+
+
+def test_allowlisted_names_and_jinja_survive_in_a_prompt() -> None:
+    text = "Read the GitHub issue {{ issue_title }} and ask Claude for JSON."
+    bundle = _one_agent_bundle(prompt_template=text)
+    assert _node(_export(bundle), "write")["prompt"]["user"] == text
+
+
+@pytest.mark.parametrize(
+    "leak",
+    ["See https://example.com/a first.", "Mail ops@example.com.", "Read /home/someone/notes."],
+)
+def test_a_prompt_with_a_url_email_or_path_refuses_the_export(leak: str) -> None:
+    with pytest.raises(Unsafe, match=r"prompt\.user"):
+        _export(_one_agent_bundle(prompt_template=leak))
+
+
+def test_an_unclear_prompt_refuses_the_export_naming_the_field() -> None:
+    with pytest.raises(Unsafe, match=r"prompt\.user: client-name scrubber") as exc:
+        _export(_one_agent_bundle(prompt_template="Hello {{ Initech"))
+    assert "Initech" not in str(exc.value)
+
+
+def test_unknown_runtime_config_keys_never_reach_the_page() -> None:
+    config = {
+        "provider": "anthropic",
+        "model_id": "claude-sonnet-4-5",
+        "token_env": "SECRETISH_TOKEN_NAME",
+        "shell": "cat secret-notes-file",
+        "max_tokens": 777123,
+    }
+    page = _export(_one_agent_bundle(runtime_config=config))
+    text = json.dumps(page)
+    assert "SECRETISH_TOKEN_NAME" not in text and "secret-notes-file" not in text
+    assert "777123" not in text
+    agent = _node(page, "write")["agent"]
+    assert agent == {"name": "Brief Drafter", "model": "claude-sonnet-4-5", "provider": "anthropic"}
+
+
+def test_the_agent_system_prompt_and_tools_are_exported() -> None:
+    config = {
+        "provider": "anthropic",
+        "model_id": "claude-sonnet-4-5",
+        "system_prompt": "You review code for Initech.",
+        "tools": [
+            {"runtime_id": "github", "config": {"repo": "o/r"}},
+            {"runtime_id": "bash", "name": "run_tests"},
+        ],
+    }
+    node = _node(_export(_one_agent_bundle(runtime_id="agent", runtime_config=config)), "write")
+    assert node["prompt"] == {
+        "system": "You review code for client.",
+        "user": "Summarise {{ issue_title }}.",
+    }
+    assert node["tools"] == ["github", "run_tests"]
+    assert "o/r" not in json.dumps(node)
+
+
+def test_a_github_op_is_its_one_tool() -> None:
+    slug = "github-read-issue-comment"
+    page = to_hub_bundle(_example(slug), slug, **CARD, generated=GENERATED)
+    tools = [n.get("tools") for n in page["graph"]["nodes"]]
+    assert ["read_issue"] in tools and ["comment"] in tools
+
+
+def test_new_keys_are_absent_when_the_bundle_does_not_hold_them() -> None:
+    bundle = _one_agent_bundle(runtime_config={}, prompt_template="  ", output_schema=[])
+    node = _node(_export(bundle), "write")
+    assert node["agent"] == {"name": "Brief Drafter"}
+    for key in ("prompt", "tools", "output_fields", "gate_rule", "retries", "max_loops"):
+        assert key not in node, key
+
+
+def test_new_keys_respect_their_limits() -> None:
+    bundle = _one_agent_bundle(
+        prompt_template="word " * 3000,
+        output_schema=[
+            {"key": f"f{i}", "type": "string", "description": "a long field " * 40}
+            for i in range(60)
+        ],
+        runtime_id="agent",
+        runtime_config={
+            "tools": [{"runtime_id": "bash", "name": "t" * 120}]
+            + [{"runtime_id": "bash", "name": f"tool_{i}"} for i in range(50)]
+        },
+    )
+    bundle["pipeline"]["defaults"] = {"max_attempts": 99, "approval_required_nodes": ["write"]}
+    bundle["pipeline"]["nodes"][0]["retry"] = {"max_retries": 80, "retry_to": "write"}
+    page = _export(bundle)
+    assert_hub_valid(page)
+    node = _node(page, "write")
+    assert len(node["prompt"]["user"]) <= 8000
+    assert len(node["output_fields"]) == 40
+    assert node["tools"] == [f"tool_{i}" for i in range(30)]  # an over-long name is dropped
+    assert node["retries"] == 20 and node["max_loops"] == 50
+    assert node["type"] == "gate" and 0 < len(node["gate_rule"]) <= 300
+
+
+def test_retries_come_from_the_pipeline_max_attempts_and_loops_from_the_node_retry() -> None:
+    page = to_hub_bundle(
+        _example("tester-coder-retry"), "tester-coder-retry", **CARD, generated=GENERATED
+    )
+    by_id = {n["id"]: n for n in page["graph"]["nodes"]}
+    assert all(n["retries"] == 0 for n in by_id.values())  # defaults.max_attempts == 1
+    looped = [n for n in by_id.values() if "max_loops" in n]
+    assert [n["max_loops"] for n in looped] == [3]
+
+
+def test_gate_rule_is_written_on_gate_nodes_only() -> None:
+    page = to_hub_bundle(
+        _example("project-bootstrap"), "project-bootstrap", **CARD, generated=GENERATED
+    )
+    for node in page["graph"]["nodes"]:
+        assert ("gate_rule" in node) == (node["type"] == "gate"), node["id"]
+
+
+def test_output_fields_keep_names_types_and_descriptions() -> None:
+    schema = ["summary", {"key": "score", "type": "number", "description": "Rank for Acme."}]
+    node = _node(_export(_one_agent_bundle(output_schema=schema)), "write")
+    assert node["output_fields"] == [
+        {"name": "summary"},
+        {"name": "score", "type": "number", "description": "Rank for client."},
+    ]
+
+
+def test_public_names_extend_the_allowlist() -> None:
+    from dap_cli.hub_names import BUILTIN
+
+    bundle = _one_agent_bundle(prompt_template="Summarise the issue for Acme Logistics")
+    public = BUILTIN.extend({"partners": ["Acme Logistics"]})
+    prompt = _node(_export(bundle, public_names=public), "write")["prompt"]
+    assert prompt == {"user": "Summarise the issue for Acme Logistics"}
+
+
+@pytest.mark.parametrize("slug", FIRST_HUB_SLUGS)
+def test_first_hub_bundles_export_the_detail_keys(slug: str) -> None:
+    page = to_hub_bundle(_example(slug), slug, **CARD, generated=GENERATED)
+    assert_hub_valid(page)
+    assert scan(page) == []
+    for node in page["graph"]["nodes"]:
+        assert {"agent", "prompt", "output_fields", "retries"} <= set(node), node["id"]
+    assert "client" not in json.dumps(page)  # nothing in the examples is a client
 
 
 def test_issue_references_are_dropped_from_text() -> None:

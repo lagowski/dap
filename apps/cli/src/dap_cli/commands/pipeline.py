@@ -41,10 +41,21 @@ def cmd_export(
     out: Annotated[
         Path, typer.Option("--out", help="Directory that receives <slug>/page/page.json")
     ] = Path("."),
+    public_names: Annotated[
+        Path | None,
+        typer.Option(
+            "--public-names",
+            help="A public-names.yaml (group -> list of names) that extends the built-in "
+            "allowlist of the client-name scrubber",
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Write a hub tutorial bundle (with its read-only graph) for one pipeline bundle."""
     try:
-        target = write_hub_bundle(bundle, hub, out, tagline5=tagline5, io=io)
+        target = write_hub_bundle(
+            bundle, hub, out, tagline5=tagline5, io=io, public_names=public_names
+        )
     except ValueError as exc:  # Unsafe is a ValueError: a refusal, a bad slug, tagline or icon
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc

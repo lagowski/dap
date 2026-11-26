@@ -12,11 +12,27 @@ and the card fields the hub requires on a pipeline page: ``tagline5`` (3-6 words
 for a human approval gate, ``llm`` for an agent on an ``LLM_RUNTIMES`` runtime, otherwise its
 runtime id.
 
-Only public, structural facts leave the bundle: the pipeline name and description, node ids, agent
+For the canvas's node detail panel a node may also carry these OPTIONAL keys, each written only
+when the bundle really holds the value (never a guess or an empty placeholder)::
+
+    "agent": {"name", "model"?, "provider"?}      "prompt": {"system"?, "user"?} (<= 8000 each)
+    "tools": [name] (<= 30, <= 80 chars)
+    "output_fields": [{"name", "type"?, "description"?}]
+    "gate_rule": str (gate nodes, <= 300)         "retries": 0-20      "max_loops": 0-50
+
+Structural facts leave the bundle as they are: the pipeline name and description, node ids, agent
 names, runtime ids, input/output field names, positions, edge conditions and the run defaults.
-Prompts, ``runtime_config``, env var names and backend profiles are never read. ``scan`` is a last
-guard: the export is refused if any text still holds a URL, IP address, email, absolute path, token
-or private host name. A refusal names the rule, never the value.
+Prompts are now read too: the agent's ``prompt_template`` (the ``user`` prompt, Jinja left as it
+is) and, for the ``agent`` runtime, its ``system_prompt``. Only these ``runtime_config`` keys are
+ever read: ``model_id``, ``provider``, a ``github`` runtime's ``op`` and the ``agent`` runtime's
+``system_prompt`` and tool names; never ``token_env``, ``shell``, ``repo``, ``body`` or any other.
+Env var names and backend profiles are never read.
+
+Every exported detail text (agent name, prompts, tool names, output descriptions, gate rule)
+goes through the client-name scrubber (``hub_names``: a name not on the public allowlist becomes
+``client``; a text it can't classify refuses the export) and then ``scan``, the last guard: the
+export is refused if any text still holds a URL, IP address, email, absolute path, token or
+private host name. A refusal names the field and the rule, never the value.
 """
 
 from __future__ import annotations
@@ -28,11 +44,23 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from dap_cli.hub_names import BUILTIN, PublicNames, Scrubber, Unclear, load_public_names
+
 SLUG = re.compile(r"^(?!g\d+-)[a-z0-9][a-z0-9-]{2,62}$")
 PSEUDO_NODES = {"__start__", "__end__"}
 MAX_TITLE, MAX_SUMMARY, MAX_ITEM, MAX_BODY, MAX_STEPS, MAX_LABEL = 200, 800, 500, 4000, 40, 80
 MAX_TAGLINE, MAX_PURPOSE = 60, 90
 MIN_TAGLINE_WORDS, MAX_TAGLINE_WORDS = 3, 6
+# The hub importer's limits on the node detail keys.
+MAX_PROMPT, MAX_TOOLS, MAX_TOOL, MAX_FIELDS, MAX_FIELD_DESC, MAX_GATE_RULE = (
+    8000,
+    30,
+    80,
+    40,
+    200,
+    300,
+)
+MAX_NAME, MAX_RETRIES, MAX_LOOPS = 200, 20, 50
 
 # The hub's closed icon vocabulary for a pipeline card's input and output.
 IO_SIDES = ("in", "out")
@@ -71,6 +99,11 @@ LLM_RUNTIMES = frozenset({"api-call", "agent", "claude-code", "codex", "gemini-c
 _MARKUP = re.compile(r"[<>*_`\[\]{}|#~]")
 _DOMAIN = re.compile(r"\b[\w-]+\.(?:com|org|net|io|dev|es|ai|app|md|json|ya?ml|txt|py|sh)\b", re.I)
 _PATH = re.compile(r"\w/\w|(?<![\w.])\.{0,2}/\w")
+# Page fields that hold machine data, not prose (ids, enums, dates, field names).
+_MACHINE = re.compile(
+    r"(?:^|\.)(?:schema|kind|slug|lang|generated|id|type|from|to|entry|inputs|outputs|io_icons"
+    r"|name|model|provider|tools)(?:\[\d+\])*$"
+)
 
 RUNTIME_NEEDS: dict[str, str] = {
     "bash": "A shell on the engine host with the command-line tools the bash nodes call",
@@ -237,8 +270,156 @@ def node_type(node: dict[str, Any], agents: dict[str, Any], gates: set[str]) -> 
     return "llm" if runtime in LLM_RUNTIMES else runtime
 
 
+def _str(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _config(agent: dict[str, Any]) -> dict[str, Any]:
+    cfg = agent.get("runtime_config")
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _agent_detail(agent: dict[str, Any]) -> dict[str, str] | None:
+    """Name, model and provider. ``model_id`` and ``provider`` are the only config keys read."""
+    if (name := _str(agent.get("name"))) is None:
+        return None
+    out = {"name": name}
+    cfg = _config(agent)
+    for key, src in (("model", "model_id"), ("provider", "provider")):
+        if (value := _str(cfg.get(src))) is not None and len(value) <= MAX_NAME:
+            out[key] = value
+    return out
+
+
+def _prompt(agent: dict[str, Any]) -> dict[str, str] | None:
+    """The one ``prompt_template`` as ``user``; ``system`` only for an agent runtime's own one."""
+    out = {}
+    if agent.get("runtime_id") == "agent" and (system := _str(_config(agent).get("system_prompt"))):
+        out["system"] = system
+    if (user := _str(agent.get("prompt_template"))) is not None:
+        out["user"] = user
+    return out or None
+
+
+def _tools(agent: dict[str, Any]) -> list[str]:
+    """Declared tool names: a ``github`` runtime's ``op``, an ``agent`` runtime's tool list."""
+    cfg = _config(agent)
+    runtime = agent.get("runtime_id")
+    names: list[str | None] = []
+    if runtime == "github":
+        names = [_str(cfg.get("op"))]
+    elif runtime == "agent" and isinstance(cfg.get("tools"), list):
+        names = [
+            _str(t.get("name")) or _str(t.get("runtime_id"))
+            for t in cfg["tools"]
+            if isinstance(t, dict)
+        ]
+    out: list[str] = []
+    for name in names:  # an over-long name is dropped, not clipped into a name it isn't
+        if name and len(name) <= MAX_TOOL and name not in out:
+            out.append(name)
+    return out[:MAX_TOOLS]
+
+
+def _output_fields(agent: dict[str, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for raw in agent.get("output_schema") or []:
+        field = {"name": raw} if isinstance(raw, str) else raw
+        if not isinstance(field, dict):
+            continue
+        name = _str(field.get("name")) or _str(field.get("key"))
+        if name is None or len(name) > MAX_NAME:
+            continue
+        item = {"name": name}
+        if (ftype := _str(field.get("type"))) is not None and len(ftype) <= MAX_NAME:
+            item["type"] = ftype
+        if (desc := _str(field.get("description"))) is not None:
+            item["description"] = desc  # scrubbed, then clipped, in _scrub_details
+        out.append(item)
+    return out[:MAX_FIELDS]
+
+
+def _gate_rule(defaults: dict[str, Any]) -> str:
+    """From ``approval_required_nodes`` (the engine pauses before the node) and its timeout."""
+    rule = "The run pauses before this node until a person approves or rejects it in the dashboard."
+    timeout = _count(defaults.get("gate_timeout_seconds"))
+    if timeout is not None and timeout > 0:
+        rule += f" With no answer within {timeout} seconds the run fails."
+    return rule
+
+
+def node_details(
+    node: dict[str, Any], agent: dict[str, Any], defaults: dict[str, Any], gate: bool
+) -> dict[str, Any]:
+    """The detail-panel keys the bundle really holds (raw text: ``_scrub_details`` cleans it)."""
+    out: dict[str, Any] = {}
+    if (detail := _agent_detail(agent)) is not None:
+        out["agent"] = detail
+    if (prompt := _prompt(agent)) is not None:
+        out["prompt"] = prompt
+    if tools := _tools(agent):
+        out["tools"] = tools
+    if fields := _output_fields(agent):
+        out["output_fields"] = fields
+    if gate:
+        out["gate_rule"] = _gate_rule(defaults)
+    if (attempts := _count(defaults.get("max_attempts"))) is not None and attempts >= 1:
+        out["retries"] = min(attempts - 1, MAX_RETRIES)
+    retry = node.get("retry")
+    if isinstance(retry, dict) and (loops := _count(retry.get("max_retries"))) is not None:
+        out["max_loops"] = max(0, min(loops, MAX_LOOPS))
+    return out
+
+
+def _clip_lines(text: str, limit: int) -> str:
+    """Clip a prompt keeping its lines (``_clip`` would fold it into one)."""
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+# (path inside a node, limit, keep lines) of every detail text the scrubber cleans
+_DETAIL_TEXTS: tuple[tuple[tuple[str, ...], int, bool], ...] = (
+    (("agent", "name"), MAX_NAME, False),
+    (("prompt", "system"), MAX_PROMPT, True),
+    (("prompt", "user"), MAX_PROMPT, True),
+    (("gate_rule",), MAX_GATE_RULE, False),
+)
+
+
+def _scrub_details(graph: dict[str, Any], scrubber: Scrubber) -> None:
+    """Replace client names in every node's detail texts, then clip them to the hub limits."""
+
+    def clean(text: str, where: str, limit: int, lines: bool) -> str:
+        try:
+            text = scrubber.scrub(text)
+        except Unclear as exc:
+            raise Unsafe(f"refused, {where}: client-name scrubber: {exc}") from exc
+        return _clip_lines(text, limit) if lines else _clip(text, limit)
+
+    for i, node in enumerate(graph["nodes"]):
+        at = f"graph.nodes[{i}]"
+        for path, limit, lines in _DETAIL_TEXTS:
+            parent = node.get(path[0]) if len(path) > 1 else node
+            key = path[-1]
+            if isinstance(parent, dict) and isinstance(parent.get(key), str):
+                parent[key] = clean(parent[key], f"{at}.{'.'.join(path)}", limit, lines)
+        if "tools" in node:
+            tools = [
+                clean(t, f"{at}.tools[{k}]", MAX_TOOL, False) for k, t in enumerate(node["tools"])
+            ]
+            node["tools"] = list(dict.fromkeys(tools))
+        for k, field in enumerate(node.get("output_fields", [])):
+            if "description" in field:
+                where = f"{at}.output_fields[{k}].description"
+                field["description"] = clean(field["description"], where, MAX_FIELD_DESC, False)
+
+
 def build_graph(pipeline: dict[str, Any], agents: dict[str, Any]) -> dict[str, Any]:
-    gates = {str(g) for g in (pipeline.get("defaults") or {}).get("approval_required_nodes") or []}
+    defaults = pipeline.get("defaults") or {}
+    gates = {str(g) for g in defaults.get("approval_required_nodes") or []}
     nodes = []
     for node in pipeline["nodes"]:
         agent = _agent(node, agents)
@@ -256,6 +437,7 @@ def build_graph(pipeline: dict[str, Any], agents: dict[str, Any]) -> dict[str, A
             "x": int(pos.get("x", 0)),
             "y": int(pos.get("y", 0)),
         }
+        out |= node_details(node, agent, defaults, out["type"] == "gate")
         nodes.append(out)
     edges = []
     for edge in pipeline["edges"]:
@@ -345,11 +527,14 @@ def to_hub_bundle(
     tagline5: str,
     io: str,
     generated: str | None = None,
+    public_names: PublicNames | None = None,
 ) -> dict[str, Any]:
     """Build the hub page for one pipeline bundle.
 
-    ``tagline5`` is the card's 3-6 word line, ``io`` the card's ``<in>:<out>`` icons.
-    Raises ValueError on a bad slug, tagline or icon, and Unsafe on a guard hit.
+    ``tagline5`` is the card's 3-6 word line, ``io`` the card's ``<in>:<out>`` icons,
+    ``public_names`` the scrubber's allowlist (default: the built-in one).
+    Raises ValueError on a bad slug, tagline or icon, and Unsafe on a guard hit or on a
+    detail text the client-name scrubber can't classify.
     """
     if not SLUG.match(slug):
         raise ValueError(
@@ -435,6 +620,9 @@ def to_hub_bundle(
         "generated": generated or date.today().isoformat(),
         "graph": graph,
     }
+    # The page's prose is the scrubber's evidence (a word in lower case elsewhere is ordinary).
+    prose = [text for where, text in _strings(page, "") if not _MACHINE.search(where)]
+    _scrub_details(graph, Scrubber(prose, public_names or BUILTIN))
     if hits := scan(page):
         raise Unsafe("refused, private material in: " + "; ".join(hits))
     return page
@@ -448,10 +636,20 @@ def write_hub_bundle(
     tagline5: str,
     io: str,
     generated: str | None = None,
+    public_names: Path | None = None,
 ) -> Path:
-    """Write ``<out_dir>/<slug>/page/page.json``. Nothing is written when the export is refused."""
+    """Write ``<out_dir>/<slug>/page/page.json``. Nothing is written when the export is refused.
+
+    ``public_names`` is a ``public-names.yaml`` that extends the built-in allowlist.
+    """
+    public = load_public_names(public_names) if public_names is not None else None
     page = to_hub_bundle(
-        json.loads(Path(src).read_text()), slug, tagline5=tagline5, io=io, generated=generated
+        json.loads(Path(src).read_text()),
+        slug,
+        tagline5=tagline5,
+        io=io,
+        generated=generated,
+        public_names=public,
     )
     target = Path(out_dir) / slug / "page" / "page.json"
     target.parent.mkdir(parents=True, exist_ok=True)
