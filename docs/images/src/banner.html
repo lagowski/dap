@@ -1,0 +1,88 @@
+<!doctype html>
+<!-- DAP README banner (v3). A frame of the dashboard's own run view (apps/dashboard): the sidebar with the brand
+     (sidebar.tsx: Workflow icon + "DAP", nav items, amber paused-run counter), the run header with RunStatusBadge
+     (status-badge.tsx: paused at a gate, "expires in", Approve), the pipeline graph (pipeline-graph.tsx: 2px status
+     border, 3px on the current node, STATUS_COLORS, slate edges with field labels and condition labels) and the
+     node timeline. Tokens from src/app/globals.css (shadcn slate, light and .dark), badge variants from
+     ui/badge.tsx. The pipeline, run and numbers are invented. ?theme=dark|light, 1280x640 @2x. -->
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=block" rel="stylesheet">
+<style>
+:root{--bg:#020817;--fg:#F8FAFC;--card:#020817;--muted:#1E293B;--mfg:#94A3B8;--border:#1E293B;--node:#0B1220;
+ --pending:#475569;--running:#3B82F6;--success:#10B981;--failed:#EF4444;--skipped:#F59E0B;--edge:#64748B;
+ --b-ok-bg:#064E3B;--b-ok:#A7F3D0;--b-warn-bg:#78350F;--b-warn:#FDE68A;--b-info-bg:#1E3A8A;--b-info:#BFDBFE;--btn:#F8FAFC;--btn-fg:#0F172A}
+:root.light{--bg:#FFFFFF;--fg:#020817;--card:#FFFFFF;--muted:#F1F5F9;--mfg:#64748B;--border:#E2E8F0;--node:#FFFFFF;
+ --pending:#CBD5E1;--running:#3B82F6;--success:#10B981;--failed:#EF4444;--skipped:#F59E0B;--edge:#94A3B8;
+ --b-ok-bg:#D1FAE5;--b-ok:#065F46;--b-warn-bg:#FEF3C7;--b-warn:#92400E;--b-info-bg:#DBEAFE;--b-info:#1E40AF;--btn:#0F172A;--btn-fg:#F8FAFC}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1280px;height:640px;overflow:hidden;background:var(--bg);color:var(--fg);font:400 14px/1.5 Inter,sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:"JetBrains Mono",monospace}
+aside{position:absolute;left:0;top:0;bottom:0;width:252px;border-right:1px solid var(--border);display:flex;flex-direction:column}
+.brand{padding:26px 22px 20px;border-bottom:1px solid var(--border)}
+.brand div{display:flex;align-items:center;gap:12px;font-weight:700;font-size:44px;letter-spacing:-.02em;line-height:1}
+.brand svg{width:38px;height:38px}
+.brand p{color:var(--mfg);font-size:14px;margin-top:8px}
+nav{padding:10px;display:flex;flex-direction:column;gap:3px;font-size:15px;font-weight:500;color:var(--mfg)}
+nav a{display:flex;align-items:center;gap:11px;padding:8px 12px;border-radius:6px}
+nav a.on{background:var(--muted);color:var(--fg)}
+nav i{width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;opacity:.8}
+nav b{margin-left:auto;width:21px;height:21px;border-radius:50%;background:#F59E0B;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center}
+.db{margin-top:auto;padding:14px 22px;border-top:1px solid var(--border);font-size:12.5px;color:var(--mfg);display:flex;align-items:center;gap:8px}
+.db i{width:8px;height:8px;border-radius:50%;background:var(--success)}
+main{position:absolute;left:252px;top:0;right:0;bottom:0;padding:24px 30px}
+.crumb{font-size:13px;color:var(--mfg)}
+.head{display:flex;align-items:center;gap:12px;margin-top:2px}
+.head h1{font-size:25px;font-weight:600;letter-spacing:-.01em}
+.badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 11px;font-size:12.5px;font-weight:600}
+.warn{background:var(--b-warn-bg);color:var(--b-warn)}.ok{background:var(--b-ok-bg);color:var(--b-ok)}.info{background:var(--b-info-bg);color:var(--b-info)}.out{border:1px solid var(--border);color:var(--mfg)}
+.btn{border-radius:6px;padding:5px 14px;font-size:13px;font-weight:500;background:var(--btn);color:var(--btn-fg)}
+.lead{font-size:18.5px;color:var(--mfg);margin-top:10px}.lead b{color:var(--fg);font-weight:600}
+.card{position:absolute;left:30px;right:30px;border:1px solid var(--border);border-radius:8px;background:var(--card)}
+.node{position:absolute;width:112px;height:40px;border-radius:6px;background:var(--node);border:2px solid var(--pending);display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:500}
+.node small{position:absolute;top:44px;left:0;right:0;text-align:center;font:400 11px "JetBrains Mono";color:var(--mfg)}
+.s{border-color:var(--success)}.cur{border-color:var(--skipped);border-width:3px}
+.el{position:absolute;font-size:11px;font-weight:500;color:var(--mfg);background:var(--card);padding:0 4px;transform:translate(-50%,-50%);white-space:nowrap}
+.cond{color:var(--fg);font-family:"JetBrains Mono";font-weight:400}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:500;color:var(--mfg);padding:8px 16px;border-bottom:1px solid var(--border);font-size:12px}
+td{padding:4.5px 16px;border-bottom:1px solid var(--border)}tr:last-child td{border:0}
+td.r,th.r{text-align:right}
+svg.g{position:absolute;inset:0}
+</style></head><body>
+<script>if(new URLSearchParams(location.search).get('theme')==='light')document.documentElement.classList.add('light')</script>
+<aside><div class="brand"><div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>DAP</div><p>Deterministic Agent Pipeline</p></div>
+ <nav><a><i></i>Projects</a><a class="on"><i></i>Runs<b>1</b></a><a><i></i>Pipelines</a><a><i></i>Agents</a><a><i></i>Account</a><a><i></i>Settings</a></nav>
+ <div class="db"><i></i>self-hosted &middot; SQLite / Postgres</div></aside>
+<main>
+ <div class="crumb">Runs / support-triage <span class="mono">v4</span></div>
+ <div class="head"><h1>support-triage</h1><span class="badge warn"><span class="mono">human_approval</span> — expires in 23h</span><span class="btn">Approve</span></div>
+ <p class="lead"><b>The state machine decides what runs next, never the model.</b> Agents fill in state; edges are code.</p>
+
+ <div class="card" style="top:148px;height:212px">
+  <svg class="g" width="966" height="212" fill="none" stroke="var(--edge)" stroke-width="1.4">
+   <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--edge)" stroke="none"/></marker></defs>
+   <path d="M136 130H184" marker-end="url(#a)"/><path d="M296 130H344" marker-end="url(#a)"/><path d="M456 130H504" marker-end="url(#a)"/>
+   <path d="M616 130H816" marker-end="url(#a)"/>
+   <path d="M560 110C560 62 590 54 668 54" marker-end="url(#a)"/><path d="M800 54C850 54 872 60 872 108" marker-end="url(#a)"/>
+  </svg>
+  <span class="el" style="left:159px;top:130px">ticket</span><span class="el" style="left:319px;top:130px">docs</span><span class="el" style="left:479px;top:130px">reply</span>
+  <span class="el cond" style="left:714px;top:130px">risk == "low"</span><span class="el cond" style="left:566px;top:76px">risk == "high"</span><span class="el" style="left:868px;top:80px">approved</span>
+  <div class="node s" style="left:24px;top:110px">classify<small>anthropic</small></div>
+  <div class="node s" style="left:184px;top:110px">retrieve<small>python-func</small></div>
+  <div class="node s" style="left:344px;top:110px">draft_reply<small>openai</small></div>
+  <div class="node s" style="left:504px;top:110px">policy_check<small>python-func</small></div>
+  <div class="node cur" style="left:668px;top:34px;width:132px">human_approval</div>
+  <div class="node" style="left:816px;top:110px">send<small>python-func</small></div>
+  <span style="position:absolute;left:24px;top:18px;font-size:12px;color:var(--mfg)">Pipeline graph &middot; a versioned DAG walked by LangGraph</span>
+ </div>
+
+ <div class="card" style="top:372px;height:246px"><table>
+  <tr><th>Node</th><th>Runtime</th><th>Status</th><th>Wrote to state</th><th class="r">Duration</th><th class="r">Tokens</th></tr>
+  <tr><td class="mono">classify</td><td>anthropic</td><td><span class="badge ok">success</span></td><td class="mono">ticket.category, risk</td><td class="r mono">1.8 s</td><td class="r mono">412</td></tr>
+  <tr><td class="mono">retrieve</td><td>python-func</td><td><span class="badge ok">success</span></td><td class="mono">docs[3]</td><td class="r mono">0.2 s</td><td class="r mono">0</td></tr>
+  <tr><td class="mono">draft_reply</td><td>openai</td><td><span class="badge ok">success</span></td><td class="mono">reply</td><td class="r mono">4.1 s</td><td class="r mono">1,306</td></tr>
+  <tr><td class="mono">policy_check</td><td>python-func</td><td><span class="badge ok">success</span></td><td class="mono">risk = "high"</td><td class="r mono">0.1 s</td><td class="r mono">0</td></tr>
+  <tr><td class="mono">human_approval</td><td>approval gate</td><td><span class="badge warn">paused</span></td><td style="color:var(--mfg)">waiting for a person</td><td class="r mono">&nbsp;</td><td class="r mono">&nbsp;</td></tr>
+  <tr><td class="mono">send</td><td>python-func</td><td><span class="badge out">pending</span></td><td>&nbsp;</td><td></td><td></td></tr>
+ </table></div>
+</main></body></html>

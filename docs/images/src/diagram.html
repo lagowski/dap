@@ -1,0 +1,69 @@
+<!doctype html>
+<!-- DAP: how it works (v3). The architecture is drawn as a pipeline in the dashboard's own graph
+     (apps/dashboard/src/components/pipeline-graph.tsx: white nodes, 2px status border, 3px on the current node,
+     slate edges with labels), inside the app frame (sidebar.tsx brand and nav, shadcn slate tokens from
+     globals.css, badge variants). Light scheme on an opaque frame: reads on GitHub dark and light. 1600x900 @2x. -->
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=block" rel="stylesheet">
+<style>
+:root{--bg:#FFFFFF;--fg:#020817;--muted:#F1F5F9;--mfg:#64748B;--border:#E2E8F0;--pending:#CBD5E1;--running:#3B82F6;--success:#10B981;--skipped:#F59E0B;--edge:#94A3B8}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1600px;height:900px;overflow:hidden;background:var(--bg);color:var(--fg);font:400 16px/1.5 Inter,sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:"JetBrains Mono",monospace}
+aside{position:absolute;left:0;top:0;bottom:0;width:230px;border-right:1px solid var(--border)}
+.brand{padding:26px 22px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:11px;font-weight:700;font-size:34px;letter-spacing:-.02em;line-height:1}
+.brand svg{width:30px;height:30px}
+nav{padding:10px;display:flex;flex-direction:column;gap:3px;font-size:16px;font-weight:500;color:var(--mfg)}
+nav a{display:flex;align-items:center;gap:11px;padding:8px 12px;border-radius:6px}nav a.on{background:var(--muted);color:var(--fg)}
+nav i{width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;opacity:.8}
+main{position:absolute;left:230px;top:0;right:0;bottom:0}
+.crumb{position:absolute;left:36px;top:26px;font-size:15px;color:var(--mfg)}
+h1{position:absolute;left:36px;top:50px;font-size:30px;font-weight:600;letter-spacing:-.01em}
+.badge{display:inline-flex;border-radius:999px;padding:3px 12px;font-size:14px;font-weight:600;vertical-align:6px;margin-left:10px}
+.b-ok{background:#D1FAE5;color:#065F46}.b-warn{background:#FEF3C7;color:#92400E}.b-info{background:#DBEAFE;color:#1E40AF}
+.card{position:absolute;border:1px solid var(--border);border-radius:8px}
+.node{position:absolute;width:180px;height:66px;border-radius:6px;background:#fff;border:2px solid var(--success);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:16px;font-weight:600;line-height:1.3}
+.node small{font:400 13px "JetBrains Mono";color:var(--mfg)}
+.cur{border-color:var(--running);border-width:3px}.gate{border-color:var(--skipped)}.pend{border-color:var(--pending)}
+.leaf{height:54px;width:274px;align-items:flex-start;padding:0 14px;font-size:14.5px}
+.el{position:absolute;font-size:13.5px;font-weight:500;color:var(--mfg);background:#fff;padding:0 6px;transform:translate(-50%,-50%);white-space:nowrap}
+.card svg{position:absolute;inset:0}
+.d{padding:16px 20px}.d h3{font-size:18px;font-weight:600;margin-bottom:5px}.d p{font-size:15.5px;color:var(--mfg);line-height:1.45}
+.d p b{color:var(--fg);font-weight:500}
+</style></head><body>
+<aside><div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>DAP</div>
+ <nav><a><i></i>Projects</a><a><i></i>Runs</a><a class="on"><i></i>Pipelines</a><a><i></i>Agents</a><a><i></i>Account</a><a><i></i>Settings</a></nav></aside>
+<main>
+ <div class="crumb">Pipelines / how-dap-works <span class="mono">v1</span></div>
+ <h1>How DAP works <span class="badge b-info">self-hosted</span></h1>
+
+ <div class="card" style="left:36px;top:118px;width:1298px;height:530px">
+  <svg width="1298" height="520" fill="none" stroke="var(--edge)" stroke-width="1.6">
+   <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#94A3B8" stroke="none"/></marker></defs>
+   <path d="M204 233H256" marker-end="url(#a)"/><path d="M436 233H488" marker-end="url(#a)"/><path d="M708 233H760" marker-end="url(#a)"/>
+   <path d="M436 83H598V196" marker-end="url(#a)"/>
+   <path d="M560 270V352" marker-end="url(#a)"/><path d="M660 270V312H850V352" marker-end="url(#a)"/>
+   <path d="M850 200V139H1000" marker-end="url(#a)"/><path d="M1137 172V214M1137 268V282M1137 336V350"/>
+  </svg>
+  <span class="el" style="left:230px;top:233px">HTTP</span><span class="el" style="left:462px;top:233px">REST</span><span class="el" style="left:520px;top:83px">REST + API token</span>
+  <span class="el" style="left:734px;top:233px">each</span><span class="el" style="left:560px;top:312px">every step</span><span class="el" style="left:756px;top:312px">interrupt</span><span class="el" style="left:916px;top:139px">XML prompt</span>
+  <div class="node" style="left:24px;top:200px">Browser</div>
+  <div class="node" style="left:256px;top:50px">apps/cli<small>dap</small></div>
+  <div class="node" style="left:256px;top:200px">apps/dashboard<small>Next.js :3000</small></div>
+  <div class="node cur" style="left:488px;top:196px;width:220px;height:74px">apps/engine<small>FastAPI + LangGraph :7333</small></div>
+  <div class="node" style="left:760px;top:200px">prompt-dsl<small>Jinja &rarr; XML</small></div>
+  <div class="node" style="left:470px;top:354px">database<small>SQLite or PostgreSQL</small></div>
+  <div class="node gate" style="left:760px;top:354px">approval gate<small>waits for a human</small></div>
+  <div class="node" style="left:1000px;top:106px;width:274px">packages/runtimes<small>9 adapters, one per node</small></div>
+  <div class="node leaf pend" style="left:1000px;top:214px">api-call<small>Anthropic OpenAI Gemini GLM</small></div>
+  <div class="node leaf pend" style="left:1000px;top:282px">agent CLIs<small>claude-code gemini-cli codex</small></div>
+  <div class="node leaf pend" style="left:1000px;top:350px">tools<small>github bash python-func http</small></div>
+  <span style="position:absolute;left:1000px;top:420px;width:274px;font-size:13.5px;color:var(--mfg);line-height:1.4">Also: OpenRouter through api-call, aider as a CLI.</span>
+  <span style="position:absolute;left:24px;top:18px;font-size:14px;color:var(--mfg)">Pipeline graph &middot; the engine is the only part that picks the next node</span>
+  <span style="position:absolute;left:24px;top:470px;font-size:14px;color:var(--mfg)"><span class="mono">packages/types</span> shared Pydantic models for the engine and the runtimes</span>
+ </div>
+
+ <div class="card d" style="left:36px;top:672px;width:420px;height:186px"><h3>LangGraph walks the DAG <span class="badge b-info" style="vertical-align:1px;font-size:12.5px">engine</span></h3><p>A pipeline is a <b>versioned DAG</b> of agents. Edges and their conditions are data, so the next node is computed, never chosen by a model. Pause, resume, abort, retry, skip.</p></div>
+ <div class="card d" style="left:475px;top:672px;width:420px;height:186px"><h3>One node, one adapter <span class="badge b-ok" style="vertical-align:1px;font-size:12.5px">node</span></h3><p>The node renders its <b>Jinja to XML prompt</b> from pipeline state, hands it to one runtime adapter and writes the result back to state. Live progress for each node.</p></div>
+ <div class="card d" style="left:914px;top:672px;width:420px;height:186px"><h3>Gates and history <span class="badge b-warn" style="vertical-align:1px;font-size:12.5px">paused</span></h3><p>An approval gate <b>interrupts the run</b> until a person approves in the dashboard. Every step, its input and its state diff are stored in SQLite or Postgres.</p></div>
+</main></body></html>

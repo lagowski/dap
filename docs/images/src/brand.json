@@ -1,0 +1,28 @@
+{
+  "product": "DAP (Deterministic Agent Pipeline)",
+  "kind": "frontend (apps/dashboard: Next.js, Tailwind, shadcn/ui)",
+  "extracted_from": {
+    "colours": "apps/dashboard/src/app/globals.css (:root and .dark HSL tokens: background, foreground, muted, muted-foreground, border, primary; --radius 0.5rem), apps/dashboard/tailwind.config.ts",
+    "brand": "apps/dashboard/src/components/sidebar.tsx (lucide Workflow icon + 'DAP' semibold; nav Projects, Runs, Pipelines, Agents, Account, Settings; amber counter of paused runs)",
+    "graph": "apps/dashboard/src/components/pipeline-graph.tsx (node: white ground, 2px border in STATUS_COLORS, 3px on the current node, radius 6, 12px/500; edges slate-400 with field labels and condition labels)",
+    "status_colours": "pipeline-graph.tsx STATUS_COLORS: pending #cbd5e1, running #3b82f6, success #10b981, failed #ef4444, skipped #f59e0b",
+    "badges": "apps/dashboard/src/components/ui/badge.tsx (success emerald-100/800, warning amber-100/800, info blue-100/800, outline)",
+    "run_status": "apps/dashboard/src/components/status-badge.tsx (paused at a gate: node id in mono, 'expires in', Approve button)",
+    "type": "body font-sans (Tailwind default stack), font-mono for node ids"
+  },
+  "fonts": { "sans": "Inter (stand-in for the dashboard's default sans stack)", "mono": "JetBrains Mono (node ids, runtimes, conditions)" },
+  "radius": { "card": 8, "node": 6, "button": 6, "badge": 999 },
+  "light": { "background": "#FFFFFF", "foreground": "#020817", "muted": "#F1F5F9", "muted_foreground": "#64748B", "border": "#E2E8F0", "primary": "#0F172A" },
+  "dark": { "background": "#020817", "foreground": "#F8FAFC", "muted": "#1E293B", "muted_foreground": "#94A3B8", "border": "#1E293B", "primary": "#F8FAFC" },
+  "status": { "pending": "#CBD5E1", "running": "#3B82F6", "success": "#10B981", "failed": "#EF4444", "skipped_or_paused": "#F59E0B", "edge": "#94A3B8" },
+  "concept": {
+    "banner": "The dashboard's run view. The name sits in the sidebar where the app has it. A run of an invented pipeline is paused at its human approval gate: four nodes are green, the conditional edges (risk == \"high\" / \"low\") show that the route is code, the gate is the current node, the last node is pending; the table lists what each node wrote to state.",
+    "diagram": "The architecture drawn as a pipeline in the same graph component: Browser and CLI, dashboard, engine (the current node), prompt DSL, runtimes and their adapters, database, approval gate; three cards explain the engine, a node and a gate."
+  },
+  "data": "The pipeline (support-triage), its nodes, durations and token counts are invented. No names, hosts or tokens.",
+  "assets": {
+    "docs/images/banner.png": "src/banner.html?theme=dark, 1280x640 @2x",
+    "docs/images/banner-light.png": "src/banner.html?theme=light, 1280x640 @2x",
+    "docs/images/how-it-works.png": "src/diagram.html, 1600x900 @2x (light scheme on an opaque frame: reads on GitHub dark and light)"
+  }
+}
