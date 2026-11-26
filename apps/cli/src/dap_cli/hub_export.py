@@ -105,7 +105,10 @@ def _clip(text: str, limit: int) -> str:
 
 def _plain(text: str) -> str:
     """Drop repository issue references such as ``(#919)``: they mean nothing on the hub."""
-    return re.sub(r"\s*\(#\d+\)", "", re.sub(r"\s*#\d+\b", "", text)).strip()
+    # Parenthesised references (also lists such as "(#1, #2)") go first, whole: stripping
+    # the bare "#919" first would leave an empty "()" behind.
+    text = re.sub(r"\s*\(\s*#\d+(?:\s*,\s*#\d+)*\s*\)", "", text)
+    return re.sub(r"\s*#\d+\b", "", text).strip()
 
 
 def _label(edge: dict[str, Any]) -> str | None:
