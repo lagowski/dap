@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Prompt box on New pipeline** — describe an automation in plain words and
+  the engine's generator returns a pipeline bundle: open it in the canvas (a
+  normal import, so every import check applies) or download the JSON. The
+  generator is an operator-configured command (`DAP_PIPELINE_GENERATOR_COMMAND`,
+  e.g. cortex's `pipeline new --json`); unset, the box is hidden and
+  `POST /pipelines/generate` answers 503. Requests are audited as
+  `pipeline.generated`.
 - **`aider` runtime (#929, follow-up to #810)** — `aider` is no longer a
   stub. It runs on the shared CLI base like `codex` and `gemini-cli`, so the
   git workspace keys and guards (#922, #923) apply to it. The prompt reaches

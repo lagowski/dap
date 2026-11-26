@@ -30,6 +30,8 @@ logger = logging.getLogger("dap.engine.pipeline_generator")
 
 PROMPT_MAX_CHARS = 4000
 _STDERR_TAIL_CHARS = 2000
+# Generator exit code meaning "refused" (cortex: bad prompt / invalid design).
+EXIT_REFUSED = 2
 
 
 class GeneratePipelineRequest(BaseModel):
@@ -77,14 +79,13 @@ def run_generator(command: list[str] | None, prompt: str, timeout_s: float) -> G
     if not command:
         raise PipelineGeneratorError(
             503,
-            "pipeline generator not configured on this engine "
-            "(set DAP_PIPELINE_GENERATOR_COMMAND)",
+            "pipeline generator not configured on this engine (set DAP_PIPELINE_GENERATOR_COMMAND)",
         )
     prompt = prompt.strip()
     if not prompt:
         raise PipelineGeneratorError(422, "prompt is empty")
     try:
-        proc = subprocess.run(  # noqa: S603 - argv list, no shell; command is operator config
+        proc = subprocess.run(  # argv list, no shell; command is operator config
             [*command, prompt],
             capture_output=True,
             text=True,
@@ -96,7 +97,7 @@ def run_generator(command: list[str] | None, prompt: str, timeout_s: float) -> G
     except OSError as exc:
         raise PipelineGeneratorError(502, f"generator could not start: {exc}") from exc
 
-    if proc.returncode == 2:
+    if proc.returncode == EXIT_REFUSED:
         raise PipelineGeneratorError(422, f"generator refused: {_tail(proc.stderr)}")
     if proc.returncode != 0:
         raise PipelineGeneratorError(

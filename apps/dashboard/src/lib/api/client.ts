@@ -35,7 +35,9 @@ import type {
   PaginatedList,
   Pipeline,
   PipelineCreate,
+  GeneratedPipeline,
   PipelineExport,
+  PipelineGeneratorStatus,
   PipelineState,
   PipelineUiMetadataPatch,
   PipelineUpdate,
@@ -358,6 +360,22 @@ export async function exportPipeline(
   return request<PipelineExport>(
     `/pipelines/${encodeURIComponent(id)}/export${qs ? `?${qs}` : ""}`,
   );
+}
+
+/** Whether the engine has a prompt-box generator configured (cortex#1774 S5). */
+export async function getPipelineGeneratorStatus(): Promise<PipelineGeneratorStatus> {
+  return request<PipelineGeneratorStatus>("/pipelines/generate");
+}
+
+/**
+ * Ask the engine's generator for a pipeline bundle from a plain-words prompt.
+ * Nothing is imported: pass ``bundle`` to ``importPipeline`` (or download it).
+ */
+export async function generatePipeline(prompt: string): Promise<GeneratedPipeline> {
+  return request<GeneratedPipeline>("/pipelines/generate", {
+    method: "POST",
+    json: { prompt },
+  });
 }
 
 export async function importPipeline(payload: PipelineExport): Promise<Pipeline> {

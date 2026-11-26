@@ -52,6 +52,9 @@ export type AgentExecution = ApiSchema<"AgentExecutionRef">;
 
 /** Projects that bind a pipeline, and as which workflow kind(s) (#697). */
 export type PipelineUsage = ApiSchema<"PipelineUsageResponse">;
+/** Prompt box (cortex#1774 S5): a generated bundle, ready for ``POST /pipelines/import``. */
+export type GeneratedPipeline = ApiSchema<"GeneratedPipeline">;
+export type PipelineGeneratorStatus = ApiSchema<"PipelineGeneratorStatus">;
 
 /** Pre-run readiness of a pipeline's python-func callables (#710). */
 export type PipelineReadiness = ApiSchema<"PipelineReadinessResponse">;

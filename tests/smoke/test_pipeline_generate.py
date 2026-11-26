@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
 
-from dap_engine.app import EngineConfig, create_app
 from tests.smoke._auth import authed_test_client
 
-_AGENT = {
+_AGENT: dict[str, Any] = {
     "name": "Generated Step",
     "role": "task_selector",
     "runtime_id": "api-call",
@@ -76,6 +76,9 @@ _SCRIPT = textwrap.dedent(
 )
 
 
+MakeClient = Callable[..., TestClient]
+
+
 @pytest.fixture
 def make_client(tmp_path: Path) -> Iterator[Callable[..., TestClient]]:
     script = tmp_path / "fake_generator.py"
@@ -100,18 +103,18 @@ def make_client(tmp_path: Path) -> Iterator[Callable[..., TestClient]]:
         cm.__exit__(None, None, None)
 
 
-def test_status_reports_enabled_only_when_configured(make_client) -> None:
+def test_status_reports_enabled_only_when_configured(make_client: MakeClient) -> None:
     assert make_client().get("/pipelines/generate").json() == {"enabled": True}
     assert make_client(command=[]).get("/pipelines/generate").json() == {"enabled": False}
 
 
-def test_unconfigured_engine_answers_503(make_client) -> None:
+def test_unconfigured_engine_answers_503(make_client: MakeClient) -> None:
     res = make_client(command=[]).post("/pipelines/generate", json={"prompt": "triage email"})
     assert res.status_code == 503
     assert "DAP_PIPELINE_GENERATOR_COMMAND" in res.json()["detail"]
 
 
-def test_generated_bundle_round_trips_through_import(make_client) -> None:
+def test_generated_bundle_round_trips_through_import(make_client: MakeClient) -> None:
     client = make_client()
     res = client.post("/pipelines/generate", json={"prompt": "triage support email"})
     assert res.status_code == 200, res.text
@@ -124,7 +127,9 @@ def test_generated_bundle_round_trips_through_import(make_client) -> None:
     assert imported.json()["name"] == "Generated Triage"
 
 
-def test_prompt_is_passed_as_one_argv_element_without_a_shell(make_client, tmp_path) -> None:
+def test_prompt_is_passed_as_one_argv_element_without_a_shell(
+    make_client: MakeClient, tmp_path: Path
+) -> None:
     marker = tmp_path / "pwned"
     prompt = f"x; touch {marker} $(touch {marker})"
     client = make_client()
@@ -143,18 +148,20 @@ def test_prompt_is_passed_as_one_argv_element_without_a_shell(make_client, tmp_p
         ("badbundle", 502, "invalid bundle"),
     ],
 )
-def test_generator_failures_map_to_clear_errors(make_client, prompt, status, needle) -> None:
+def test_generator_failures_map_to_clear_errors(
+    make_client: MakeClient, prompt: str, status: int, needle: str
+) -> None:
     res = make_client().post("/pipelines/generate", json={"prompt": prompt})
     assert res.status_code == status, res.text
     assert needle in res.json()["detail"]
 
 
-def test_timeout_answers_504(make_client) -> None:
+def test_timeout_answers_504(make_client: MakeClient) -> None:
     res = make_client(timeout=0.5).post("/pipelines/generate", json={"prompt": "slow"})
     assert res.status_code == 504
 
 
-def test_missing_command_answers_502(make_client, tmp_path) -> None:
+def test_missing_command_answers_502(make_client: MakeClient, tmp_path: Path) -> None:
     res = make_client(command=[str(tmp_path / "no-such-generator")]).post(
         "/pipelines/generate", json={"prompt": "x"}
     )
@@ -162,11 +169,11 @@ def test_missing_command_answers_502(make_client, tmp_path) -> None:
 
 
 @pytest.mark.parametrize("prompt", ["", "x" * 4001])
-def test_prompt_length_is_bounded(make_client, prompt) -> None:
+def test_prompt_length_is_bounded(make_client: MakeClient, prompt: str) -> None:
     assert make_client().post("/pipelines/generate", json={"prompt": prompt}).status_code == 422
 
 
-def test_generation_requires_login(tmp_path) -> None:
+def test_generation_requires_login(tmp_path: Path) -> None:
     config = EngineConfig(
         db_path=str(tmp_path / "anon.db"),
         auth_jwt_secret="smoke-test-secret-32-chars-padding",
