@@ -212,9 +212,8 @@ class PublicNames:
         self.singles = frozenset(n for n in names if " " not in n)
 
     def extend(self, groups: dict[str, list[str]]) -> PublicNames:
-        merged = {"_": sorted(self.phrases)}
-        merged.update({f"+{k}": v for k, v in groups.items()})
-        return PublicNames(merged)
+        extra = PublicNames(groups)  # validates; an error names the caller's group
+        return PublicNames({"base": sorted(self.phrases), "extra": sorted(extra.phrases)})
 
     def word(self, tok: str) -> bool:
         w = _canon(tok)

@@ -104,6 +104,13 @@ def test_a_malformed_public_names_file_is_refused(tmp_path: Path, content: str) 
         load_public_names(path)
 
 
+def test_a_bad_group_is_named_as_written(tmp_path: Path) -> None:
+    path = tmp_path / "public-names.yaml"
+    path.write_text("products: 5\n")
+    with pytest.raises(ValueError, match=r"^bad --public-names: group 'products' must be a list"):
+        load_public_names(path)
+
+
 def test_a_missing_public_names_file_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="bad --public-names"):
         load_public_names(tmp_path / "missing.yaml")
