@@ -173,6 +173,11 @@ GUARD: dict[str, re.Pattern[str]] = {
         r"\b[\w-]+\.(?:internal|local|lan|corp|home\.arpa)\b|lagowski|dixter|rafeekpro", re.I
     ),
     "secret marker": re.compile(r"SOURCE-OF-TRUTH|VAULT_SYNC_SECRET|BEGIN [A-Z ]*PRIVATE KEY"),
+    # The hub's leak policy: a credential name set to 8+ non-space characters, even an env
+    # lookup (``api_key=os.environ[...]``). Code reads the value into a short name first.
+    "credential assignment": re.compile(
+        r"(?:api_key|token|password|passwd|secret)\s*[=:]\s*\S{8,}", re.I
+    ),
 }
 
 

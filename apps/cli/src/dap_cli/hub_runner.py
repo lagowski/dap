@@ -375,9 +375,8 @@ def call_model(provider, model, system, prompt):
     if provider in KEY_ENV:
         import openai
 
-        api = openai.OpenAI(
-            api_key=os.environ[KEY_ENV[provider]], base_url=os.environ.get("MODEL_BASE_URL") or None
-        )
+        key = os.environ[KEY_ENV[provider]]
+        api = openai.OpenAI(api_key=key, base_url=os.environ.get("MODEL_BASE_URL") or None)
         messages = [{"role": "system", "content": system}] if system else []
         messages.append({"role": "user", "content": prompt})
         reply = api.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=messages)

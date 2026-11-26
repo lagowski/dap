@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from dap_cli.__main__ import app
-from dap_cli.hub_export import Unsafe, _plain, scan, to_hub_bundle, write_hub_bundle
+from dap_cli.hub_export import GUARD, Unsafe, _plain, scan, to_hub_bundle, write_hub_bundle
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -573,6 +573,38 @@ def test_scan_flags_private_material(leak: str) -> None:
 def test_scan_reports_the_rule_not_the_value() -> None:
     hits = scan({"steps": [{"body": "token ghp_abcdefghijklmnopqrstuvwxyz0123456789"}]})
     assert hits and "ghp_" not in " ".join(hits)
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "api_key=os.environ[X]",
+        "client(API_KEY = os.environ[KEY_ENV[provider]])",
+        "token: abcdefgh12",
+        "password=hunter2hunter2",
+        "passwd:s3cr3t-value",
+        "Secret = some-long-value",
+    ],
+)
+def test_scan_flags_a_credential_assignment(leak: str) -> None:
+    hits = scan({"build": {"runner": leak}})
+    assert hits == ["build.runner: credential assignment"]
+    assert re.split(r"[=:]", leak, maxsplit=1)[1].strip() not in " ".join(hits)
+
+
+@pytest.mark.parametrize(
+    "fine",
+    ["key = os.environ[X]", "token=short", "max_tokens=MAX_TOKENS", "a secret: is kept"],
+)
+def test_scan_allows_no_credential_assignment(fine: str) -> None:
+    assert scan({"build": {"runner": fine}}) == []
+
+
+def test_generated_runner_has_no_credential_assignment() -> None:
+    from dap_cli import hub_runner
+
+    source = Path(hub_runner.__file__).read_text(encoding="utf-8")
+    assert not GUARD["credential assignment"].search(source)
 
 
 def test_export_refuses_a_leaky_bundle() -> None:
