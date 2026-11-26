@@ -7,7 +7,7 @@
  * ``layoutDesignerGraph`` (#1033).
  */
 import dagre from "dagre";
-import type { Edge, Node } from "@xyflow/react";
+import { Position, type Edge, type Node } from "@xyflow/react";
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 40;
@@ -256,40 +256,231 @@ export function routeCrossesBoxes(points: Point[], boxes: NodeBox[]): boolean {
   return false;
 }
 
-/** Designer handles: React Flow's default node takes edges in at the top
- *  centre and sends them out at the bottom centre. */
-export function sourceHandle(box: NodeBox): Point {
-  return { x: box.x + box.width / 2, y: box.y + box.height };
-}
-export function targetHandle(box: NodeBox): Point {
-  return { x: box.x + box.width / 2, y: box.y };
+/* ---- Handle sides (#1033 round 3) ---------------------------------------
+ * A designer node's handles sit on the side that faces its neighbours, worked
+ * out from the node positions alone, so a graph reopened from its saved
+ * positions draws exactly as Auto-arrange laid it out. A node with a
+ * successor clearly to its right sends edges out on the right; at the turn of
+ * a snake row, where the next node sits straight below with nothing between,
+ * the edge leaves at the bottom and enters at the top. Back-edges (loops) do
+ * not vote: they are routed around the nodes instead. */
+
+/** Source (outgoing) and target (incoming) handle side of each node. */
+export type HandleSides = Record<string, { source: Position; target: Position }>;
+
+const OPPOSITE: Record<Position, Position> = {
+  [Position.Top]: Position.Bottom,
+  [Position.Bottom]: Position.Top,
+  [Position.Left]: Position.Right,
+  [Position.Right]: Position.Left,
+};
+
+function isVerticalSide(side: Position): boolean {
+  return side === Position.Top || side === Position.Bottom;
 }
 
-/** The route a designer edge draws without waypoints: down out of the source
- *  handle's row, across, then into the target handle (same rule as
- *  ``routePoints`` for Bottom/Top handles). */
-function defaultRoute(source: Point, target: Point): Point[] {
-  return [source, { x: target.x, y: source.y }, target];
+/** The point on ``box`` where a handle on ``side`` sits (React Flow centres
+ *  the default node's handles on their side). */
+export function handlePoint(box: NodeBox, side: Position): Point {
+  switch (side) {
+    case Position.Top:
+      return { x: box.x + box.width / 2, y: box.y };
+    case Position.Bottom:
+      return { x: box.x + box.width / 2, y: box.y + box.height };
+    case Position.Left:
+      return { x: box.x, y: box.y + box.height / 2 };
+    default:
+      return { x: box.x + box.width, y: box.y + box.height / 2 };
+  }
+}
+
+/** ``point`` moved ``distance`` away from its node along the handle normal. */
+function stepOut(point: Point, side: Position, distance: number): Point {
+  switch (side) {
+    case Position.Top:
+      return { x: point.x, y: point.y - distance };
+    case Position.Bottom:
+      return { x: point.x, y: point.y + distance };
+    case Position.Left:
+      return { x: point.x - distance, y: point.y };
+    default:
+      return { x: point.x + distance, y: point.y };
+  }
+}
+
+type EdgeLike = Pick<Edge, "id" | "source" | "target">;
+
+/** Edges that close a cycle (their target is still on the depth-first stack
+ *  when they are walked), self-loops included. Walks start at nodes without
+ *  incoming edges, in node order, so the result does not depend on layout. */
+export function backEdgeIds(nodeIds: string[], edges: EdgeLike[]): Set<string> {
+  const ids = new Set(nodeIds);
+  const outgoing = new Map<string, EdgeLike[]>(nodeIds.map((id) => [id, []]));
+  const incoming = new Map<string, number>(nodeIds.map((id) => [id, 0]));
+  for (const e of edges) {
+    if (!ids.has(e.source) || !ids.has(e.target)) continue;
+    outgoing.get(e.source)!.push(e);
+    if (e.source !== e.target) incoming.set(e.target, incoming.get(e.target)! + 1);
+  }
+  const state = new Map<string, "open" | "done">();
+  const back = new Set<string>();
+  const visit = (id: string) => {
+    state.set(id, "open");
+    for (const e of outgoing.get(id)!) {
+      const next = state.get(e.target);
+      if (next === "open") back.add(e.id);
+      else if (next == null) visit(e.target);
+    }
+    state.set(id, "done");
+  };
+  const roots = [
+    ...nodeIds.filter((id) => incoming.get(id) === 0),
+    ...nodeIds.filter((id) => incoming.get(id) !== 0),
+  ];
+  for (const id of roots) if (!state.has(id)) visit(id);
+  return back;
+}
+
+/** No node box lies between ``a`` and ``b`` along the vertical line(s)
+ *  through their centres. */
+function verticalPathClear(a: NodeBox, b: NodeBox, boxes: NodeBox[]): boolean {
+  const [upper, lower] = a.y <= b.y ? [a, b] : [b, a];
+  const top = upper.y + upper.height;
+  const bottom = lower.y;
+  if (bottom <= top) return false;
+  const minX = Math.min(a.x + a.width / 2, b.x + b.width / 2);
+  const maxX = Math.max(a.x + a.width / 2, b.x + b.width / 2);
+  return !boxes.some(
+    (box) =>
+      box.id !== a.id &&
+      box.id !== b.id &&
+      box.x <= maxX &&
+      box.x + box.width >= minX &&
+      box.y < bottom &&
+      box.y + box.height > top,
+  );
+}
+
+/** The side of ``from`` that faces ``to``, or null when no side clearly
+ *  does (``to`` sits straight above or below behind another node). */
+function facingSide(from: NodeBox, to: NodeBox, boxes: NodeBox[]): Position | null {
+  const dx = to.x + to.width / 2 - (from.x + from.width / 2);
+  const dy = to.y + to.height / 2 - (from.y + from.height / 2);
+  if (Math.abs(dx) >= from.width / 2) return dx > 0 ? Position.Right : Position.Left;
+  if (dy === 0 || !verticalPathClear(from, to, boxes)) return null;
+  return dy > 0 ? Position.Bottom : Position.Top;
+}
+
+/** Most frequent side; a tie goes to the side voted first (edge order). */
+function majoritySide(votes: Position[] | undefined): Position | null {
+  if (!votes || votes.length === 0) return null;
+  const counts = new Map<Position, number>();
+  for (const v of votes) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best = votes[0];
+  for (const v of votes) if (counts.get(v)! > counts.get(best)!) best = v;
+  return best;
+}
+
+/** Handle sides of every positioned node, from geometry only. */
+export function designerHandleSides(
+  nodes: Array<Pick<Node, "id" | "position">>,
+  edges: EdgeLike[],
+): HandleSides {
+  const boxes = nodes.filter((n) => finitePoint(n.position)).map(designerNodeBox);
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const back = backEdgeIds(
+    boxes.map((b) => b.id),
+    edges,
+  );
+  const sourceVotes = new Map<string, Position[]>();
+  const targetVotes = new Map<string, Position[]>();
+  const vote = (map: Map<string, Position[]>, id: string, side: Position | null) => {
+    if (side == null) return;
+    const list = map.get(id);
+    if (list) list.push(side);
+    else map.set(id, [side]);
+  };
+  for (const e of edges) {
+    if (back.has(e.id) || e.source === e.target) continue;
+    const s = byId.get(e.source);
+    const t = byId.get(e.target);
+    if (!s || !t) continue;
+    vote(sourceVotes, s.id, facingSide(s, t, boxes));
+    vote(targetVotes, t.id, facingSide(t, s, boxes));
+  }
+  const out: HandleSides = {};
+  for (const box of boxes) {
+    const source = majoritySide(sourceVotes.get(box.id));
+    const target = majoritySide(targetVotes.get(box.id));
+    out[box.id] = {
+      source: source ?? (target ? OPPOSITE[target] : Position.Bottom),
+      target: target ?? (source ? OPPOSITE[source] : Position.Top),
+    };
+  }
+  return out;
+}
+
+/* ---- Snake layout (#1033 round 3) ------------------------------------- */
+
+/** Horizontal gap between two node columns of a snake row. */
+const COLUMN_GAP = 60;
+const COLUMN_STEP = DESIGNER_NODE_WIDTH + COLUMN_GAP;
+/** Smallest vertical gap between two snake rows. */
+const ROW_GAP_MIN = 80;
+/** A snake row holds about 6-8 columns (dagre ranks). */
+export const SNAKE_MIN_COLUMNS = 6;
+export const SNAKE_MAX_COLUMNS = 8;
+
+/** Columns per snake row for a graph ``columns`` ranks deep: one row up to
+ *  ``SNAKE_MAX_COLUMNS``, else rows as even as possible, at least
+ *  ``SNAKE_MIN_COLUMNS`` wide. */
+export function snakeColumnsPerRow(columns: number): number {
+  if (columns <= SNAKE_MAX_COLUMNS) return Math.max(columns, 1);
+  const rows = Math.ceil(columns / SNAKE_MAX_COLUMNS);
+  return Math.max(SNAKE_MIN_COLUMNS, Math.ceil(columns / rows));
+}
+
+type Placement = { row: number; slot: number; offsetY: number };
+type RoutePlan =
+  | { kind: "straight" }
+  | { kind: "mid" }
+  | { kind: "lane"; gap: number; lane: number }
+  | { kind: "corridor"; gapS: number; laneS: number; gapT: number; laneT: number; x: number };
+
+/** Lanes of one gap between rows: each lane holds x-intervals that do not
+ *  touch, so two routes never share a stretch of lane. */
+function takeLane(lanes: Array<Array<[number, number]>>, a: number, b: number): number {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  for (let k = 0; ; k++) {
+    if (!lanes[k]) lanes[k] = [];
+    if (lanes[k].every(([l, h]) => hi + 8 < l || h + 8 < lo)) {
+      lanes[k].push([lo, hi]);
+      return k;
+    }
+  }
 }
 
 /**
- * Lay the designer graph out with dagre (LR, designer node size) and route
- * the edges that need it.
+ * Lay the designer graph out as a snake and route the edges that need it.
  *
- * Positions come from dagre. Each edge then gets waypoints when it is
- * conditional, a back-edge (its target sits in the same or an earlier
- * column, self-loops included) or when its plain route would cross a node.
- * Those routes leave the source downwards, turn in the gap between columns
- * (no node ever sits there), and, when source and target are not in adjacent
- * columns, run along a lane under every node they pass, stacking lanes so two
- * back-edges never share one. Plain edges that already clear every node keep
- * no waypoints.
+ * dagre (LR) gives every node a column (its depth) and a vertical order. The
+ * columns are wrapped into rows of about 6-8 (``snakeColumnsPerRow``); even
+ * rows run left to right, odd rows right to left, and a row's last column
+ * sits straight above the next row's first, so a long chain reads as one
+ * continuous line instead of one very wide row. Nodes of one column (a
+ * fan-out) stay stacked inside the band of their own row.
+ *
+ * Handle sides come from ``designerHandleSides``. An edge between facing
+ * handles of neighbouring columns, or across a turn, draws without
+ * waypoints; any other edge (a loop back, a skip over columns or rows) runs
+ * along a lane in the gap between rows and, between rows, up or down a gap
+ * between columns, where no node ever sits. Gaps grow with their lanes.
  */
 export function layoutDesignerGraph(
   nodes: Node[],
   edges: Edge[],
-  conditionalEdgeIds: ReadonlySet<string> = new Set(),
-): { nodes: Node[]; waypoints: DesignerWaypoints } {
+): { nodes: Node[]; waypoints: DesignerWaypoints; sides: HandleSides } {
   const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", nodesep: DESIGNER_NODESEP, ranksep: DESIGNER_RANKSEP });
@@ -301,56 +492,156 @@ export function layoutDesignerGraph(
   for (const edge of routable) g.setEdge(edge.source, edge.target, {}, edge.id);
   dagre.layout(g);
 
-  const laidOut = nodes.map((node) => {
-    const { x, y } = g.node(node.id);
-    return {
-      ...node,
-      position: { x: x - DESIGNER_NODE_WIDTH / 2, y: y - DESIGNER_NODE_HEIGHT / 2 },
-    };
-  });
-  const boxes = laidOut.map(designerNodeBox);
-  const boxById = new Map(boxes.map((b) => [b.id, b]));
-  const gap = DESIGNER_RANKSEP / 2;
-  const lanes: Array<{ minX: number; maxX: number; y: number }> = [];
+  // dagre columns, left to right.
+  const centre = new Map(nodes.map((n) => [n.id, g.node(n.id) as Point]));
+  const columnKeys = [...new Set(nodes.map((n) => Math.round(centre.get(n.id)!.x)))].sort(
+    (a, b) => a - b,
+  );
+  const columnOf = new Map(columnKeys.map((key, i) => [key, i]));
+  const perRow = snakeColumnsPerRow(columnKeys.length);
+  const rowCount = Math.max(Math.ceil(columnKeys.length / perRow), 1);
+
+  // Row, slot (left-to-right grid position) and offset inside the row band.
+  const rowMinY = new Array<number>(rowCount).fill(Infinity);
+  const rowOf = (id: string) =>
+    Math.floor(columnOf.get(Math.round(centre.get(id)!.x))! / perRow);
+  for (const n of nodes) {
+    const r = rowOf(n.id);
+    rowMinY[r] = Math.min(rowMinY[r], centre.get(n.id)!.y);
+  }
+  const placement = new Map<string, Placement>();
+  const bandHeight = new Array<number>(rowCount).fill(DESIGNER_NODE_HEIGHT);
+  for (const n of nodes) {
+    const column = columnOf.get(Math.round(centre.get(n.id)!.x))!;
+    const row = Math.floor(column / perRow);
+    const j = column % perRow;
+    const offsetY = centre.get(n.id)!.y - rowMinY[row];
+    placement.set(n.id, { row, slot: row % 2 === 0 ? j : perRow - 1 - j, offsetY });
+    bandHeight[row] = Math.max(bandHeight[row], offsetY + DESIGNER_NODE_HEIGHT);
+  }
+
+  // gap r sits above row r; gap rowCount below the last row.
+  const place = (gapHeight: number[]) => {
+    const gapTop: number[] = [];
+    let y = 0;
+    for (let r = 0; r <= rowCount; r++) {
+      gapTop.push(y);
+      y += gapHeight[r] + (r < rowCount ? bandHeight[r] : 0);
+    }
+    const laidOut = nodes.map((node) => {
+      const p = placement.get(node.id)!;
+      return {
+        ...node,
+        position: {
+          x: p.slot * COLUMN_STEP,
+          y: gapTop[p.row] + gapHeight[p.row] + p.offsetY,
+        },
+      };
+    });
+    return { laidOut, gapTop };
+  };
+
+  const baseGaps = Array.from({ length: rowCount + 1 }, (_, r) =>
+    r === 0 || r === rowCount ? 0 : ROW_GAP_MIN,
+  );
+  const first = place(baseGaps);
+  const sides = designerHandleSides(first.laidOut, routable);
+  const firstBoxes = new Map(first.laidOut.map((n) => [n.id, designerNodeBox(n)]));
+  const allFirstBoxes = [...firstBoxes.values()];
+
+  // Plan every route; lanes depend on x only, which the gap heights never change.
+  const lanes: Array<Array<Array<[number, number]>>> = baseGaps.map(() => []);
+  const plans = new Map<string, RoutePlan>();
+  for (const edge of routable) {
+    const s = firstBoxes.get(edge.source)!;
+    const t = firstBoxes.get(edge.target)!;
+    const ps = placement.get(edge.source)!;
+    const pt = placement.get(edge.target)!;
+    const ss = sides[edge.source].source;
+    const ts = sides[edge.target].target;
+    const S = handlePoint(s, ss);
+    const T = handlePoint(t, ts);
+    const S1 = stepOut(S, ss, ROUTE_MARGIN);
+    const T1 = stepOut(T, ts, ROUTE_MARGIN);
+    const facing = edge.source !== edge.target && ts === OPPOSITE[ss];
+    if (facing && !isVerticalSide(ss) && ps.row === pt.row) {
+      const step = ss === Position.Right ? 1 : -1;
+      if (pt.slot - ps.slot === step) {
+        plans.set(edge.id, { kind: S.y === T.y ? "straight" : "mid" });
+        continue;
+      }
+    }
+    if (facing && isVerticalSide(ss) && S.x === T.x && !routeCrossesBoxes([S, T], allFirstBoxes)) {
+      plans.set(edge.id, { kind: "straight" });
+      continue;
+    }
+    let gapS = isVerticalSide(ss) ? (ss === Position.Bottom ? ps.row + 1 : ps.row) : null;
+    let gapT = isVerticalSide(ts) ? (ts === Position.Top ? pt.row : pt.row + 1) : null;
+    if (gapS == null && gapT == null) {
+      gapS = gapT = pt.row > ps.row ? pt.row : pt.row < ps.row ? pt.row + 1 : ps.row + 1;
+    } else if (gapS == null) gapS = gapT;
+    else if (gapT == null) gapT = gapS;
+    if (gapS === gapT) {
+      plans.set(edge.id, { kind: "lane", gap: gapS!, lane: takeLane(lanes[gapS!], S1.x, T1.x) });
+      continue;
+    }
+    // Change rows up or down the gap between columns nearest the middle.
+    const mid = (S1.x + T1.x) / 2;
+    let x = -COLUMN_GAP / 2;
+    for (let k = 0; k <= perRow; k++) {
+      const gx = k * COLUMN_STEP - COLUMN_GAP / 2;
+      if (Math.abs(gx - mid) < Math.abs(x - mid)) x = gx;
+    }
+    plans.set(edge.id, {
+      kind: "corridor",
+      gapS: gapS!,
+      laneS: takeLane(lanes[gapS!], S1.x, x),
+      gapT: gapT!,
+      laneT: takeLane(lanes[gapT!], x, T1.x),
+      x,
+    });
+  }
+
+  // Gaps tall enough for their lanes, then the final positions.
+  const gapHeight = baseGaps.map((base, r) =>
+    lanes[r].length > 0
+      ? Math.max(base, 2 * ROUTE_MARGIN + LANE_GAP * lanes[r].length + 8)
+      : base,
+  );
+  const { laidOut, gapTop } = place(gapHeight);
+  const boxById = new Map(laidOut.map((n) => [n.id, designerNodeBox(n)]));
+  const laneY = (gap: number, lane: number) => gapTop[gap] + ROUTE_MARGIN + 12 + LANE_GAP * lane;
 
   const waypoints: DesignerWaypoints = {};
   for (const edge of routable) {
-    const src = boxById.get(edge.source)!;
-    const tgt = boxById.get(edge.target)!;
-    const start = sourceHandle(src);
-    const end = targetHandle(tgt);
-    const isBack = tgt.x <= src.x;
-    const isConditional = conditionalEdgeIds.has(edge.id);
-    if (!isBack && !isConditional && !routeCrossesBoxes(defaultRoute(start, end), boxes)) {
-      waypoints[edge.id] = [];
-      continue;
+    const plan = plans.get(edge.id)!;
+    const ss = sides[edge.source].source;
+    const ts = sides[edge.target].target;
+    const S = handlePoint(boxById.get(edge.source)!, ss);
+    const T = handlePoint(boxById.get(edge.target)!, ts);
+    const S1 = stepOut(S, ss, ROUTE_MARGIN);
+    const T1 = stepOut(T, ts, ROUTE_MARGIN);
+    let route: Point[];
+    if (plan.kind === "straight") route = [];
+    else if (plan.kind === "mid") {
+      const mx = (S.x + T.x) / 2;
+      route = [
+        { x: mx, y: S.y },
+        { x: mx, y: T.y },
+      ];
+    } else if (plan.kind === "lane") {
+      const y = laneY(plan.gap, plan.lane);
+      route = [S1, { x: S1.x, y }, { x: T1.x, y }, T1];
+    } else {
+      const y1 = laneY(plan.gapS, plan.laneS);
+      const y2 = laneY(plan.gapT, plan.laneT);
+      route = [S1, { x: S1.x, y: y1 }, { x: plan.x, y: y1 }, { x: plan.x, y: y2 }, { x: T1.x, y: y2 }, T1];
     }
-    const exitY = src.y + src.height + ROUTE_MARGIN;
-    const entryY = tgt.y - ROUTE_MARGIN;
-    const exitX = src.x + src.width + gap; // gap right of the source column
-    const entryX = tgt.x - gap; // gap left of the target column
-    const route: Point[] = [{ x: start.x, y: exitY }, { x: exitX, y: exitY }];
-    if (exitX !== entryX) {
-      const minX = Math.min(exitX, entryX);
-      const maxX = Math.max(exitX, entryX);
-      let laneY = Math.max(exitY, entryY);
-      for (const box of boxes) {
-        if (box.x < maxX && box.x + box.width > minX) {
-          laneY = Math.max(laneY, box.y + box.height + ROUTE_MARGIN);
-        }
-      }
-      for (const lane of lanes) {
-        if (lane.minX < maxX && lane.maxX > minX) laneY = Math.max(laneY, lane.y + LANE_GAP);
-      }
-      lanes.push({ minX, maxX, y: laneY });
-      route.push({ x: exitX, y: laneY }, { x: entryX, y: laneY });
-    }
-    route.push({ x: entryX, y: entryY }, { x: end.x, y: entryY });
     waypoints[edge.id] = route.filter(
       (p, i) => i === 0 || p.x !== route[i - 1].x || p.y !== route[i - 1].y,
     );
   }
-  return { nodes: laidOut, waypoints };
+  return { nodes: laidOut, waypoints, sides };
 }
 
 /** What Auto-arrange replaced, so "Undo arrange" can put it back. */
@@ -373,14 +664,13 @@ function withWaypoints(edge: Edge, waypoints: Point[]): Edge {
 export function arrangeDesignerGraph(
   nodes: Node[],
   edges: Edge[],
-  conditionalEdgeIds: ReadonlySet<string> = new Set(),
 ): { nodes: Node[]; edges: Edge[]; snapshot: ArrangeSnapshot } {
   const snapshot: ArrangeSnapshot = { positions: {}, waypoints: {} };
   for (const n of nodes) {
     if (finitePoint(n.position)) snapshot.positions[n.id] = { ...n.position };
   }
   for (const e of edges) snapshot.waypoints[e.id] = edgeWaypointsOf(e);
-  const { nodes: laidOut, waypoints } = layoutDesignerGraph(nodes, edges, conditionalEdgeIds);
+  const { nodes: laidOut, waypoints } = layoutDesignerGraph(nodes, edges);
   return {
     nodes: laidOut,
     edges: edges.map((e) => (e.id in waypoints ? withWaypoints(e, waypoints[e.id]) : e)),
@@ -490,6 +780,39 @@ export function visibleBoxFraction(
     if (w > 0 && h > 0) visible += w * h;
   }
   return total > 0 ? visible / total : 1;
+}
+
+/** Smallest zoom at which a designer graph still reads (#1033 round 3). */
+export const READABLE_ZOOM = 0.4;
+/** The pane the open-time readability check assumes: a little smaller than
+ *  the designer's canvas in a 1600x900 window, so it errs towards arranging. */
+export const REFERENCE_PANE: PaneSize = { width: 900, height: 640 };
+
+/** Zoom at which ``boxes`` just fit ``pane`` (not clamped). */
+export function fitZoomFor(
+  boxes: NodeBox[],
+  pane: PaneSize,
+  padding: number = FIT_PADDING_PX,
+): number {
+  const bounds = boxesBounds(boxes);
+  if (bounds == null) return Infinity;
+  return Math.min(
+    Math.max(pane.width - 2 * padding, 1) / Math.max(bounds.width, 1),
+    Math.max(pane.height - 2 * padding, 1) / Math.max(bounds.height, 1),
+  );
+}
+
+/** Open-time guard for a graph without overlaps: re-lay it out when it
+ *  cannot be shown at ``READABLE_ZOOM`` (one very long row, say) and the
+ *  arranged graph reads clearly better. */
+export function arrangeImprovesReadability(
+  current: NodeBox[],
+  arranged: NodeBox[],
+  pane: PaneSize = REFERENCE_PANE,
+): boolean {
+  const now = fitZoomFor(current, pane);
+  if (now >= READABLE_ZOOM) return false;
+  return fitZoomFor(arranged, pane) >= now * 1.25;
 }
 
 /** Open-time check on a saved viewport: fit the view instead when it shows

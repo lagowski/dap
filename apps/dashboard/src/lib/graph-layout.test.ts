@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
-import type { Node, Edge } from "@xyflow/react";
+import { Position, type Node, type Edge } from "@xyflow/react";
 import {
   arrangeDesignerGraph,
+  arrangeImprovesReadability,
+  backEdgeIds,
   boxesOverlap,
+  designerHandleSides,
+  fitZoomFor,
+  READABLE_ZOOM,
+  REFERENCE_PANE,
+  snakeColumnsPerRow,
   designerNodeBox,
   layoutDesignerGraph,
   needsDesignerLayout,
@@ -242,7 +249,7 @@ describe("designer layout guard (#1033)", () => {
       { ...makeEdge("e3", "c", "a"), data: { waypoints: [] } },
     ];
 
-    const arranged = arrangeDesignerGraph(nodes, edges, new Set(["e2"]));
+    const arranged = arrangeDesignerGraph(nodes, edges);
     expect(arranged.nodes.map((n) => n.position)).not.toEqual(nodes.map((n) => n.position));
 
     const restored = restoreArrangeSnapshot(arranged.nodes, arranged.edges, arranged.snapshot);
@@ -349,5 +356,139 @@ describe("framing the arranged graph (#1033 follow-up)", () => {
     expect(
       fitViewportToBoxes([{ id: "a", x: 0, y: 0, width: 10, height: 10 }], { width: 0, height: 0 }),
     ).toBeNull();
+  });
+});
+
+// #1033 round 3: a long chain wraps into snake rows that read at zoom >= 0.4.
+describe("snake layout (#1033 round 3)", () => {
+  /** The designer pane in a 1600x900 window (palette and inspector aside). */
+  const PANE_1600x900: PaneSize = REFERENCE_PANE;
+
+  const stacked = (ids: string[]): Node[] =>
+    ids.map((id, i) => ({ id, type: "default", position: { x: i * 100, y: 0 }, data: { label: id } }));
+
+  const chainShape = (n: number) => {
+    const ids = Array.from({ length: n }, (_, i) => `n${i}`);
+    return { nodes: stacked(ids), edges: ids.slice(1).map((id, i) => makeEdge(`e${i}`, ids[i], id)) };
+  };
+
+  /** A 6-node chain, a fan-out into 5 branches of 5 nodes, a join, 5 more. */
+  const fanOutShape = () => {
+    const ids: string[] = [];
+    const edges: Edge[] = [];
+    const link = (a: string, b: string) => edges.push(makeEdge(`${a}-${b}`, a, b));
+    for (let i = 0; i < 6; i++) ids.push(`c${i}`);
+    for (let i = 1; i < 6; i++) link(`c${i - 1}`, `c${i}`);
+    for (let b = 0; b < 5; b++) {
+      for (let d = 0; d < 5; d++) {
+        ids.push(`b${b}_${d}`);
+        link(d === 0 ? "c5" : `b${b}_${d - 1}`, `b${b}_${d}`);
+      }
+    }
+    ids.push("join");
+    for (let b = 0; b < 5; b++) link(`b${b}_4`, "join");
+    for (let i = 0; i < 5; i++) {
+      ids.push(`t${i}`);
+      link(i === 0 ? "join" : `t${i - 1}`, `t${i}`);
+    }
+    return { nodes: stacked(ids), edges };
+  };
+
+  const overlaps = (nodes: Node[]) => {
+    const boxes = nodes.map(designerNodeBox);
+    return boxes.filter((a, i) => boxes.slice(i + 1).some((b) => boxesOverlap(a, b))).length;
+  };
+
+  it.each([
+    ["chain of 26", () => chainShape(26)],
+    ["chain plus 5x5 fan-out", fanOutShape],
+    ["4-node chain", () => chainShape(4)],
+  ])("%s: no overlap, every node in the pane, zoom >= 0.4", (_label, shape) => {
+    const { nodes, edges } = shape();
+    expect(needsDesignerLayout(nodes)).toBe(true);
+    const arranged = arrangeDesignerGraph(nodes, edges);
+    expect(overlaps(arranged.nodes)).toBe(0);
+    const boxes = arranged.nodes.map(measuredNodeBox);
+    const vp = fitViewportToBoxes(boxes, PANE_1600x900)!;
+    expect(vp.zoom).toBeGreaterThanOrEqual(READABLE_ZOOM);
+    expectAllInside(boxes, vp, PANE_1600x900);
+    // Idempotent: the arranged graph is neither stacked nor unreadable.
+    expect(needsDesignerLayout(arranged.nodes)).toBe(false);
+    expect(arrangeImprovesReadability(boxes, boxes)).toBe(false);
+  });
+
+  it("a chain of 26 wraps into rows of 6-8 that alternate direction", () => {
+    const { nodes, edges } = chainShape(26);
+    const laidOut = arrangeDesignerGraph(nodes, edges).nodes;
+    const ys = [...new Set(laidOut.map((n) => n.position.y))].sort((a, b) => a - b);
+    expect(ys.length).toBe(4);
+    const rows = ys.map((y) => laidOut.filter((n) => n.position.y === y));
+    for (const row of rows.slice(0, -1)) {
+      expect(row.length).toBeGreaterThanOrEqual(6);
+      expect(row.length).toBeLessThanOrEqual(8);
+    }
+    const xs = (row: Node[]) => row.map((n) => n.position.x); // in chain order
+    const ascending = (v: number[]) => v.every((x, i) => i === 0 || x > v[i - 1]);
+    const descending = (v: number[]) => v.every((x, i) => i === 0 || x < v[i - 1]);
+    expect(ascending(xs(rows[0]))).toBe(true);
+    expect(descending(xs(rows[1]))).toBe(true);
+    expect(ascending(xs(rows[2]))).toBe(true);
+    // A row ends straight above the next row's start.
+    expect(rows[0].at(-1)!.position.x).toBe(rows[1][0].position.x);
+  });
+
+  it("edges follow the turns: handles face the next node", () => {
+    const { nodes, edges } = chainShape(26);
+    const { nodes: laidOut, waypoints, sides } = layoutDesignerGraph(nodes, edges);
+    const perRow = snakeColumnsPerRow(26);
+    // Left-to-right row, right-to-left row, and the turn between them.
+    expect(sides.n1).toEqual({ source: Position.Right, target: Position.Left });
+    expect(sides[`n${perRow - 1}`]).toEqual({ source: Position.Bottom, target: Position.Left });
+    expect(sides[`n${perRow}`]).toEqual({ source: Position.Left, target: Position.Top });
+    expect(sides[`n${perRow + 1}`]).toEqual({ source: Position.Left, target: Position.Right });
+    // A plain chain needs no waypoints at all.
+    expect(Object.values(waypoints).every((w) => w.length === 0)).toBe(true);
+    // The sides come from geometry alone, so a reopened graph draws the same.
+    expect(designerHandleSides(laidOut, edges)).toEqual(sides);
+  });
+
+  it("a fan-out keeps its branches stacked inside its own row band", () => {
+    const { nodes, edges } = fanOutShape();
+    const laidOut = arrangeDesignerGraph(nodes, edges).nodes;
+    const by = new Map(laidOut.map((n) => [n.id, n.position]));
+    const chainY = by.get("c0")!.y;
+    const tailY = by.get("t4")!.y;
+    for (let b = 0; b < 5; b++) {
+      for (let d = 0; d < 5; d++) {
+        const y = by.get(`b${b}_${d}`)!.y;
+        expect(y).toBeGreaterThan(chainY);
+        expect(y).toBeLessThan(tailY);
+      }
+      // A branch stays on one line.
+      expect(new Set([0, 1, 2, 3, 4].map((d) => by.get(`b${b}_${d}`)!.y)).size).toBe(1);
+    }
+  });
+
+  it("a long single row (round 2's layout) is re-laid out on open; a readable one is not", () => {
+    const row = Array.from({ length: 22 }, (_, i) => ({
+      id: `n${i}`,
+      x: i * 270,
+      y: 0,
+      width: 150,
+      height: 40,
+    }));
+    expect(fitZoomFor(row, REFERENCE_PANE)).toBeLessThan(0.15);
+    const { nodes, edges } = chainShape(22);
+    const arranged = arrangeDesignerGraph(nodes, edges).nodes.map(designerNodeBox);
+    expect(arrangeImprovesReadability(row, arranged)).toBe(true);
+    expect(arrangeImprovesReadability(row.slice(0, 4), arranged)).toBe(false);
+  });
+
+  it("classifies loop edges as back-edges", () => {
+    const back = backEdgeIds(
+      ["a", "b", "c"],
+      [makeEdge("ab", "a", "b"), makeEdge("bc", "b", "c"), makeEdge("ca", "c", "a"), makeEdge("cc", "c", "c")],
+    );
+    expect([...back].sort()).toEqual(["ca", "cc"]);
   });
 });
