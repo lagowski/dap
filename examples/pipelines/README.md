@@ -248,3 +248,8 @@ rather than the flat `examples/pipelines/` convention used by the other bundles.
 See [`examples/ops-pipeline/README.md`](../ops-pipeline/README.md) for the full
 node table, trigger payload example, GitHub write-back ownership statement, and
 Cortex executor prerequisites.
+
+## Publishing a bundle as a hub tutorial
+
+`dap pipeline export <bundle> --hub <slug> [--out DIR]` writes `DIR/<slug>/page/page.json`. It is a tutorial page (schema 1, `kind: pipeline`, English) with a `graph` field (`entry`, `nodes` with id/title/runtime/inputs/outputs/x/y, `edges` with from/to/optional label), which a read-only canvas can draw.
+Only structural facts are copied: the name, the description, the node and agent names, the runtimes, the input/output field names, the positions, the edge conditions and the run defaults. Prompts, `runtime_config`, env var names and backend profiles are never read. If a URL, IP address, email, absolute path, token or private host name is still in the output, the export is refused (exit 2) and no file is written.
