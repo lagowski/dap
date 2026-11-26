@@ -179,7 +179,9 @@ runtime), `tester-coder-retry` (retry loops), `team-collaboration` and
 An agent is a runtime plus a prompt template, input/output schemas and a role; a pipeline
 wires agents into a DAG in the React Flow designer (`/pipelines/new`), with conditional
 edges, retry loops, approval gates and fallback chains. Every node execution is logged with
-its exact prompt, output, tokens and cost. From a terminal, `dap project run`, `approve`,
+its exact prompt, output, tokens and cost. A pipeline whose nodes have no saved position or
+overlap (an imported bundle, say) is laid out and saved when the designer opens it, and the
+toolbar's **Auto-arrange** does the same on demand, with **Undo arrange** right after. From a terminal, `dap project run`, `approve`,
 `reject` and `state` drive a run.
 
 - [docs/usage.md](docs/usage.md): agents (test panel, render preview, archive, versions),
