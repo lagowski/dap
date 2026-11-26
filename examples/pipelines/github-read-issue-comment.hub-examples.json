@@ -1,0 +1,48 @@
+{
+  "read_issue": {
+    "input": {
+      "repo": "client-a/example-app",
+      "extensions": {
+        "issue_number": 42
+      }
+    },
+    "output": {
+      "github_issue": {
+        "number": 42,
+        "title": "Add a dark mode toggle",
+        "body": "Readers ask for a dark theme on the settings page.",
+        "state": "open",
+        "labels": [
+          "enhancement"
+        ],
+        "is_pull_request": false
+      }
+    },
+    "example_source": "synthetic"
+  },
+  "comment": {
+    "input": {
+      "repo": "client-a/example-app",
+      "extensions": {
+        "issue_number": 42,
+        "github_issue": {
+          "number": 42,
+          "title": "Add a dark mode toggle",
+          "body": "Readers ask for a dark theme on the settings page.",
+          "state": "open",
+          "labels": [
+            "enhancement"
+          ],
+          "is_pull_request": false
+        }
+      }
+    },
+    "output": {
+      "github_comment": {
+        "id": 1001,
+        "issue": 42
+      }
+    },
+    "example_source": "synthetic"
+  }
+}
