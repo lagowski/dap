@@ -73,6 +73,12 @@ def test_markdown_headings_start_a_sentence_and_rst_literals_are_code() -> None:
     assert scrub(text) == text
 
 
+def test_a_markdown_task_item_starts_a_sentence_and_csv_is_a_standard() -> None:
+    text = "- [ ] Each report has a CSV download\n- [x] Empty reports hold a header row"
+    assert scrub(text) == text
+    assert scrub("- [ ] Send it to Globex") == "- [ ] Send it to client"
+
+
 def test_an_unclosed_template_tag_is_unclear() -> None:
     with pytest.raises(Unclear):
         scrub("Hello {{ name for Acme")

@@ -1,0 +1,110 @@
+{
+  "fetch_issues": {
+    "input": {
+      "repo": "client-a/example-app"
+    },
+    "output": {
+      "available_issues": [
+        {
+          "number": 7,
+          "title": "Fix the login redirect",
+          "body": "After login the app opens the home page instead of the page the user asked for.",
+          "labels": [
+            {
+              "name": "high"
+            }
+          ],
+          "updatedAt": "2026-01-05T10:00:00Z"
+        },
+        {
+          "number": 8,
+          "title": "Tidy the footer links",
+          "body": "Two footer links point to the same page.",
+          "labels": [],
+          "updatedAt": "2026-01-02T09:00:00Z"
+        }
+      ]
+    },
+    "example_source": "synthetic"
+  },
+  "select_issue": {
+    "input": {
+      "available_issues": [
+        {
+          "number": 7,
+          "title": "Fix the login redirect",
+          "body": "After login the app opens the home page instead of the page the user asked for.",
+          "labels": [
+            {
+              "name": "high"
+            }
+          ],
+          "updatedAt": "2026-01-05T10:00:00Z"
+        },
+        {
+          "number": 8,
+          "title": "Tidy the footer links",
+          "body": "Two footer links point to the same page.",
+          "labels": [],
+          "updatedAt": "2026-01-02T09:00:00Z"
+        }
+      ]
+    },
+    "output": {
+      "selected_issue_ids": [
+        7
+      ]
+    },
+    "example_source": "synthetic"
+  },
+  "load_prd": {
+    "input": {},
+    "output": {
+      "implementation_notes": "(no docs/PRD.md found in working directory)"
+    },
+    "example_source": "synthetic"
+  },
+  "enrich": {
+    "input": {
+      "selected_issue_ids": [
+        7
+      ],
+      "implementation_notes": "(no docs/PRD.md found in working directory)",
+      "available_issues": [
+        {
+          "number": 7,
+          "title": "Fix the login redirect",
+          "body": "After login the app opens the home page instead of the page the user asked for.",
+          "labels": [
+            {
+              "name": "high"
+            }
+          ],
+          "updatedAt": "2026-01-05T10:00:00Z"
+        },
+        {
+          "number": 8,
+          "title": "Tidy the footer links",
+          "body": "Two footer links point to the same page.",
+          "labels": [],
+          "updatedAt": "2026-01-02T09:00:00Z"
+        }
+      ]
+    },
+    "output": {
+      "implementation_notes": "# Issue #7: Fix the login redirect\n\n## Goal\nAfter login the user lands on the page they asked for.\n\n## Context from PRD\nPRD does not cover this. Which pages may be a redirect target?\n\n## Acceptance criteria\n- Login returns to the requested page\n- An unknown target falls back to the home page\n\n## Suggested tests\n- Login from a deep page returns to it\n- Login with no target opens the home page\n- A target outside the app is ignored\n\n## Related issues\nNone.\n\n## Risks / open questions\nAn open redirect if the target is not checked."
+    },
+    "example_source": "synthetic"
+  },
+  "create_branch": {
+    "input": {
+      "selected_issue_ids": [
+        7
+      ]
+    },
+    "output": {
+      "branch": "feature/issue-7"
+    },
+    "example_source": "synthetic"
+  }
+}

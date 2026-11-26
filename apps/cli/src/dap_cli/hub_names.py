@@ -108,6 +108,7 @@ BUILTIN_PUBLIC_NAMES: dict[str, list[str]] = {
         "XML",
         "HTML",
         "CSS",
+        "CSV",
         "SVG",
         "PDF",
         "PNG",
@@ -182,7 +183,8 @@ _PLACEHOLDER = re.compile(r"<[^<>\n]{1,60}>")
 # a word: a letter, then letters/digits with inner apostrophes, hyphens, dots or underscores
 _TOKEN = re.compile(r"[^\W\d_](?:[\w'’.+#/@-]*[\w+#])?")  # noqa: RUF001
 _SENTENCE_END = re.compile(
-    r"(?:^|[.!?:;\n¿¡]|\d\)|\s[-–—•*]\s|^[-–—•*]\s|(?:^|\n)[ \t]*(?:#{1,6}|>))"  # noqa: RUF001
+    r"(?:^|[.!?:;\n¿¡]|\d\)|\s[-–—•*]\s|^[-–—•*]\s|(?:^|\n)[ \t]*(?:#{1,6}|>)"  # noqa: RUF001
+    r"|(?:^|\s)[-*]\s+\[[ xX]\])"  # a markdown task item: - [ ] Each ...
     r"[\s\"'“”«»(\[]*$"
 )
 _MIN_WORD = 2

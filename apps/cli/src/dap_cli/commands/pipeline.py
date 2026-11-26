@@ -50,11 +50,26 @@ def cmd_export(
             dir_okay=False,
         ),
     ] = None,
+    examples: Annotated[
+        Path | None,
+        typer.Option(
+            "--examples",
+            help="A JSON file of hand-written synthetic node examples: {<node id>: {input, "
+            'output, example_source: "synthetic"}}',
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Write a hub tutorial bundle (with its read-only graph) for one pipeline bundle."""
     try:
         target = write_hub_bundle(
-            bundle, hub, out, tagline5=tagline5, io=io, public_names=public_names
+            bundle,
+            hub,
+            out,
+            tagline5=tagline5,
+            io=io,
+            public_names=public_names,
+            examples=examples,
         )
     except ValueError as exc:  # Unsafe is a ValueError: a refusal, a bad slug, tagline or icon
         typer.echo(str(exc), err=True)
