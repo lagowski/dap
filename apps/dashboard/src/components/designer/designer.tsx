@@ -52,6 +52,7 @@ import {
 import { useAgentsList } from "@/hooks/api";
 import {
   arrangeDesignerGraph,
+  FIT_MIN_ZOOM,
   fitViewportToBoxes,
   measuredNodeBox,
   needsDesignerLayout,
@@ -532,6 +533,10 @@ function PipelineDesignerCanvas({
             onPaneClick={() => setSelection({ kind: "none" })}
             onMoveEnd={onMoveEnd}
             defaultViewport={savedViewport ?? undefined}
+            // React Flow's default minZoom (0.5) would clamp a fitted view of a
+            // wide graph; allow the engine's saved-viewport range instead.
+            minZoom={FIT_MIN_ZOOM}
+            maxZoom={4}
             proOptions={{ hideAttribution: true }}
           >
             <Background />
