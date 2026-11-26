@@ -5,6 +5,7 @@ import {
   buildLayoutUiMetadata,
   buildPipelinePayload,
   initialLayoutBaseline,
+  layoutAutosaveReady,
 } from "./use-pipeline-save";
 
 const nodes: PipelineNode[] = [
@@ -130,5 +131,24 @@ describe("initialLayoutBaseline (#1033)", () => {
 
   it("a layout the guard re-arranged on open differs from the baseline, so it is saved", () => {
     expect(initialLayoutBaseline(snapshot, true)).not.toBe(snapshot);
+  });
+});
+
+describe("framing before the layout autosave (#1033 follow-up)", () => {
+  it("waits until the view has been fitted to the graph", () => {
+    expect(layoutAutosaveReady("p1", false)).toBe(false);
+    expect(layoutAutosaveReady("p1", true)).toBe(true);
+    expect(layoutAutosaveReady(null, true)).toBe(false);
+  });
+
+  it("saves the fitted viewport, not the stale one already in ui_metadata", () => {
+    const stale = { x: 0, y: 0, zoom: 1.72 };
+    const fitted = { x: 120, y: 80, zoom: 0.9 };
+    const metadata = buildLayoutUiMetadata({
+      designerNodes: nodes,
+      existingUiMetadata: { viewport: stale },
+      viewport: fitted,
+    });
+    expect(metadata.viewport).toEqual(fitted);
   });
 });

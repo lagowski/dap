@@ -249,6 +249,10 @@ interface UseAutoSaveLayoutParams {
    *  set when the designer re-laid out a pipeline whose saved positions were
    *  missing or overlapping (#1033), so the fix is persisted. */
   saveOnOpen?: boolean;
+  /** False while the designer still has to fit the view to the graph (#1033
+   *  follow-up): the autosave waits, so it saves the fitted viewport instead
+   *  of the stale one in ``existingUiMetadata``. Defaults to true. */
+  framed?: boolean;
 }
 
 /** Snapshot the autosave compares the first layout against. Normally the
@@ -256,6 +260,12 @@ interface UseAutoSaveLayoutParams {
  *  baseline, so the opening layout differs and is saved once. */
 export function initialLayoutBaseline(snapshot: string, saveOnOpen: boolean): string {
   return saveOnOpen ? "" : snapshot;
+}
+
+/** Whether the layout autosave may run: an existing pipeline whose view
+ *  has been framed. Until then nothing is compared or saved. */
+export function layoutAutosaveReady(pipelineId: string | null, framed: boolean): boolean {
+  return pipelineId != null && pipelineId !== "" && framed;
 }
 
 interface UseAutoSaveLayoutResult {
@@ -271,6 +281,7 @@ export function useAutoSaveLayout({
   viewport,
   edgeWaypoints,
   saveOnOpen = false,
+  framed = true,
 }: UseAutoSaveLayoutParams): UseAutoSaveLayoutResult {
   const { mutateAsync } = useUpdatePipelineUiMetadata();
   const [status, setStatus] = useState<AutoSaveLayoutStatus>("idle");
@@ -291,7 +302,7 @@ export function useAutoSaveLayout({
   );
 
   useEffect(() => {
-    if (!pipelineId) return;
+    if (!pipelineId || !layoutAutosaveReady(pipelineId, framed)) return;
 
     const snapshot = JSON.stringify(uiMetadata);
     if (lastSnapshotRef.current === null) {
@@ -320,7 +331,7 @@ export function useAutoSaveLayout({
     }, AUTOSAVE_LAYOUT_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeout);
-  }, [pipelineId, uiMetadata, mutateAsync, saveOnOpen]);
+  }, [pipelineId, uiMetadata, mutateAsync, saveOnOpen, framed]);
 
   return { status, savedAt, error: currentError };
 }

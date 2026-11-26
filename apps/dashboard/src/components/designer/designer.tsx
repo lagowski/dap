@@ -22,12 +22,13 @@
  * Pre-split this file was 512 LOC; post-split it stays under 260.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   Background,
   Controls,
   ReactFlow,
+  ReactFlowProvider,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
@@ -43,13 +44,20 @@ import {
   type OnNodesChange,
   type Viewport,
   type XYPosition,
+  useNodesInitialized,
+  useReactFlow,
+  useStore,
 } from "@xyflow/react";
 
 import { useAgentsList } from "@/hooks/api";
 import {
   arrangeDesignerGraph,
+  FIT_MIN_ZOOM,
+  fitViewportToBoxes,
+  measuredNodeBox,
   needsDesignerLayout,
   restoreArrangeSnapshot,
+  savedViewportNeedsFit,
   type ArrangeSnapshot,
 } from "@/lib/graph-layout";
 import type {
@@ -131,9 +139,21 @@ function parseSavedViewport(uiMetadata: Record<string, unknown> | undefined): Vi
   }
   return { x: candidate.x, y: candidate.y, zoom: candidate.zoom };
 }
+/** Why the view still has to be framed: the opening check, or a layout
+ *  change from Auto-arrange / Undo arrange. ``null`` once framed. */
+type FitReason = "open" | "arrange" | null;
 
+export function PipelineDesigner(props: PipelineDesignerProps) {
+  // The provider lets the designer read React Flow's store (pane size,
+  // measured nodes) to frame the graph (#1033 follow-up).
+  return (
+    <ReactFlowProvider>
+      <PipelineDesignerCanvas {...props} />
+    </ReactFlowProvider>
+  );
+}
 
-export function PipelineDesigner({
+function PipelineDesignerCanvas({
   initialPipeline,
   seedFromPipeline = null,
 }: PipelineDesignerProps) {
@@ -189,8 +209,20 @@ export function PipelineDesigner({
   });
   // A re-laid-out graph ignores the saved viewport, which framed the old
   // positions, and fits the view instead.
-  const savedViewport = initialGraph.arranged ? null : parseSavedViewport(seed?.ui_metadata);
+  const [savedViewport] = useState(() =>
+    initialGraph.arranged ? null : parseSavedViewport(seed?.ui_metadata),
+  );
   const [viewport, setViewport] = useState<Viewport | null>(savedViewport);
+  // Framing (#1033 follow-up): once React Flow has measured the nodes, fit
+  // the view to the whole graph (after the open-time re-layout, when the
+  // saved viewport shows no node or crops more than half the graph, after
+  // Auto-arrange / Undo arrange) and save that viewport.
+  const [fitReason, setFitReason] = useState<FitReason>("open");
+  const [openRefit, setOpenRefit] = useState(false);
+  const reactFlow = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  const paneWidth = useStore((s) => s.width);
+  const paneHeight = useStore((s) => s.height);
 
   const [nodes, setNodes] = useState<Node[]>(initialGraph.nodes);
   const [edges, setEdges] = useState<Edge[]>(initialGraph.edges);
@@ -364,6 +396,7 @@ export function PipelineDesigner({
     setNodes(arranged.nodes);
     setEdges(arranged.edges);
     setArrangeUndo(arranged.snapshot);
+    setFitReason("arrange");
   }, [nodes, edges, edgeMeta]);
 
   const handleUndoArrange = useCallback(() => {
@@ -372,7 +405,33 @@ export function PipelineDesigner({
     setNodes(restored.nodes);
     setEdges(restored.edges);
     setArrangeUndo(null);
+    setFitReason("arrange");
   }, [nodes, edges, arrangeUndo]);
+
+  useEffect(() => {
+    if (fitReason == null) return;
+    if (nodes.length === 0) {
+      setFitReason(null);
+      return;
+    }
+    if (!nodesInitialized || paneWidth <= 0 || paneHeight <= 0) return;
+    const pane = { width: paneWidth, height: paneHeight };
+    const boxes = nodes.map(measuredNodeBox);
+    const keepSaved =
+      fitReason === "open" &&
+      savedViewport != null &&
+      !savedViewportNeedsFit(savedViewport, pane, boxes);
+    if (!keepSaved) {
+      const fitted = fitViewportToBoxes(boxes, pane);
+      if (fitted != null) {
+        void reactFlow.setViewport(fitted);
+        setViewport(fitted);
+        // A saved viewport that cropped the graph is replaced on the server too.
+        if (fitReason === "open" && savedViewport != null) setOpenRefit(true);
+      }
+    }
+    setFitReason(null);
+  }, [fitReason, nodes, nodesInitialized, paneWidth, paneHeight, reactFlow, savedViewport]);
 
   const { designerNodes, designerEdges, annotatedEdges, selectionDetail } =
     usePipelineProjections({ nodes, edges, edgeMeta, agents, selection });
@@ -432,7 +491,8 @@ export function PipelineDesigner({
     existingUiMetadata: initialPipeline?.ui_metadata ?? null,
     viewport,
     edgeWaypoints,
-    saveOnOpen: initialGraph.arranged,
+    saveOnOpen: initialGraph.arranged || openRefit,
+    framed: fitReason == null,
   });
 
   return (
@@ -473,7 +533,10 @@ export function PipelineDesigner({
             onPaneClick={() => setSelection({ kind: "none" })}
             onMoveEnd={onMoveEnd}
             defaultViewport={savedViewport ?? undefined}
-            fitView={savedViewport == null}
+            // React Flow's default minZoom (0.5) would clamp a fitted view of a
+            // wide graph; allow the engine's saved-viewport range instead.
+            minZoom={FIT_MIN_ZOOM}
+            maxZoom={4}
             proOptions={{ hideAttribution: true }}
           >
             <Background />

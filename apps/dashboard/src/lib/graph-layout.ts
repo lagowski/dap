@@ -404,3 +404,101 @@ export function restoreArrangeSnapshot(
     ),
   };
 }
+
+// --- Framing the view (#1033 follow-up) ----------------------------------
+
+/** React Flow's viewport: a flow point p is drawn at ``p * zoom + (x, y)``. */
+export type FlowViewport = { x: number; y: number; zoom: number };
+export type PaneSize = { width: number; height: number };
+
+/** Zoom bounds for a fitted view: never zoom a small graph past 1.5x, and
+ *  stay inside the designer's saved-viewport range (0.1..4). */
+export const FIT_MIN_ZOOM = 0.1;
+export const FIT_MAX_ZOOM = 1.5;
+/** Screen pixels left free around the graph in a fitted view. */
+export const FIT_PADDING_PX = 40;
+
+/** A node's box from its measured size (falls back to the designer size
+ *  before React Flow has measured it). */
+export function measuredNodeBox(
+  node: Pick<Node, "id" | "position"> & {
+    measured?: { width?: number; height?: number };
+    width?: number;
+    height?: number;
+  },
+): NodeBox {
+  return {
+    id: node.id,
+    x: node.position.x,
+    y: node.position.y,
+    width: node.measured?.width ?? node.width ?? DESIGNER_NODE_WIDTH,
+    height: node.measured?.height ?? node.height ?? DESIGNER_NODE_HEIGHT,
+  };
+}
+
+function boxesBounds(boxes: NodeBox[]): NodeBox | null {
+  if (boxes.length === 0) return null;
+  const minX = Math.min(...boxes.map((b) => b.x));
+  const minY = Math.min(...boxes.map((b) => b.y));
+  const maxX = Math.max(...boxes.map((b) => b.x + b.width));
+  const maxY = Math.max(...boxes.map((b) => b.y + b.height));
+  return { id: "bounds", x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** The viewport that shows every box inside the pane, centred, with
+ *  ``padding`` screen pixels around the graph. ``null`` without boxes or
+ *  before the pane has a size. */
+export function fitViewportToBoxes(
+  boxes: NodeBox[],
+  pane: PaneSize,
+  padding: number = FIT_PADDING_PX,
+): FlowViewport | null {
+  const bounds = boxesBounds(boxes);
+  if (bounds == null || pane.width <= 0 || pane.height <= 0) return null;
+  const usableW = Math.max(pane.width - 2 * padding, 1);
+  const usableH = Math.max(pane.height - 2 * padding, 1);
+  const fitZoom = Math.min(
+    usableW / Math.max(bounds.width, 1),
+    usableH / Math.max(bounds.height, 1),
+  );
+  const zoom = Math.min(Math.max(fitZoom, FIT_MIN_ZOOM), FIT_MAX_ZOOM);
+  const centreX = bounds.x + bounds.width / 2;
+  const centreY = bounds.y + bounds.height / 2;
+  return { x: pane.width / 2 - centreX * zoom, y: pane.height / 2 - centreY * zoom, zoom };
+}
+
+/** Fraction (0..1) of the boxes' total area that the viewport shows in the pane. */
+export function visibleBoxFraction(
+  viewport: FlowViewport,
+  pane: PaneSize,
+  boxes: NodeBox[],
+): number {
+  if (boxes.length === 0) return 1;
+  // The pane's visible rectangle in flow coordinates.
+  const view = {
+    x: -viewport.x / viewport.zoom,
+    y: -viewport.y / viewport.zoom,
+    width: pane.width / viewport.zoom,
+    height: pane.height / viewport.zoom,
+  };
+  let total = 0;
+  let visible = 0;
+  for (const b of boxes) {
+    total += b.width * b.height;
+    const w = Math.min(b.x + b.width, view.x + view.width) - Math.max(b.x, view.x);
+    const h = Math.min(b.y + b.height, view.y + view.height) - Math.max(b.y, view.y);
+    if (w > 0 && h > 0) visible += w * h;
+  }
+  return total > 0 ? visible / total : 1;
+}
+
+/** Open-time check on a saved viewport: fit the view instead when it shows
+ *  no node or crops the graph by more than half. */
+export function savedViewportNeedsFit(
+  viewport: FlowViewport,
+  pane: PaneSize,
+  boxes: NodeBox[],
+): boolean {
+  if (boxes.length === 0 || pane.width <= 0 || pane.height <= 0) return false;
+  return visibleBoxFraction(viewport, pane, boxes) < 0.5;
+}
