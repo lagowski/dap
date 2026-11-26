@@ -1,12 +1,35 @@
+<p align="center"><a href="docs/quick-start.md"><picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/banner-light.png">
+  <img alt="DAP: deterministic agent pipelines, the state machine decides what runs next, never the model" src="docs/images/banner.png" width="100%">
+</picture></a></p>
+
+<p align="center"><b>Deterministic agent pipelines: the state machine decides what runs next, never the model.</b><br>
+<a href="#installation">Install</a> · <a href="#demo">Demo</a> · <a href="#how-it-works">How it works</a> · <a href="docs/architecture.md">Docs</a></p>
+
+<p align="center">
+<a href="https://github.com/lagowski/dap/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lagowski/dap/ci.yml?branch=develop&style=flat-square&labelColor=1a1a1a&label=CI"></a>
+<a href="https://pypi.org/project/dap-cli/"><img alt="PyPI: dap-cli" src="https://img.shields.io/badge/pypi-dap--cli-e0643c?style=flat-square&labelColor=1a1a1a"></a>
+<a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-e0643c?style=flat-square&labelColor=1a1a1a"></a>
+<img alt="Python 3.13+" src="https://img.shields.io/badge/python-3.13%2B-e0643c?style=flat-square&labelColor=1a1a1a">
+<img alt="9 runtime adapters" src="https://img.shields.io/badge/runtimes-9-e0643c?style=flat-square&labelColor=1a1a1a">
+<a href="https://github.com/lagowski/dap"><img alt="GitHub stars" src="https://img.shields.io/github/stars/lagowski/dap?style=flat-square&labelColor=1a1a1a&color=e0643c"></a>
+</p>
+
 # DAP — Deterministic Agent Pipeline
 
-[![CI](https://github.com/lagowski/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/lagowski/dap/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Checked with mypy](https://img.shields.io/badge/mypy-checked-blue)](https://mypy-lang.org/)
-[![codecov](https://codecov.io/gh/lagowski/dap/branch/develop/graph/badge.svg)](https://codecov.io/gh/lagowski/dap)
-[![CodeQL](https://github.com/lagowski/dap/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/lagowski/dap/actions/workflows/codeql.yml)
+## Demo
+
+<p align="center"><img alt="DAP dashboard: import the example pipeline, run it, the run pauses at the human approval gate" src="docs/images/demo.gif" width="900"></p>
+
+<sub>Screenshots of the real dashboard running the example python-func pipeline from <code>examples/</code> on local SQLite.</sub>
+
+## How it works
+
+<p align="center"><img alt="How DAP works: dashboard or CLI, engine, LangGraph state machine, prompt DSL, runtime adapter, approval gate, database" src="docs/images/how-it-works.png" width="100%"></p>
+
+The dashboard and CLI talk REST to the FastAPI engine. LangGraph walks the versioned DAG and picks every next node;
+each node renders a Jinja to XML prompt and hands it to one runtime adapter. Approval gates interrupt the run until a
+human approves, and every step is stored in SQLite or Postgres.
 
 > **Project status:** active development. The latest tagged release is **v0.3.0** (on PyPI as
 > `dap-cli` and on GHCR as `ghcr.io/lagowski/dap`); `develop` is well ahead of that tag (see
