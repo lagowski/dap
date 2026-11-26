@@ -54,6 +54,13 @@ IO_ICONS = frozenset(
         "list",
         "fanout",
         "comment",
+        "agents",
+        "agreement",
+        "endpoint",
+        "pr",
+        "review",
+        "terminal",
+        "engine",
     ]
 )
 
