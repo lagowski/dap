@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { Node, Edge } from "@xyflow/react";
-import { getLayoutedElements } from "./graph-layout";
+import {
+  arrangeDesignerGraph,
+  boxesOverlap,
+  designerNodeBox,
+  layoutDesignerGraph,
+  needsDesignerLayout,
+  restoreArrangeSnapshot,
+  getLayoutedElements,
+} from "./graph-layout";
 
 const makeNode = (id: string): Node => ({
   id,
@@ -175,5 +183,66 @@ describe("getLayoutedElements", () => {
       });
       expect(result).toBe(edges);
     });
+  });
+});
+
+describe("designer layout guard (#1033)", () => {
+  const placed = (id: string, x: number, y: number): Node => ({
+    id,
+    type: "default",
+    position: { x, y },
+    data: { label: id },
+  });
+  const anyOverlap = (nodes: Node[]) => {
+    const boxes = nodes.map(designerNodeBox);
+    return boxes.some((a, i) => boxes.slice(i + 1).some((b) => boxesOverlap(a, b)));
+  };
+
+  it("a bundle with every node at y=0 and x 100 px apart has no overlapping box after the guard", () => {
+    const nodes = ["a", "b", "c", "d", "e"].map((id, i) => placed(id, i * 100, 0));
+    const edges = [
+      makeEdge("e1", "a", "b"),
+      makeEdge("e2", "b", "c"),
+      makeEdge("e3", "b", "d"),
+      makeEdge("e4", "c", "e"),
+      makeEdge("e5", "d", "e"),
+    ];
+    expect(anyOverlap(nodes)).toBe(true);
+    expect(needsDesignerLayout(nodes)).toBe(true);
+
+    const { nodes: laidOut } = layoutDesignerGraph(nodes, edges);
+
+    expect(anyOverlap(laidOut)).toBe(false);
+    expect(needsDesignerLayout(laidOut)).toBe(false);
+  });
+
+  it("a node without a position triggers the layout", () => {
+    const missing = { ...placed("b", 0, 0), position: undefined } as unknown as Node;
+    expect(needsDesignerLayout([placed("a", 0, 0), missing])).toBe(true);
+  });
+
+  it("a graph without overlaps keeps its positions", () => {
+    const nodes = [placed("a", 0, 0), placed("b", 400, 0), placed("c", 0, 300)];
+    expect(needsDesignerLayout(nodes)).toBe(false);
+  });
+
+  it("Auto-arrange followed by undo restores the positions and waypoints", () => {
+    const nodes = [placed("a", 0, 0), placed("b", 400, 0), placed("c", 0, 300)];
+    const edges: Edge[] = [
+      { ...makeEdge("e1", "a", "b"), data: { waypoints: [{ x: 7, y: 9 }] } },
+      { ...makeEdge("e2", "b", "c"), data: { waypoints: [] } },
+      { ...makeEdge("e3", "c", "a"), data: { waypoints: [] } },
+    ];
+
+    const arranged = arrangeDesignerGraph(nodes, edges, new Set(["e2"]));
+    expect(arranged.nodes.map((n) => n.position)).not.toEqual(nodes.map((n) => n.position));
+
+    const restored = restoreArrangeSnapshot(arranged.nodes, arranged.edges, arranged.snapshot);
+    expect(restored.nodes.map((n) => n.position)).toEqual(nodes.map((n) => n.position));
+    expect(restored.edges.map((e) => (e.data as { waypoints: unknown }).waypoints)).toEqual([
+      [{ x: 7, y: 9 }],
+      [],
+      [],
+    ]);
   });
 });

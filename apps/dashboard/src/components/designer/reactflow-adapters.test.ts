@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PipelineNode } from "@/lib/api/types";
 
 import {
+  conditionalEdgeLabel,
   fromReactFlowNode,
   parseEdgeWaypoints,
   summarizeCondition,
@@ -151,5 +152,31 @@ describe("toReactFlowNode / fromReactFlowNode", () => {
     const back = fromReactFlowNode(toReactFlowNode(node));
     expect(back).toEqual(node);
     expect("retry" in back).toBe(false);
+  });
+});
+
+describe("conditionalEdgeLabel (#1033)", () => {
+  const condition = {
+    type: "comparison" as const,
+    field: "extensions.verdict",
+    operator: "==" as const,
+    value: "approve",
+  };
+
+  it("a conditional edge's label shows its condition, not a bare 'if'", () => {
+    expect(conditionalEdgeLabel("if", condition, null)).toBe("verdict == approve");
+    expect(conditionalEdgeLabel(undefined, condition, null)).toBe("verdict == approve");
+  });
+
+  it("keeps the field chip after the condition", () => {
+    expect(conditionalEdgeLabel("if · 2 fields", condition, null)).toBe(
+      "verdict == approve · 2 fields",
+    );
+  });
+
+  it("a label the user typed wins; a plain edge keeps its label", () => {
+    expect(conditionalEdgeLabel("if", condition, " approved ")).toBe("approved");
+    expect(conditionalEdgeLabel("2 fields", null, null)).toBe("2 fields");
+    expect(conditionalEdgeLabel(undefined, null, null)).toBeUndefined();
   });
 });

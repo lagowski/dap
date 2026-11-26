@@ -1,8 +1,10 @@
 /**
- * Dagre auto-layout for pipeline run graphs (#225).
+ * Dagre auto-layout for pipeline graphs.
  *
- * Used only in the read-only run detail view — the pipeline designer
- * preserves manual node positions and does not call this.
+ * ``getLayoutedElements`` lays out the read-only run detail view (#225).
+ * The designer keeps manual node positions, except that a graph opened with
+ * missing or overlapping positions, or an "Auto-arrange" click, runs
+ * ``layoutDesignerGraph`` (#1033).
  */
 import dagre from "dagre";
 import type { Edge, Node } from "@xyflow/react";
@@ -148,4 +150,257 @@ function wrapColumns(
 
   // Preserve original node order in the returned array.
   return nodes.map((n) => repositioned.get(n.id) ?? n);
+}
+
+/* ------------------------------------------------------------------ */
+/* Designer layout guard + auto-arrange (#1033)                        */
+/* ------------------------------------------------------------------ */
+
+/** Box of a designer node: React Flow's default node (150 px wide, ~40 px
+ *  tall with its padding), not the run view's 160x40 placeholder. */
+export const DESIGNER_NODE_WIDTH = 150;
+export const DESIGNER_NODE_HEIGHT = 40;
+const DESIGNER_NODESEP = 60;
+const DESIGNER_RANKSEP = 120;
+/** Distance an edge leg keeps from a node border. */
+const ROUTE_MARGIN = 20;
+/** Vertical gap between stacked back-edge lanes. */
+const LANE_GAP = 24;
+
+type Point = { x: number; y: number };
+export type NodeBox = { id: string; x: number; y: number; width: number; height: number };
+export type DesignerWaypoints = Record<string, Point[]>;
+
+function finitePoint(value: unknown): value is Point {
+  if (!value || typeof value !== "object") return false;
+  const p = value as Partial<Point>;
+  return (
+    typeof p.x === "number" &&
+    typeof p.y === "number" &&
+    Number.isFinite(p.x) &&
+    Number.isFinite(p.y)
+  );
+}
+
+export function designerNodeBox(node: Pick<Node, "id" | "position">): NodeBox {
+  return {
+    id: node.id,
+    x: node.position.x,
+    y: node.position.y,
+    width: DESIGNER_NODE_WIDTH,
+    height: DESIGNER_NODE_HEIGHT,
+  };
+}
+
+/** True when the two boxes share interior area (touching borders is fine). */
+export function boxesOverlap(a: NodeBox, b: NodeBox): boolean {
+  return (
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height
+  );
+}
+
+/** The guard: a graph needs a layout when any node lacks a usable position
+ *  or any two designer node boxes overlap. */
+export function needsDesignerLayout(nodes: Array<Pick<Node, "id" | "position">>): boolean {
+  if (nodes.some((n) => !finitePoint(n.position))) return true;
+  const boxes = nodes.map(designerNodeBox);
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      if (boxesOverlap(boxes[i], boxes[j])) return true;
+    }
+  }
+  return false;
+}
+
+/** True when an axis-aligned segment passes through the interior of ``box``. */
+function segmentCrossesBox(a: Point, b: Point, box: NodeBox): boolean {
+  const minX = Math.min(a.x, b.x);
+  const maxX = Math.max(a.x, b.x);
+  const minY = Math.min(a.y, b.y);
+  const maxY = Math.max(a.y, b.y);
+  return (
+    minX < box.x + box.width &&
+    maxX > box.x &&
+    minY < box.y + box.height &&
+    maxY > box.y
+  );
+}
+
+/** Expand a polyline into axis-aligned vertices (diagonals become H→V→H
+ *  through the mid-x, the way ``WaypointEdge`` draws them). */
+function orthogonal(points: Point[]): Point[] {
+  const out: Point[] = points.length > 0 ? [points[0]] : [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (a.x === b.x || a.y === b.y) out.push(b);
+    else {
+      const midX = (a.x + b.x) / 2;
+      out.push({ x: midX, y: a.y }, { x: midX, y: b.y }, b);
+    }
+  }
+  return out;
+}
+
+/** True when the drawn route through ``points`` crosses any node box. */
+export function routeCrossesBoxes(points: Point[], boxes: NodeBox[]): boolean {
+  const vertices = orthogonal(points);
+  for (let i = 1; i < vertices.length; i++) {
+    for (const box of boxes) {
+      if (segmentCrossesBox(vertices[i - 1], vertices[i], box)) return true;
+    }
+  }
+  return false;
+}
+
+/** Designer handles: React Flow's default node takes edges in at the top
+ *  centre and sends them out at the bottom centre. */
+export function sourceHandle(box: NodeBox): Point {
+  return { x: box.x + box.width / 2, y: box.y + box.height };
+}
+export function targetHandle(box: NodeBox): Point {
+  return { x: box.x + box.width / 2, y: box.y };
+}
+
+/** The route a designer edge draws without waypoints: down out of the source
+ *  handle's row, across, then into the target handle (same rule as
+ *  ``routePoints`` for Bottom/Top handles). */
+function defaultRoute(source: Point, target: Point): Point[] {
+  return [source, { x: target.x, y: source.y }, target];
+}
+
+/**
+ * Lay the designer graph out with dagre (LR, designer node size) and route
+ * the edges that need it.
+ *
+ * Positions come from dagre. Each edge then gets waypoints when it is
+ * conditional, a back-edge (its target sits in the same or an earlier
+ * column, self-loops included) or when its plain route would cross a node.
+ * Those routes leave the source downwards, turn in the gap between columns
+ * (no node ever sits there), and, when source and target are not in adjacent
+ * columns, run along a lane under every node they pass, stacking lanes so two
+ * back-edges never share one. Plain edges that already clear every node keep
+ * no waypoints.
+ */
+export function layoutDesignerGraph(
+  nodes: Node[],
+  edges: Edge[],
+  conditionalEdgeIds: ReadonlySet<string> = new Set(),
+): { nodes: Node[]; waypoints: DesignerWaypoints } {
+  const g = new dagre.graphlib.Graph({ multigraph: true });
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "LR", nodesep: DESIGNER_NODESEP, ranksep: DESIGNER_RANKSEP });
+  const ids = new Set(nodes.map((n) => n.id));
+  for (const node of nodes) {
+    g.setNode(node.id, { width: DESIGNER_NODE_WIDTH, height: DESIGNER_NODE_HEIGHT });
+  }
+  const routable = edges.filter((e) => ids.has(e.source) && ids.has(e.target));
+  for (const edge of routable) g.setEdge(edge.source, edge.target, {}, edge.id);
+  dagre.layout(g);
+
+  const laidOut = nodes.map((node) => {
+    const { x, y } = g.node(node.id);
+    return {
+      ...node,
+      position: { x: x - DESIGNER_NODE_WIDTH / 2, y: y - DESIGNER_NODE_HEIGHT / 2 },
+    };
+  });
+  const boxes = laidOut.map(designerNodeBox);
+  const boxById = new Map(boxes.map((b) => [b.id, b]));
+  const gap = DESIGNER_RANKSEP / 2;
+  const lanes: Array<{ minX: number; maxX: number; y: number }> = [];
+
+  const waypoints: DesignerWaypoints = {};
+  for (const edge of routable) {
+    const src = boxById.get(edge.source)!;
+    const tgt = boxById.get(edge.target)!;
+    const start = sourceHandle(src);
+    const end = targetHandle(tgt);
+    const isBack = tgt.x <= src.x;
+    const isConditional = conditionalEdgeIds.has(edge.id);
+    if (!isBack && !isConditional && !routeCrossesBoxes(defaultRoute(start, end), boxes)) {
+      waypoints[edge.id] = [];
+      continue;
+    }
+    const exitY = src.y + src.height + ROUTE_MARGIN;
+    const entryY = tgt.y - ROUTE_MARGIN;
+    const exitX = src.x + src.width + gap; // gap right of the source column
+    const entryX = tgt.x - gap; // gap left of the target column
+    const route: Point[] = [{ x: start.x, y: exitY }, { x: exitX, y: exitY }];
+    if (exitX !== entryX) {
+      const minX = Math.min(exitX, entryX);
+      const maxX = Math.max(exitX, entryX);
+      let laneY = Math.max(exitY, entryY);
+      for (const box of boxes) {
+        if (box.x < maxX && box.x + box.width > minX) {
+          laneY = Math.max(laneY, box.y + box.height + ROUTE_MARGIN);
+        }
+      }
+      for (const lane of lanes) {
+        if (lane.minX < maxX && lane.maxX > minX) laneY = Math.max(laneY, lane.y + LANE_GAP);
+      }
+      lanes.push({ minX, maxX, y: laneY });
+      route.push({ x: exitX, y: laneY }, { x: entryX, y: laneY });
+    }
+    route.push({ x: entryX, y: entryY }, { x: end.x, y: entryY });
+    waypoints[edge.id] = route.filter(
+      (p, i) => i === 0 || p.x !== route[i - 1].x || p.y !== route[i - 1].y,
+    );
+  }
+  return { nodes: laidOut, waypoints };
+}
+
+/** What Auto-arrange replaced, so "Undo arrange" can put it back. */
+export type ArrangeSnapshot = {
+  positions: Record<string, Point>;
+  waypoints: DesignerWaypoints;
+};
+
+function edgeWaypointsOf(edge: Edge): Point[] {
+  const raw = (edge.data as { waypoints?: unknown } | undefined)?.waypoints;
+  return Array.isArray(raw) ? raw.filter(finitePoint).map((p) => ({ x: p.x, y: p.y })) : [];
+}
+
+function withWaypoints(edge: Edge, waypoints: Point[]): Edge {
+  return { ...edge, data: { ...(edge.data ?? {}), waypoints } };
+}
+
+/** Run the designer layout on React Flow state; returns the new state and a
+ *  snapshot of the positions and waypoints it replaced. */
+export function arrangeDesignerGraph(
+  nodes: Node[],
+  edges: Edge[],
+  conditionalEdgeIds: ReadonlySet<string> = new Set(),
+): { nodes: Node[]; edges: Edge[]; snapshot: ArrangeSnapshot } {
+  const snapshot: ArrangeSnapshot = { positions: {}, waypoints: {} };
+  for (const n of nodes) {
+    if (finitePoint(n.position)) snapshot.positions[n.id] = { ...n.position };
+  }
+  for (const e of edges) snapshot.waypoints[e.id] = edgeWaypointsOf(e);
+  const { nodes: laidOut, waypoints } = layoutDesignerGraph(nodes, edges, conditionalEdgeIds);
+  return {
+    nodes: laidOut,
+    edges: edges.map((e) => (e.id in waypoints ? withWaypoints(e, waypoints[e.id]) : e)),
+    snapshot,
+  };
+}
+
+/** Undo an Auto-arrange: restore the snapshot's positions and waypoints.
+ *  Nodes or edges added since keep their current state. */
+export function restoreArrangeSnapshot(
+  nodes: Node[],
+  edges: Edge[],
+  snapshot: ArrangeSnapshot,
+): { nodes: Node[]; edges: Edge[] } {
+  return {
+    nodes: nodes.map((n) =>
+      snapshot.positions[n.id] ? { ...n, position: { ...snapshot.positions[n.id] } } : n,
+    ),
+    edges: edges.map((e) =>
+      snapshot.waypoints[e.id] ? withWaypoints(e, snapshot.waypoints[e.id]) : e,
+    ),
+  };
 }

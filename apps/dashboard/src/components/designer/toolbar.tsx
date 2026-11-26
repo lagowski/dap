@@ -7,9 +7,11 @@ import {
   CheckCircle2,
   Copy,
   Download,
+  LayoutGrid,
   Lightbulb,
   Package,
   Play,
+  Undo2,
 } from "lucide-react";
 import type { Pipeline, ValidationResult } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
@@ -49,6 +51,11 @@ interface DesignerToolbarProps {
    *  download filename slug, plus ``id`` for the API call. ``null``
    *  while the user is creating a new pipeline (no Export yet). */
   pipeline?: Pipeline | null;
+  /** Re-run the dagre layout on the canvas (#1033); hidden when unset. */
+  onAutoArrange?: () => void;
+  /** Restore the positions and waypoints the last Auto-arrange replaced;
+   *  shown only right after an arrange. */
+  onUndoArrange?: () => void;
 }
 
 export function DesignerToolbar({
@@ -69,6 +76,8 @@ export function DesignerToolbar({
   pipelineId,
   pipelineVersion,
   pipeline,
+  onAutoArrange,
+  onUndoArrange,
 }: DesignerToolbarProps) {
   const canSave = !isSaving && name.length > 0 && validationResult?.valid !== false;
   const canRun = pipelineId != null && pipelineVersion != null;
@@ -111,6 +120,18 @@ export function DesignerToolbar({
             savedAt={layoutSavedAt}
             error={layoutSaveError}
           />
+          {onAutoArrange ? (
+            <Button type="button" variant="outline" size="sm" onClick={onAutoArrange}>
+              <LayoutGrid className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+              Auto-arrange
+            </Button>
+          ) : null}
+          {onUndoArrange ? (
+            <Button type="button" variant="ghost" size="sm" onClick={onUndoArrange}>
+              <Undo2 className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+              Undo arrange
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="outline"

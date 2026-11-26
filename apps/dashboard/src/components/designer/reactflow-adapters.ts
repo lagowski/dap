@@ -114,3 +114,23 @@ export function toReactFlowEdge(e: PipelineEdge, waypoints: XYPosition[] = []): 
     data: { waypoints },
   };
 }
+
+
+/**
+ * Label a rendered designer edge (#1033): a conditional edge shows its
+ * condition (``summarizeCondition``) instead of a bare "if". A label the user
+ * typed wins; the annotation chip after "if" (``if · 2 fields``) is kept.
+ */
+export function conditionalEdgeLabel(
+  label: unknown,
+  condition: EdgeCondition | null | undefined,
+  userLabel: string | null | undefined,
+): string | undefined {
+  const typed = userLabel?.trim() ?? "";
+  if (typed.length > 0) return typed;
+  const current = typeof label === "string" && label.length > 0 ? label : undefined;
+  if (!condition) return current;
+  const summary = summarizeCondition(condition);
+  if (current === undefined) return summary;
+  return /^if\b/.test(current) ? `${summary}${current.slice(2)}` : `${summary} · ${current}`;
+}

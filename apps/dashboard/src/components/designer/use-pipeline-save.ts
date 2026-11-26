@@ -245,6 +245,17 @@ interface UseAutoSaveLayoutParams {
   existingUiMetadata?: Record<string, unknown> | null;
   viewport?: Viewport | null;
   edgeWaypoints?: EdgeWaypoints;
+  /** Save the opening layout once even though nothing has been edited yet:
+   *  set when the designer re-laid out a pipeline whose saved positions were
+   *  missing or overlapping (#1033), so the fix is persisted. */
+  saveOnOpen?: boolean;
+}
+
+/** Snapshot the autosave compares the first layout against. Normally the
+ *  opening layout itself (nothing to save); with ``saveOnOpen`` an empty
+ *  baseline, so the opening layout differs and is saved once. */
+export function initialLayoutBaseline(snapshot: string, saveOnOpen: boolean): string {
+  return saveOnOpen ? "" : snapshot;
 }
 
 interface UseAutoSaveLayoutResult {
@@ -259,6 +270,7 @@ export function useAutoSaveLayout({
   existingUiMetadata,
   viewport,
   edgeWaypoints,
+  saveOnOpen = false,
 }: UseAutoSaveLayoutParams): UseAutoSaveLayoutResult {
   const { mutateAsync } = useUpdatePipelineUiMetadata();
   const [status, setStatus] = useState<AutoSaveLayoutStatus>("idle");
@@ -283,8 +295,7 @@ export function useAutoSaveLayout({
 
     const snapshot = JSON.stringify(uiMetadata);
     if (lastSnapshotRef.current === null) {
-      lastSnapshotRef.current = snapshot;
-      return;
+      lastSnapshotRef.current = initialLayoutBaseline(snapshot, saveOnOpen);
     }
     if (lastSnapshotRef.current === snapshot) return;
 
@@ -309,7 +320,7 @@ export function useAutoSaveLayout({
     }, AUTOSAVE_LAYOUT_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeout);
-  }, [pipelineId, uiMetadata, mutateAsync]);
+  }, [pipelineId, uiMetadata, mutateAsync, saveOnOpen]);
 
   return { status, savedAt, error: currentError };
 }

@@ -46,6 +46,12 @@ import {
 } from "@xyflow/react";
 
 import { useAgentsList } from "@/hooks/api";
+import {
+  arrangeDesignerGraph,
+  needsDesignerLayout,
+  restoreArrangeSnapshot,
+  type ArrangeSnapshot,
+} from "@/lib/graph-layout";
 import type {
   Agent,
   EdgeCondition,
@@ -56,7 +62,9 @@ import type {
 import { AgentPalette } from "./agent-palette";
 import { Inspector } from "./inspector";
 import {
+  conditionalEdgeLabel,
   parseEdgeWaypoints,
+  summarizeCondition,
   toReactFlowEdge,
   toReactFlowNode,
   type EdgeWaypoints,
@@ -152,27 +160,42 @@ export function PipelineDesigner({
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(seed?.description ?? "");
   const [entryPoint, setEntryPoint] = useState(seed?.entry_point ?? "");
-  const savedViewport = parseSavedViewport(seed?.ui_metadata);
-  const savedEdgeWaypoints = parseEdgeWaypoints(seed?.ui_metadata);
-  const [viewport, setViewport] = useState<Viewport | null>(savedViewport);
-
-  const [nodes, setNodes] = useState<Node[]>(() => {
-    // Prefer positions stored in ui_metadata.node_positions (saved by
-    // buildPayload on every Save). Falls back to PipelineNode.position for
-    // older pipelines / first-load before any Save (#226).
+  // The opening graph, computed once. Prefer positions stored in
+  // ui_metadata.node_positions (saved by buildPayload on every Save); fall
+  // back to PipelineNode.position for older pipelines (#226). Layout guard
+  // (#1033): when a node has no usable position or two node boxes overlap
+  // (an imported bundle can stack every node), run the dagre layout; the
+  // layout autosave then persists it. A graph without overlaps is untouched.
+  const [initialGraph] = useState(() => {
     const savedPositions = seed?.ui_metadata?.node_positions as
       | Record<string, { x: number; y: number }>
       | undefined;
-    return (seed?.nodes ?? []).map((n) => {
+    const savedEdgeWaypoints = parseEdgeWaypoints(seed?.ui_metadata);
+    const openedNodes = (seed?.nodes ?? []).map((n) => {
       const pos = savedPositions?.[n.id];
       return toReactFlowNode(pos ? { ...n, position: pos } : n);
     });
-  });
-  const [edges, setEdges] = useState<Edge[]>(() =>
-    (seed?.edges ?? []).map((edge) =>
+    const openedEdges = (seed?.edges ?? []).map((edge) =>
       toReactFlowEdge(edge, savedEdgeWaypoints[edge.id] ?? []),
-    ),
-  );
+    );
+    if (!needsDesignerLayout(openedNodes)) {
+      return { nodes: openedNodes, edges: openedEdges, arranged: false };
+    }
+    const conditional = new Set(
+      (seed?.edges ?? []).filter((e) => e.condition != null).map((e) => e.id),
+    );
+    const arranged = arrangeDesignerGraph(openedNodes, openedEdges, conditional);
+    return { nodes: arranged.nodes, edges: arranged.edges, arranged: true };
+  });
+  // A re-laid-out graph ignores the saved viewport, which framed the old
+  // positions, and fits the view instead.
+  const savedViewport = initialGraph.arranged ? null : parseSavedViewport(seed?.ui_metadata);
+  const [viewport, setViewport] = useState<Viewport | null>(savedViewport);
+
+  const [nodes, setNodes] = useState<Node[]>(initialGraph.nodes);
+  const [edges, setEdges] = useState<Edge[]>(initialGraph.edges);
+  // Positions and waypoints the last Auto-arrange replaced ("Undo arrange").
+  const [arrangeUndo, setArrangeUndo] = useState<ArrangeSnapshot | null>(null);
 
   // Designer-domain edge metadata that React Flow doesn't know about.
   const [edgeMeta, setEdgeMeta] = useState<
@@ -277,11 +300,15 @@ export function PipelineDesigner({
         ...meta,
         [edgeId]: { ...(meta[edgeId] ?? { label: null, condition: null }), condition },
       }));
-      // Also update the React Flow edge label to indicate "if"
+      // Also update the React Flow edge label to show the condition (#1033)
       setEdges((eds) =>
         eds.map((e) =>
           e.id === edgeId
-            ? { ...e, label: condition ? "if" : undefined, animated: condition != null }
+            ? {
+                ...e,
+                label: condition ? summarizeCondition(condition) : undefined,
+                animated: condition != null,
+              }
             : e,
         ),
       );
@@ -327,19 +354,45 @@ export function PipelineDesigner({
     [],
   );
 
+  const handleAutoArrange = useCallback(() => {
+    const conditional = new Set(
+      Object.entries(edgeMeta)
+        .filter(([, meta]) => meta.condition != null)
+        .map(([id]) => id),
+    );
+    const arranged = arrangeDesignerGraph(nodes, edges, conditional);
+    setNodes(arranged.nodes);
+    setEdges(arranged.edges);
+    setArrangeUndo(arranged.snapshot);
+  }, [nodes, edges, edgeMeta]);
+
+  const handleUndoArrange = useCallback(() => {
+    if (arrangeUndo == null) return;
+    const restored = restoreArrangeSnapshot(nodes, edges, arrangeUndo);
+    setNodes(restored.nodes);
+    setEdges(restored.edges);
+    setArrangeUndo(null);
+  }, [nodes, edges, arrangeUndo]);
+
   const { designerNodes, designerEdges, annotatedEdges, selectionDetail } =
     usePipelineProjections({ nodes, edges, edgeMeta, agents, selection });
   const renderedEdges = useMemo<Edge[]>(
     () =>
       annotatedEdges.map((edge) => ({
         ...edge,
+        // A conditional edge is labelled with its condition, not "if" (#1033).
+        label: conditionalEdgeLabel(
+          edge.label,
+          edgeMeta[edge.id]?.condition,
+          edgeMeta[edge.id]?.label,
+        ),
         type: "waypoint",
         data: {
           ...designerEdgeData(edge.data),
           onWaypointsChange: handleUpdateEdgeWaypoints,
         },
       })),
-    [annotatedEdges, handleUpdateEdgeWaypoints],
+    [annotatedEdges, edgeMeta, handleUpdateEdgeWaypoints],
   );
   const edgeWaypoints = useMemo<EdgeWaypoints>(() => {
     const out: EdgeWaypoints = {};
@@ -379,6 +432,7 @@ export function PipelineDesigner({
     existingUiMetadata: initialPipeline?.ui_metadata ?? null,
     viewport,
     edgeWaypoints,
+    saveOnOpen: initialGraph.arranged,
   });
 
   return (
@@ -401,6 +455,8 @@ export function PipelineDesigner({
         pipelineId={initialPipeline?.id}
         pipelineVersion={initialPipeline?.version}
         pipeline={initialPipeline}
+        onAutoArrange={nodes.length > 0 ? handleAutoArrange : undefined}
+        onUndoArrange={arrangeUndo != null ? handleUndoArrange : undefined}
       />
       <div className="flex flex-1 overflow-hidden">
         <AgentPalette onAddNode={handleAddNode} />
