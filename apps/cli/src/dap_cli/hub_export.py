@@ -35,6 +35,7 @@ MAX_TAGLINE, MAX_PURPOSE = 60, 90
 MIN_TAGLINE_WORDS, MAX_TAGLINE_WORDS = 3, 6
 
 # The hub's closed icon vocabulary for a pipeline card's input and output.
+IO_SIDES = ("in", "out")
 IO_ICONS = frozenset(
     [
         "bulb",
@@ -131,12 +132,12 @@ def check_tagline5(text: str) -> str:
 def parse_io(spec: str) -> dict[str, str]:
     """``"<in>:<out>"`` -> ``{"in", "out"}``; refuse a name outside ``IO_ICONS``."""
     parts = [p.strip() for p in spec.split(":")]
-    if len(parts) != 2 or not all(parts):  # noqa: PLR2004 (in and out)
+    if len(parts) != len(IO_SIDES) or not all(parts):
         raise ValueError("bad --io: expected <in>:<out>")
-    for side, name in zip(("in", "out"), parts, strict=True):
+    for side, name in zip(IO_SIDES, parts, strict=True):
         if name not in IO_ICONS:
             raise ValueError(f"bad --io: unknown {side} icon; one of: {' '.join(sorted(IO_ICONS))}")
-    return {"in": parts[0], "out": parts[1]}
+    return dict(zip(IO_SIDES, parts, strict=True))
 
 
 def _purpose(agent: dict[str, Any]) -> str | None:
@@ -211,9 +212,14 @@ def _names(fields: Any) -> list[str]:
     return out
 
 
+def _agent(node: dict[str, Any], agents: dict[str, Any]) -> dict[str, Any]:
+    """The bundled agent a node runs, or ``{}`` (one lookup for the title, type and purpose)."""
+    agent = agents.get(str(node.get("agent_id")))
+    return agent if isinstance(agent, dict) else {}
+
+
 def _runtime(node: dict[str, Any], agents: dict[str, Any]) -> str:
-    agent = agents.get(str(node.get("agent_id")), {})
-    return str(agent.get("runtime_id") or "unknown")
+    return str(_agent(node, agents).get("runtime_id") or "unknown")
 
 
 def node_type(node: dict[str, Any], agents: dict[str, Any], gates: set[str]) -> str:
@@ -228,7 +234,7 @@ def build_graph(pipeline: dict[str, Any], agents: dict[str, Any]) -> dict[str, A
     gates = {str(g) for g in (pipeline.get("defaults") or {}).get("approval_required_nodes") or []}
     nodes = []
     for node in pipeline["nodes"]:
-        agent = agents.get(node.get("agent_id"), {})
+        agent = _agent(node, agents)
         pos = node.get("position") or {}
         out: dict[str, Any] = {
             "id": node["id"],

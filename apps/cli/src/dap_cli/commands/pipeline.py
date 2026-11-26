@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from dap_cli.hub_export import write_hub_bundle
+from dap_cli.hub_export import IO_ICONS, write_hub_bundle
 
 pipeline_app = typer.Typer(
     name="pipeline",
@@ -35,8 +35,7 @@ def cmd_export(
         str,
         typer.Option(
             "--io",
-            help="Hub card icons <in>:<out>, from: bulb scale repo issue merge docs post "
-            "search report script clapperboard blocks pipeline list fanout comment",
+            help="Hub card icons <in>:<out>, from: " + " ".join(sorted(IO_ICONS)),
         ),
     ],
     out: Annotated[

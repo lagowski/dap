@@ -26,6 +26,8 @@ FIRST_HUB_CARDS = {
     "github-issue-triage": ("Pick and enrich the next issue", "list:issue"),
     "team-collaboration": ("Turn a problem into a brief", "comment:report"),
 }
+# A deliberate independent copy of the vocabulary from issue #1016, so a change to
+# IO_ICONS in hub_export.py fails this spec check instead of passing silently.
 IO_VOCAB = set(
     [
         "bulb",
