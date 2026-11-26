@@ -19,6 +19,35 @@ REPO = Path(__file__).resolve().parents[3]
 EXAMPLES = sorted((REPO / "examples" / "pipelines").glob("*.pipeline-bundle.json"))
 FIRST_HUB_SLUGS = ("github-read-issue-comment", "github-issue-triage", "team-collaboration")
 GENERATED = "2026-11-26"
+CARD = {"tagline5": "Run this example pipeline", "io": "pipeline:report"}
+# The card values for the first three hub bundles (issue #1016).
+FIRST_HUB_CARDS = {
+    "github-read-issue-comment": ("Read an issue, then comment", "issue:comment"),
+    "github-issue-triage": ("Pick and enrich the next issue", "list:issue"),
+    "team-collaboration": ("Turn a problem into a brief", "comment:report"),
+}
+# A deliberate independent copy of the vocabulary from issue #1016, so a change to
+# IO_ICONS in hub_export.py fails this spec check instead of passing silently.
+IO_VOCAB = set(
+    [
+        "bulb",
+        "scale",
+        "repo",
+        "issue",
+        "merge",
+        "docs",
+        "post",
+        "search",
+        "report",
+        "script",
+        "clapperboard",
+        "blocks",
+        "pipeline",
+        "list",
+        "fanout",
+        "comment",
+    ]
+)
 
 # The hub's docbundle schema 1 rules, plus the ``graph`` key this adapter adds.
 HUB_KEYS = {
@@ -37,6 +66,8 @@ HUB_KEYS = {
     "curated_on",
     "source_note",
     "graph",
+    "tagline5",
+    "io_icons",
 }
 HUB_REQUIRED = {
     "schema",
@@ -50,6 +81,8 @@ HUB_REQUIRED = {
     "steps",
     "pitfalls",
     "generated",
+    "tagline5",
+    "io_icons",
 }
 HUB_SLUG = re.compile(r"^(?!g\d+-)[a-z0-9][a-z0-9-]{2,62}$")
 
@@ -83,6 +116,13 @@ def assert_hub_valid(page: dict[str, Any]) -> None:
         assert len(name) <= 100 and not re.search(
             r"[/\\]|://|^[A-Za-z]:|\.(?:md|txt|json|ya?ml)$", name
         )
+    assert 3 <= len(page["tagline5"].split()) <= 6 and len(page["tagline5"]) <= 60
+    assert page["tagline5"] == page["tagline5"].strip()
+    assert set(page["io_icons"]) == {"in", "out"} and set(page["io_icons"].values()) <= IO_VOCAB
+    for node in page["graph"]["nodes"]:
+        assert set(node) <= {"id", "title", "type", "purpose", "inputs", "outputs", "x", "y"}
+        if "purpose" in node:
+            assert 0 < len(node["purpose"]) <= 90 and "\n" not in node["purpose"]
     note = page.get("source_note", "")
     assert len(note) <= 160
     assert not re.search(
@@ -98,7 +138,7 @@ def assert_hub_valid(page: dict[str, Any]) -> None:
 @pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name.split(".")[0])
 def test_every_example_exports_valid_and_clean(path: Path) -> None:
     slug = path.name.split(".")[0]
-    page = to_hub_bundle(_load(path), slug, generated=GENERATED)
+    page = to_hub_bundle(_load(path), slug, **CARD, generated=GENERATED)
     assert_hub_valid(page)
     assert scan(page) == []
     assert page["slug"] == slug
@@ -106,7 +146,7 @@ def test_every_example_exports_valid_and_clean(path: Path) -> None:
 
 def test_graph_mirrors_the_pipeline_without_start_and_end() -> None:
     bundle = _example("github-issue-triage")
-    graph = to_hub_bundle(bundle, "github-issue-triage", generated=GENERATED)["graph"]
+    graph = to_hub_bundle(bundle, "github-issue-triage", **CARD, generated=GENERATED)["graph"]
     assert graph["entry"] == "fetch_issues"
     assert [n["id"] for n in graph["nodes"]] == [
         "fetch_issues",
@@ -135,11 +175,11 @@ def test_graph_mirrors_the_pipeline_without_start_and_end() -> None:
 
 def test_conditional_edge_keeps_its_label_or_derives_one() -> None:
     labelled = to_hub_bundle(
-        _example("cortex-github-issue"), "cortex-github-issue", generated=GENERATED
+        _example("cortex-github-issue"), "cortex-github-issue", **CARD, generated=GENERATED
     )["graph"]
     assert {"from": "finalize", "to": "phase1_gate", "label": "READY"} in labelled["edges"]
     derived = to_hub_bundle(
-        _example("project-bootstrap"), "project-bootstrap", generated=GENERATED
+        _example("project-bootstrap"), "project-bootstrap", **CARD, generated=GENERATED
     )["graph"]
     assert {
         "from": "gate_params",
@@ -150,7 +190,7 @@ def test_conditional_edge_keeps_its_label_or_derives_one() -> None:
 
 def test_no_prompt_or_runtime_config_reaches_the_bundle() -> None:
     bundle = _example("github-issue-triage")
-    text = json.dumps(to_hub_bundle(bundle, "github-issue-triage", generated=GENERATED))
+    text = json.dumps(to_hub_bundle(bundle, "github-issue-triage", **CARD, generated=GENERATED))
     for agent in bundle["bundled_agents"].values():
         assert agent["prompt_template"][:60] not in text
         for value in agent.get("runtime_config", {}).values():
@@ -162,13 +202,18 @@ def test_no_prompt_or_runtime_config_reaches_the_bundle() -> None:
 
 def test_issue_references_are_dropped_from_text() -> None:
     page = to_hub_bundle(
-        _example("github-read-issue-comment"), "github-read-issue-comment", generated=GENERATED
+        _example("github-read-issue-comment"),
+        "github-read-issue-comment",
+        **CARD,
+        generated=GENERATED,
     )
     assert "#919" not in page["summary"]
 
 
 def test_steps_walk_the_nodes_and_explain_import_and_run() -> None:
-    page = to_hub_bundle(_example("team-collaboration"), "team-collaboration", generated=GENERATED)
+    page = to_hub_bundle(
+        _example("team-collaboration"), "team-collaboration", **CARD, generated=GENERATED
+    )
     titles = [s["title"] for s in page["steps"]]
     assert titles[0].lower().startswith("get the bundle")
     assert titles[1].lower().startswith("import")
@@ -183,7 +228,7 @@ def test_steps_walk_the_nodes_and_explain_import_and_run() -> None:
 
 def test_needs_cover_every_runtime_used() -> None:
     page = to_hub_bundle(
-        _example("github-issue-triage"), "github-issue-triage", generated=GENERATED
+        _example("github-issue-triage"), "github-issue-triage", **CARD, generated=GENERATED
     )
     needs = " ".join(page["needs"]).lower()
     assert "dap" in needs
@@ -192,7 +237,9 @@ def test_needs_cover_every_runtime_used() -> None:
 
 
 def test_approval_gates_and_budget_become_pitfalls() -> None:
-    page = to_hub_bundle(_example("project-bootstrap"), "project-bootstrap", generated=GENERATED)
+    page = to_hub_bundle(
+        _example("project-bootstrap"), "project-bootstrap", **CARD, generated=GENERATED
+    )
     pitfalls = " ".join(page["pitfalls"])
     assert "gate_params" in pitfalls
     assert "25" in pitfalls  # budget_limit_usd
@@ -200,9 +247,9 @@ def test_approval_gates_and_budget_become_pitfalls() -> None:
 
 def test_bad_slug_is_refused() -> None:
     with pytest.raises(ValueError):
-        to_hub_bundle(_example("team-collaboration"), "g300-truco", generated=GENERATED)
+        to_hub_bundle(_example("team-collaboration"), "g300-truco", **CARD, generated=GENERATED)
     with pytest.raises(ValueError):
-        to_hub_bundle(_example("team-collaboration"), "Bad Slug", generated=GENERATED)
+        to_hub_bundle(_example("team-collaboration"), "Bad Slug", **CARD, generated=GENERATED)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +282,7 @@ def test_export_refuses_a_leaky_bundle() -> None:
     bundle = copy.deepcopy(_example("team-collaboration"))
     bundle["pipeline"]["description"] = "Ask ops at 10.1.2.3 first."
     with pytest.raises(Unsafe):
-        to_hub_bundle(bundle, "team-collaboration", generated=GENERATED)
+        to_hub_bundle(bundle, "team-collaboration", **CARD, generated=GENERATED)
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +292,7 @@ def test_export_refuses_a_leaky_bundle() -> None:
 
 def test_write_hub_bundle_layout(tmp_path: Path) -> None:
     src = REPO / "examples" / "pipelines" / "team-collaboration.pipeline-bundle.json"
-    out = write_hub_bundle(src, "team-collaboration", tmp_path, generated=GENERATED)
+    out = write_hub_bundle(src, "team-collaboration", tmp_path, **CARD, generated=GENERATED)
     assert out == tmp_path / "team-collaboration" / "page" / "page.json"
     assert_hub_valid(_load(out))
 
@@ -256,18 +303,39 @@ def test_write_leaves_nothing_on_refusal(tmp_path: Path) -> None:
     src = tmp_path / "leaky.pipeline-bundle.json"
     src.write_text(json.dumps(bundle))
     with pytest.raises(Unsafe):
-        write_hub_bundle(src, "leaky", tmp_path / "out", generated=GENERATED)
+        write_hub_bundle(src, "leaky", tmp_path / "out", **CARD, generated=GENERATED)
     assert not (tmp_path / "out").exists()
+
+
+def _card_args(tagline: str = CARD["tagline5"], io: str = CARD["io"]) -> list[str]:
+    return ["--tagline5", tagline, "--io", io]
 
 
 def test_cli_export_writes_the_first_hub_bundles(tmp_path: Path) -> None:
     for slug in FIRST_HUB_SLUGS:
+        tagline, io = FIRST_HUB_CARDS[slug]
         src = REPO / "examples" / "pipelines" / f"{slug}.pipeline-bundle.json"
         result = runner.invoke(
-            app, ["pipeline", "export", str(src), "--hub", slug, "--out", str(tmp_path)]
+            app,
+            [
+                "pipeline",
+                "export",
+                str(src),
+                "--hub",
+                slug,
+                "--tagline5",
+                tagline,
+                "--io",
+                io,
+                "--out",
+                str(tmp_path),
+            ],
         )
         assert result.exit_code == 0, result.output
-        assert_hub_valid(_load(tmp_path / slug / "page" / "page.json"))
+        page = _load(tmp_path / slug / "page" / "page.json")
+        assert_hub_valid(page)
+        assert page["tagline5"] == tagline
+        assert page["io_icons"] == dict(zip(("in", "out"), io.split(":"), strict=True))
 
 
 def test_cli_export_refusal_exits_nonzero(tmp_path: Path) -> None:
@@ -276,7 +344,17 @@ def test_cli_export_refusal_exits_nonzero(tmp_path: Path) -> None:
     src = tmp_path / "leaky.pipeline-bundle.json"
     src.write_text(json.dumps(bundle))
     result = runner.invoke(
-        app, ["pipeline", "export", str(src), "--hub", "leaky", "--out", str(tmp_path / "o")]
+        app,
+        [
+            "pipeline",
+            "export",
+            str(src),
+            "--hub",
+            "leaky",
+            *_card_args(),
+            "--out",
+            str(tmp_path / "o"),
+        ],
     )
     assert result.exit_code == 2
     assert "192.168" not in result.output
@@ -292,3 +370,145 @@ def test_plain_removes_a_parenthesised_reference_list_whole() -> None:
 
 def test_plain_still_removes_a_bare_reference() -> None:
     assert _plain("Built on #12 for good.") == "Built on for good."
+
+
+# ---------------------------------------------------------------------------
+# Hub card fields: tagline5, io_icons, node type and purpose
+# ---------------------------------------------------------------------------
+
+
+def _card(tagline5: str = CARD["tagline5"], io: str = CARD["io"]) -> dict[str, Any]:
+    return to_hub_bundle(
+        _example("team-collaboration"),
+        "team-collaboration",
+        tagline5=tagline5,
+        io=io,
+        generated=GENERATED,
+    )
+
+
+def test_card_fields_reach_the_page() -> None:
+    page = _card("  Turn a problem into a brief ", "comment:report")
+    assert page["tagline5"] == "Turn a problem into a brief"
+    assert page["io_icons"] == {"in": "comment", "out": "report"}
+
+
+@pytest.mark.parametrize(
+    ("tagline", "rule"),
+    [
+        ("Too short", "3-6 words"),
+        ("one two three four five six seven", "3-6 words"),
+        (
+            "Extraordinarily unbelievably lengthy wording surpassing sixtycharacters",
+            "60 characters",
+        ),
+        ("Read an issue...", "ellipsis"),
+        ("Read an issue…", "ellipsis"),
+        ("Read an **issue** now", "markup"),
+        ("Read <b>an</b> issue", "markup"),
+        ("Read [an issue](x) now", "markup"),
+        ("See https example.com today", "link"),
+        ("Read the docs/guide now", "link"),
+        ("Read an\nissue then comment", "one line"),
+    ],
+)
+def test_bad_tagline5_is_refused(tagline: str, rule: str) -> None:
+    with pytest.raises(ValueError, match=rule):
+        _card(tagline5=tagline)
+
+
+@pytest.mark.parametrize("io", ["issue", "issue:", ":comment", "issue:comment:post", "issue:tweet"])
+def test_bad_io_is_refused(io: str) -> None:
+    with pytest.raises(ValueError, match="bad --io"):
+        _card(io=io)
+
+
+def test_every_io_icon_in_the_vocabulary_is_accepted() -> None:
+    for name in sorted(IO_VOCAB):
+        assert _card(io=f"{name}:{name}")["io_icons"] == {"in": name, "out": name}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--tagline5", "Too short", "--io", "issue:comment"],
+        ["--tagline5", "Read an issue, then comment", "--io", "issue:tweet"],
+        ["--io", "issue:comment"],
+        ["--tagline5", "Read an issue, then comment"],
+    ],
+    ids=["bad-tagline", "bad-io", "no-tagline", "no-io"],
+)
+def test_cli_refuses_bad_or_missing_card_fields(tmp_path: Path, args: list[str]) -> None:
+    src = REPO / "examples" / "pipelines" / "github-read-issue-comment.pipeline-bundle.json"
+    result = runner.invoke(
+        app,
+        ["pipeline", "export", str(src), "--hub", "x-slug", *args, "--out", str(tmp_path / "o")],
+    )
+    assert result.exit_code == 2, result.output
+    assert not (tmp_path / "o").exists()
+
+
+def _types(name: str) -> dict[str, str]:
+    page = to_hub_bundle(_example(name), name, **CARD, generated=GENERATED)
+    return {n["id"]: n["type"] for n in page["graph"]["nodes"]}
+
+
+def test_approval_gates_are_typed_gate() -> None:
+    bundle = _example("project-bootstrap")
+    gates = set(bundle["pipeline"]["defaults"]["approval_required_nodes"])
+    types = _types("project-bootstrap")
+    assert {nid for nid, t in types.items() if t == "gate"} == gates
+    # The other nodes keep their (non-LLM) runtime id.
+    assert {t for nid, t in types.items() if nid not in gates} == {"python-func"}
+
+
+def test_llm_runtimes_are_typed_llm_and_the_rest_keep_their_runtime() -> None:
+    bundle = _example("github-issue-triage")
+    agents = bundle["bundled_agents"]
+    runtime = {n["id"]: agents[n["agent_id"]]["runtime_id"] for n in bundle["pipeline"]["nodes"]}
+    for nid, t in _types("github-issue-triage").items():
+        assert t == ("llm" if runtime[nid] == "api-call" else runtime[nid])
+    assert set(_types("team-collaboration").values()) == {"llm"}
+    assert set(_types("github-read-issue-comment").values()) == {"github"}
+    tester = _types("tester-coder-retry")
+    assert "llm" in tester.values() and "bash" in tester.values()
+
+
+def test_llm_typing_comes_from_the_runtime_not_the_title() -> None:
+    bundle = copy.deepcopy(_example("github-read-issue-comment"))
+    for agent in bundle["bundled_agents"].values():
+        agent["name"] = "LLM model call"
+    page = to_hub_bundle(bundle, "x-slug", **CARD, generated=GENERATED)
+    assert {n["type"] for n in page["graph"]["nodes"]} == {"github"}
+
+
+def test_needs_and_steps_still_name_the_runtime_behind_llm_and_gate() -> None:
+    page = to_hub_bundle(
+        _example("github-issue-triage"), "github-issue-triage", **CARD, generated=GENERATED
+    )
+    assert "llm provider" in " ".join(page["needs"]).lower()
+    assert "`llm`" not in " ".join(s["body"] for s in page["steps"])
+    assert "Runtime `api-call`" in " ".join(s["body"] for s in page["steps"])
+
+
+def test_purpose_is_omitted_without_a_description() -> None:
+    page = to_hub_bundle(
+        _example("team-collaboration"), "team-collaboration", **CARD, generated=GENERATED
+    )
+    assert all("purpose" not in n for n in page["graph"]["nodes"])
+
+
+def test_purpose_is_one_short_line_from_the_description() -> None:
+    bundle = copy.deepcopy(_example("team-collaboration"))
+    agents = bundle["bundled_agents"]
+    first, second, third = list(agents)
+    agents[first]["description"] = "Drafts the brief from the problem (#12).\nSecond line."
+    agents[second]["description"] = "word " * 40
+    agents[third]["description"] = "Reads the docs/guide.md file first"
+    page = to_hub_bundle(bundle, "team-collaboration", **CARD, generated=GENERATED)
+    by_agent = {n["agent_id"]: n["id"] for n in bundle["pipeline"]["nodes"] if n.get("agent_id")}
+    nodes = {n["id"]: n for n in page["graph"]["nodes"]}
+    assert nodes[by_agent[first]]["purpose"] == "Drafts the brief from the problem."
+    long = nodes[by_agent[second]]["purpose"]
+    assert len(long) <= 90 and "\n" not in long
+    assert "purpose" not in nodes[by_agent[third]]  # a path never reaches the card
