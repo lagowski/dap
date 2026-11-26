@@ -559,6 +559,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pipelines/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pipeline Generator Status
+         * @description Whether this engine has a pipeline generator configured (the prompt box shows if so).
+         */
+        get: operations["pipeline_generator_status_pipelines_generate_get"];
+        put?: never;
+        /**
+         * Generate Pipeline
+         * @description Turn a prompt into a pipeline bundle with the operator's generator.
+         *
+         *     Returns the bundle only; nothing is imported. The dashboard imports it with
+         *     ``POST /pipelines/import`` (so the usual import checks apply) or offers it
+         *     as a JSON download. 503 = no generator configured, 422 = the generator
+         *     refused the prompt, 502 = it failed or returned something that is not a
+         *     valid bundle, 504 = it timed out.
+         */
+        post: operations["generate_pipeline_pipelines_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pipelines/import": {
         parameters: {
             query?: never;
@@ -2579,6 +2609,34 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * GeneratePipelineRequest
+         * @description Body of ``POST /pipelines/generate``.
+         */
+        GeneratePipelineRequest: {
+            /**
+             * Prompt
+             * @description What the pipeline should do, in plain words.
+             */
+            prompt: string;
+        };
+        /**
+         * GeneratedPipeline
+         * @description Response of ``POST /pipelines/generate``: a bundle ready for ``/pipelines/import``.
+         */
+        GeneratedPipeline: {
+            /**
+             * Bundle
+             * @description pipeline-export envelope; POST it to /pipelines/import as-is.
+             */
+            bundle: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+            /** Nodes */
+            nodes: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3098,6 +3156,14 @@ export interface components {
             ui_metadata?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * PipelineGeneratorStatus
+         * @description Response of ``GET /pipelines/generate``: is the prompt box usable here.
+         */
+        PipelineGeneratorStatus: {
+            /** Enabled */
+            enabled: boolean;
         };
         /**
          * PipelineImportRequest
@@ -4834,6 +4900,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Pipeline"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pipeline_generator_status_pipelines_generate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineGeneratorStatus"];
+                };
+            };
+        };
+    };
+    generate_pipeline_pipelines_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GeneratePipelineRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GeneratedPipeline"];
                 };
             };
             /** @description Validation Error */
