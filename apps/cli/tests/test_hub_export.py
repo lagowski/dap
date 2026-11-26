@@ -46,6 +46,13 @@ IO_VOCAB = set(
         "list",
         "fanout",
         "comment",
+        "agents",
+        "agreement",
+        "endpoint",
+        "pr",
+        "review",
+        "terminal",
+        "engine",
     ]
 )
 
