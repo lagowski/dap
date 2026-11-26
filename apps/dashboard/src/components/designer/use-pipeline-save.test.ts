@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { Pipeline, PipelineEdge, PipelineNode } from "@/lib/api/types";
-import { buildLayoutUiMetadata, buildPipelinePayload } from "./use-pipeline-save";
+import {
+  buildLayoutUiMetadata,
+  buildPipelinePayload,
+  initialLayoutBaseline,
+} from "./use-pipeline-save";
 
 const nodes: PipelineNode[] = [
   { id: "n1", agent_id: "a1", position: { x: 10, y: 20 } },
@@ -114,5 +118,17 @@ describe("buildPipelinePayload", () => {
         { x: 200, y: 220 },
       ],
     });
+  });
+});
+
+describe("initialLayoutBaseline (#1033)", () => {
+  const snapshot = JSON.stringify({ node_positions: { n1: { x: 0, y: 0 } } });
+
+  it("an untouched opening layout is the baseline, so nothing is saved", () => {
+    expect(initialLayoutBaseline(snapshot, false)).toBe(snapshot);
+  });
+
+  it("a layout the guard re-arranged on open differs from the baseline, so it is saved", () => {
+    expect(initialLayoutBaseline(snapshot, true)).not.toBe(snapshot);
   });
 });

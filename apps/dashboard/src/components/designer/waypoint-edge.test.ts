@@ -10,6 +10,12 @@ import {
   routePoints,
   waypointPath,
 } from "./waypoint-edge";
+import {
+  designerNodeBox,
+  layoutDesignerGraph,
+  sourceHandle,
+  targetHandle,
+} from "@/lib/graph-layout";
 
 describe("orthogonalVertices", () => {
   it("returns an empty list without points", () => {
@@ -215,5 +221,80 @@ describe("nudgeWaypoint", () => {
       x: 15,
       y: 20,
     });
+  });
+});
+
+describe("routes after a designer layout (#1033)", () => {
+  // Real drawn route: the edge's handles (bottom-centre out, top-centre in),
+  // the layout's waypoints through ``routePoints``, expanded the way
+  // ``waypointPath`` draws it; every segment must stay out of every node box.
+  function drawnRouteCrossesANode(
+    nodes: Parameters<typeof layoutDesignerGraph>[0],
+    edges: Parameters<typeof layoutDesignerGraph>[1],
+    conditional: Set<string>,
+    withWaypoints = true,
+  ): Record<string, boolean> {
+    const { nodes: laidOut, waypoints } = layoutDesignerGraph(nodes, edges, conditional);
+    const boxes = laidOut.map(designerNodeBox);
+    const byId = new Map(boxes.map((b) => [b.id, b]));
+    const out: Record<string, boolean> = {};
+    for (const edge of edges) {
+      const points = routePoints(
+        sourceHandle(byId.get(edge.source)!),
+        Position.Bottom,
+        withWaypoints ? waypoints[edge.id] : [],
+        targetHandle(byId.get(edge.target)!),
+        Position.Top,
+      );
+      const vertices = orthogonalVertices(points);
+      out[edge.id] = vertices.slice(1).some((b, i) => {
+        const a = vertices[i];
+        return boxes.some(
+          (box) =>
+            Math.min(a.x, b.x) < box.x + box.width &&
+            Math.max(a.x, b.x) > box.x &&
+            Math.min(a.y, b.y) < box.y + box.height &&
+            Math.max(a.y, b.y) > box.y,
+        );
+      });
+    }
+    return out;
+  }
+
+  const node = (id: string) => ({
+    id,
+    type: "default",
+    position: { x: 0, y: 0 },
+    data: { label: id },
+  });
+  const edge = (id: string, source: string, target: string) => ({ id, source, target });
+
+  it("a back-edge's route crosses no node box", () => {
+    const nodes = ["plan", "code", "test", "review"].map(node);
+    const edges = [
+      edge("e1", "plan", "code"),
+      edge("e2", "code", "test"),
+      edge("e3", "test", "review"),
+      edge("back", "review", "code"),
+      edge("loop", "test", "plan"),
+    ];
+    const crosses = drawnRouteCrossesANode(nodes, edges, new Set(["back"]));
+    expect(crosses).toEqual({ e1: false, e2: false, e3: false, back: false, loop: false });
+    // The check has teeth: drawn without the layout's waypoints, the same
+    // back-edges cut through nodes.
+    const bare = drawnRouteCrossesANode(nodes, edges, new Set(["back"]), false);
+    expect(bare.back || bare.loop).toBe(true);
+  });
+
+  it("a conditional forward edge skipping columns routes around the nodes it passes", () => {
+    const nodes = ["a", "b", "c", "d"].map(node);
+    const edges = [
+      edge("ab", "a", "b"),
+      edge("bc", "b", "c"),
+      edge("cd", "c", "d"),
+      edge("skip", "a", "d"),
+    ];
+    const crosses = drawnRouteCrossesANode(nodes, edges, new Set(["skip"]));
+    expect(crosses.skip).toBe(false);
   });
 });
