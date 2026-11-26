@@ -161,6 +161,13 @@ class ServerConfig:
     # ``budget_limit_usd`` exceeds this. Belt-and-suspenders against
     # a runaway form value or a forgotten zero default in the UI.
     dry_run_budget_usd: float = 0.50
+    # Pipeline generator behind the dashboard's prompt box (cortex#1774 S5).
+    # argv of an operator-installed command; the engine appends the user's
+    # prompt as the last argument (no shell) and reads ONE JSON object with
+    # a ``bundle`` key from its stdout. ``None`` (default) → the feature is
+    # off and ``POST /pipelines/generate`` answers 503.
+    pipeline_generator_command: list[str] | None = None
+    pipeline_generator_timeout_seconds: float = 600.0
 
 
 @dataclass
@@ -312,6 +319,8 @@ _FLAT_TO_NESTED: dict[str, tuple[str, str]] = {
     "port": ("server", "port"),
     "cors_origins": ("server", "cors_origins"),
     "dry_run_budget_usd": ("server", "dry_run_budget_usd"),
+    "pipeline_generator_command": ("server", "pipeline_generator_command"),
+    "pipeline_generator_timeout_seconds": ("server", "pipeline_generator_timeout_seconds"),
     # AuthConfig
     "auth_jwt_secret": ("auth", "jwt_secret"),
     "auth_access_ttl_seconds": ("auth", "access_ttl_seconds"),
@@ -384,6 +393,8 @@ class EngineConfigKwargs(TypedDict, total=False):
     port: NotRequired[int]
     cors_origins: NotRequired[list[str] | None]
     dry_run_budget_usd: NotRequired[float]
+    pipeline_generator_command: NotRequired[list[str] | None]
+    pipeline_generator_timeout_seconds: NotRequired[float]
     auth_jwt_secret: NotRequired[str | None]
     auth_access_ttl_seconds: NotRequired[int]
     auth_log_reset_tokens: NotRequired[bool]

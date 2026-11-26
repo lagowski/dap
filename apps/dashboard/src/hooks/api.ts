@@ -87,6 +87,21 @@ export const useImportPipeline = createInvalidatingMutation({
   invalidates: () => [queryKeys.pipelines],
 });
 
+/** Is the prompt box usable on this engine (cortex#1774 S5). */
+export function usePipelineGeneratorStatus() {
+  return useQuery({
+    queryKey: queryKeys.pipelineGenerator,
+    queryFn: () => api.getPipelineGeneratorStatus(),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useGeneratePipeline() {
+  return useMutation({
+    mutationFn: (prompt: string) => api.generatePipeline(prompt),
+  });
+}
+
 export function useInspectPipelineImportBackends() {
   return useMutation({
     mutationFn: (payload: PipelineExport) => api.inspectPipelineImportBackends(payload),
