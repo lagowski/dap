@@ -1,4 +1,4 @@
-"""Tests for ``dap pipeline export --hub`` (#1016): pipeline bundle -> Labs hub docbundle with a ``graph`` field."""
+"""Tests for ``dap pipeline export --hub`` (#1016): bundle -> Labs hub docbundle + graph."""
 
 from __future__ import annotations
 
@@ -20,17 +20,43 @@ EXAMPLES = sorted((REPO / "examples" / "pipelines").glob("*.pipeline-bundle.json
 FIRST_HUB_SLUGS = ("github-read-issue-comment", "github-issue-triage", "team-collaboration")
 GENERATED = "2026-11-26"
 
-# The hub's docbundle schema 1 rules (labs-hub app/docbundle.py), plus the ``graph`` key this adapter adds.
+# The hub's docbundle schema 1 rules, plus the ``graph`` key this adapter adds.
 HUB_KEYS = {
-    "schema", "kind", "slug", "lang", "title", "summary", "goal", "needs", "steps", "pitfalls",
-    "sources", "generated", "curated_on", "source_note", "graph",
+    "schema",
+    "kind",
+    "slug",
+    "lang",
+    "title",
+    "summary",
+    "goal",
+    "needs",
+    "steps",
+    "pitfalls",
+    "sources",
+    "generated",
+    "curated_on",
+    "source_note",
+    "graph",
 }
-HUB_REQUIRED = {"schema", "kind", "slug", "lang", "title", "summary", "goal", "needs", "steps", "pitfalls", "generated"}
+HUB_REQUIRED = {
+    "schema",
+    "kind",
+    "slug",
+    "lang",
+    "title",
+    "summary",
+    "goal",
+    "needs",
+    "steps",
+    "pitfalls",
+    "generated",
+}
 HUB_SLUG = re.compile(r"^(?!g\d+-)[a-z0-9][a-z0-9-]{2,62}$")
 
 
 def _load(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    data: dict[str, Any] = json.loads(path.read_text())
+    return data
 
 
 def _example(name: str) -> dict[str, Any]:
@@ -54,10 +80,14 @@ def assert_hub_valid(page: dict[str, Any]) -> None:
         assert set(step) <= {"title", "body", "code"} and {"title", "body"} <= set(step)
         assert 0 < len(step["title"]) <= 200 and 0 < len(step["body"]) <= 4000
     for name in page.get("sources", []):
-        assert len(name) <= 100 and not re.search(r"[/\\]|://|^[A-Za-z]:|\.(?:md|txt|json|ya?ml)$", name)
+        assert len(name) <= 100 and not re.search(
+            r"[/\\]|://|^[A-Za-z]:|\.(?:md|txt|json|ya?ml)$", name
+        )
     note = page.get("source_note", "")
     assert len(note) <= 160
-    assert not re.search(r"://|\bwww\.|[/\\]|\b[\w-]+\.(?:com|es|org|net|io|dev|md|json|ya?ml|txt|py|sh)\b", note)
+    assert not re.search(
+        r"://|\bwww\.|[/\\]|\b[\w-]+\.(?:com|es|org|net|io|dev|md|json|ya?ml|txt|py|sh)\b", note
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +108,13 @@ def test_graph_mirrors_the_pipeline_without_start_and_end() -> None:
     bundle = _example("github-issue-triage")
     graph = to_hub_bundle(bundle, "github-issue-triage", generated=GENERATED)["graph"]
     assert graph["entry"] == "fetch_issues"
-    assert [n["id"] for n in graph["nodes"]] == ["fetch_issues", "select_issue", "load_prd", "enrich", "create_branch"]
+    assert [n["id"] for n in graph["nodes"]] == [
+        "fetch_issues",
+        "select_issue",
+        "load_prd",
+        "enrich",
+        "create_branch",
+    ]
     first = graph["nodes"][0]
     assert first == {
         "id": "fetch_issues",
@@ -90,15 +126,26 @@ def test_graph_mirrors_the_pipeline_without_start_and_end() -> None:
         "y": 0,
     }
     assert {"from": "fetch_issues", "to": "select_issue"} in graph["edges"]
-    assert all("__start__" not in (e["from"], e["to"]) and "__end__" not in (e["from"], e["to"]) for e in graph["edges"])
+    assert all(
+        "__start__" not in (e["from"], e["to"]) and "__end__" not in (e["from"], e["to"])
+        for e in graph["edges"]
+    )
     assert len(graph["edges"]) == 4
 
 
 def test_conditional_edge_keeps_its_label_or_derives_one() -> None:
-    labelled = to_hub_bundle(_example("cortex-github-issue"), "cortex-github-issue", generated=GENERATED)["graph"]
+    labelled = to_hub_bundle(
+        _example("cortex-github-issue"), "cortex-github-issue", generated=GENERATED
+    )["graph"]
     assert {"from": "finalize", "to": "phase1_gate", "label": "READY"} in labelled["edges"]
-    derived = to_hub_bundle(_example("project-bootstrap"), "project-bootstrap", generated=GENERATED)["graph"]
-    assert {"from": "gate_params", "to": "scope_mvp", "label": "gate_params_approved == true"} in derived["edges"]
+    derived = to_hub_bundle(
+        _example("project-bootstrap"), "project-bootstrap", generated=GENERATED
+    )["graph"]
+    assert {
+        "from": "gate_params",
+        "to": "scope_mvp",
+        "label": "gate_params_approved == true",
+    } in derived["edges"]
 
 
 def test_no_prompt_or_runtime_config_reaches_the_bundle() -> None:
@@ -114,7 +161,9 @@ def test_no_prompt_or_runtime_config_reaches_the_bundle() -> None:
 
 
 def test_issue_references_are_dropped_from_text() -> None:
-    page = to_hub_bundle(_example("github-read-issue-comment"), "github-read-issue-comment", generated=GENERATED)
+    page = to_hub_bundle(
+        _example("github-read-issue-comment"), "github-read-issue-comment", generated=GENERATED
+    )
     assert "#919" not in page["summary"]
 
 
@@ -124,12 +173,18 @@ def test_steps_walk_the_nodes_and_explain_import_and_run() -> None:
     assert titles[0].lower().startswith("get the bundle")
     assert titles[1].lower().startswith("import")
     assert titles[-1].lower().startswith("run")
-    assert ["Scope Extractor", "Brief Drafter", "GitHub Issue Formatter"] == [t.split(": ", 1)[1] for t in titles[2:-1]]
+    assert [t.split(": ", 1)[1] for t in titles[2:-1]] == [
+        "Scope Extractor",
+        "Brief Drafter",
+        "GitHub Issue Formatter",
+    ]
     assert "team-collaboration.pipeline-bundle.json" in page["steps"][0]["body"]
 
 
 def test_needs_cover_every_runtime_used() -> None:
-    page = to_hub_bundle(_example("github-issue-triage"), "github-issue-triage", generated=GENERATED)
+    page = to_hub_bundle(
+        _example("github-issue-triage"), "github-issue-triage", generated=GENERATED
+    )
     needs = " ".join(page["needs"]).lower()
     assert "dap" in needs
     assert "shell" in needs  # bash
@@ -208,7 +263,9 @@ def test_write_leaves_nothing_on_refusal(tmp_path: Path) -> None:
 def test_cli_export_writes_the_first_hub_bundles(tmp_path: Path) -> None:
     for slug in FIRST_HUB_SLUGS:
         src = REPO / "examples" / "pipelines" / f"{slug}.pipeline-bundle.json"
-        result = runner.invoke(app, ["pipeline", "export", str(src), "--hub", slug, "--out", str(tmp_path)])
+        result = runner.invoke(
+            app, ["pipeline", "export", str(src), "--hub", slug, "--out", str(tmp_path)]
+        )
         assert result.exit_code == 0, result.output
         assert_hub_valid(_load(tmp_path / slug / "page" / "page.json"))
 
@@ -218,6 +275,8 @@ def test_cli_export_refusal_exits_nonzero(tmp_path: Path) -> None:
     bundle["pipeline"]["description"] = "host 192.168.1.100"
     src = tmp_path / "leaky.pipeline-bundle.json"
     src.write_text(json.dumps(bundle))
-    result = runner.invoke(app, ["pipeline", "export", str(src), "--hub", "leaky", "--out", str(tmp_path / "o")])
+    result = runner.invoke(
+        app, ["pipeline", "export", str(src), "--hub", "leaky", "--out", str(tmp_path / "o")]
+    )
     assert result.exit_code == 2
     assert "192.168" not in result.output
