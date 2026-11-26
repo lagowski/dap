@@ -28,7 +28,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Final
+from typing import Any, Final
 
 from dap_types import (
     BackendErrorCategory,
@@ -65,6 +65,24 @@ class ApiCallAdapter(BaseAdapter):
     id = "api-call"
     display_name = "Direct LLM API call (SDK)"
     kind: RuntimeKind = "api"
+
+    def tool_input_schema(self) -> dict[str, Any]:
+        """The input an agent model may give this runtime as a tool (#1022).
+
+        The prompt and sampling fields only (the user prompt is the agent's own
+        task prompt). ``provider``, ``model_id``, ``base_url`` and
+        ``api_key_env`` stay in the tool's static config, so a model can't send
+        a provider key to its own endpoint or switch to a costlier model.
+        """
+        return {
+            "type": "object",
+            "properties": {
+                "system_prompt": {"type": "string"},
+                "temperature": {"type": "number"},
+                "max_tokens": {"type": "integer", "minimum": 1},
+            },
+            "additionalProperties": False,
+        }
 
     async def healthcheck(self) -> HealthStatus:
         """Available if at least one provider's env var is set.

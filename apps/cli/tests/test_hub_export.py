@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from dap_cli.__main__ import app
-from dap_cli.hub_export import Unsafe, scan, to_hub_bundle, write_hub_bundle
+from dap_cli.hub_export import Unsafe, _plain, scan, to_hub_bundle, write_hub_bundle
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -280,3 +280,15 @@ def test_cli_export_refusal_exits_nonzero(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "192.168" not in result.output
+
+
+def test_plain_removes_a_trailing_parenthesised_reference_whole() -> None:
+    assert _plain("x through state (#919).") == "x through state."
+
+
+def test_plain_removes_a_parenthesised_reference_list_whole() -> None:
+    assert _plain("Reads issues (#1, #2) and comments.") == "Reads issues and comments."
+
+
+def test_plain_still_removes_a_bare_reference() -> None:
+    assert _plain("Built on #12 for good.") == "Built on for good."

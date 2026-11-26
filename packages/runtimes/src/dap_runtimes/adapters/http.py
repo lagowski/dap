@@ -93,6 +93,26 @@ class HttpAdapter(BaseAdapter):
         """Adapter is always available — per-agent URL + auth are checked at execute time."""
         return HealthStatus(available=True, version=f"httpx {httpx.__version__}")
 
+    def tool_input_schema(self) -> dict[str, Any]:
+        """The input an agent model may give this runtime as a tool (#1022).
+
+        The request's data only: ``method`` and the body (``request_template``).
+        ``url``, ``auth``, ``headers`` and ``response_extractor`` stay in the
+        tool's static config, so a model can't point the call at its own host or
+        name an env var to send as credentials.
+        """
+        return {
+            "type": "object",
+            "properties": {
+                "method": {"type": "string", "enum": sorted(ALLOWED_METHODS)},
+                "request_template": {
+                    "type": ["object", "array", "string"],
+                    "description": "The request body (Jinja placeholders rendered as usual)",
+                },
+            },
+            "additionalProperties": False,
+        }
+
     async def execute(  # noqa: PLR0911
         self,
         task: RuntimeTask,

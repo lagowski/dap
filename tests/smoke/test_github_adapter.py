@@ -395,3 +395,31 @@ async def test_registered_as_an_always_available_http_runtime() -> None:
     assert isinstance(adapter, GithubAdapter)
     assert adapter.kind == "http"
     assert (await adapter.healthcheck()).available
+
+
+# --- tool input schema (#1020) ---------------------------------------------------
+
+
+def test_tool_input_schema_lists_ops_and_params_only() -> None:
+    from dap_runtimes.adapters.github import _OPS
+
+    schema = GithubAdapter().tool_input_schema()
+
+    assert schema is not None
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["op"]
+    props = schema["properties"]
+    assert props["op"]["type"] == "string"
+    assert props["op"]["enum"] == list(_OPS)
+    assert props["repo"]["type"] == "string"
+    params = {key for spec in _OPS.values() for key in (*spec.required, *spec.optional)}
+    assert set(props) == {"op", "repo", *params}
+    assert props["issue"]["type"] == "integer"
+    assert props["pr"]["type"] == "integer"
+    assert props["draft"]["type"] == "boolean"
+    assert props["body"]["type"] == "string"
+    assert props["method"]["type"] == "string"
+    for protected in ("api_url", "token_env", "state_key"):
+        assert protected not in props
+        assert protected not in json.dumps(schema)
