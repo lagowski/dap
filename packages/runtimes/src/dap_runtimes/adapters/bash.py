@@ -70,6 +70,15 @@ class BashAdapter(BaseAdapter):
             return HealthStatus(available=False, missing=[f"shell binary: {shell}"])
         return HealthStatus(available=True, version=shell)
 
+    def tool_input_schema(self) -> dict[str, Any]:
+        """The input an agent model may give this runtime as a tool (#1022).
+
+        None: bash has no data fields apart from the command itself, and
+        ``command``, ``shell``, ``env`` and the working directory pick what runs
+        and where. The tool runs the command fixed in its static config.
+        """
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+
     async def execute(  # noqa: PLR0911
         self,
         task: RuntimeTask,

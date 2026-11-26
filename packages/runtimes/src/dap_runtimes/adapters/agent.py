@@ -18,12 +18,27 @@ runtime adapters, declared in ``runtime_config.tools``::
 Each turn sends the conversation to the provider. When the model asks for a
 tool, the adapter builds a ``RuntimeTask`` for the named runtime (the tool's
 static ``config`` overlaid with the model's input), executes it and returns
-the result as a ``tool_result``. The model's input is checked first (#1020):
-keys starting with ``__`` are always refused, and when the tool's schema sets
-``additionalProperties: false`` so is any key outside its ``properties``. A
-tool's schema is the entry's ``input_schema``, else the runtime's own
-``tool_input_schema()`` (the github runtime lists its ops and params, never
-``api_url`` / ``token_env``), else :data:`DEFAULT_INPUT_SCHEMA`. A refused call
+the result as a ``tool_result``. The model's input is checked first (#1020,
+#1022), at the top level of the input, for every tool and whatever schema it
+advertises:
+
+- keys starting with ``__`` are refused;
+- keys on the fixed deny-list :data:`PROTECTED_INPUT_KEYS` (``url``,
+  ``api_url``, ``base_url``, ``env``, ``cwd``, ``command``, ``module``,
+  ``function``, ``state_key``, ``auth``, ``headers``, plus the executable
+  pickers ``callable_path``, ``shell``, ``binary_path``, ``extra_args``) and
+  any key ending in ``_env`` are refused. They redirect where a call goes, which
+  env var becomes a credential, or what code runs; only the tool entry's static
+  ``config`` sets them, and an entry ``input_schema`` listing one doesn't
+  open it;
+- when the schema sets ``additionalProperties: false``, any key outside its
+  ``properties`` is refused;
+- an object-valued key is refused unless the schema's ``properties`` list it.
+
+A tool's schema is the entry's ``input_schema``, else the runtime's own
+``tool_input_schema()`` (github, http, bash and api-call list only their data
+fields), else :data:`DEFAULT_INPUT_SCHEMA`, which is closed: a runtime without a
+schema of its own takes no model input beyond its base config. A refused call
 is a failed tool result naming the keys; the tool doesn't run. The loop ends
 when the model stops asking for tools, or halts with :class:`MaxTurnsExhaustedError` /
 :class:`BudgetExhaustedError` when ``max_turns`` / ``budget_usd`` run out.
@@ -99,14 +114,35 @@ DEFAULT_MAX_TOKENS: Final = 4096
 # A tool result fed back to the model is capped so one verbose tool can't
 # blow the context window.
 MAX_TOOL_RESULT_CHARS: Final = 20_000
-# Generic tool input schema: the tool's runtime_config overrides. Used for a
-# runtime without a ``tool_input_schema()`` of its own when the tool entry sets
-# no ``input_schema``. Keys starting with ``__`` are refused even here (#1020).
+# Generic tool input schema, used for a runtime without a ``tool_input_schema()``
+# of its own when the tool entry sets no ``input_schema``. Closed (#1022): such a
+# tool runs with its base config only; an entry ``input_schema`` opens fields.
 DEFAULT_INPUT_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",
-    "description": "runtime_config fields for this runtime (merged over the tool's config)",
-    "additionalProperties": True,
+    "properties": {},
+    "additionalProperties": False,
 }
+# Model-input keys refused for every tool whatever its schema says (#1022), as
+# is any key ending in ``_env``. See the module docstring.
+PROTECTED_INPUT_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "api_url",
+        "base_url",
+        "env",
+        "cwd",
+        "command",
+        "module",
+        "function",
+        "state_key",
+        "auth",
+        "headers",
+        "callable_path",
+        "shell",
+        "binary_path",
+        "extra_args",
+    }
+)
 
 ToolResolver = Callable[[str], RuntimeAdapter]
 ClientFactory = Callable[[], Any]
@@ -371,7 +407,7 @@ class _Loop:
             record["success"] = False
             return (
                 f"refused tool input keys for '{name}': {', '.join(refused)} "
-                "(not allowed by the tool's input schema)"
+                "(protected, or not allowed by the tool's input schema)"
             ), True
         sub_task = self.task.model_copy(
             update={
@@ -1012,13 +1048,23 @@ def _runtime_schema(tool: RuntimeAdapter) -> dict[str, Any] | None:
 
 
 def _refused_keys(tool_input: dict[str, Any], schema: dict[str, Any]) -> list[str]:
-    """Input keys the tool may not take: ``__``-prefixed always, unlisted ones
-    when the schema is closed (``additionalProperties: false``)."""
-    refused = [key for key in tool_input if key.startswith("__")]
-    if schema.get("additionalProperties") is False:
-        allowed = schema.get("properties") or {}
-        refused += [key for key in tool_input if key not in allowed and key not in refused]
-    return sorted(refused)
+    """Top-level input keys the tool may not take (#1020, #1022).
+
+    ``__``-prefixed, deny-listed and ``*_env`` keys always; with a closed schema
+    (``additionalProperties: false``) any key outside ``properties``; with any
+    schema an object-valued key outside ``properties``.
+    """
+    listed = schema.get("properties")
+    allowed = listed if isinstance(listed, dict) else {}
+    closed = schema.get("additionalProperties") is False
+    return sorted(
+        key
+        for key, value in tool_input.items()
+        if key.startswith("__")
+        or key in PROTECTED_INPUT_KEYS
+        or key.endswith("_env")
+        or (key not in allowed and (closed or isinstance(value, dict)))
+    )
 
 
 def _tool_name(raw: str) -> str:
@@ -1030,6 +1076,7 @@ def _tool_name(raw: str) -> str:
 
 
 __all__ = [
+    "PROTECTED_INPUT_KEYS",
     "AgentAdapter",
     "AgentHaltError",
     "BudgetExhaustedError",
