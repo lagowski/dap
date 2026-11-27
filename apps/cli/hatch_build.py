@@ -12,7 +12,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+# hatchling exists only in the build environment, not in the dev venv.
+from hatchling.builders.hooks.plugin.interface import (  # type: ignore[import-not-found]
+    BuildHookInterface,
+)
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "python-func-pipeline"
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import secrets
+import signal
 import tempfile
 import threading
 import time
@@ -78,8 +79,13 @@ def _login(client: Any, password: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
+def _interrupt(signum: int, frame: object) -> None:
+    raise KeyboardInterrupt
+
+
 def _wait_for_interrupt(session: DemoSession) -> None:
-    """Block until Ctrl-C (raises ``KeyboardInterrupt``). Patched in tests."""
+    """Block until Ctrl-C or SIGTERM (raises ``KeyboardInterrupt``). Patched in tests."""
+    signal.signal(signal.SIGTERM, _interrupt)  # ``kill`` cleans up like Ctrl-C
     while True:
         time.sleep(1)
 
@@ -125,7 +131,9 @@ def demo_command(*, no_dashboard: bool, port: int, engine_port: int) -> None:
             # The only place the password ever appears: this terminal.
             typer.echo(f"  demo admin  email: {DEMO_ADMIN_EMAIL}  password: {password}")
             config = EngineConfig(
-                db_path=str(db_path), host="127.0.0.1", port=engine_port,
+                db_path=str(db_path),
+                host="127.0.0.1",
+                port=engine_port,
                 auth_jwt_secret=secrets.token_urlsafe(32),
             )
             engine_app = create_app(config)
@@ -136,8 +144,12 @@ def demo_command(*, no_dashboard: bool, port: int, engine_port: int) -> None:
                 client: _EngineClient = stack.enter_context(TestClient(engine_app))
                 client.headers.update(_login(client, password))  # type: ignore[attr-defined]
                 code, _ = _drive_run(
-                    client, payload, initial_state={}, approve_gates=True,
-                    timeout_s=_RUN_TIMEOUT_S, as_json=False,
+                    client,
+                    payload,
+                    initial_state={},
+                    approve_gates=True,
+                    timeout_s=_RUN_TIMEOUT_S,
+                    as_json=False,
                 )
                 if code == EXIT_SUCCESS:
                     typer.echo("greet → shout → gate → end completed")
@@ -148,37 +160,48 @@ def demo_command(*, no_dashboard: bool, port: int, engine_port: int) -> None:
             headers = _login(http, password)
             http.headers.update(headers)
             code, run = _drive_run(
-                http, payload, initial_state={}, approve_gates=False,
-                timeout_s=_RUN_TIMEOUT_S, as_json=False,
+                http,
+                payload,
+                initial_state={},
+                approve_gates=False,
+                timeout_s=_RUN_TIMEOUT_S,
+                as_json=False,
             )
             if code != EXIT_GATE:
                 raise typer.Exit(code)
             run_id = str(run["id"])
-            dashboard = spawn_dashboard(port=port, engine_url=engine_url)
-            if dashboard is not None:
-                stack.callback(_stop, dashboard)
-                typer.echo(f"  dashboard   http://127.0.0.1:{port}  (log in as the demo admin)")
-                typer.echo(f"  approve the gate here: http://127.0.0.1:{port}/runs/{run_id}")
-            else:
-                if find_bundle() is None:
-                    why = "no dashboard bundle in this install"
-                elif find_node() is None:
-                    why = "Node.js is not on PATH"
-                else:
-                    why = "it failed to start"
-                typer.echo(f"  dashboard   not started ({why}); the engine is at {engine_url}")
-                typer.echo(f"  approve the gate: POST {engine_url}/runs/{run_id}/nodes/gate/approve")
+            _start_dashboard(stack, port=port, engine_url=engine_url, run_id=run_id)
             typer.echo("Press Ctrl+C to stop and remove the demo instance.")
             session = DemoSession(state_dir, engine_url, run_id, headers)
             with contextlib.suppress(KeyboardInterrupt):
                 _wait_for_interrupt(session)
-            typer.echo("demo stopped; temporary instance removed")
+        typer.echo("demo stopped; temporary instance removed")
     except KeyboardInterrupt:
         typer.echo("demo interrupted; temporary instance removed", err=True)
         raise typer.Exit(130) from None
     except (_RunError, httpx.HTTPError, FileNotFoundError) as exc:
         typer.echo(f"dap demo failed: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+
+def _start_dashboard(
+    stack: contextlib.ExitStack[Any], *, port: int, engine_url: str, run_id: str
+) -> None:
+    """Spawn the bundled dashboard (stopped on exit) and say where the run's gate is."""
+    dashboard = spawn_dashboard(port=port, engine_url=engine_url)
+    if dashboard is not None:
+        stack.callback(_stop, dashboard)
+        typer.echo(f"  dashboard   http://127.0.0.1:{port}  (log in as the demo admin)")
+        typer.echo(f"  approve the gate here: http://127.0.0.1:{port}/runs/{run_id}")
+        return
+    if find_bundle() is None:
+        why = "no dashboard bundle in this install"
+    elif find_node() is None:
+        why = "Node.js is not on PATH"
+    else:
+        why = "it failed to start"
+    typer.echo(f"  dashboard   not started ({why}); the engine is at {engine_url}")
+    typer.echo(f"  approve the gate: POST {engine_url}/runs/{run_id}/nodes/gate/approve")
 
 
 def _stop(proc: Any) -> None:
