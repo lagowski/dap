@@ -215,6 +215,21 @@ its exact prompt, output, tokens and cost. From a terminal, `dap project run`, `
 - [docs/pipelines.md](docs/pipelines.md): retry loops, workspace diff state, fallback chains.
 - [docs/projects.md](docs/projects.md): projects and the `dap project` workflow.
 
+### Use the review council in your repo
+
+DAP's Code Review Council runs scoped AI reviewers (security, correctness and others) on a pull request,
+then an arbiter drops duplicates and low-confidence findings before one review comment is posted. It is a
+one-file GitHub Actions workflow and needs only a Gemini or OpenRouter API key:
+
+```yaml
+- uses: lagowski/dap/review@v0.4.0
+  with:
+    api-key: ${{ secrets.GEMINI_API_KEY }}
+```
+
+The full copy-paste workflow, inputs, project-context file and the local CLI
+(`code-review-council --base main --head HEAD`) are in [review/README.md](review/README.md).
+
 ## Configuration
 
 The engine reads its settings from the process environment at startup only, so restart it

@@ -27,6 +27,9 @@ dependencies = [
     "pydantic>=2.9.0,<3.0",
 ]
 
+[project.scripts]
+code-review-council = "code_review_council.cli:run"
+
 [project.urls]
 Homepage = "https://github.com/lagowski/dap"
 Repository = "https://github.com/lagowski/dap"
