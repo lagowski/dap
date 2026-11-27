@@ -52,6 +52,9 @@ import {
 import { useAgentsList } from "@/hooks/api";
 import {
   arrangeDesignerGraph,
+  arrangeImprovesReadability,
+  designerHandleSides,
+  designerNodeBox,
   FIT_MIN_ZOOM,
   fitViewportToBoxes,
   measuredNodeBox,
@@ -184,8 +187,9 @@ function PipelineDesignerCanvas({
   // ui_metadata.node_positions (saved by buildPayload on every Save); fall
   // back to PipelineNode.position for older pipelines (#226). Layout guard
   // (#1033): when a node has no usable position or two node boxes overlap
-  // (an imported bundle can stack every node), run the dagre layout; the
-  // layout autosave then persists it. A graph without overlaps is untouched.
+  // (an imported bundle can stack every node), or when the graph cannot be
+  // shown at a readable zoom and the snake layout reads clearly better, run
+  // the layout; the layout autosave then persists it. Otherwise untouched.
   const [initialGraph] = useState(() => {
     const savedPositions = seed?.ui_metadata?.node_positions as
       | Record<string, { x: number; y: number }>
@@ -198,14 +202,24 @@ function PipelineDesignerCanvas({
     const openedEdges = (seed?.edges ?? []).map((edge) =>
       toReactFlowEdge(edge, savedEdgeWaypoints[edge.id] ?? []),
     );
-    if (!needsDesignerLayout(openedNodes)) {
-      return { nodes: openedNodes, edges: openedEdges, arranged: false };
+    const arranged = arrangeDesignerGraph(openedNodes, openedEdges);
+    // Round 3: a graph without overlaps is also re-laid out when it cannot be
+    // shown readably (one 22-column row opened at zoom ~0.1).
+    const relayout =
+      needsDesignerLayout(openedNodes) ||
+      arrangeImprovesReadability(
+        openedNodes.map(designerNodeBox),
+        arranged.nodes.map(designerNodeBox),
+      );
+    if (!relayout) {
+      return { nodes: openedNodes, edges: openedEdges, arranged: false, snapshot: null };
     }
-    const conditional = new Set(
-      (seed?.edges ?? []).filter((e) => e.condition != null).map((e) => e.id),
-    );
-    const arranged = arrangeDesignerGraph(openedNodes, openedEdges, conditional);
-    return { nodes: arranged.nodes, edges: arranged.edges, arranged: true };
+    return {
+      nodes: arranged.nodes,
+      edges: arranged.edges,
+      arranged: true,
+      snapshot: arranged.snapshot,
+    };
   });
   // A re-laid-out graph ignores the saved viewport, which framed the old
   // positions, and fits the view instead.
@@ -227,7 +241,10 @@ function PipelineDesignerCanvas({
   const [nodes, setNodes] = useState<Node[]>(initialGraph.nodes);
   const [edges, setEdges] = useState<Edge[]>(initialGraph.edges);
   // Positions and waypoints the last Auto-arrange replaced ("Undo arrange").
-  const [arrangeUndo, setArrangeUndo] = useState<ArrangeSnapshot | null>(null);
+  // An open-time re-layout can be undone too.
+  const [arrangeUndo, setArrangeUndo] = useState<ArrangeSnapshot | null>(
+    initialGraph.snapshot,
+  );
 
   // Designer-domain edge metadata that React Flow doesn't know about.
   const [edgeMeta, setEdgeMeta] = useState<
@@ -387,17 +404,12 @@ function PipelineDesignerCanvas({
   );
 
   const handleAutoArrange = useCallback(() => {
-    const conditional = new Set(
-      Object.entries(edgeMeta)
-        .filter(([, meta]) => meta.condition != null)
-        .map(([id]) => id),
-    );
-    const arranged = arrangeDesignerGraph(nodes, edges, conditional);
+    const arranged = arrangeDesignerGraph(nodes, edges);
     setNodes(arranged.nodes);
     setEdges(arranged.edges);
     setArrangeUndo(arranged.snapshot);
     setFitReason("arrange");
-  }, [nodes, edges, edgeMeta]);
+  }, [nodes, edges]);
 
   const handleUndoArrange = useCallback(() => {
     if (arrangeUndo == null) return;
@@ -433,6 +445,18 @@ function PipelineDesignerCanvas({
     setFitReason(null);
   }, [fitReason, nodes, nodesInitialized, paneWidth, paneHeight, reactFlow, savedViewport]);
 
+  // Handles face the neighbouring nodes (#1033 round 3): worked out from the
+  // positions, so a reopened snake graph draws its turns like Auto-arrange.
+  const renderedNodes = useMemo<Node[]>(() => {
+    const sides = designerHandleSides(nodes, edges);
+    return nodes.map((n) => {
+      const side = sides[n.id];
+      if (!side || (n.sourcePosition === side.source && n.targetPosition === side.target)) {
+        return n;
+      }
+      return { ...n, sourcePosition: side.source, targetPosition: side.target };
+    });
+  }, [nodes, edges]);
   const { designerNodes, designerEdges, annotatedEdges, selectionDetail } =
     usePipelineProjections({ nodes, edges, edgeMeta, agents, selection });
   const renderedEdges = useMemo<Edge[]>(
@@ -522,7 +546,7 @@ function PipelineDesignerCanvas({
         <AgentPalette onAddNode={handleAddNode} />
         <div className="flex-1 bg-muted/30">
           <ReactFlow
-            nodes={nodes}
+            nodes={renderedNodes}
             edges={renderedEdges}
             edgeTypes={EDGE_TYPES}
             onNodesChange={onNodesChange}

@@ -10,12 +10,7 @@ import {
   routePoints,
   waypointPath,
 } from "./waypoint-edge";
-import {
-  designerNodeBox,
-  layoutDesignerGraph,
-  sourceHandle,
-  targetHandle,
-} from "@/lib/graph-layout";
+import { designerNodeBox, handlePoint, layoutDesignerGraph } from "@/lib/graph-layout";
 
 describe("orthogonalVertices", () => {
   it("returns an empty list without points", () => {
@@ -225,26 +220,27 @@ describe("nudgeWaypoint", () => {
 });
 
 describe("routes after a designer layout (#1033)", () => {
-  // Real drawn route: the edge's handles (bottom-centre out, top-centre in),
-  // the layout's waypoints through ``routePoints``, expanded the way
-  // ``waypointPath`` draws it; every segment must stay out of every node box.
+  // Real drawn route: the edge's handles on the sides the layout picked
+  // (round 3), the layout's waypoints through ``routePoints``, expanded the
+  // way ``waypointPath`` draws it; every segment must stay out of every box.
   function drawnRouteCrossesANode(
     nodes: Parameters<typeof layoutDesignerGraph>[0],
     edges: Parameters<typeof layoutDesignerGraph>[1],
-    conditional: Set<string>,
     withWaypoints = true,
   ): Record<string, boolean> {
-    const { nodes: laidOut, waypoints } = layoutDesignerGraph(nodes, edges, conditional);
+    const { nodes: laidOut, waypoints, sides } = layoutDesignerGraph(nodes, edges);
     const boxes = laidOut.map(designerNodeBox);
     const byId = new Map(boxes.map((b) => [b.id, b]));
     const out: Record<string, boolean> = {};
     for (const edge of edges) {
+      const ss = sides[edge.source].source;
+      const ts = sides[edge.target].target;
       const points = routePoints(
-        sourceHandle(byId.get(edge.source)!),
-        Position.Bottom,
+        handlePoint(byId.get(edge.source)!, ss),
+        ss,
         withWaypoints ? waypoints[edge.id] : [],
-        targetHandle(byId.get(edge.target)!),
-        Position.Top,
+        handlePoint(byId.get(edge.target)!, ts),
+        ts,
       );
       const vertices = orthogonalVertices(points);
       out[edge.id] = vertices.slice(1).some((b, i) => {
@@ -278,11 +274,11 @@ describe("routes after a designer layout (#1033)", () => {
       edge("back", "review", "code"),
       edge("loop", "test", "plan"),
     ];
-    const crosses = drawnRouteCrossesANode(nodes, edges, new Set(["back"]));
+    const crosses = drawnRouteCrossesANode(nodes, edges);
     expect(crosses).toEqual({ e1: false, e2: false, e3: false, back: false, loop: false });
     // The check has teeth: drawn without the layout's waypoints, the same
     // back-edges cut through nodes.
-    const bare = drawnRouteCrossesANode(nodes, edges, new Set(["back"]), false);
+    const bare = drawnRouteCrossesANode(nodes, edges, false);
     expect(bare.back || bare.loop).toBe(true);
   });
 
@@ -294,7 +290,37 @@ describe("routes after a designer layout (#1033)", () => {
       edge("cd", "c", "d"),
       edge("skip", "a", "d"),
     ];
-    const crosses = drawnRouteCrossesANode(nodes, edges, new Set(["skip"]));
+    const crosses = drawnRouteCrossesANode(nodes, edges);
     expect(crosses.skip).toBe(false);
+  });
+
+  const chainIds = (n: number) => Array.from({ length: n }, (_, i) => `n${i}`);
+
+  it("a snake-wrapped chain with loops and skips across rows crosses no node box", () => {
+    const ids = chainIds(26);
+    const edges = ids.slice(1).map((id, i) => edge(`e${i}`, ids[i], id));
+    edges.push(
+      edge("loop-row", "n5", "n2"), // back within the first row
+      edge("loop-up", "n20", "n3"), // back across rows
+      edge("skip-down", "n4", "n17"), // forward across rows
+      edge("self", "n9", "n9"),
+    );
+    const crosses = drawnRouteCrossesANode(ids.map(node), edges);
+    expect(Object.entries(crosses).filter(([, c]) => c)).toEqual([]);
+  });
+
+  it("a fan-out of 5 branches at a row turn crosses no node box", () => {
+    const ids = chainIds(8);
+    const edges = ids.slice(1).map((id, i) => edge(`e${i}`, ids[i], id));
+    for (let b = 0; b < 5; b++) {
+      for (let d = 0; d < 5; d++) {
+        ids.push(`b${b}_${d}`);
+        edges.push(edge(`f${b}_${d}`, d === 0 ? "n7" : `b${b}_${d - 1}`, `b${b}_${d}`));
+      }
+      edges.push(edge(`j${b}`, `b${b}_4`, "join"));
+    }
+    ids.push("join");
+    const crosses = drawnRouteCrossesANode(ids.map(node), edges);
+    expect(Object.entries(crosses).filter(([, c]) => c)).toEqual([]);
   });
 });

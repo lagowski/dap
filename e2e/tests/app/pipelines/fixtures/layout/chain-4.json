@@ -1,0 +1,57 @@
+{
+  "name": "chain-4",
+  "description": "Imported chain of 4 nodes, every node stacked at the origin.",
+  "entry_point": "n0",
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_n0_n1",
+      "source": "n0",
+      "target": "n1"
+    },
+    {
+      "id": "e_n1_n2",
+      "source": "n1",
+      "target": "n2"
+    },
+    {
+      "id": "e_n2_n3",
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "id": "e_n3_end",
+      "source": "n3",
+      "target": "__end__"
+    }
+  ]
+}
