@@ -784,9 +784,10 @@ export function visibleBoxFraction(
 
 /** Smallest zoom at which a designer graph still reads (#1033 round 3). */
 export const READABLE_ZOOM = 0.4;
-/** The pane the open-time readability check assumes: a little smaller than
- *  the designer's canvas in a 1600x900 window, so it errs towards arranging. */
-export const REFERENCE_PANE: PaneSize = { width: 900, height: 640 };
+/** The pane the open-time readability check assumes: the designer's canvas
+ *  in a 1600x900 window (about 800x815 between the palette and the
+ *  inspector), rounded down so the check errs towards arranging. */
+export const REFERENCE_PANE: PaneSize = { width: 780, height: 760 };
 
 /** Zoom at which ``boxes`` just fit ``pane`` (not clamped). */
 export function fitZoomFor(
