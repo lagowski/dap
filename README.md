@@ -173,7 +173,7 @@ one in the demo: `greet → shout → gate → end`.
    `python-func` agents and wires them into the DAG. You land on `/pipelines/<id>/edit`.
 3. Click **Run**. The live run view shows `greet` and `shout` finish, then the run waits at
    the `gate` node for a human.
-4. Approve the gate. The run ends `completed`, with `extensions.greeting_loud` set
+4. Approve the gate. The run ends with status `success` and `extensions.greeting_loud` set
    to `HELLO, WORLD!`.
 
 How the nodes are written: [`docs/python-func-pipelines.md`](docs/python-func-pipelines.md).

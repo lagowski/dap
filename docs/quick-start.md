@@ -337,7 +337,7 @@ Its nodes are plain Python, so the package has to be importable by the engine.
 2. In the dashboard open **Pipelines**, click **Import JSON** and pick
    `examples/python-func-pipeline/example.pipeline-bundle.json`.
 3. Click **Run**. `greet` and `shout` finish, then the run waits at `gate`.
-4. Approve the gate. The run ends `completed` with `extensions.greeting_loud` = `HELLO, WORLD!`.
+4. Approve the gate. The run ends with status `success` and `extensions.greeting_loud` = `HELLO, WORLD!`.
 
 ### Second pipeline: with real tools
 
