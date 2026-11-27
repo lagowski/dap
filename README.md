@@ -4,7 +4,7 @@
 </picture></a></p>
 
 <p align="center"><b>Deterministic agent pipelines: the state machine decides what runs next, never the model.</b><br>
-<a href="#installation">Install</a> · <a href="#demo">Demo</a> · <a href="#how-it-works">How it works</a> · <a href="docs/architecture.md">Docs</a></p>
+<a href="#installation">Install</a> · <a href="#demo">Demo</a> · <a href="#how-it-works">How it works</a> · <a href="docs/architecture.md">Docs</a> · <a href="docs/why-dap.md">Why DAP</a></p>
 
 <p align="center">
 <a href="https://github.com/lagowski/dap/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lagowski/dap/ci.yml?branch=develop&style=flat-square&labelColor=1a1a1a&label=CI"></a>
@@ -262,6 +262,8 @@ e2e/           Playwright browser e2e (see e2e/COVERAGE.md for scope)
 ### Documentation
 
 - [docs/quick-start.md](docs/quick-start.md): pick an install path. **Start here.**
+- [docs/why-dap.md](docs/why-dap.md): why DAP exists, a dated timeline of its design
+  decisions, and what is in and out of scope.
 - [DEPLOYMENT.md](DEPLOYMENT.md): local-only, LAN and SSH tunnel setups.
 - [docs/self-hosting.md](docs/self-hosting.md): deployment paths, production checklist,
   OAuth, troubleshooting.
