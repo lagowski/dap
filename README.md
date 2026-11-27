@@ -4,15 +4,14 @@
 </picture></a></p>
 
 <p align="center"><b>Deterministic agent pipelines: the state machine decides what runs next, never the model.</b><br>
-<a href="#installation">Install</a> · <a href="#demo">Demo</a> · <a href="#how-it-works">How it works</a> · <a href="docs/architecture.md">Docs</a></p>
+<a href="#installation">Install</a> · <a href="#demo">Demo</a> · <a href="#how-it-works">How it works</a> · <a href="docs/architecture.md">Docs</a> · <a href="docs/why-dap.md">Why DAP</a></p>
 
 <p align="center">
 <a href="https://github.com/lagowski/dap/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lagowski/dap/ci.yml?branch=develop&style=flat-square&labelColor=1a1a1a&label=CI"></a>
 <a href="https://pypi.org/project/dap-cli/"><img alt="PyPI: dap-cli" src="https://img.shields.io/badge/pypi-dap--cli-e0643c?style=flat-square&labelColor=1a1a1a"></a>
 <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-e0643c?style=flat-square&labelColor=1a1a1a"></a>
 <img alt="Python 3.13+" src="https://img.shields.io/badge/python-3.13%2B-e0643c?style=flat-square&labelColor=1a1a1a">
-<img alt="9 runtime adapters" src="https://img.shields.io/badge/runtimes-9-e0643c?style=flat-square&labelColor=1a1a1a">
-<a href="https://github.com/lagowski/dap"><img alt="GitHub stars" src="https://img.shields.io/github/stars/lagowski/dap?style=flat-square&labelColor=1a1a1a&color=e0643c"></a>
+<img alt="10 runtime adapters" src="https://img.shields.io/badge/runtimes-10-e0643c?style=flat-square&labelColor=1a1a1a">
 </p>
 
 # DAP — Deterministic Agent Pipeline
@@ -59,7 +58,7 @@ flowchart LR
   dash -->|REST| engine["apps/engine<br/>FastAPI + LangGraph :7333"]
   engine --> db[("SQLite .dap/state.db<br/>or PostgreSQL")]
   engine --> dsl["packages/prompt-dsl<br/>Jinja → XML"]
-  engine --> rt["packages/runtimes<br/>9 adapters"]
+  engine --> rt["packages/runtimes<br/>10 adapters"]
   rt --> sdk["api-call: Anthropic / OpenAI / Gemini / GLM / OpenRouter"]
   rt --> clis["claude-code / gemini-cli / codex / aider"]
   rt --> other["github / bash / python-func / http"]
@@ -161,23 +160,46 @@ pnpm dev                                  # http://localhost:3000
 
 With the PyPI install, use `dap start`, `dap stop` and `dap status` instead.
 
-### First pipeline
+### First pipeline (no API key)
 
-The repo ships an importable example bundle that exercises the whole stack:
+The first pipeline runs your own Python, so it needs no API key, no `gh auth` and no
+extra files. It is [`examples/python-func-pipeline`](examples/python-func-pipeline/), the
+one in the demo: `greet → shout → gate → end`.
 
-1. Open `http://localhost:3000/pipelines` and click **Import JSON**.
-2. Pick `examples/pipelines/github-issue-triage.pipeline-bundle.json`.
-3. The engine creates the bundled agents (one bash, two GLM api-call, two more bash) and
-   wires them into a 5-node DAG
-   (`fetch_issues → select_issue → load_prd → enrich → create_branch`). You land on
-   `/pipelines/<id>/edit`.
-4. Click **Run**. The page redirects to the live run view, which shows each node's status,
-   prompt, output and cost as it runs.
+1. Stop the stack if it is running, install the example package into the engine venv, then
+   start the stack again (the engine imports the node code from its own venv):
 
-This bundle needs `gh auth login` on the host, `GLM_API_KEY` in `.env.local`, and a
-`docs/PRD.md` in the repo the engine is started from. Other bundles in
-[`examples/pipelines/`](examples/pipelines/): `github-read-issue-comment` (the `github`
-runtime), `tester-coder-retry` (retry loops), `team-collaboration` and
+   ```bash
+   uv pip install -e examples/python-func-pipeline
+   ./scripts/dev
+   ```
+
+2. Open `http://localhost:3000/pipelines`, click **Import JSON** and pick
+   `examples/python-func-pipeline/example.pipeline-bundle.json`. The engine creates three
+   `python-func` agents and wires them into the DAG. You land on `/pipelines/<id>/edit`.
+3. Click **Run**. The live run view shows `greet` and `shout` finish, then the run waits at
+   the `gate` node for a human.
+4. Approve the gate. The run ends with status `success` and `extensions.greeting_loud` set
+   to `HELLO, WORLD!`.
+
+How the nodes are written: [`docs/python-func-pipelines.md`](docs/python-func-pipelines.md).
+
+### Second pipeline: with real tools
+
+`examples/pipelines/github-issue-triage.pipeline-bundle.json` calls GitHub and an LLM. Before
+you import it you need:
+
+- `gh auth login` on the host (its `bash` nodes run `gh`),
+- `GLM_API_KEY` in `.env.local` (its two `api-call` nodes use GLM), then restart the engine,
+- a `docs/PRD.md` in the repo the engine is started from.
+
+Import it the same way. The engine creates the bundled agents (one bash, two GLM api-call,
+two more bash) and wires them into a 5-node DAG
+(`fetch_issues → select_issue → load_prd → enrich → create_branch`). Click **Run**. The
+live run view shows each node's status, prompt, output and cost as it runs.
+
+Other bundles in [`examples/pipelines/`](examples/pipelines/): `github-read-issue-comment`
+(the `github` runtime), `tester-coder-retry` (retry loops), `team-collaboration` and
 `cortex-github-issue`. Everything stays editable from the dashboard once it's imported.
 
 ### Agents, pipelines and logs
@@ -213,7 +235,7 @@ apps/
   cli/         Typer CLI `dap` (init, start, stop, status, project run/approve/reject/state)
 packages/
   types/                Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
-  runtimes/             The 9 runtime adapters (api-call has 5 built-in providers + openai-compat)
+  runtimes/             The 10 runtime adapters (api-call has 5 built-in providers + openai-compat)
   prompt-dsl/           Jinja2 → XML prompt compiler with sandboxing and schema validation
   database/             Shared SQLAlchemy engine and session factories (SQLite WAL / PostgreSQL)
   code-review-council/  Multi-agent PR reviewer (security/correctness/db/perf/frontend + arbiter);
@@ -246,6 +268,8 @@ e2e/           Playwright browser e2e (see e2e/COVERAGE.md for scope)
 ### Documentation
 
 - [docs/quick-start.md](docs/quick-start.md): pick an install path. **Start here.**
+- [docs/why-dap.md](docs/why-dap.md): why DAP exists, a dated timeline of its design
+  decisions, and what is in and out of scope.
 - [DEPLOYMENT.md](DEPLOYMENT.md): local-only, LAN and SSH tunnel setups.
 - [docs/self-hosting.md](docs/self-hosting.md): deployment paths, production checklist,
   OAuth, troubleshooting.
