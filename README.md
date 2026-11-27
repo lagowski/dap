@@ -69,6 +69,12 @@ flowchart LR
 
 ## Installation
 
+**Try it in one command:** `pipx run dap-cli demo`. It starts a throwaway instance (a temp
+SQLite database, removed on Ctrl-C), runs the example pipeline (greet → shout → gate) up to
+its human-approval gate and prints the run's dashboard URL and a one-time admin login, so you
+can approve the gate in the UI. No API key, `gh` login or network. `dap demo --no-dashboard`
+approves the gate itself and exits.
+
 There are three supported install paths, from simplest to most involved:
 
 1. **PyPI**: `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`.
