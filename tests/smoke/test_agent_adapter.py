@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
+import httpx
 import pytest
 from dap_runtimes.adapters._providers._base import ProviderError
 from dap_runtimes.adapters.agent import (
@@ -891,7 +892,11 @@ async def test_agent_entry_schema_cannot_open_a_deny_listed_key(key: str) -> Non
 
 async def test_agent_open_entry_schema_refuses_unlisted_object_values() -> None:
     tool = _StubTool()
-    custom = {"type": "object", "properties": {"op": {"type": "string"}, "body": {}}}
+    custom = {
+        "type": "object",
+        "properties": {"op": {"type": "string"}, "body": {}},
+        "additionalProperties": True,
+    }
 
     _, refused = await _run_one(
         "github", tool, {"op": "x", "extra": {"nested": 1}}, input_schema=custom
@@ -925,7 +930,7 @@ def test_runtime_tool_schemas_are_closed_and_hold_no_deny_listed_key(adapter_cls
 @pytest.mark.parametrize(
     ("runtime_id", "adapter_cls", "base", "tool_input"),
     [
-        ("http", HttpAdapter, _HTTP_BASE, {"method": "PUT", "request_template": {"q": "hi"}}),
+        ("http", HttpAdapter, _HTTP_BASE, {"method": "PUT", "body": {"q": "hi"}}),
         ("bash", BashAdapter, {"command": "pytest -q"}, {}),
         (
             "api-call",
@@ -963,3 +968,138 @@ async def test_agent_api_call_tool_refuses_base_url_and_key_env() -> None:
     assert tool_result["is_error"] is True
     for key in ("api_key_env", "base_url", "provider"):
         assert key in tool_result["content"]
+
+
+# --- #1037: request_template is static-only, a missing additionalProperties is closed,
+# --- the deny-list is case-insensitive ---
+
+
+class _EchoHttpClient:
+    """Fake httpx.AsyncClient: records the request and echoes its body back."""
+
+    sent: ClassVar[list[dict[str, Any]]] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+
+    async def __aenter__(self) -> _EchoHttpClient:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def request(self, **kwargs: Any) -> httpx.Response:
+        _EchoHttpClient.sent.append(kwargs)
+        echoed = kwargs["json"] if kwargs["json"] is not None else kwargs["content"]
+        return httpx.Response(
+            200,
+            json={"answer": json.dumps(echoed)},
+            request=httpx.Request(kwargs["method"], kwargs["url"]),
+        )
+
+
+_SECRET_HEADER = "Bearer sk-static-1037"
+_HTTP_WITH_HEADERS: dict[str, Any] = {
+    **_HTTP_BASE,
+    "headers": {"Authorization": _SECRET_HEADER},
+}
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        {"leak": "{{ runtime_config.headers }}"},
+        "{{ runtime_config.headers }}",
+        {"leak": "{{ runtime_config.auth }}"},
+    ],
+)
+async def test_agent_http_model_request_template_cannot_read_static_headers(
+    template: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _EchoHttpClient.sent = []
+    monkeypatch.setattr(httpx, "AsyncClient", _EchoHttpClient)
+
+    result, tool_result = await _run_one(
+        "http", HttpAdapter(), {"request_template": template}, base=_HTTP_WITH_HEADERS
+    )
+
+    bodies = [(call["json"], call["content"]) for call in _EchoHttpClient.sent]
+    assert _SECRET_HEADER not in json.dumps(bodies, default=str)
+    assert _SECRET_HEADER not in tool_result["content"]
+    assert _SECRET_HEADER not in json.dumps(result.structured, default=str)
+    assert tool_result["is_error"] is True
+    assert "request_template" in tool_result["content"]
+    assert _EchoHttpClient.sent == []
+
+
+async def test_agent_http_model_body_is_sent_verbatim_not_rendered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _EchoHttpClient.sent = []
+    monkeypatch.setattr(httpx, "AsyncClient", _EchoHttpClient)
+
+    _, tool_result = await _run_one(
+        "http",
+        HttpAdapter(),
+        {"body": {"q": "{{ runtime_config.headers }}"}},
+        base=_HTTP_WITH_HEADERS,
+    )
+
+    assert tool_result["is_error"] is False, tool_result["content"]
+    assert [call["json"] for call in _EchoHttpClient.sent] == [
+        {"q": "{{ runtime_config.headers }}"}
+    ]
+    assert _SECRET_HEADER not in tool_result["content"]
+
+
+def test_http_tool_schema_offers_body_not_request_template() -> None:
+    properties = HttpAdapter().tool_input_schema()["properties"]
+
+    assert "body" in properties
+    assert "request_template" not in properties
+
+
+async def test_agent_entry_schema_without_additional_properties_is_closed() -> None:
+    tool = _StubTool()
+    custom: dict[str, Any] = {"properties": {"op": {}}}
+
+    _, tool_result = await _run_one(
+        "github", tool, {"op": "read_issue", "args": "x"}, input_schema=custom
+    )
+
+    assert tool.tasks == []
+    assert tool_result["is_error"] is True
+    assert "args" in tool_result["content"]
+
+
+@pytest.mark.parametrize("key", ["URL", "Api_Url", "TOKEN_ENV", "Headers", "__Pipeline_State"])
+async def test_agent_deny_list_ignores_key_case(key: str) -> None:
+    tool = _Recording(HttpAdapter())
+    open_schema = {"type": "object", "properties": {key: {}}, "additionalProperties": True}
+
+    _, tool_result = await _run_one(
+        "http", tool, {key: "x"}, base=_HTTP_BASE, input_schema=open_schema
+    )
+
+    assert tool.tasks == []
+    assert tool_result["is_error"] is True
+    assert key in tool_result["content"]
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {"op": {}}, "additionalProperties": False},
+        {"type": "object", "properties": {"op": {}}},
+    ],
+)
+async def test_agent_closed_schema_refuses_unlisted_list_value(schema: dict[str, Any]) -> None:
+    tool = _StubTool()
+
+    _, tool_result = await _run_one(
+        "github", tool, {"op": "x", "args": ["--upload", "/etc/passwd"]}, input_schema=schema
+    )
+
+    assert tool.tasks == []
+    assert tool_result["is_error"] is True
+    assert "args" in tool_result["content"]

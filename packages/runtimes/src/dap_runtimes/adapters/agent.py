@@ -26,14 +26,17 @@ advertises:
 - keys on the fixed deny-list :data:`PROTECTED_INPUT_KEYS` (``url``,
   ``api_url``, ``base_url``, ``env``, ``cwd``, ``command``, ``module``,
   ``function``, ``state_key``, ``auth``, ``headers``, plus the executable
-  pickers ``callable_path``, ``shell``, ``binary_path``, ``extra_args``) and
-  any key ending in ``_env`` are refused. They redirect where a call goes, which
+  pickers ``callable_path``, ``shell``, ``binary_path``, ``extra_args``, and
+  http's ``request_template``, which is Jinja rendered with ``runtime_config``
+  in scope, #1037) and any key ending in ``_env`` are refused, whatever the
+  key's case. They redirect where a call goes, which
   env var becomes a credential, or what code runs; only the tool entry's static
   ``config`` sets them, and an entry ``input_schema`` listing one doesn't
   open it;
-- when the schema sets ``additionalProperties: false``, any key outside its
-  ``properties`` is refused;
-- an object-valued key is refused unless the schema's ``properties`` list it.
+- unless the schema sets ``additionalProperties: true``, any key outside its
+  ``properties`` is refused (a schema that omits it counts as closed, #1037);
+- an object- or list-valued key is refused unless the schema's ``properties``
+  list it.
 
 A tool's schema is the entry's ``input_schema``, else the runtime's own
 ``tool_input_schema()`` (github, http, bash and api-call list only their data
@@ -141,6 +144,7 @@ PROTECTED_INPUT_KEYS: Final[frozenset[str]] = frozenset(
         "shell",
         "binary_path",
         "extra_args",
+        "request_template",
     }
 )
 
@@ -1050,21 +1054,26 @@ def _runtime_schema(tool: RuntimeAdapter) -> dict[str, Any] | None:
 def _refused_keys(tool_input: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     """Top-level input keys the tool may not take (#1020, #1022).
 
-    ``__``-prefixed, deny-listed and ``*_env`` keys always; with a closed schema
-    (``additionalProperties: false``) any key outside ``properties``; with any
-    schema an object-valued key outside ``properties``.
+    ``__``-prefixed, deny-listed and ``*_env`` keys always, compared
+    lower-cased (#1037); unless the schema is explicitly open
+    (``additionalProperties: true``) any key outside ``properties``; with any
+    schema an object- or list-valued key outside ``properties``.
     """
     listed = schema.get("properties")
     allowed = listed if isinstance(listed, dict) else {}
-    closed = schema.get("additionalProperties") is False
+    closed = schema.get("additionalProperties") is not True
     return sorted(
         key
         for key, value in tool_input.items()
-        if key.startswith("__")
-        or key in PROTECTED_INPUT_KEYS
-        or key.endswith("_env")
-        or (key not in allowed and (closed or isinstance(value, dict)))
+        if _is_protected(key)
+        or (key not in allowed and (closed or isinstance(value, (dict, list))))
     )
+
+
+def _is_protected(key: str) -> bool:
+    """A key no schema can open: ``__``-prefixed, deny-listed or ``*_env``, any case."""
+    folded = key.casefold()
+    return folded.startswith("__") or folded in PROTECTED_INPUT_KEYS or folded.endswith("_env")
 
 
 def _tool_name(raw: str) -> str:

@@ -12,6 +12,10 @@ Usage shape:
   with Jinja2 placeholders. Rendered against ``{prompt_xml,
   runtime_config}``; the result is the request body. String fields are
   templated; numbers / booleans / lists pass through as-is.
+- ``runtime_config.body`` — optional. A request body sent as-is, never
+  rendered; when set it replaces ``request_template``. It is what an agent
+  model sends when it calls http as a tool (#1037): a model-supplied template
+  would render with ``runtime_config`` (static headers, auth) in scope.
 - ``runtime_config.response_extractor`` — dict mapping result keys to
   JSONPath expressions over the response body. Each match is lifted
   into ``RuntimeResult`` (e.g. ``{"output": "$.response",
@@ -96,18 +100,19 @@ class HttpAdapter(BaseAdapter):
     def tool_input_schema(self) -> dict[str, Any]:
         """The input an agent model may give this runtime as a tool (#1022).
 
-        The request's data only: ``method`` and the body (``request_template``).
-        ``url``, ``auth``, ``headers`` and ``response_extractor`` stay in the
-        tool's static config, so a model can't point the call at its own host or
-        name an env var to send as credentials.
+        The request's data only: ``method`` and a plain ``body``, sent as-is.
+        ``url``, ``auth``, ``headers``, ``request_template`` and
+        ``response_extractor`` stay in the tool's static config, so a model can't
+        point the call at its own host, name an env var to send as credentials,
+        or template static config into the body (#1037).
         """
         return {
             "type": "object",
             "properties": {
                 "method": {"type": "string", "enum": sorted(ALLOWED_METHODS)},
-                "request_template": {
+                "body": {
                     "type": ["object", "array", "string"],
-                    "description": "The request body (Jinja placeholders rendered as usual)",
+                    "description": "The request body, sent as-is (not templated)",
                 },
             },
             "additionalProperties": False,
@@ -132,15 +137,20 @@ class HttpAdapter(BaseAdapter):
         method = str(config.get("method", DEFAULT_METHOD)).upper()
         url = config["url"]
 
-        # Render request body via sandboxed Jinja2 over the template tree.
+        # A plain ``body`` is sent as-is (#1037); otherwise render the request
+        # body via sandboxed Jinja2 over the template tree.
         try:
-            body = _render_template(
-                config["request_template"],
-                _build_template_env(),
-                {
-                    "prompt_xml": task.prompt_xml,
-                    "runtime_config": config,
-                },
+            body = (
+                config["body"]
+                if "body" in config
+                else _render_template(
+                    config["request_template"],
+                    _build_template_env(),
+                    {
+                        "prompt_xml": task.prompt_xml,
+                        "runtime_config": config,
+                    },
+                )
             )
         except TemplateError as exc:
             return _failed(
@@ -256,8 +266,10 @@ def _validate_config(config: dict[str, Any]) -> str | None:  # noqa: PLR0911,PLR
     if not isinstance(method, str) or method.upper() not in ALLOWED_METHODS:
         return f"runtime_config.method must be one of {sorted(ALLOWED_METHODS)}"
 
-    template = config.get("request_template")
-    if not isinstance(template, (dict, list, str)):
+    if "body" in config:
+        if not isinstance(config["body"], (dict, list, str)):
+            return "runtime_config.body must be a dict / list / string"
+    elif not isinstance(config.get("request_template"), (dict, list, str)):
         return (
             "runtime_config.request_template is required "
             "(dict / list / string with Jinja2 placeholders)"
