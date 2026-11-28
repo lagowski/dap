@@ -2,9 +2,9 @@
 
 A runtime adapter is what actually executes a node. The pipeline runner
 hands it a `RuntimeTask` (rendered XML prompt + working directory + timeout
-+ runtime config) and expects a `RuntimeResult` back. DAP ships with nine
++ runtime config) and expects a `RuntimeResult` back. DAP ships with ten
 adapters that follow the same shape: `api-call`, `bash`, `claude-code`,
-`gemini-cli`, `codex`, `aider`, `python-func`, `http`, and `github`.
+`gemini-cli`, `codex`, `aider`, `python-func`, `http`, `github`, and `agent`.
 How to *use* `github`, and the git workspace config on the CLI code
 runtimes, is in [Built-in runtime reference](#built-in-runtime-reference)
 below.

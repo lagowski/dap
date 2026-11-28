@@ -1,0 +1,139 @@
+name: DAP Code Review Council
+description: >-
+  Multi-agent AI review of a pull request. Scoped specialists (security,
+  correctness, database, performance, frontend) review the diff; a final
+  arbiter drops duplicates and low-confidence findings; the result is posted
+  as one PR review comment.
+author: DAP maintainers
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  provider:
+    description: "LLM provider: gemini or openrouter."
+    required: false
+    default: gemini
+  model:
+    description: "Model name. Empty uses the provider's default."
+    required: false
+    default: ""
+  api-key:
+    description: "API key for the provider. Pass a secret, e.g. secrets.GEMINI_API_KEY."
+    required: true
+  context-file:
+    description: >-
+      Optional project-context file (.toml/.json with stack, in_scope,
+      out_of_scope, notes; any other file is read as free-form notes). Path
+      relative to the workspace, so check the repo out first.
+    required: false
+    default: ""
+  fail-on:
+    description: >-
+      none: never fail the job on findings. high: fail the job when a HIGH or
+      CRITICAL finding survives the arbiter (after the review is posted).
+    required: false
+    default: none
+  github-token:
+    description: "Token used to read the PR diff and post the review (needs pull-requests: write)."
+    required: false
+    default: ${{ github.token }}
+  python-version:
+    description: "Python used to run the council (3.13 or newer)."
+    required: false
+    default: "3.13"
+
+outputs:
+  verdict:
+    description: "comment or request_changes."
+    value: ${{ steps.council.outputs.verdict }}
+  findings:
+    description: "Number of findings that survived the arbiter."
+    value: ${{ steps.council.outputs.findings }}
+  json-file:
+    description: "Path of the full JSON verdict."
+    value: ${{ steps.council.outputs.json-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install the review council
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --quiet --disable-pip-version-check \
+          "$GITHUB_ACTION_PATH/../packages/code-review-council"
+
+    - name: Fetch the pull request diff
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::error::This action runs on pull_request or pull_request_target events only."
+          exit 2
+        fi
+        gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/council.diff"
+        echo "diff: $(wc -l < "$RUNNER_TEMP/council.diff") lines"
+
+    - name: Run the council
+      id: council
+      shell: bash
+      env:
+        COUNCIL_API_KEY: ${{ inputs.api-key }}
+        COUNCIL_PROVIDER: ${{ inputs.provider }}
+        COUNCIL_MODEL: ${{ inputs.model }}
+        COUNCIL_CONTEXT_FILE: ${{ inputs.context-file }}
+        COUNCIL_FAIL_ON: ${{ inputs.fail-on }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+      run: |
+        set -uo pipefail
+        args=(--diff "$RUNNER_TEMP/council.diff"
+              --provider "$COUNCIL_PROVIDER"
+              --api-key-env COUNCIL_API_KEY
+              --fail-on "$COUNCIL_FAIL_ON"
+              --title "$PR_TITLE" --body "$PR_BODY"
+              --format none
+              --json-out "$RUNNER_TEMP/council.json"
+              --markdown-out "$RUNNER_TEMP/council.md")
+        if [ -n "$COUNCIL_MODEL" ]; then args+=(--model "$COUNCIL_MODEL"); fi
+        if [ -n "$COUNCIL_CONTEXT_FILE" ]; then args+=(--context-file "$COUNCIL_CONTEXT_FILE"); fi
+        python -m code_review_council "${args[@]}"
+        rc=$?
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+          echo "::error::code-review-council failed (exit $rc); see the message above."
+          exit "$rc"
+        fi
+        {
+          echo "exit-code=$rc"
+          echo "json-file=$RUNNER_TEMP/council.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("verdict="+d["verdict"]); print("findings=%d" % len(d["findings"]))' "$RUNNER_TEMP/council.json"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Post the review comment
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment \
+          --body-file "$RUNNER_TEMP/council.md"
+
+    - name: Apply fail-on
+      shell: bash
+      env:
+        COUNCIL_EXIT: ${{ steps.council.outputs.exit-code }}
+      run: |
+        if [ "$COUNCIL_EXIT" != "0" ]; then
+          echo "::error::A HIGH or CRITICAL finding survived the arbiter (fail-on: high)."
+        fi
+        exit "$COUNCIL_EXIT"
