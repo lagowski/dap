@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from dap_cli import __version__
@@ -98,6 +100,56 @@ def cmd_demo(
 ) -> None:
     """Run the example pipeline on a throwaway instance: no API key, login or network."""
     demo_command(no_dashboard=no_dashboard, port=port, engine_port=engine_port)
+
+
+@app.command("mcp")
+def cmd_mcp(
+    headless: bool = typer.Option(
+        False,
+        "--headless",
+        help="Use a throwaway in-process engine (temp SQLite) for the server's lifetime",
+    ),
+    engine: str = typer.Option(
+        f"http://localhost:{DEFAULT_ENGINE_PORT}",
+        "--engine",
+        help="Engine base URL (without --headless)",
+        envvar="DAP_ENGINE_URL",
+    ),
+    token: str | None = typer.Option(
+        None, "--token", help="Engine API token (without --headless)", envvar="DAP_AUTH_TOKEN"
+    ),
+    allow_bundle_path: str | None = typer.Option(
+        None,
+        "--allow-bundle-path",
+        help=(
+            "Let run_pipeline read bundle files inside DIR (off by default). Their "
+            "python-func callables must live in DIR too, and run in this process: DIR "
+            "must be trusted and NOT writable by the model. Bundled agents may use "
+            "only the python-func, api-call and http runtimes"
+        ),
+        metavar="DIR",
+    ),
+    allow_approve: bool = typer.Option(
+        False,
+        "--allow-approve",
+        help="Expose approve_gate, so the agent can approve human gates (off by default)",
+    ),
+) -> None:
+    """Serve DAP pipelines as MCP tools over stdio (for Claude Code, Cursor, ...)."""
+    from dap_cli.commands.mcp import mcp_command  # noqa: PLC0415  (mcp + engine imports are heavy)
+
+    bundle_root = Path(allow_bundle_path).expanduser() if allow_bundle_path else None
+    if bundle_root is not None and not bundle_root.is_dir():
+        raise typer.BadParameter(
+            f"{allow_bundle_path} is not a directory", param_hint="--allow-bundle-path"
+        )
+    mcp_command(
+        headless=headless,
+        engine=engine,
+        token=token,
+        allow_bundle_path=bundle_root,
+        allow_approve=allow_approve,
+    )
 
 
 @app.command("stop")
