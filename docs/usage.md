@@ -141,9 +141,9 @@ auditable job to a pipeline instead of improvising it.
 | --- | --- |
 | `list_pipelines` | The pipelines on the engine: id, name, description, version |
 | `describe_pipeline` | One pipeline's nodes (agent, runtime, inputs, outputs), edges, gates, and the state keys a run needs |
-| `run_pipeline` | Start a run from a `pipeline_id` or a `bundle_path` (imported first), with an optional `initial_state`; returns the run id |
+| `run_pipeline` | Start a run from a `pipeline_id` or, with `--allow-bundle-path`, a `bundle_path` (imported first), with an optional `initial_state`; returns the run id |
 | `run_status` | The run's `final_status`, the gate it waits at (`paused_at_node`), per-node statuses, cost, and state |
-| `approve_gate` | Approve a human-approval gate; the run continues |
+| `approve_gate` | Approve a human-approval gate; the run continues. Only with `--allow-approve` |
 | `reject_gate` | Reject a human-approval gate; the run is aborted |
 
 Register it with Claude Code:
@@ -153,8 +153,21 @@ Register it with Claude Code:
 claude mcp add dap --env DAP_AUTH_TOKEN=<token> -- dap mcp
 
 # Or with no engine at all: a throwaway in-process engine that lives as long as the server
-claude mcp add dap -- dap mcp --headless
+claude mcp add dap -- dap mcp --headless --allow-bundle-path ./pipelines
 ```
+
+The model chooses every tool argument, so two capabilities are off unless you turn them on:
+
+- `--allow-bundle-path DIR`: `run_pipeline` may read bundle files, and only files that resolve
+  inside `DIR`. With `--headless` the bundle's directory goes on the server's import path, so a
+  bundle can run Python code in a process that holds your environment: point `DIR` at bundles you
+  trust.
+- `--allow-approve`: registers `approve_gate`. Without it the agent can start runs and reject a
+  gate, but a human-approval gate is approved by a human (dashboard or API), not by the agent that
+  started the run.
+
+Pipeline, run and node ids must be UUIDs or slugs (`A-Z a-z 0-9 _ -`); anything else is refused
+before a request is made.
 
 Without `--headless` the server uses the engine at `--engine` (default `http://localhost:7333`, or
 `DAP_ENGINE_URL`) and authenticates with `--token` / `DAP_AUTH_TOKEN`, like `dap pipeline run`.
@@ -162,10 +175,13 @@ With `--headless` nothing is written to the working directory and every run is l
 server stops; a `python-func` package next to a bundle passed as `bundle_path` is importable, as
 with `dap pipeline run --headless`.
 
-Tool results go through the engine's secret redaction: the value of any environment variable of
-the server process (except plain ones such as `PATH` and `HOME`) and the API token come back as
+Tool results and error messages go through the engine's secret redaction: the value (4
+characters or more) of any environment variable of the server process (except plain ones such as
+`PATH` and `HOME`, and flag values such as `true`) and the API token come back as
 `[REDACTED:<NAME>]`, and secret-shaped tokens (bearer tokens, JWTs, provider keys) are scrubbed.
-Agent prompt templates are never returned.
+Agent prompt templates are never returned. The server only knows its own environment: against a
+remote engine, secrets that live on the engine host (its provider keys, its env) are kept out of
+run state and errors by the engine's own redaction, not by `dap mcp`.
 
 ## Logs
 

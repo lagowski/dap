@@ -2,20 +2,26 @@
 
 Each test spawns ``python -m dap_cli mcp --headless`` as a subprocess and talks
 to it over stdin/stdout with ``mcp.client.stdio``. The server runs a throwaway
-in-process engine (temp SQLite, ASGI transport): no port, no network.
+in-process engine (temp SQLite, ASGI transport): no port, no network. The
+remote-engine path is driven in-process, over an ``httpx.MockTransport``.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
 import anyio
+import httpx
 import pytest
+from dap_cli.commands.mcp import DapTools, Redactor, _engine_client, build_server, collect_secrets
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.client import Client
 from mcp.client.stdio import stdio_client
 
 EXAMPLE_BUNDLE = (
@@ -25,14 +31,17 @@ EXAMPLE_BUNDLE = (
     / "example.pipeline-bundle.json"
 )
 
-TOOLS = {
+SAFE_TOOLS = {
     "list_pipelines",
     "describe_pipeline",
     "run_pipeline",
     "run_status",
-    "approve_gate",
     "reject_gate",
 }
+TOOLS = SAFE_TOOLS | {"approve_gate"}
+
+# The flags the full flow needs: bundles from the examples dir, and approve_gate.
+TRUSTING = ("--allow-bundle-path", str(EXAMPLE_BUNDLE.parent), "--allow-approve")
 
 # Upper-case so the example's ``shout`` node (which upper-cases the greeting)
 # writes the very same value into the state a second time.
@@ -42,10 +51,10 @@ TOKEN_SENTINEL = "TOKENSENTINEL" + secrets.token_hex(12).upper()
 _DEADLINE_S = 120.0
 
 
-def _params(cwd: Path) -> StdioServerParameters:
+def _params(cwd: Path, *flags: str) -> StdioServerParameters:
     return StdioServerParameters(
         command=sys.executable,
-        args=["-m", "dap_cli", "mcp", "--headless"],
+        args=["-m", "dap_cli", "mcp", "--headless", *flags],
         cwd=str(cwd),
         env={
             # A secret the server process holds, and an API token: neither may
@@ -87,6 +96,14 @@ class _Recorder:
             assert TOKEN_SENTINEL not in text, text
 
 
+async def _error_text(session: ClientSession, name: str, arguments: dict[str, Any]) -> str:
+    """Call a tool that must be refused; its error text."""
+    result = await session.call_tool(name, arguments)
+    text = "".join(getattr(block, "text", "") for block in result.content)
+    assert result.is_error, text
+    return text
+
+
 @pytest.fixture
 def cwd(tmp_path: Path) -> Path:
     path = tmp_path / "cwd"
@@ -96,7 +113,7 @@ def cwd(tmp_path: Path) -> Path:
 
 async def test_lists_tools_and_runs_the_example_headless_to_completion(cwd: Path) -> None:
     async with (
-        stdio_client(_params(cwd)) as (read, write),
+        stdio_client(_params(cwd, *TRUSTING)) as (read, write),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
@@ -141,7 +158,10 @@ async def test_lists_tools_and_runs_the_example_headless_to_completion(cwd: Path
 
 async def test_reject_gate_aborts_the_run(cwd: Path) -> None:
     async with (
-        stdio_client(_params(cwd)) as (read, write),
+        stdio_client(_params(cwd, "--allow-bundle-path", str(EXAMPLE_BUNDLE.parent))) as (
+            read,
+            write,
+        ),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
@@ -149,6 +169,9 @@ async def test_reject_gate_aborts_the_run(cwd: Path) -> None:
         started = await rec.call("run_pipeline", bundle_path=str(EXAMPLE_BUNDLE))
         run_id = started["run_id"]
         await rec.wait_for(run_id, statuses={"paused"})
+
+        wrong = await _error_text(session, "reject_gate", {"run_id": run_id, "node_id": "greet"})
+        assert "not waiting at gate" in wrong, wrong
 
         rejected = await rec.call("reject_gate", run_id=run_id, node_id="gate")
         assert rejected["run_id"] == run_id
@@ -169,3 +192,113 @@ async def test_a_refused_call_is_an_error_result_without_secrets(cwd: Path) -> N
         text = "".join(getattr(block, "text", "") for block in result.content)
         assert "404" in text, text
         assert SENTINEL not in text, text
+
+
+def _evil_bundle(tmp_path: Path) -> Path:
+    """A valid bundle next to a module a model wants on sys.path."""
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    (evil / "evil_module.py").write_text("raise SystemExit('imported')\n", encoding="utf-8")
+    bundle = evil / "x.pipeline-bundle.json"
+    shutil.copy(EXAMPLE_BUNDLE, bundle)
+    return bundle
+
+
+async def test_bundle_path_is_refused_without_the_flag_and_outside_its_dir(
+    cwd: Path, tmp_path: Path
+) -> None:
+    bundle = _evil_bundle(tmp_path)
+    async with (
+        stdio_client(_params(cwd)) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        text = await _error_text(session, "run_pipeline", {"bundle_path": str(bundle)})
+        assert "--allow-bundle-path" in text, text
+        assert (await session.call_tool("list_pipelines", {})).structured_content == {
+            "pipelines": [],
+            "total": 0,
+        }  # nothing was imported
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    async with (
+        stdio_client(_params(cwd, "--allow-bundle-path", str(allowed))) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        escape = allowed / ".." / "evil" / bundle.name
+        text = await _error_text(session, "run_pipeline", {"bundle_path": str(escape)})
+        assert "must be inside" in text, text
+
+
+async def test_approve_gate_is_absent_without_allow_approve(cwd: Path) -> None:
+    async with (
+        stdio_client(_params(cwd)) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        listed = await session.list_tools()
+        assert {tool.name for tool in listed.tools} == SAFE_TOOLS
+        text = await _error_text(session, "approve_gate", {"run_id": "r", "node_id": "gate"})
+        assert "approve_gate" in text, text
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("run_status", {"run_id": "../pipelines"}),
+        ("describe_pipeline", {"pipeline_id": "../agents"}),
+        ("reject_gate", {"run_id": "x/../../pipelines", "node_id": "gate"}),
+        ("run_pipeline", {"pipeline_id": "../runs"}),
+    ],
+)
+async def test_a_path_traversal_id_is_refused(
+    cwd: Path, tool: str, arguments: dict[str, str]
+) -> None:
+    async with (
+        stdio_client(_params(cwd)) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        text = await _error_text(session, tool, arguments)
+        assert "invalid" in text, text
+
+
+@contextlib.asynccontextmanager
+async def _remote(handler: Any, environ: dict[str, str], *, allow_approve: bool = False) -> Any:
+    """The server against a 'remote' engine, an in-process MockTransport."""
+    redactor = Redactor(collect_secrets(environ, TOKEN_SENTINEL))
+    with _engine_client(
+        headless=False,
+        engine="http://engine.invalid",
+        token=TOKEN_SENTINEL,
+        redactor=redactor,
+        transport=httpx.MockTransport(handler),
+    ) as (client, stack):
+        server = build_server(DapTools(client, stack=stack), redactor, allow_approve=allow_approve)
+        async with Client(server) as session:
+            yield session
+
+
+async def test_remote_engine_gets_the_bearer_token_and_echoed_secrets_are_redacted() -> None:
+    seen: list[str] = []
+    short = "Ab9z"  # a short secret: 4 chars are enough to be scrubbed
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("Authorization", ""))
+        echo = f"bad token {TOKEN_SENTINEL} with {short} and {SENTINEL}"
+        if request.url.path == "/pipelines":
+            return httpx.Response(401, json={"detail": echo})
+        raise RuntimeError(echo)  # not an httpx error: the catch-all must redact it too
+
+    environ = {"DAP_MCP_TEST_SECRET": SENTINEL, "SHORT_SECRET": short, "FLAG": "true"}
+    async with _remote(handler, environ) as session:
+        for tool, arguments in (("list_pipelines", {}), ("run_status", {"run_id": "r1"})):
+            result = await session.call_tool(tool, arguments)
+            text = "".join(getattr(block, "text", "") for block in result.content)
+            assert result.is_error, text
+            assert "[REDACTED:DAP_AUTH_TOKEN]" in text, text
+            for secret in (TOKEN_SENTINEL, SENTINEL, short):
+                assert secret not in text, text
+    assert seen and set(seen) == {f"Bearer {TOKEN_SENTINEL}"}, seen

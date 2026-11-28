@@ -7,7 +7,8 @@ calls these tools over stdin/stdout:
 - ``describe_pipeline``: one pipeline's nodes, edges, gates and inputs.
 - ``run_pipeline``: start a run from a pipeline id or a bundle file; returns the run id.
 - ``run_status``: a run's status, per-node statuses and state.
-- ``approve_gate`` / ``reject_gate``: decide a human-approval gate.
+- ``approve_gate`` (only with ``--allow-approve``) / ``reject_gate``: decide a
+  human-approval gate.
 
 The server talks to a running engine (``--engine`` / ``DAP_ENGINE_URL`` and
 ``--token`` / ``DAP_AUTH_TOKEN``, as ``dap pipeline run`` does) or, with
@@ -16,6 +17,17 @@ server. Every tool result and error message goes through the engine's
 redaction (:func:`dap_engine.redaction.redact`): the value of any environment
 variable of this process, and the API token, come back as ``[REDACTED:<NAME>]``.
 Agent prompt templates are never returned.
+
+The server is driven by a model, so it trusts none of its arguments:
+
+- ``bundle_path`` is refused unless ``--allow-bundle-path DIR`` is given, and the
+  file must resolve inside ``DIR``. Only then does its directory go on
+  ``sys.path`` (headless python-func packages), since that runs code in a
+  process that holds the environment's secrets.
+- ``approve_gate`` exists only with ``--allow-approve``: without it the agent
+  cannot approve its own human gate.
+- Ids are validated as slugs before they go into an engine URL, so ``../agents``
+  cannot steer the authenticated client to another route.
 """
 
 from __future__ import annotations
@@ -23,6 +35,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import threading
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -33,8 +46,16 @@ import httpx
 from dap_cli.commands.pipeline import _bundle_dir_on_path, _check, _EngineClient, _RunError
 
 # An environment value shorter than this is not treated as a secret: scrubbing
-# "1", "true" or "dev" everywhere would wreck every result.
-_MIN_SECRET_LEN = 8
+# "1" or "on" everywhere would wreck every result.
+_MIN_SECRET_LEN = 4
+
+# Flag-like values, which are no secret however long, and which would otherwise
+# scrub every "true" out of a run's state.
+_NOT_SECRET_VALUES = frozenset({"true", "false", "none", "null", "yes", "no", "on", "off"})
+
+# A pipeline, run or node id: a UUID or a slug. No "/", no ".", so an id cannot
+# leave the route it is put into.
+_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 # Variables whose values are not secrets and are routinely part of legitimate
 # results (paths). Everything else in the environment is scrubbed.
@@ -78,7 +99,7 @@ def collect_secrets(environ: Mapping[str, str], token: str | None) -> dict[str, 
     for name, value in environ.items():
         if name in _NOT_SECRET or name.startswith(_NOT_SECRET_PREFIXES):
             continue
-        if len(value) >= _MIN_SECRET_LEN:
+        if len(value) >= _MIN_SECRET_LEN and value.lower() not in _NOT_SECRET_VALUES:
             found[name] = value
     if token:
         found["DAP_AUTH_TOKEN"] = token
@@ -111,6 +132,13 @@ class Redactor:
         return value
 
 
+def _id(value: str, what: str) -> str:
+    """``value`` if it is a safe id to put into an engine URL, else a refusal."""
+    if not isinstance(value, str) or not _ID_RE.fullmatch(value):
+        raise _RunError(f"invalid {what} {value!r}: expected a UUID or a slug ([A-Za-z0-9_-])")
+    return value
+
+
 class _LockedClient:
     """Serialise engine calls: tools run in worker threads, the clients are not
     meant for concurrent use."""
@@ -131,9 +159,16 @@ class _LockedClient:
 class DapTools:
     """The tool implementations, independent of the MCP transport."""
 
-    def __init__(self, client: _EngineClient, *, stack: contextlib.ExitStack) -> None:
+    def __init__(
+        self,
+        client: _EngineClient,
+        *,
+        stack: contextlib.ExitStack,
+        bundle_root: Path | None = None,
+    ) -> None:
         self._client = client
         self._stack = stack
+        self._bundle_root = bundle_root.expanduser().resolve() if bundle_root else None
         self._paths: set[Path] = set()
 
     def list_pipelines(self) -> dict[str, Any]:
@@ -152,13 +187,14 @@ class DapTools:
         }
 
     def describe_pipeline(self, pipeline_id: str) -> dict[str, Any]:
+        pipeline_id = _id(pipeline_id, "pipeline_id")
         pipeline = _check(self._client.get(f"/pipelines/{pipeline_id}"), "pipeline read")
         nodes: list[dict[str, Any]] = []
         needed: set[str] = set()
         produced: set[str] = set()
         for node in pipeline.get("nodes", []):
             entry: dict[str, Any] = {"id": node["id"], "agent_id": node["agent_id"]}
-            agent = self._client.get(f"/agents/{node['agent_id']}")
+            agent = self._client.get(f"/agents/{_id(str(node['agent_id']), 'agent_id')}")
             if not agent.is_error:
                 data = agent.json()
                 entry |= {
@@ -197,7 +233,7 @@ class DapTools:
         if bool(pipeline_id) == bool(bundle_path):
             raise _RunError("pass exactly one of pipeline_id or bundle_path")
         if bundle_path:
-            bundle = Path(bundle_path).expanduser()
+            bundle = self._allowed_bundle(bundle_path)
             try:
                 payload = json.loads(bundle.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
@@ -205,6 +241,7 @@ class DapTools:
             self._import_path(bundle)
             pipeline = _check(self._client.post("/pipelines/import", json=payload), "bundle import")
             pipeline_id = str(pipeline["id"])
+        pipeline_id = _id(str(pipeline_id), "pipeline_id")
         run = _check(
             self._client.post(
                 "/runs", json={"pipeline_id": pipeline_id, "initial_state": initial_state or {}}
@@ -214,6 +251,7 @@ class DapTools:
         return {"run_id": str(run["id"]), "pipeline_id": pipeline_id, "status": run["final_status"]}
 
     def run_status(self, run_id: str) -> dict[str, Any]:
+        run_id = _id(run_id, "run_id")
         run = _check(self._client.get(f"/runs/{run_id}"), "run read")
         result: dict[str, Any] = {k: run.get(k) for k in _RUN_FIELDS}
         result["run_id"] = result.pop("id")
@@ -224,20 +262,40 @@ class DapTools:
         return result
 
     def approve_gate(self, run_id: str, node_id: str) -> dict[str, Any]:
+        run_id, node_id = self._paused_at(run_id, node_id)
         run = _check(
             self._client.post(f"/runs/{run_id}/nodes/{node_id}/approve"), f"approve {node_id}"
         )
         return {"run_id": str(run["id"]), "node_id": node_id, "status": run["final_status"]}
 
     def reject_gate(self, run_id: str, node_id: str) -> dict[str, Any]:
+        run_id, node_id = self._paused_at(run_id, node_id)
+        aborted = _check(self._client.post(f"/runs/{run_id}/abort"), f"reject {node_id}")
+        return {"run_id": str(aborted["id"]), "node_id": node_id, "status": aborted["final_status"]}
+
+    def _paused_at(self, run_id: str, node_id: str) -> tuple[str, str]:
+        """The validated ids, if the run is paused at exactly this gate; else a refusal."""
+        run_id = _id(run_id, "run_id")
+        node_id = _id(node_id, "node_id")
         run = _check(self._client.get(f"/runs/{run_id}"), "run read")
         if run.get("final_status") != "paused" or run.get("paused_at_node") != node_id:
             raise _RunError(
                 f"run {run_id} is not waiting at gate {node_id!r} "
                 f"(status {run.get('final_status')}, paused at {run.get('paused_at_node')!r})"
             )
-        aborted = _check(self._client.post(f"/runs/{run_id}/abort"), f"reject {node_id}")
-        return {"run_id": str(aborted["id"]), "node_id": node_id, "status": aborted["final_status"]}
+        return run_id, node_id
+
+    def _allowed_bundle(self, bundle_path: str) -> Path:
+        """The resolved bundle file, only inside ``--allow-bundle-path``."""
+        if self._bundle_root is None:
+            raise _RunError(
+                "bundle_path is disabled: start the server with --allow-bundle-path DIR "
+                "to run bundle files from DIR, or pass a pipeline_id"
+            )
+        bundle = Path(bundle_path).expanduser().resolve()
+        if not bundle.is_relative_to(self._bundle_root):
+            raise _RunError(f"bundle_path must be inside {self._bundle_root}")
+        return bundle
 
     def _import_path(self, bundle: Path) -> None:
         """Headless: let a python-func package next to the bundle import, for the
@@ -249,8 +307,10 @@ class DapTools:
             self._stack.enter_context(_bundle_dir_on_path(bundle))
 
 
-def build_server(tools: DapTools, redactor: Redactor) -> Any:
-    """The MCP server: every tool result and error message is redacted."""
+def build_server(tools: DapTools, redactor: Redactor, *, allow_approve: bool = False) -> Any:
+    """The MCP server: every tool result and error message is redacted.
+
+    ``approve_gate`` is registered only with ``allow_approve``."""
     from mcp.server.mcpserver import MCPServer  # noqa: PLC0415
     from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
@@ -261,16 +321,21 @@ def build_server(tools: DapTools, redactor: Redactor) -> Any:
         version=__version__,
         instructions=(
             "Run DAP deterministic agent pipelines. list_pipelines / describe_pipeline to "
-            "find one, run_pipeline to start it, run_status to follow it, approve_gate or "
-            "reject_gate when it waits at a human-approval gate."
+            "find one, run_pipeline to start it, run_status to follow it, reject_gate (or "
+            "approve_gate, when the server allows it) when it waits at a human-approval gate."
         ),
     )
 
     def guarded(call: Any) -> dict[str, Any]:
         try:
             result: dict[str, Any] = redactor.value(call())
-        except (_RunError, httpx.HTTPError) as exc:
-            raise ToolError(redactor.text(str(exc))) from None
+        except Exception as exc:
+            message = (
+                str(exc)
+                if isinstance(exc, _RunError | httpx.HTTPError)
+                else (f"{type(exc).__name__}: {exc}")
+            )
+            raise ToolError(redactor.text(message)) from None
         return result
 
     @server.tool()
@@ -301,10 +366,12 @@ def build_server(tools: DapTools, redactor: Redactor) -> Any:
         waits at (paused_at_node), per-node statuses, cost and current state."""
         return guarded(lambda: tools.run_status(run_id))
 
-    @server.tool()
-    def approve_gate(run_id: str, node_id: str) -> dict[str, Any]:
-        """Approve the human-approval gate node_id of a paused run; the run continues."""
-        return guarded(lambda: tools.approve_gate(run_id, node_id))
+    if allow_approve:
+
+        @server.tool()
+        def approve_gate(run_id: str, node_id: str) -> dict[str, Any]:
+            """Approve the human-approval gate node_id of a paused run; the run continues."""
+            return guarded(lambda: tools.approve_gate(run_id, node_id))
 
     @server.tool()
     def reject_gate(run_id: str, node_id: str) -> dict[str, Any]:
@@ -316,7 +383,12 @@ def build_server(tools: DapTools, redactor: Redactor) -> Any:
 
 @contextlib.contextmanager
 def _engine_client(
-    *, headless: bool, engine: str, token: str | None, redactor: Redactor
+    *,
+    headless: bool,
+    engine: str,
+    token: str | None,
+    redactor: Redactor,
+    transport: httpx.BaseTransport | None = None,
 ) -> Iterator[tuple[_EngineClient, contextlib.ExitStack]]:
     with contextlib.ExitStack() as stack:
         client: _EngineClient
@@ -328,15 +400,25 @@ def _engine_client(
             client = test_client
         else:
             headers = {"Authorization": f"Bearer {token}"} if token else {}
-            client = stack.enter_context(httpx.Client(base_url=engine, headers=headers))
+            client = stack.enter_context(
+                httpx.Client(base_url=engine, headers=headers, transport=transport)
+            )
         yield _LockedClient(client), stack
 
 
-def mcp_command(*, headless: bool, engine: str, token: str | None) -> None:
+def mcp_command(
+    *,
+    headless: bool,
+    engine: str,
+    token: str | None,
+    allow_bundle_path: Path | None = None,
+    allow_approve: bool = False,
+) -> None:
     """Serve the DAP tools over stdio until the client closes the connection."""
     redactor = Redactor(collect_secrets(os.environ, token))
     with _engine_client(headless=headless, engine=engine, token=token, redactor=redactor) as (
         client,
         stack,
     ):
-        build_server(DapTools(client, stack=stack), redactor).run("stdio")
+        tools = DapTools(client, stack=stack, bundle_root=allow_bundle_path)
+        build_server(tools, redactor, allow_approve=allow_approve).run("stdio")
