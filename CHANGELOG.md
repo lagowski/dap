@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-28
+
+Half a year of `develop` since v0.3.0. Headlines: the agent tool-loop
+runtime (Anthropic, OpenAI, OpenRouter, Gemini; #813), the `github` and
+`aider` runtimes with declarative git workspaces and push guards (#810),
+live run output over SSE and `dap project run --follow` (#662), retry,
+workspace state and fallback (#811), backend profiles per node, the in-app
+config assistant and AI error explanations (#689, #691), the interaction
+log (#722), the pipeline designer rework (orthogonal edges, waypoints,
+auto-arrange, fit view; #1033), the prompt box on New pipeline and
+`dap pipeline export --hub`. The full set is below; agent-tool hardening is
+under **Security**.
+
 ### Added
+- **Agent tool-loop runtime (#813)** — a bounded, deterministic tool loop
+  on Anthropic, then OpenAI/OpenRouter and a Gemini dialect.
+- **Live run output (#662)** — node stdout streams to
+  `node_output_chunks`, an SSE run-events endpoint feeds the dashboard's
+  live-output panel, and `dap project run --follow` streams it in the CLI.
+- **Retry, workspace state and fallback (#811)**.
+- **Backend profiles** — inspected and configured on bundle import,
+  resolved at runtime, and assignable per node from the designer's
+  LLM-per-node panel.
+- **In-app config assistant (#689)** — a right-dock chat grounded in the
+  docs and the current page, with navigate/doc/prefill actions, Markdown
+  replies and a `claude-code` subscription path; AI-assisted error
+  explanation on failed nodes (#691).
+- **Agent and pipeline usage** — `GET /agents/{id}/usage`,
+  `GET /agents/{id}/executions` and `GET /pipelines/{id}/usage`, shown as
+  *Used in* / *Activity* on the dashboard (#697); "Open in agent tester"
+  from a run node (#724); pre-run readiness checks and fail-fast preflight
+  for `python-func` callables (#710).
+- **Dashboard** — two-step new-agent and new-pipeline flows with grouped
+  templates, run-detail tabs and node navigation, API token creation and an
+  instance environment-variables editor in admin Settings, audit-log
+  drill-down and filters, run deletion with a children-first cascade, gate
+  approval deadlines with a countdown, managed (Cortex) agents grouped as a
+  package with a side-effects acknowledgement before a dry run (#739).
+- **API** — `has_more` on paginated lists, `created_at`/`updated_at` on the
+  run list; provider out-of-credits is told apart from rate limiting.
 - **Prompt box on New pipeline** — describe an automation in plain words and
   the engine's generator returns a pipeline bundle: open it in the canvas (a
   normal import, so every import check applies) or download the JSON. The
@@ -207,6 +246,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `secrets.PYPI_API_TOKEN` is no longer referenced by any workflow.
   Operators should delete the secret manually
   (`gh secret delete PYPI_API_TOKEN --repo rafeekpro/dap`).
+
+### Security
+- **Agent tool hardening (#1020, #1022, #1037)** — the agent tool loop no
+  longer merges model input over the tool config unfiltered (a
+  prompt-injected model could set `api_url`/`token_env` on the `github`
+  tool and send the token to its own host). Each runtime declares a closed
+  tool input schema; the default schema is closed; every call refuses
+  `__`-prefixed keys, a fixed deny-list (`url`, `api_url`, `base_url`,
+  `env`, `cwd`, `command`, `auth`, `headers`, `request_template`, …) and any
+  `*_env` key, compared case-folded, plus unlisted object- and list-valued
+  keys. The `http` tool takes a plain `body`, sent as-is, instead of a
+  templated `request_template`.
+- **Hub export scrubbing (#1016)** — `dap pipeline export --hub` exports
+  structure only (no prompts, runtime config, env var names or backend
+  profiles), refuses the export if a URL, IP, email, absolute path, token,
+  private host or credential assignment survives, and scrubs client names.
+- **Secret/PII redaction for interaction logs (#722)** — model call and
+  assistant transcripts are redacted before they are stored; the admin
+  API and a retention window cover the EU AI Act interaction log.
+- **Audit hardening (#778)** — ownership and audit gaps found in the
+  security review are closed, with a coverage floor on the audit paths.
+- **Assistant action links (#727)** — LLM-supplied `href`s are restricted
+  to in-app paths and known docs.
+- **Dispatch deny for self-fix-dangerous projects (#641)** — UUID-pinned,
+  so a renamed project can't slip past it.
+- **Dependency CVEs** — floors or bumps for cryptography, pyjwt,
+  python-multipart, starlette, langgraph-checkpoint(-postgres),
+  langgraph-sdk, langsmith, msgpack, dnspython, pyasn1, certifi, filelock
+  and opentelemetry-api (#791, #800, #644, #849, #858, #944, #967, #970);
+  the Python CVE scan now also runs against `develop` daily (#899), and
+  `.github/workflows/` is code-owner locked (#786).
 
 ## [0.3.0] — 2026-05-12
 

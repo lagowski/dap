@@ -31,7 +31,7 @@ The dashboard and CLI talk REST to the FastAPI engine. LangGraph walks the versi
 each node renders a Jinja to XML prompt and hands it to one runtime adapter. Approval gates interrupt the run until a
 human approves, and every step is stored in SQLite or Postgres.
 
-> **Project status:** active development. The latest tagged release is **v0.3.0** (on PyPI as
+> **Project status:** active development. The latest tagged release is **v0.4.0** (on PyPI as
 > `dap-cli` and on GHCR as `ghcr.io/lagowski/dap`); `develop` is well ahead of that tag (see
 > [CHANGELOG.md](CHANGELOG.md) → *Unreleased* and the release map in
 > [docs/architecture.md](docs/architecture.md#what-has-been-built)).
@@ -75,7 +75,7 @@ There are three supported install paths, from simplest to most involved:
    This runs on a single machine. The wheel bundles the Next.js dashboard. `dap start`
    starts the dashboard alongside the engine when `node` is on `PATH`, and otherwise runs
    the engine only (the CLI prints a hint).
-2. **Docker**: `ghcr.io/lagowski/dap:0.3.0`, for shared or production deployments.
+2. **Docker**: `ghcr.io/lagowski/dap:0.4.0`, for shared or production deployments.
    [`examples/standalone/`](examples/standalone/) has a working compose file, with SQLite
    (the default) or Postgres.
 3. **Source**: for contributors, and the only way to get what's on `develop`. See below.
@@ -122,7 +122,7 @@ When it finishes, edit `.env.local` and add at least one provider key (see
 
 ### Upgrading from 0.0.1
 
-v0.3.0 adds multi-user auth. The first start against a pre-v0.3 `.dap/state.db` creates a
+Multi-user auth arrived in v0.3. The first start against a pre-v0.3 `.dap/state.db` creates a
 `legacy-admin@local` admin and prints its generated password **once**, on stdout; scripts
 that called `localhost:7333` without auth then need an API token. The steps are in
 [docs/self-hosting.md](docs/self-hosting.md#upgrading-from-001).
