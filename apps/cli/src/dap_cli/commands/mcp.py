@@ -335,7 +335,8 @@ def _engine_client(
 def mcp_command(*, headless: bool, engine: str, token: str | None) -> None:
     """Serve the DAP tools over stdio until the client closes the connection."""
     redactor = Redactor(collect_secrets(os.environ, token))
-    with _engine_client(
-        headless=headless, engine=engine, token=token, redactor=redactor
-    ) as (client, stack):
+    with _engine_client(headless=headless, engine=engine, token=token, redactor=redactor) as (
+        client,
+        stack,
+    ):
         build_server(DapTools(client, stack=stack), redactor).run("stdio")
