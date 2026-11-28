@@ -123,7 +123,7 @@ curl -O https://raw.githubusercontent.com/lagowski/dap/main/examples/standalone/
 cp .env.example .env
 # Edit .env — the only REQUIRED value is DAP_AUTH_JWT_SECRET.
 # Mint one with: openssl rand -hex 32.
-# Also pin DAP_IMAGE_TAG=0.4.0 (or whichever tag you intend), so
+# Also pin DAP_IMAGE_TAG=0.4.1 (or whichever tag you intend), so
 # compose doesn't silently pull `latest`.
 nano .env
 
@@ -377,7 +377,7 @@ token.
 
 ### The fork in the road for Docker users
 
-The default Docker image (`ghcr.io/lagowski/dap:0.4.0`) ships with
+The default Docker image (`ghcr.io/lagowski/dap:0.4.1`) ships with
 **Python + Node + the bundled dashboard** — NOT with the LLM
 CLIs. If you want `claude-code` / `gemini-cli` / `codex` /
 `aider` to work from a Dockerised DAP, you have three options:
@@ -392,7 +392,7 @@ as env vars to the container.
 # docker-compose.yml
 services:
   dap:
-    image: ghcr.io/lagowski/dap:0.4.0
+    image: ghcr.io/lagowski/dap:0.4.1
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -422,7 +422,7 @@ subscription, or `aider` for repo-scoped edits):
 
 ```dockerfile
 # Dockerfile.dap-with-clis
-FROM ghcr.io/lagowski/dap:0.4.0
+FROM ghcr.io/lagowski/dap:0.4.1
 
 USER root
 RUN npm install -g @anthropic-ai/claude-code @google-ai/gemini-cli \

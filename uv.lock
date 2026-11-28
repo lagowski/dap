@@ -523,7 +523,7 @@ wheels = [
 
 [[package]]
 name = "dap-cli"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "apps/cli" }
 dependencies = [
     { name = "dap-engine" },
@@ -546,7 +546,7 @@ requires-dist = [
 
 [[package]]
 name = "dap-database"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/database" }
 dependencies = [
     { name = "sqlalchemy" },
@@ -557,7 +557,7 @@ requires-dist = [{ name = "sqlalchemy", specifier = ">=2.0.52" }]
 
 [[package]]
 name = "dap-engine"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "apps/engine" }
 dependencies = [
     { name = "alembic" },
@@ -617,7 +617,7 @@ requires-dist = [
 
 [[package]]
 name = "dap-prompt-dsl"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/prompt-dsl" }
 dependencies = [
     { name = "defusedxml" },
@@ -634,7 +634,7 @@ requires-dist = [
 
 [[package]]
 name = "dap-runtimes"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/runtimes" }
 dependencies = [
     { name = "anyio" },
@@ -694,7 +694,7 @@ provides-extras = ["anthropic", "openai", "google", "api-call", "http", "all"]
 
 [[package]]
 name = "dap-schemas"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/types" }
 dependencies = [
     { name = "pydantic" },
@@ -705,7 +705,7 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.9.2" }]
 
 [[package]]
 name = "dap-workspace"
-version = "0.4.0"
+version = "0.4.1"
 source = { virtual = "." }
 
 [package.dev-dependencies]

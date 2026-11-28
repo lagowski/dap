@@ -1,4 +1,4 @@
-"""The workspace is prepared for the v0.4.0 release (#1045).
+"""The workspace is prepared for the v0.4.1 release (#1045, #1070).
 
 Runs ``scripts/check-release-metadata.py`` and pins the release family it
 reports, so a partial bump (one package left behind, a stale ``>=0.3,<0.4``
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPECTED_VERSION = "0.4.0"
+EXPECTED_VERSION = "0.4.1"
 
 INSTALL_DOCS = (
     Path("README.md"),

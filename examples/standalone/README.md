@@ -85,7 +85,7 @@ state on its first line.
       makes the engine log raw reset tokens to stdout — useful for
       self-hosted dev without email delivery, dangerous in prod logs.
 - [ ] Switch to Postgres for >1 user.
-- [ ] Pin `DAP_IMAGE_TAG` to a specific version (e.g. `0.4.0`) rather
+- [ ] Pin `DAP_IMAGE_TAG` to a specific version (e.g. `0.4.1`) rather
       than `latest`.
 
 ## Reverse proxy / HTTPS
