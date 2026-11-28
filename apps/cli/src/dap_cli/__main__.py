@@ -100,6 +100,29 @@ def cmd_demo(
     demo_command(no_dashboard=no_dashboard, port=port, engine_port=engine_port)
 
 
+@app.command("mcp")
+def cmd_mcp(
+    headless: bool = typer.Option(
+        False,
+        "--headless",
+        help="Use a throwaway in-process engine (temp SQLite) for the server's lifetime",
+    ),
+    engine: str = typer.Option(
+        f"http://localhost:{DEFAULT_ENGINE_PORT}",
+        "--engine",
+        help="Engine base URL (without --headless)",
+        envvar="DAP_ENGINE_URL",
+    ),
+    token: str | None = typer.Option(
+        None, "--token", help="Engine API token (without --headless)", envvar="DAP_AUTH_TOKEN"
+    ),
+) -> None:
+    """Serve DAP pipelines as MCP tools over stdio (for Claude Code, Cursor, ...)."""
+    from dap_cli.commands.mcp import mcp_command  # noqa: PLC0415  (mcp + engine imports are heavy)
+
+    mcp_command(headless=headless, engine=engine, token=token)
+
+
 @app.command("stop")
 def cmd_stop() -> None:
     """Stop running engine + dashboard."""
