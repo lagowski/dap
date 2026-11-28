@@ -3,9 +3,91 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ComparisonOperator = Literal["==", "!=", "<", "<=", ">", ">="]
+
+
+# Map cortex's short operator aliases to DAP's symbolic ones.
+# Symbolic operators pass through unchanged.
+_OPERATOR_ALIASES: dict[str, ComparisonOperator] = {
+    "eq": "==",
+    "ne": "!=",
+    "lt": "<",
+    "lte": "<=",
+    "gt": ">",
+    "gte": ">=",
+    "==": "==",
+    "!=": "!=",
+    "<": "<",
+    "<=": "<=",
+    ">": ">",
+    ">=": ">=",
+}
+
+
+def _normalize_legacy_condition(value: Any) -> Any:
+    """Accept cortex's legacy edge-condition shape.
+
+    DAP's strict shape (the canonical one validators expect):
+      Comparison: {"type": "comparison", "field": ..., "operator": ..., "value": ...}
+      Logical:    {"type": "and"|"or"|"not", "children": [<EdgeCondition>, ...]}
+
+    Cortex's legacy shape (shipped via cortex bundles pre-2026-06 schema migration):
+      Comparison: {"field": ..., "op": ..., "value": ...}
+      Logical:    {"field": ..., "op": ..., "value": ...,
+                   "and": {"field": ..., "op": ..., "value": ...}}
+                  (the outer keys are the first conjunct; the nested "and" or "or" is the second)
+
+    This normalizer detects the legacy shape (presence of "op" key without "type" key)
+    and rewrites it to the strict shape that EdgeCondition's discriminated union accepts.
+
+    Backward-compat path. Once cortex's exporter emits the strict shape on all edges,
+    this normalizer becomes a no-op and can be removed.
+
+    Tracked at #635.
+    """
+    if not isinstance(value, dict):
+        return value
+
+    # Already in strict shape (has the type discriminator) — no transformation needed.
+    if "type" in value:
+        return value
+
+    # Legacy shape requires an "op" key on a comparison.
+    if "op" not in value:
+        return value
+
+    op_raw = value["op"]
+    operator = _OPERATOR_ALIASES.get(op_raw, op_raw)
+
+    base_comparison = {
+        "type": "comparison",
+        "field": value.get("field", ""),
+        "operator": operator,
+        "value": value.get("value"),
+    }
+
+    # Detect legacy compound: nested "and" or "or" key on the same object.
+    # The outer keys become the first conjunct; the nested becomes the second.
+    for compound_type in ("and", "or"):
+        nested = value.get(compound_type)
+        if isinstance(nested, dict):
+            return {
+                "type": compound_type,
+                "children": [
+                    base_comparison,
+                    _normalize_legacy_condition(nested),
+                ],
+            }
+        if isinstance(nested, list):
+            return {
+                "type": compound_type,
+                "children": [base_comparison] + [_normalize_legacy_condition(c) for c in nested],
+            }
+
+    # No compound — just a comparison.
+    return base_comparison
 
 
 class ComparisonCondition(BaseModel):
@@ -18,10 +100,19 @@ class ComparisonCondition(BaseModel):
 
 
 class LogicalCondition(BaseModel):
+    """``and`` / ``or`` over any number of children; ``not`` over exactly one (#930)."""
+
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["and", "or"]
+    type: Literal["and", "or", "not"]
     children: list[EdgeCondition]
+
+    @model_validator(mode="after")
+    def _not_has_one_child(self) -> LogicalCondition:
+        if self.type == "not" and len(self.children) != 1:
+            msg = f"'not' takes exactly one child, got {len(self.children)}"
+            raise ValueError(msg)
+        return self
 
 
 EdgeCondition = Annotated[
@@ -43,6 +134,40 @@ class NodeOverrides(BaseModel):
     timeout_ms: int | None = None
 
 
+class RetryPolicy(BaseModel):
+    """Bounded retry loop declared on a node (#931; runtime routing is #932).
+
+    While retries remain, a failed attempt goes back to ``retry_to``; once
+    ``max_retries`` is spent the run goes to ``on_failure``. Range and
+    reference checks live in the engine's DAG validator so the designer gets
+    a readable error instead of a 422.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_retries: int = Field(description="Retries allowed after the first attempt (1-20).")
+    retry_to: str = Field(
+        description="Node to re-enter while retries remain; must be able to reach this node.",
+    )
+    on_failure: str = Field(
+        default="__end__",
+        description="Node id (or ``__end__``) to go to once ``max_retries`` is spent.",
+    )
+    feedback_into: str | None = Field(
+        default=None,
+        description="``state.extensions`` key that receives the failure reason.",
+    )
+    short_circuit_on: EdgeCondition | None = Field(
+        default=None,
+        description="Condition (edge-condition schema) that marks the attempt as failed.",
+    )
+
+    @field_validator("short_circuit_on", mode="before")
+    @classmethod
+    def _accept_legacy_condition_shape(cls, v: Any) -> Any:
+        return _normalize_legacy_condition(v)
+
+
 class PipelineNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -50,6 +175,7 @@ class PipelineNode(BaseModel):
     agent_id: str
     position: NodePosition = Field(default_factory=NodePosition)
     overrides: NodeOverrides | None = None
+    retry: RetryPolicy | None = None
 
 
 class PipelineEdge(BaseModel):
@@ -61,12 +187,56 @@ class PipelineEdge(BaseModel):
     condition: EdgeCondition | None = None
     label: str | None = None
 
+    @field_validator("condition", mode="before")
+    @classmethod
+    def _accept_legacy_condition_shape(cls, v: Any) -> Any:
+        """Accept cortex's legacy edge-condition format.
+
+        See ``_normalize_legacy_condition`` docstring for the shape mapping.
+        """
+        return _normalize_legacy_condition(v)
+
 
 class PipelineDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     max_attempts: int = 3
     budget_limit_usd: float = 5.0
     approval_required_nodes: list[str] = Field(default_factory=list)
+    gate_timeout_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "Seconds a gate waits for human approval before the run is "
+            "marked failed with failure_reason='gate approval timed out'. "
+            "Defaults to 1 hour. Set per-pipeline in defaults.gate_timeout_seconds."
+        ),
+    )
+    requires_terminal_final_status: bool = Field(
+        default=True,
+        description=(
+            "When true, the orchestrator treats a run that finishes with "
+            "``final_status='running'`` as a failed run with a structured "
+            "failure_reason. A residual ``running`` at termination means "
+            "no node ever set a terminal status — typically because graph "
+            "routing bypassed the intended success-terminal (#628 for the "
+            "cortex github-issue case where phase-1 with zero tasks "
+            "short-circuits the rest of the pipeline).\n\n"
+            "Default flipped from ``False`` to ``True`` in 2026-06 (#628). "
+            "The historical ``False`` default silently coerced residual "
+            "``running`` to ``success``, which made phase-only-1 cortex "
+            "exits indistinguishable from real successful runs on the "
+            "dashboard. The new default is the architecturally correct "
+            "contract: every pipeline must reach a terminal status. "
+            "Generic pipelines that legitimately rely on 'all nodes ran "
+            "without raising = success' must now set this to ``False`` "
+            "explicitly OR set ``state.final_status='success'`` in their "
+            "final node (the recommended path).\n\n"
+            "Existing pipelines in the database are unaffected — their "
+            "``defaults`` JSON was frozen at import time under the old "
+            "default. Only pipelines created or re-imported AFTER this "
+            "change pick up the new default."
+        ),
+    )
 
 
 class Pipeline(BaseModel):
@@ -92,6 +262,7 @@ class Pipeline(BaseModel):
     updated_at: datetime
     is_active: bool = True
     ui_metadata: dict[str, Any] | None = None
+    backend_profiles: dict[str, Any] | None = None
 
 
 # Resolve forward reference for self-referential LogicalCondition.children

@@ -2,7 +2,7 @@
 name: Chore
 about: Tooling, dependencies, CI, cleanup (bez zmiany zachowania user-facing)
 title: "chore: "
-labels: chore
+labels: chore, type:chore
 ---
 
 ## Co zmieniamy

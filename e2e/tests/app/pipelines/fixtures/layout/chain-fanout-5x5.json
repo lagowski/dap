@@ -1,0 +1,503 @@
+{
+  "name": "chain-fanout-5x5",
+  "description": "Imported chain of 6, a fan-out of 5 branches of 5 nodes, a join and a tail of 5, stacked at the origin.",
+  "entry_point": "c0",
+  "nodes": [
+    {
+      "id": "c0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "c1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "c2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "c3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "c4",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "c5",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b0_0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b0_1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b0_2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b0_3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b0_4",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b1_0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b1_1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b1_2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b1_3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b1_4",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b2_0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b2_1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b2_2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b2_3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b2_4",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b3_0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b3_1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b3_2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b3_3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b3_4",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b4_0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b4_1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b4_2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b4_3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "b4_4",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "join",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "t0",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "t1",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "t2",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "t3",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "t4",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_c0_c1",
+      "source": "c0",
+      "target": "c1"
+    },
+    {
+      "id": "e_c1_c2",
+      "source": "c1",
+      "target": "c2"
+    },
+    {
+      "id": "e_c2_c3",
+      "source": "c2",
+      "target": "c3"
+    },
+    {
+      "id": "e_c3_c4",
+      "source": "c3",
+      "target": "c4"
+    },
+    {
+      "id": "e_c4_c5",
+      "source": "c4",
+      "target": "c5"
+    },
+    {
+      "id": "e_c5_b0_0",
+      "source": "c5",
+      "target": "b0_0",
+      "condition": {
+        "type": "comparison",
+        "field": "route",
+        "operator": "==",
+        "value": "b0"
+      }
+    },
+    {
+      "id": "e_b0_0_b0_1",
+      "source": "b0_0",
+      "target": "b0_1"
+    },
+    {
+      "id": "e_b0_1_b0_2",
+      "source": "b0_1",
+      "target": "b0_2"
+    },
+    {
+      "id": "e_b0_2_b0_3",
+      "source": "b0_2",
+      "target": "b0_3"
+    },
+    {
+      "id": "e_b0_3_b0_4",
+      "source": "b0_3",
+      "target": "b0_4"
+    },
+    {
+      "id": "e_b0_4_join",
+      "source": "b0_4",
+      "target": "join"
+    },
+    {
+      "id": "e_c5_b1_0",
+      "source": "c5",
+      "target": "b1_0",
+      "condition": {
+        "type": "comparison",
+        "field": "route",
+        "operator": "==",
+        "value": "b1"
+      }
+    },
+    {
+      "id": "e_b1_0_b1_1",
+      "source": "b1_0",
+      "target": "b1_1"
+    },
+    {
+      "id": "e_b1_1_b1_2",
+      "source": "b1_1",
+      "target": "b1_2"
+    },
+    {
+      "id": "e_b1_2_b1_3",
+      "source": "b1_2",
+      "target": "b1_3"
+    },
+    {
+      "id": "e_b1_3_b1_4",
+      "source": "b1_3",
+      "target": "b1_4"
+    },
+    {
+      "id": "e_b1_4_join",
+      "source": "b1_4",
+      "target": "join"
+    },
+    {
+      "id": "e_c5_b2_0",
+      "source": "c5",
+      "target": "b2_0",
+      "condition": {
+        "type": "comparison",
+        "field": "route",
+        "operator": "==",
+        "value": "b2"
+      }
+    },
+    {
+      "id": "e_b2_0_b2_1",
+      "source": "b2_0",
+      "target": "b2_1"
+    },
+    {
+      "id": "e_b2_1_b2_2",
+      "source": "b2_1",
+      "target": "b2_2"
+    },
+    {
+      "id": "e_b2_2_b2_3",
+      "source": "b2_2",
+      "target": "b2_3"
+    },
+    {
+      "id": "e_b2_3_b2_4",
+      "source": "b2_3",
+      "target": "b2_4"
+    },
+    {
+      "id": "e_b2_4_join",
+      "source": "b2_4",
+      "target": "join"
+    },
+    {
+      "id": "e_c5_b3_0",
+      "source": "c5",
+      "target": "b3_0",
+      "condition": {
+        "type": "comparison",
+        "field": "route",
+        "operator": "==",
+        "value": "b3"
+      }
+    },
+    {
+      "id": "e_b3_0_b3_1",
+      "source": "b3_0",
+      "target": "b3_1"
+    },
+    {
+      "id": "e_b3_1_b3_2",
+      "source": "b3_1",
+      "target": "b3_2"
+    },
+    {
+      "id": "e_b3_2_b3_3",
+      "source": "b3_2",
+      "target": "b3_3"
+    },
+    {
+      "id": "e_b3_3_b3_4",
+      "source": "b3_3",
+      "target": "b3_4"
+    },
+    {
+      "id": "e_b3_4_join",
+      "source": "b3_4",
+      "target": "join"
+    },
+    {
+      "id": "e_c5_b4_0",
+      "source": "c5",
+      "target": "b4_0",
+      "condition": {
+        "type": "comparison",
+        "field": "route",
+        "operator": "==",
+        "value": "b4"
+      }
+    },
+    {
+      "id": "e_b4_0_b4_1",
+      "source": "b4_0",
+      "target": "b4_1"
+    },
+    {
+      "id": "e_b4_1_b4_2",
+      "source": "b4_1",
+      "target": "b4_2"
+    },
+    {
+      "id": "e_b4_2_b4_3",
+      "source": "b4_2",
+      "target": "b4_3"
+    },
+    {
+      "id": "e_b4_3_b4_4",
+      "source": "b4_3",
+      "target": "b4_4"
+    },
+    {
+      "id": "e_b4_4_join",
+      "source": "b4_4",
+      "target": "join"
+    },
+    {
+      "id": "e_join_t0",
+      "source": "join",
+      "target": "t0"
+    },
+    {
+      "id": "e_t0_t1",
+      "source": "t0",
+      "target": "t1"
+    },
+    {
+      "id": "e_t1_t2",
+      "source": "t1",
+      "target": "t2"
+    },
+    {
+      "id": "e_t2_t3",
+      "source": "t2",
+      "target": "t3"
+    },
+    {
+      "id": "e_t3_t4",
+      "source": "t3",
+      "target": "t4"
+    },
+    {
+      "id": "e_t4_end",
+      "source": "t4",
+      "target": "__end__"
+    }
+  ]
+}

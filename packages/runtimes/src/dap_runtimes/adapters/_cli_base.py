@@ -45,9 +45,28 @@ import time
 from dataclasses import dataclass
 from typing import Any, Final
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    BackendErrorCategory,
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 
+from dap_runtimes.adapters._error_category import with_category
+from dap_runtimes.adapters._git_workspace import (
+    GitWorkspace,
+    diff_fields,
+    head_sha,
+    parse_git_config,
+    prepare_workspace,
+    push_branch,
+    run_guards,
+)
+from dap_runtimes.adapters._providers._base import classify_provider_failure
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
+from dap_runtimes.adapters._subprocess_stream import drain_subprocess_output
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.cli_base")
@@ -63,6 +82,7 @@ class SubprocessOutcome:
 
     - ``start_error`` set: the subprocess could not be spawned
       (``FileNotFoundError`` / ``OSError``); other fields are zero/empty.
+      ``binary_missing`` tells the first apart (#934).
     - ``timed_out=True``: the subprocess exceeded the configured
       timeout and was killed; ``stdout`` / ``stderr`` are empty.
     - Otherwise: the subprocess ran to completion; the fields hold
@@ -75,6 +95,7 @@ class SubprocessOutcome:
     duration_ms: int
     timed_out: bool = False
     start_error: str | None = None
+    binary_missing: bool = False
 
 
 def _normalise_extra_args(value: Any) -> tuple[list[str], str | None]:
@@ -235,6 +256,30 @@ class _BaseCliAdapter(BaseAdapter):
         """Assemble the CLI argv (``[binary, *flags, *extra_args]``)."""
         raise NotImplementedError
 
+    def _validate_env(self, config: dict[str, Any], env: dict[str, str]) -> str | None:
+        """Check the merged subprocess env before anything runs. Return error or None.
+
+        Runs after the env layers are merged, so a key from instance or project env
+        counts. Default no-op.
+        """
+        del config, env
+        return None
+
+    async def _before_run(self, cwd: str, env: dict[str, str]) -> None:
+        """Last step before the CLI is spawned in ``cwd`` (after any git checkout).
+
+        Default no-op.
+        """
+        del cwd, env
+
+    def _decode_stdout(self, stdout: str) -> dict[str, Any]:
+        """Parse subprocess stdout into a payload dict.
+
+        Default: treat the entire stdout as a single JSON object.
+        Override for streaming formats (e.g. NDJSON / stream-json).
+        """
+        return json.loads(stdout)  # type: ignore[no-any-return]
+
     def _parse_payload(
         self,
         payload: dict[str, Any],
@@ -268,7 +313,11 @@ class _BaseCliAdapter(BaseAdapter):
     # Shared execute() pipeline
     # ------------------------------------------------------------------
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    async def execute(  # noqa: PLR0911, PLR0912
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch obscures
         # the mapping (same rationale as ApiCallAdapter / BashAdapter).
@@ -278,12 +327,19 @@ class _BaseCliAdapter(BaseAdapter):
         if validation_error is not None:
             return self._failed(validation_error, duration_ms=0)
 
+        # Optional declarative git workspace (#922). ``None`` when no git key is set,
+        # and then nothing below changes.
+        git_config, git_error = parse_git_config(config)
+        if git_error is not None:
+            return self._failed(git_error, duration_ms=0, model_id=config.get("model_id"))
+
         binary = self._resolve_binary(config)
         if shutil.which(binary) is None:
             return self._failed(
                 f"{self.display_label} binary not found: {binary}",
                 duration_ms=0,
                 model_id=config.get("model_id"),
+                category="unavailable",
             )
 
         extra_args, extra_args_error = _normalise_extra_args(config.get("extra_args"))
@@ -292,17 +348,25 @@ class _BaseCliAdapter(BaseAdapter):
 
         argv = self._build_argv(binary, config, extra_args)
 
-        # Three-layer env (#65): engine env → project env_vars → per-agent
-        # runtime_config.env (highest). The CLI reads its provider-specific
-        # auth env var (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY)
-        # itself; we just propagate the documented overlays.
-        env, env_error = merge_subprocess_env(task.project_env_vars, config)
+        # Four-layer env (#65 + #388): engine env → instance env_vars
+        # → project env_vars → per-agent runtime_config.env (highest).
+        # The CLI reads its provider-specific auth env var
+        # (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY) itself;
+        # we just propagate the documented overlays.
+        env, env_error = merge_subprocess_env(
+            task.project_env_vars,
+            config,
+            instance_env_vars=task.instance_env_vars,
+        )
         if env_error is not None:
             return self._failed(
                 env_error,
                 duration_ms=0,
                 model_id=config.get("model_id"),
             )
+        env_error = self._validate_env(config, env)
+        if env_error is not None:
+            return self._failed(env_error, duration_ms=0, model_id=config.get("model_id"))
 
         # Resolve effective timeout once and reuse in both the wait_for budget
         # and any "timed out after Xms" message — RuntimeTask.timeout_ms is
@@ -311,6 +375,20 @@ class _BaseCliAdapter(BaseAdapter):
         cwd = task.working_directory or os.getcwd()
         timeout_seconds = max(effective_timeout_ms, 1) / MS_PER_SECOND
 
+        git_workspace: GitWorkspace | None = None
+        if git_config is not None:
+            git_workspace, git_error = await prepare_workspace(
+                git_config, working_directory=cwd, env=env
+            )
+            if git_workspace is None:
+                return self._failed(
+                    git_error or "git workspace preparation failed",
+                    duration_ms=0,
+                    model_id=config.get("model_id"),
+                )
+            cwd = git_workspace.path
+
+        await self._before_run(cwd, env)
         outcome = await self._run_subprocess(
             argv=argv,
             stdin=task.prompt_xml.encode("utf-8"),
@@ -318,6 +396,7 @@ class _BaseCliAdapter(BaseAdapter):
             env=env,
             timeout_seconds=timeout_seconds,
             binary=binary,
+            on_output=on_output,
         )
 
         # Use ``.get`` for ``model_id`` in failure paths so a misbehaving
@@ -330,6 +409,7 @@ class _BaseCliAdapter(BaseAdapter):
                 outcome.start_error,
                 duration_ms=outcome.duration_ms,
                 model_id=model_id,
+                category="unavailable" if outcome.binary_missing else None,
             )
 
         if outcome.timed_out:
@@ -338,6 +418,7 @@ class _BaseCliAdapter(BaseAdapter):
                 duration_ms=outcome.duration_ms,
                 model_id=model_id,
                 timed_out=True,
+                category="timeout",
             )
 
         if outcome.exit_code != 0:
@@ -351,10 +432,13 @@ class _BaseCliAdapter(BaseAdapter):
                 model_id=model_id,
                 exit_code=outcome.exit_code,
                 stderr=outcome.stderr,
+                # Only the provider's quota / rate-limit wording is reliable enough
+                # to read off a CLI's stderr; any other exit stays uncategorised.
+                category=classify_provider_failure(outcome.stderr),
             )
 
         try:
-            payload = json.loads(outcome.stdout)
+            payload = self._decode_stdout(outcome.stdout)
         except json.JSONDecodeError as exc:
             return self._failed(
                 f"Could not parse {self.display_label} CLI output as JSON: {exc.msg}",
@@ -374,7 +458,53 @@ class _BaseCliAdapter(BaseAdapter):
                 stderr=outcome.stderr,
             )
 
-        return self._parse_payload(payload, config, outcome)
+        result = self._parse_payload(payload, config, outcome)
+        if git_workspace is None:
+            return result
+        return await self._finish_git(git_workspace, result)
+
+    async def _finish_git(self, ws: GitWorkspace, result: RuntimeResult) -> RuntimeResult:
+        """Record the git outcome on a successful run, pushing first if asked to.
+
+        A failed run is returned untouched: nothing is pushed from a run the CLI itself
+        reported as failed.
+        """
+        if not result.success:
+            return result
+        # Guards (#923) run before the push, so a failing guard never reaches the remote.
+        guard, guard_error = await run_guards(ws)
+        if guard_error is not None:
+            return result.model_copy(
+                update={
+                    "success": False,
+                    "errors": [*result.errors, ws.redact(guard_error)],
+                    "structured": {
+                        **(result.structured or {}),
+                        "git": ws.info(head_sha=await head_sha(ws), pushed=False, guard=guard),
+                    },
+                }
+            )
+        pushed = False
+        push_error: str | None = None
+        if ws.config.push:
+            push_error = await push_branch(ws)
+            pushed = push_error is None
+        structured = {
+            **(result.structured or {}),
+            "git": ws.info(head_sha=await head_sha(ws), pushed=pushed),
+        }
+        if push_error is not None:
+            return result.model_copy(
+                update={
+                    "success": False,
+                    "errors": [*result.errors, push_error],
+                    "structured": structured,
+                }
+            )
+        # Top-level keys, not ``state_delta``: the engine merges them into state and
+        # still runs the per-role output parse (#933).
+        structured.update(await diff_fields(ws))
+        return result.model_copy(update={"structured": structured})
 
     # ------------------------------------------------------------------
     # Internals — overridable when needed but rarely
@@ -395,8 +525,21 @@ class _BaseCliAdapter(BaseAdapter):
         env: dict[str, str],
         timeout_seconds: float,
         binary: str,
+        on_output: OutputCallback | None = None,
     ) -> SubprocessOutcome:
-        """Spawn ``argv``, pipe ``stdin``, run with timeout. Always returns an outcome."""
+        """Spawn ``argv``, pipe ``stdin``, run with timeout. Always returns an outcome.
+
+        Replaces ``process.communicate(input=stdin)`` with the shared
+        :func:`drain_subprocess_output` helper (#662): stdout + stderr are
+        drained concurrently (a full stderr pipe would deadlock a stdout-only
+        reader) and stdin is fed concurrently, all under one ``wait_for``
+        budget so the previous timeout semantics are preserved. stdout is
+        chunk-read and incrementally UTF-8 decoded so each fragment can be
+        forwarded to ``on_output`` without corrupting a multi-byte char split
+        across a read boundary. ``on_output`` never affects the returned full
+        stdout/stderr, and a raising sink is logged and swallowed so a flaky
+        output consumer can't fail the node.
+        """
         new_session = hasattr(os, "setsid")
         start = time.monotonic()
 
@@ -417,6 +560,7 @@ class _BaseCliAdapter(BaseAdapter):
                 stderr="",
                 duration_ms=_elapsed_ms(start),
                 start_error=f"{self.display_label} binary not found: {binary} ({exc})",
+                binary_missing=True,
             )
         except OSError as exc:
             return SubprocessOutcome(
@@ -429,10 +573,14 @@ class _BaseCliAdapter(BaseAdapter):
 
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(input=stdin),
+                drain_subprocess_output(process, on_output=on_output, stdin=stdin),
                 timeout=timeout_seconds,
             )
+            # drain completing means EOF on both pipes; reap to set returncode.
+            await process.wait()
         except TimeoutError:
+            # wait_for cancelled the gather; the subprocess is still alive —
+            # tear down the whole tree exactly as before.
             await _kill_process_tree(process, new_session)
             return SubprocessOutcome(
                 exit_code=-1,
@@ -461,6 +609,7 @@ class _BaseCliAdapter(BaseAdapter):
         exit_code: int | None = None,
         stderr: str = "",
         timed_out: bool = False,
+        category: BackendErrorCategory | None = None,
     ) -> RuntimeResult:
         structured: dict[str, Any] = {
             "provider": self.provider_name,
@@ -477,7 +626,7 @@ class _BaseCliAdapter(BaseAdapter):
             output="",
             duration_ms=duration_ms,
             errors=[message],
-            structured=structured,
+            structured=with_category(structured, category),
         )
 
 

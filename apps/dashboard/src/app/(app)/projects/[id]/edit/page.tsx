@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -21,7 +22,7 @@ export default function EditProjectPage({
   const update = useUpdateProject();
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (
@@ -56,6 +57,8 @@ export default function EditProjectPage({
               repo_url: project.repo_url,
               default_branch: project.default_branch,
               env_vars: project.env_vars,
+              pipelines: project.pipelines,
+              auto_approve_nodes: project.auto_approve_nodes,
             }}
             onSubmit={async (values) => {
               await update.mutateAsync({
@@ -67,10 +70,8 @@ export default function EditProjectPage({
                   repo_url: values.repo_url,
                   default_branch: values.default_branch,
                   env_vars: values.env_vars,
-                  // Bindings are managed on the detail page; preserve
-                  // them through the update so a metadata edit doesn't
-                  // wipe the user's workflow wiring.
-                  pipelines: project.pipelines,
+                  pipelines: values.pipelines,
+                  auto_approve_nodes: values.auto_approve_nodes,
                 },
               });
               router.push(`/projects/${id}`);

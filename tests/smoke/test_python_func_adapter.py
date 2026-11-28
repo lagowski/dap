@@ -519,3 +519,336 @@ def test_registered_in_default_registry() -> None:
     assert registry.has("python-func")
     adapter = registry.get("python-func")
     assert adapter.id == "python-func"
+
+
+# ---------------------------------------------------------------------------
+# env overlay (#65/#388 follow-up) — in-process callables must see the
+# instance / project / runtime_config.env layers in os.environ, and the
+# adapter must restore os.environ exactly afterwards (no leakage across runs).
+# ---------------------------------------------------------------------------
+
+
+def _env_task(
+    *,
+    callable_path: str,
+    instance_env_vars: dict[str, str] | None = None,
+    project_env_vars: dict[str, str] | None = None,
+    runtime_env: dict[str, Any] | None = None,
+    timeout_ms: int | None = 5000,
+) -> RuntimeTask:
+    config: dict[str, Any] = {"callable_path": callable_path}
+    if runtime_env is not None:
+        config["env"] = runtime_env
+    return RuntimeTask(
+        execution_id="exec-env-test",
+        prompt_xml="<p/>",
+        working_directory="/tmp",
+        timeout_ms=timeout_ms,
+        runtime_config=config,
+        instance_env_vars=instance_env_vars or {},
+        project_env_vars=project_env_vars or {},
+    )
+
+
+def _install(monkeypatch: pytest.MonkeyPatch, name: str, func: Any) -> str:
+    import sys
+    import types
+
+    mod = types.ModuleType(name)
+    mod.run = func  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, name, mod)
+    return f"{name}:run"
+
+
+def _probe(key: str) -> Any:
+    """Build a callable that returns the live os.environ value for *key*."""
+
+    def run(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        import os
+
+        return {"seen": os.environ.get(key, "__UNSET__")}
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_instance_env_var_visible_to_callable(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_inst_mod", _probe("CORTEX_GH_TOKEN_MERGE"))
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            instance_env_vars={"CORTEX_GH_TOKEN_MERGE": "merge-token"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured is not None
+    assert result.structured["state_delta"]["seen"] == "merge-token"
+
+
+@pytest.mark.asyncio
+async def test_project_env_overrides_instance_for_callable(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_proj_mod", _probe("GH_TOKEN"))
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            instance_env_vars={"GH_TOKEN": "from-instance"},
+            project_env_vars={"GH_TOKEN": "from-project"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured is not None
+    assert result.structured["state_delta"]["seen"] == "from-project"
+
+
+@pytest.mark.asyncio
+async def test_runtime_env_overrides_project_for_callable(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_rt_mod", _probe("GH_TOKEN"))
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            project_env_vars={"GH_TOKEN": "from-project"},
+            runtime_env={"GH_TOKEN": "from-agent"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured is not None
+    assert result.structured["state_delta"]["seen"] == "from-agent"
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_also_sees_overlay(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sync callables run in run_in_executor (a thread) — os.environ is
+    process-global so the overlay must be visible there too."""
+
+    def run(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        import os
+
+        return {"seen": os.environ.get("CORTEX_GH_TOKEN_CODE", "__UNSET__")}
+
+    path = _install(monkeypatch, "_dap_env_sync_mod", run)
+    result = await adapter.execute(
+        _env_task(
+            callable_path=path,
+            instance_env_vars={"CORTEX_GH_TOKEN_CODE": "code-token"},
+        )
+    )
+    assert result.success, result.errors
+    assert result.structured is not None
+    assert result.structured["state_delta"]["seen"] == "code-token"
+
+
+@pytest.mark.asyncio
+async def test_os_environ_restored_after_execution(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key that did not exist before must be gone afterwards."""
+    import os
+
+    assert "DAP_OVERLAY_NEWKEY" not in os.environ
+    path = _install(monkeypatch, "_dap_env_restore_mod", _probe("DAP_OVERLAY_NEWKEY"))
+    result = await adapter.execute(
+        _env_task(callable_path=path, instance_env_vars={"DAP_OVERLAY_NEWKEY": "transient"})
+    )
+    assert result.success, result.errors
+    assert result.structured is not None
+    assert result.structured["state_delta"]["seen"] == "transient"
+    assert "DAP_OVERLAY_NEWKEY" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_os_environ_preexisting_value_restored(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing key is temporarily overridden, then restored to its
+    original value — no permanent mutation of the engine process env."""
+    import os
+
+    monkeypatch.setenv("GH_TOKEN", "engine-default")
+    path = _install(monkeypatch, "_dap_env_pre_mod", _probe("GH_TOKEN"))
+    result = await adapter.execute(
+        _env_task(callable_path=path, instance_env_vars={"GH_TOKEN": "overlay-value"})
+    )
+    assert result.success, result.errors
+    assert result.structured is not None
+    assert result.structured["state_delta"]["seen"] == "overlay-value"
+    assert os.environ["GH_TOKEN"] == "engine-default"
+
+
+@pytest.mark.asyncio
+async def test_os_environ_restored_even_when_callable_raises(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    def run(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    assert "DAP_OVERLAY_RAISEKEY" not in os.environ
+    path = _install(monkeypatch, "_dap_env_raise_mod", run)
+    result = await adapter.execute(
+        _env_task(callable_path=path, instance_env_vars={"DAP_OVERLAY_RAISEKEY": "x"})
+    )
+    assert result.success is False
+    assert "DAP_OVERLAY_RAISEKEY" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_empty_overlay_leaves_environ_untouched(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No overlay → no patching; a probe sees whatever the ambient env holds."""
+    monkeypatch.setenv("DAP_AMBIENT_ONLY", "ambient")
+    path = _install(monkeypatch, "_dap_env_empty_mod", _probe("DAP_AMBIENT_ONLY"))
+    result = await adapter.execute(_env_task(callable_path=path))
+    assert result.success, result.errors
+    assert result.structured is not None
+    assert result.structured["state_delta"]["seen"] == "ambient"
+
+
+@pytest.mark.asyncio
+async def test_malformed_runtime_env_returns_failed(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(monkeypatch, "_dap_env_bad_mod", _probe("X"))
+    result = await adapter.execute(
+        _env_task(callable_path=path, runtime_env="not-a-dict")  # type: ignore[arg-type]
+    )
+    assert result.success is False
+    assert any("dict[str, str]" in err for err in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# Dedicated thread pool (#621) — sync nodes must NOT run on asyncio's default
+# executor (which FastAPI also uses for sync ``def`` route handlers).
+# ---------------------------------------------------------------------------
+
+
+def test_dedicated_executor_is_module_level() -> None:
+    """The module exposes a dedicated ``_NODE_EXECUTOR`` (#621).
+
+    Sync python-func callables are dispatched there instead of the
+    default ``loop.run_in_executor(None, ...)`` so they don't share
+    a worker pool with FastAPI's ``def`` route handlers. A long
+    sync node previously queued ``/health`` behind it for minutes
+    when both contended for the default pool.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dap_runtimes.adapters.python_func import _NODE_EXECUTOR
+
+    assert isinstance(_NODE_EXECUTOR, ThreadPoolExecutor)
+    # max_workers comes from DAP_PYTHON_FUNC_MAX_WORKERS or defaults to 10.
+    assert _NODE_EXECUTOR._max_workers >= 1
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_runs_in_dedicated_executor(
+    adapter: PythonFuncAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sync ``def`` callable executes inside the python-func executor's
+    worker thread, not the default asyncio executor.
+
+    The thread name prefix ``dap-python-func`` lets us cheaply verify the
+    dispatch without mocking asyncio internals. This is the regression
+    guard for #621 — if a future refactor reverts to
+    ``loop.run_in_executor(None, ...)``, this test fails by reading a
+    thread name like ``ThreadPoolExecutor-0_0`` instead of
+    ``dap-python-func_0``.
+    """
+    import sys
+    import threading
+    import types
+
+    def _record_thread_name(state: dict[str, Any], _config: dict[str, Any]) -> dict[str, Any]:
+        return {"thread_name": threading.current_thread().name}
+
+    # Register a fake module directly in ``sys.modules`` so the adapter's
+    # ``importlib.import_module`` call finds it without needing to monkeypatch
+    # importlib itself (which would recurse on the fallback path).
+    fake_mod = types.ModuleType("_dap_thread_probe_mod")
+    fake_mod._dap_thread_probe = _record_thread_name  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_dap_thread_probe_mod", fake_mod)
+
+    result = await adapter.execute(_task(callable_path="_dap_thread_probe_mod:_dap_thread_probe"))
+    assert result.success, result.errors
+    assert result.structured is not None
+    name = result.structured["state_delta"]["thread_name"]
+    assert name.startswith("dap-python-func"), (
+        f"sync python-func ran on the WRONG executor — thread name was {name!r}; "
+        f"expected the dedicated pool prefix 'dap-python-func' (#621)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# resolve_callable — the shared resolver backing both the adapter and the
+# engine's fail-fast preflight (#710).
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_callable_resolves_a_real_callable() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("json:dumps")
+    assert error is None
+    assert callable(func)
+
+
+def test_resolve_callable_rejects_missing_path() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable(None)
+    assert func is None
+    assert error is not None
+    assert "required" in error
+
+
+def test_resolve_callable_requires_colon_separator() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("json.dumps")
+    assert func is None
+    assert error is not None
+    assert "module.path:func_name" in error
+
+
+def test_resolve_callable_rejects_blank_parts() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    assert resolve_callable(":dumps")[1] is not None
+    assert resolve_callable("json:")[1] is not None
+
+
+def test_resolve_callable_reports_unimportable_module() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("dap_no_such_module_zzz_710:run")
+    assert func is None
+    assert error is not None
+    assert "cannot import" in error
+
+
+def test_resolve_callable_reports_missing_attribute() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    func, error = resolve_callable("json:no_such_attr_710")
+    assert func is None
+    assert error is not None
+    assert "has no attribute" in error
+
+
+def test_resolve_callable_rejects_non_callable_attribute() -> None:
+    from dap_runtimes.adapters.python_func import resolve_callable
+
+    # json.__name__ is a str, not callable.
+    func, error = resolve_callable("json:__name__")
+    assert func is None
+    assert error is not None
+    assert "is not callable" in error

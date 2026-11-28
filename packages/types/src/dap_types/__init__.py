@@ -1,4 +1,5 @@
 from dap_types.agent import Agent, AgentRole
+from dap_types.batch_run import BatchRun, BatchRunResult, BatchRunStatus
 from dap_types.pipeline import (
     ComparisonCondition,
     EdgeCondition,
@@ -7,6 +8,7 @@ from dap_types.pipeline import (
     PipelineDefaults,
     PipelineEdge,
     PipelineNode,
+    RetryPolicy,
 )
 from dap_types.project import RECOMMENDED_PIPELINE_KINDS, Project
 from dap_types.role_outputs import (
@@ -15,34 +17,49 @@ from dap_types.role_outputs import (
     resolve_output_validator,
     role_output_model,
 )
-from dap_types.run import NodeExecutionLog, NodeStatus, Run
+from dap_types.run import NodeExecutionLog, NodeOutputChunk, NodeStatus, Run
 from dap_types.runtime import (
+    BACKEND_ERROR_CATEGORIES,
+    ERROR_CATEGORY_KEY,
+    BackendErrorCategory,
     HealthStatus,
+    OutputCallback,
     RuntimeAdapter,
     RuntimeKind,
     RuntimeResult,
     RuntimeTask,
+    error_category,
+    is_backend_error,
 )
 from dap_types.state import FinalStatus, PipelineState, StateSnapshot, VerificationStatus
 
 __all__ = [
+    "BACKEND_ERROR_CATEGORIES",
+    "ERROR_CATEGORY_KEY",
     "RECOMMENDED_PIPELINE_KINDS",
     "ROLE_FIELDS",
     "Agent",
     "AgentRole",
+    "BackendErrorCategory",
+    "BatchRun",
+    "BatchRunResult",
+    "BatchRunStatus",
     "ComparisonCondition",
     "EdgeCondition",
     "FinalStatus",
     "HealthStatus",
     "LogicalCondition",
     "NodeExecutionLog",
+    "NodeOutputChunk",
     "NodeStatus",
+    "OutputCallback",
     "Pipeline",
     "PipelineDefaults",
     "PipelineEdge",
     "PipelineNode",
     "PipelineState",
     "Project",
+    "RetryPolicy",
     "Run",
     "RuntimeAdapter",
     "RuntimeKind",
@@ -51,6 +68,8 @@ __all__ = [
     "StateSnapshot",
     "VerificationStatus",
     "agent_output_model",
+    "error_category",
+    "is_backend_error",
     "resolve_output_validator",
     "role_output_model",
 ]

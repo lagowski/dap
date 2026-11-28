@@ -11,7 +11,7 @@ import json
 import os
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from dap_runtimes import GeminiCliAdapter
@@ -216,7 +216,8 @@ async def test_execute_passes_prompt_via_stdin(with_api_key: None) -> None:
     ):
         await adapter.execute(_task())
 
-    sent = proc.communicate.call_args.kwargs["input"].decode("utf-8")
+    # Prompt is now fed via the streamed stdin write (#662), not communicate().
+    sent = proc.stdin.write.call_args.args[0].decode("utf-8")
     assert sent.startswith("<agent_prompt>")
 
 
@@ -458,16 +459,9 @@ async def test_timeout_kills_long_running_command(with_api_key: None) -> None:
 async def test_cancellation_kills_subprocess(with_api_key: None) -> None:
     adapter = GeminiCliAdapter()
 
-    async def hang(*_args: Any, **_kwargs: Any) -> tuple[bytes, bytes]:
-        await asyncio.Event().wait()
-        return (b"", b"")
-
-    proc = MagicMock()
+    # Subprocess whose stdout read hangs forever (#662); cancel the outer task.
+    proc = build_subprocess_mock(hang=True, pid=99999)
     proc.returncode = None
-    proc.pid = 99999
-    proc.communicate = hang
-    proc.wait = AsyncMock(return_value=-9)
-    proc.kill = MagicMock()
 
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/gemini"),

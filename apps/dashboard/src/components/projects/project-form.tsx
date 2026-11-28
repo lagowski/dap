@@ -4,13 +4,19 @@ import { useState } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Trash2 } from "lucide-react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatApiError } from "@/lib/api/client";
+import { useCurrentUser, useValidateProjectEnv } from "@/hooks/api";
+import type { EnvVarValidationResult } from "@/lib/api/types";
+import { EnvVarsEditor } from "@/components/projects/env-vars-editor";
+import { Field } from "@/components/projects/form-field";
+import { GateAutoApproveEditor } from "@/components/projects/gate-auto-approve-editor";
+import { PipelineBindingsEditor } from "@/components/projects/pipeline-bindings-editor";
+
+export { buildGateAutoApproveRows } from "@/components/projects/gate-auto-approve-editor";
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
@@ -22,12 +28,6 @@ const formSchema = z.object({
 
 type FormShape = z.infer<typeof formSchema>;
 
-/**
- * Project form values include the env_vars editor's state since it's
- * not driven by react-hook-form (free-form key/value pairs).
- * Pipeline bindings live on the detail page, not the form — they need
- * a pipeline picker we don't want to surface during create.
- */
 export interface ProjectFormValues {
   name: string;
   description: string;
@@ -35,6 +35,8 @@ export interface ProjectFormValues {
   repo_url: string | null;
   default_branch: string;
   env_vars: Record<string, string>;
+  pipelines: Record<string, string>;
+  auto_approve_nodes: string[];
 }
 
 interface ProjectFormProps {
@@ -68,8 +70,43 @@ export function ProjectForm({
   const [envVars, setEnvVars] = useState<Record<string, string>>(
     () => initialValues?.env_vars ?? {},
   );
+  const [validationResults, setValidationResults] = useState<
+    Record<string, EnvVarValidationResult>
+  >({});
+  const [validationWarning, setValidationWarning] = useState<string | null>(null);
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser.data?.is_superuser === true;
+  const validateEnv = useValidateProjectEnv();
+
+  const [pipelines, setPipelines] = useState<Record<string, string>>(
+    () => initialValues?.pipelines ?? {},
+  );
+  const [autoApproveNodes, setAutoApproveNodes] = useState<string[]>(
+    () => initialValues?.auto_approve_nodes ?? [],
+  );
 
   const handleSubmit = form.handleSubmit(async (values) => {
+    setValidationResults({});
+    setValidationWarning(null);
+
+    // Validate env vars before submitting.
+    try {
+      const res = await validateEnv.mutateAsync({ env_vars: envVars });
+      const byKey: Record<string, EnvVarValidationResult> = {};
+      let hasInvalid = false;
+      for (const r of res.results) {
+        byKey[r.key] = r;
+        if (r.is_token && !r.valid) hasInvalid = true;
+      }
+      setValidationResults(byKey);
+      if (hasInvalid) return; // Block save — inline feedback shown.
+    } catch {
+      // Validation itself failed (network error) — degrade to warning.
+      setValidationWarning(
+        "Could not validate GitHub tokens — saving anyway.",
+      );
+    }
+
     try {
       await onSubmit({
         name: values.name,
@@ -80,6 +117,14 @@ export function ProjectForm({
         repo_url: values.repo_url.trim() || null,
         default_branch: values.default_branch,
         env_vars: envVars,
+        // Drop incomplete bindings (blank kind or pipeline id) before submit
+        // to avoid 422s from the engine validator.
+        pipelines: Object.fromEntries(
+          Object.entries(pipelines).filter(
+            ([k, v]) => k.trim().length > 0 && v.trim().length > 0,
+          ),
+        ),
+        auto_approve_nodes: autoApproveNodes,
       });
     } catch {
       // Parent surfaces submitError.
@@ -127,13 +172,45 @@ export function ProjectForm({
       </Field>
 
       <Field label="Project env vars">
-        <EnvVarsEditor value={envVars} onChange={setEnvVars} />
+        <EnvVarsEditor
+          value={envVars}
+          onChange={setEnvVars}
+          validationResults={validationResults}
+        />
         <p className="text-xs text-muted-foreground">
           Layered onto subprocess env (#65). Engine env (base) → these
           → per-agent runtime_config.env (highest). Keep secrets in
           engine env — these are convenience overrides.
         </p>
       </Field>
+
+      <Field label="Pipeline bindings">
+        <PipelineBindingsEditor value={pipelines} onChange={setPipelines} />
+        <p className="text-xs text-muted-foreground">
+          Map a workflow kind (e.g. &quot;cortex&quot;) to a pipeline. Bindings
+          are optional — leave empty to configure later on the detail page.
+        </p>
+      </Field>
+
+      {isAdmin ? (
+        <Field label="Gate auto-approval">
+          <GateAutoApproveEditor
+            pipelines={pipelines}
+            selectedNodes={autoApproveNodes}
+            onChange={setAutoApproveNodes}
+          />
+          <p className="text-xs text-muted-foreground">
+            Checked gates auto-resume for runs triggered through this project.
+            Unchecked gates still pause for review.
+          </p>
+        </Field>
+      ) : null}
+
+      {validationWarning ? (
+        <p className="text-sm text-yellow-600" role="status">
+          {validationWarning}
+        </p>
+      ) : null}
 
       {submitError ? (
         <p className="text-sm text-destructive" role="alert">
@@ -142,110 +219,13 @@ export function ProjectForm({
       ) : null}
 
       <div className="flex gap-2 pt-2">
-        <Button type="submit" disabled={isPending}>
-          {isPending ? "Saving…" : submitLabel}
+        <Button type="submit" disabled={isPending || validateEnv.isPending}>
+          {validateEnv.isPending ? "Validating…" : isPending ? "Saving…" : submitLabel}
         </Button>
         <Button type="button" variant="outline" asChild>
           <Link href={cancelHref}>Cancel</Link>
         </Button>
       </div>
     </form>
-  );
-}
-
-interface EnvVarsEditorProps {
-  value: Record<string, string>;
-  onChange: (next: Record<string, string>) => void;
-}
-
-function EnvVarsEditor({ value, onChange }: EnvVarsEditorProps) {
-  const entries = Object.entries(value);
-
-  const update = (oldKey: string, nextKey: string, nextValue: string) => {
-    const next: Record<string, string> = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (k === oldKey) {
-        if (nextKey.length > 0) next[nextKey] = nextValue;
-      } else {
-        next[k] = v;
-      }
-    }
-    onChange(next);
-  };
-
-  const remove = (key: string) => {
-    const { [key]: _removed, ...rest } = value;
-    onChange(rest);
-  };
-
-  const add = () => {
-    let candidate = "VAR_NAME";
-    let n = 1;
-    while (candidate in value) {
-      candidate = `VAR_NAME_${n++}`;
-    }
-    onChange({ ...value, [candidate]: "" });
-  };
-
-  return (
-    <div className="space-y-2">
-      {entries.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          No project env vars yet.
-        </p>
-      ) : (
-        <div className="space-y-1">
-          {entries.map(([key, val]) => (
-            <div key={key} className="flex items-center gap-2">
-              <Input
-                defaultValue={key}
-                onBlur={(e) => update(key, e.target.value, val)}
-                placeholder="KEY"
-                className="font-mono text-xs h-8 max-w-[14rem]"
-                aria-label="env var name"
-              />
-              <Input
-                value={val}
-                onChange={(e) => update(key, key, e.target.value)}
-                placeholder="value"
-                className="font-mono text-xs h-8"
-                aria-label="env var value"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => remove(key)}
-                aria-label={`Remove ${key}`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-      <Button type="button" variant="outline" size="sm" onClick={add}>
-        <Plus className="h-3.5 w-3.5 mr-1" />
-        Add env var
-      </Button>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      {children}
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
   );
 }

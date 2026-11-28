@@ -17,7 +17,13 @@ from typing import Any
 import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -41,7 +47,11 @@ class CountingSlowAdapter:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.calls.append(task.execution_id)
         await asyncio.sleep(self.sleep_seconds)
         return RuntimeResult(success=True, output="ok", duration_ms=1)
@@ -112,6 +122,11 @@ def _create_pipeline(client: TestClient, agent_id: str, num_nodes: int = 3) -> s
                 "max_attempts": 3,
                 "budget_limit_usd": 5.0,
                 "approval_required_nodes": [],
+                # This suite verifies pause/resume and gate-approval flows, not
+                # terminal-status enforcement (#628). Opt out so a residual
+                # ``running`` keeps the legacy "no node raised = success"
+                # semantics these tests rely on.
+                "requires_terminal_final_status": False,
             },
         },
     )
@@ -294,6 +309,11 @@ def _create_gated_pipeline(client: TestClient, agent_id: str, gate_node: str = "
                 "max_attempts": 3,
                 "budget_limit_usd": 5.0,
                 "approval_required_nodes": [gate_node],
+                # This suite verifies pause/resume and gate-approval flows, not
+                # terminal-status enforcement (#628). Opt out so a residual
+                # ``running`` keeps the legacy "no node raised = success"
+                # semantics these tests rely on.
+                "requires_terminal_final_status": False,
             },
         },
     )
@@ -356,9 +376,39 @@ def test_approve_gate_node_succeeds(
     run_id = _trigger_and_wait_paused(client, pipeline_id)
 
     response = client.post(f"/runs/{run_id}/nodes/n2/approve")
-    assert response.status_code == 200
+    # 202 Accepted: approval recorded, run resumes in the background (#623).
+    assert response.status_code == 202
     assert response.json()["final_status"] == "running"
 
+    completed = _wait_for_status(client, run_id, {"success", "failed"})
+    assert completed["final_status"] == "success"
+
+
+def test_approve_returns_202_and_resumes_in_background(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Locks in the non-blocking approve contract (#623).
+
+    The approve endpoint records the gate decision, dispatches the resume as a
+    background task, and returns **202 Accepted** immediately without awaiting
+    the next phase. We assert the status code and that the returned ``Run`` body
+    is already transitioning to ``running`` — the prompt return is implicit in
+    the synchronous TestClient call completing while the run still advances to
+    ``success`` in the background (mirrors test_approve_gate_node_succeeds).
+    """
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    response = client.post(f"/runs/{run_id}/nodes/n2/approve")
+    assert response.status_code == 202
+    body = response.json()
+    # Response body is the Run, already claimed paused → running.
+    assert body["id"] == run_id
+    assert body["final_status"] == "running"
+
+    # The resume runs in the background and advances the run to completion.
     completed = _wait_for_status(client, run_id, {"success", "failed"})
     assert completed["final_status"] == "success"
 
@@ -378,7 +428,7 @@ def test_approve_after_first_succeeds_returns_409(
     run_id = _trigger_and_wait_paused(client, pipeline_id)
 
     first = client.post(f"/runs/{run_id}/nodes/n2/approve")
-    assert first.status_code == 200
+    assert first.status_code == 202
 
     second = client.post(f"/runs/{run_id}/nodes/n2/approve")
     assert second.status_code == 409
@@ -411,7 +461,7 @@ def test_approve_on_completed_run_returns_409(
 def test_concurrent_approve_only_one_wins(
     pause_client: tuple[TestClient, CountingSlowAdapter],
 ) -> None:
-    """Two concurrent /approve calls on the same gate: exactly one 200, one 409 (#186).
+    """Two concurrent /approve calls on the same gate: exactly one 202, one 409 (#186).
 
     Sister of test_concurrent_resume_only_one_wins — same TOCTOU class but on
     the gate-validating endpoint specifically. Forbidden outcome is a 500
@@ -429,8 +479,8 @@ def test_concurrent_approve_only_one_wins(
         responses = [f.result() for f in concurrent.futures.as_completed(futures)]
 
     statuses = sorted(r.status_code for r in responses)
-    assert statuses == [200, 409], (
-        f"Expected exactly one 200 and one 409 from concurrent /approve, got {statuses}"
+    assert statuses == [202, 409], (
+        f"Expected exactly one 202 and one 409 from concurrent /approve, got {statuses}"
     )
 
     loser = next(r for r in responses if r.status_code == 409)
@@ -531,6 +581,38 @@ def test_try_claim_resume_atomic(
 
     assert first is True
     assert second is False  # Already claimed by s1 — no row matches WHERE paused.
+
+
+def test_paused_at_node_populated_on_gate_interrupt(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """Run paused at an approval gate exposes paused_at_node in GET /runs/{id} (#363)."""
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    run = client.get(f"/runs/{run_id}").json()
+    assert run["final_status"] == "paused"
+    assert run["paused_at_node"] == "n2"
+
+
+def test_paused_at_node_cleared_on_resume(
+    pause_client: tuple[TestClient, CountingSlowAdapter],
+) -> None:
+    """paused_at_node is cleared when the run is resumed (#363)."""
+    client, _ = pause_client
+    agent_id = _create_agent(client)
+    pipeline_id = _create_gated_pipeline(client, agent_id, gate_node="n2")
+    run_id = _trigger_and_wait_paused(client, pipeline_id)
+
+    assert client.get(f"/runs/{run_id}").json()["paused_at_node"] == "n2"
+
+    client.post(f"/runs/{run_id}/nodes/n2/approve")
+    _wait_for_status(client, run_id, {"success", "failed"})
+
+    run = client.get(f"/runs/{run_id}").json()
+    assert run["paused_at_node"] is None
 
 
 def test_try_claim_revive_accepts_paused_and_failed() -> None:

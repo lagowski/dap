@@ -1,9 +1,7 @@
 "use client";
 
-import { Sparkles, Wand2 } from "lucide-react";
+import { ChevronRight, Loader2, Sparkles, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import {
   PIPELINE_TEMPLATE_CATEGORIES,
   PIPELINE_TEMPLATES,
@@ -13,59 +11,68 @@ import {
 
 interface PipelineTemplatePickerProps {
   /**
-   * Fired when the user clicks "Use this template" on a card. Parent
-   * is responsible for the actual import + navigation. Awaiting the
-   * promise lets the parent disable the picker while the request is
-   * in flight (no double-imports on rage clicks).
+   * Fired when the user picks a template row. Parent is responsible for
+   * the import + navigation. Awaiting the promise lets the parent disable
+   * the list while the request is in flight (no double-imports).
    */
   onUseTemplate: (template: PipelineTemplate) => Promise<void> | void;
-  /** Disable every card while an import is in flight. */
+  /** Fired when the user picks "Start from a blank canvas". */
+  onStartScratch: () => void;
+  /** Disable every row while an import is in flight. */
   disabled?: boolean;
-  /** Surfaces the "currently importing" state on the matching card. */
+  /** Surfaces the "currently importing" state on the matching row. */
   pendingTemplateId?: string | null;
 }
 
 /**
- * Card grid above the empty Designer on ``/pipelines/new``. Each
- * template ships with its own bundle (pipeline + agents); clicking
- * "Use this template" runs ``POST /pipelines/import`` and navigates
- * to ``/pipelines/{id}/edit`` for further customisation. No
- * "Start from scratch" card here — the empty Designer below is the
- * scratch path; the picker is purely an alternative bootstrap.
+ * Step-1 chooser for ``/pipelines/new``: a grouped list of starting
+ * points. "Start from a blank canvas" advances to the empty Designer;
+ * picking a template runs ``POST /pipelines/import`` and navigates to the
+ * new pipeline's edit page. Choosing is a navigation action — there's no
+ * persistent selection.
  */
 export function PipelineTemplatePicker({
   onUseTemplate,
+  onStartScratch,
   disabled = false,
   pendingTemplateId = null,
 }: PipelineTemplatePickerProps) {
-  const groups: { group: PipelineTemplateCategory; templates: PipelineTemplate[] }[] =
-    PIPELINE_TEMPLATE_CATEGORIES.map((cat) => ({
-      group: cat,
-      templates: PIPELINE_TEMPLATES.filter((t) => t.category === cat),
-    })).filter((g) => g.templates.length > 0);
+  const groups: {
+    group: PipelineTemplateCategory;
+    templates: PipelineTemplate[];
+  }[] = PIPELINE_TEMPLATE_CATEGORIES.map((cat) => ({
+    group: cat,
+    templates: PIPELINE_TEMPLATES.filter((t) => t.category === cat),
+  })).filter((g) => g.templates.length > 0);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex items-center gap-1.5">
-        <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-        <h3 className="text-sm font-medium">Start from template</h3>
-        <span className="text-xs text-muted-foreground">
-          — drops a working pipeline + its agents into the engine in one click.
-          You can edit everything afterwards on the pipeline&apos;s edit page.
-        </span>
+        <Sparkles className="h-4 w-4" aria-hidden="true" />
+        <h2 className="text-base font-medium">How do you want to start?</h2>
       </div>
+
+      <Row
+        title="Start from a blank canvas"
+        description="An empty Designer — add nodes and wire the pipeline yourself."
+        icon={<Plus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+        onClick={onStartScratch}
+        disabled={disabled}
+      />
 
       {groups.map((group) => (
         <div key={group.group} className="space-y-1.5">
-          <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {group.group}
-          </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          </h3>
+          <div className="space-y-1.5">
             {group.templates.map((t) => (
-              <PipelineTemplateCard
+              <Row
                 key={t.id}
-                template={t}
-                onUse={() => onUseTemplate(t)}
+                title={t.name}
+                description={t.description}
+                tags={tagsFor(t)}
+                onClick={() => onUseTemplate(t)}
                 disabled={disabled}
                 pending={pendingTemplateId === t.id}
               />
@@ -77,57 +84,74 @@ export function PipelineTemplatePicker({
   );
 }
 
-function PipelineTemplateCard({
-  template,
-  onUse,
-  disabled,
-  pending,
-}: {
-  template: PipelineTemplate;
-  onUse: () => void;
-  disabled: boolean;
-  pending: boolean;
-}) {
-  const nodeCount = template.bundle.pipeline.nodes.length;
-  const agentCount = Object.keys(template.bundle.bundled_agents ?? {}).length;
-  const runtimes = new Set(
-    Object.values(template.bundle.bundled_agents ?? {}).map((a) => a.runtime_id),
+function tagsFor(t: PipelineTemplate): string[] {
+  const nodeCount = t.bundle.pipeline.nodes.length;
+  const agentCount = Object.keys(t.bundle.bundled_agents ?? {}).length;
+  const runtimes = Array.from(
+    new Set(
+      Object.values(t.bundle.bundled_agents ?? {}).map((a) => a.runtime_id),
+    ),
   );
+  return [
+    `${nodeCount} node${nodeCount === 1 ? "" : "s"}`,
+    `${agentCount} agent${agentCount === 1 ? "" : "s"}`,
+    ...runtimes,
+  ];
+}
+
+function Row({
+  title,
+  description,
+  tags,
+  icon,
+  onClick,
+  disabled,
+  pending = false,
+}: {
+  title: string;
+  description: string;
+  tags?: string[];
+  icon?: React.ReactNode;
+  onClick: () => void;
+  disabled: boolean;
+  pending?: boolean;
+}) {
   return (
-    <div
-      className={cn(
-        "h-full flex flex-col gap-2 rounded-md border bg-card p-3 transition-colors",
-        "border-input",
-      )}
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="group/row flex w-full items-center gap-3 rounded-md border border-input bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-accent/30 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="text-sm font-medium leading-tight">{template.name}</div>
+      {icon}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium leading-tight">{title}</span>
+          {tags?.map((tag) => (
+            <Badge
+              key={tag}
+              variant="secondary"
+              className="font-mono text-[10px]"
+            >
+              {tag}
+            </Badge>
+          ))}
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {pending ? "Importing…" : description}
+        </p>
       </div>
-      <div className="flex flex-wrap items-center gap-1">
-        <Badge variant="secondary" className="font-mono text-[10px]">
-          {nodeCount} node{nodeCount === 1 ? "" : "s"}
-        </Badge>
-        <Badge variant="secondary" className="font-mono text-[10px]">
-          {agentCount} agent{agentCount === 1 ? "" : "s"}
-        </Badge>
-        {Array.from(runtimes).map((runtime) => (
-          <Badge key={runtime} variant="outline" className="font-mono text-[10px]">
-            {runtime}
-          </Badge>
-        ))}
-      </div>
-      <p className="text-xs text-muted-foreground flex-1">{template.description}</p>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={onUse}
-        disabled={disabled || pending}
-        className="self-start"
-      >
-        <Wand2 className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-        {pending ? "Importing…" : "Use this template"}
-      </Button>
-    </div>
+      {pending ? (
+        <Loader2
+          className="h-4 w-4 shrink-0 animate-spin text-muted-foreground"
+          aria-hidden="true"
+        />
+      ) : (
+        <ChevronRight
+          className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover/row:translate-x-0.5"
+          aria-hidden="true"
+        />
+      )}
+    </button>
   );
 }

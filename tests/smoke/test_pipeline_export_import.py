@@ -8,28 +8,22 @@ plus the 404 export path.
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
-from dap_engine.app import EngineConfig, create_app
+from dap_engine.version import __version__
 from fastapi.testclient import TestClient
-
-from tests.smoke._auth import authed_test_client
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory(prefix="dap-pipeline-export-") as tmp:
-        config = EngineConfig(
-            db_path=str(Path(tmp) / "state.db"),
-            auth_jwt_secret="smoke-secret",
-        )
-        app = create_app(config)
-        with authed_test_client(app) as c:
-            yield c
+def client(authed_client: TestClient) -> TestClient:
+    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
+
+    Kept as a local alias because most test bodies in this file already
+    take a ``client: TestClient`` parameter; renaming them all would
+    bloat the X1 diff without changing behaviour.
+    """
+    return authed_client
 
 
 def _create_minimal_agent(client: TestClient, name: str = "Agent") -> str:
@@ -84,7 +78,8 @@ def test_export_returns_portable_shape(client: TestClient) -> None:
     assert response.status_code == 200, response.text
 
     body = response.json()
-    assert body["schema_version"] == "pipeline-export/1"
+    assert body["schema_version"] == "pipeline-export/2"
+    assert body["min_dap_version"] == __version__
     pipeline = body["pipeline"]
     # Per-installation fields stripped
     assert "id" not in pipeline
@@ -112,8 +107,9 @@ def test_export_404_unknown_pipeline(client: TestClient) -> None:
 
 
 def test_round_trip_preserves_all_portable_fields(client: TestClient) -> None:
-    """Export then import in the same DB — fields land on the new pipeline
-    with v1 and the agent reference still resolves locally."""
+    """Export then import in the same DB — re-importing the same name bumps the
+    version under the existing pipeline (#755), with all fields preserved and the
+    agent reference still resolving locally."""
     agent_id = _create_minimal_agent(client)
     created = client.post("/pipelines", json=_pipeline_payload(agent_id)).json()
     exported = client.get(f"/pipelines/{created['id']}/export").json()
@@ -122,14 +118,35 @@ def test_round_trip_preserves_all_portable_fields(client: TestClient) -> None:
     assert response.status_code == 201, response.text
     imported = response.json()
 
-    assert imported["id"] != created["id"]  # new pipeline
-    assert imported["version"] == 1
+    assert imported["id"] == created["id"]  # same pipeline, version bumped (#755)
+    assert imported["version"] == 2
     assert imported["name"] == created["name"]
     assert imported["description"] == created["description"]
     assert imported["entry_point"] == created["entry_point"]
     assert len(imported["nodes"]) == len(created["nodes"])
     assert imported["nodes"][0]["agent_id"] == agent_id
     assert len(imported["edges"]) == len(created["edges"])
+
+
+def test_export_carries_pipeline_id_and_reimport_targets_it_over_name(
+    client: TestClient,
+) -> None:
+    """Export emits the source pipeline_id; a renamed re-import still upgrades the
+    original pipeline via that id rather than creating a new row (#755 part B)."""
+    agent_id = _create_minimal_agent(client)
+    created = client.post("/pipelines", json=_pipeline_payload(agent_id)).json()
+
+    exported = client.get(f"/pipelines/{created['id']}/export").json()
+    assert exported["pipeline_id"] == created["id"]
+
+    # Rename the bundle: name no longer matches, so only the explicit id can win.
+    exported["pipeline"]["name"] = "Renamed Away From The Original"
+    response = client.post("/pipelines/import", json=exported)
+    assert response.status_code == 201, response.text
+    imported = response.json()
+    assert imported["id"] == created["id"]
+    assert imported["version"] == 2
+    assert imported["name"] == "Renamed Away From The Original"
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +176,76 @@ def test_import_rejects_wrong_schema_version(client: TestClient) -> None:
     detail = str(response.json()["detail"])
     assert "schema_version" in detail
     assert "pipeline-export/1" in detail
+    assert "pipeline-export/2" in detail
+
+
+def test_import_allows_legacy_bundle_without_min_dap_version(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/1",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_import_rejects_bundle_that_requires_newer_dap(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": "999.0.0",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "Bundle requires DAP >= 999.0.0" in detail
+    assert f"this instance is {__version__}" in detail
+    assert "Update DAP before importing this bundle" in detail
+
+
+def test_import_accepts_bundle_when_min_dap_version_is_met(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": __version__,
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_import_accepts_prerelease_min_dap_version(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": "0.3.0-rc1",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_import_rejects_invalid_min_dap_version(client: TestClient) -> None:
+    agent_id = _create_minimal_agent(client)
+    response = client.post(
+        "/pipelines/import",
+        json={
+            "schema_version": "pipeline-export/2",
+            "min_dap_version": "next",
+            "pipeline": _pipeline_payload(agent_id),
+        },
+    )
+    assert response.status_code == 422
+    assert "Invalid min_dap_version" in response.json()["detail"]
 
 
 def test_import_rejects_extra_top_level_field(client: TestClient) -> None:
@@ -277,6 +364,7 @@ def test_export_bundle_scrubs_secrets_in_runtime_config(client: TestClient) -> N
             "runtime_id": "api-call",
             "runtime_config": {
                 "model_id": "claude-haiku-4-5",
+                "max_tokens": 1024,
                 "api_key": "sk-very-secret",
             },
             "prompt_template": "<agent_prompt><role>x</role></agent_prompt>",
@@ -288,6 +376,7 @@ def test_export_bundle_scrubs_secrets_in_runtime_config(client: TestClient) -> N
 
     bundled = client.get(f"/pipelines/{pipeline['id']}/export?bundle=true").json()
     bundled_config = bundled["bundled_agents"][agent_id]["runtime_config"]
+    assert bundled_config["max_tokens"] == 1024
     assert bundled_config["api_key"] == "<redacted>"
 
 
@@ -350,9 +439,9 @@ def test_bundle_import_rolls_back_agents_on_pipeline_validation_failure(
 
 
 def test_bundle_round_trip(client: TestClient) -> None:
-    """Export with ``bundle=true`` → import same envelope → fresh
-    pipeline + fresh agents in a single round-trip. The imported
-    pipeline should still validate (no missing references)."""
+    """Export with ``bundle=true`` → import same envelope. Re-importing the same
+    name bumps the version under the existing pipeline (#755) and still creates
+    fresh agent rows for the bundled agents (the new version references them)."""
     source_agent_id = _create_minimal_agent(client, name="Round Trip Source")
     created = client.post("/pipelines", json=_pipeline_payload(source_agent_id)).json()
 
@@ -363,10 +452,10 @@ def test_bundle_round_trip(client: TestClient) -> None:
     assert response.status_code == 201, response.text
     imported = response.json()
 
-    # Two distinct pipelines, two distinct agent rows (since the
-    # importer always creates fresh; conflict resolution against
-    # existing names is out of scope per the issue).
-    assert imported["id"] != created["id"]
+    # Same pipeline, bumped to v2 (#755) — not a duplicate row. Bundled agents
+    # are still re-created, so the new version references fresh agent rows.
+    assert imported["id"] == created["id"]
+    assert imported["version"] == 2
     new_agent_id = imported["nodes"][0]["agent_id"]
     assert new_agent_id != source_agent_id
 

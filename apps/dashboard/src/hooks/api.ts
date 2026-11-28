@@ -9,127 +9,66 @@ import type {
   AgentUpdate,
   PipelineCreate,
   PipelineExport,
+  PipelineUiMetadataPatch,
   PipelineUpdate,
   ProjectCreate,
   ProjectRunRequest,
   ProjectUpdate,
-  RunCreateRequest,
+  ValidateEnvRequest,
 } from "@/lib/api/types";
+import {
+  createEntityQuery,
+  createInvalidatingMutation,
+  refetchWhile,
+} from "@/lib/query-factory";
+import { queryKeys } from "./api/query-keys";
 
-export const queryKeys = {
-  runs: ["runs"] as const,
-  runsList: (filters?: {
-    pipelineId?: string;
-    finalStatus?: string;
-    projectId?: string;
-  }) => ["runs", "list", filters ?? {}] as const,
-  run: (id: string) => ["runs", id] as const,
-  runState: (id: string) => ["runs", id, "state"] as const,
-  runHistory: (id: string) => ["runs", id, "history"] as const,
-  runNodeLog: (runId: string, nodeId: string) =>
-    ["runs", runId, "nodes", nodeId] as const,
-  agents: ["agents"] as const,
-  agentsList: (filters?: { role?: string }) => ["agents", "list", filters ?? {}] as const,
-  agent: (id: string) => ["agents", id] as const,
-  agentVersions: (id: string) => ["agents", id, "versions"] as const,
-  pipelines: ["pipelines"] as const,
-  pipelinesList: ["pipelines", "list"] as const,
-  pipeline: (id: string) => ["pipelines", id] as const,
-  pipelineVersions: (id: string) => ["pipelines", id, "versions"] as const,
-  projects: ["projects"] as const,
-  projectsList: (filters?: { archived?: boolean }) =>
-    ["projects", "list", filters ?? {}] as const,
-  project: (id: string) => ["projects", id] as const,
-  settings: ["settings"] as const,
-  currentUser: ["auth", "me"] as const,
-  adminUsers: ["admin", "users"] as const,
-  adminUsersList: (filters?: { includeDeleted?: boolean }) =>
-    ["admin", "users", "list", filters ?? {}] as const,
-  adminAuditEvents: ["admin", "audit-events"] as const,
-  adminAuditEventsList: (filters?: {
-    eventType?: string;
-    userId?: string;
-    offset?: number;
-    limit?: number;
-  }) => ["admin", "audit-events", "list", filters ?? {}] as const,
-  adminApiTokens: ["admin", "api-tokens"] as const,
-  adminApiTokensList: (filters?: {
-    includeRevoked?: boolean;
-    offset?: number;
-    limit?: number;
-  }) => ["admin", "api-tokens", "list", filters ?? {}] as const,
-  adminSettings: ["admin", "settings"] as const,
-};
+export { queryKeys } from "./api/query-keys";
+export {
+  useAbortRun,
+  useApproveGate,
+  useDeleteRun,
+  useGateCountdown,
+  usePauseRun,
+  usePipelineVersions,
+  useResumeRun,
+  useRun,
+  useRunNodeExplain,
+  useRunNodeLog,
+  useRunNodeLogs,
+  useRunsList,
+  useRunStateHistory,
+  useTriggerRun,
+} from "./api/runs";
 
-const RUNS_LIST_REFETCH_MS = 2_000;
-const RUN_DETAIL_REFETCH_MS = 2_000;
+// ---------------------------------------------------------------------------
+// Pipelines
+// ---------------------------------------------------------------------------
 
-export function useRunsList(
-  filters?: {
-    pipelineId?: string;
-    finalStatus?: string;
-    projectId?: string;
-  },
-  options?: { enabled?: boolean },
-) {
-  return useQuery({
-    queryKey: queryKeys.runsList(filters),
-    queryFn: () => api.listRuns(filters),
-    enabled: options?.enabled ?? true,
-    refetchInterval: (query) => {
-      // Stop polling when there are no running runs
-      const data = query.state.data;
-      if (data && !data.items.some((r) => r.final_status === "running")) {
-        return false;
-      }
-      return RUNS_LIST_REFETCH_MS;
-    },
-  });
-}
+export const usePipeline = createEntityQuery({
+  scope: "pipelines",
+  queryKey: queryKeys.pipeline,
+  queryFn: api.getPipeline,
+});
 
-export function useRun(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.run(id) : ["runs", "noop"],
-    queryFn: () => (id ? api.getRun(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (data && data.final_status !== "running") return false;
-      return RUN_DETAIL_REFETCH_MS;
-    },
-  });
-}
+export const usePipelineUsage = createEntityQuery({
+  scope: "pipelines",
+  suffix: ["usage"],
+  queryKey: queryKeys.pipelineUsage,
+  queryFn: api.getPipelineUsage,
+});
 
-export function useRunStateHistory(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.runHistory(id) : ["runs", "noop", "history"],
-    queryFn: () =>
-      id ? api.getRunStateHistory(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
-  });
-}
-
-export function useRunNodeLog(runId: string | null, nodeId: string | null) {
-  return useQuery({
-    queryKey:
-      runId && nodeId
-        ? queryKeys.runNodeLog(runId, nodeId)
-        : ["runs", "noop", "nodes", "noop"],
-    queryFn: () =>
-      runId && nodeId
-        ? api.getRunNodeLog(runId, nodeId)
-        : Promise.reject(new Error("no id")),
-    enabled: runId != null && nodeId != null,
-  });
-}
-
-export function usePipeline(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.pipeline(id) : ["pipelines", "noop"],
-    queryFn: () => (id ? api.getPipeline(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
-  });
-}
+/**
+ * Pre-run readiness of a pipeline's python-func callables (#710). Lazily
+ * enabled (e.g. when the run dialog opens) so we don't resolve callables on
+ * every pipeline list render.
+ */
+export const usePipelineReadiness = createEntityQuery({
+  scope: "pipelines",
+  suffix: ["readiness"],
+  queryKey: queryKeys.pipelineReadiness,
+  queryFn: api.getPipelineReadiness,
+});
 
 export function usePipelinesList() {
   return useQuery({
@@ -138,57 +77,72 @@ export function usePipelinesList() {
   });
 }
 
-export function useCreatePipeline() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: PipelineCreate) => api.createPipeline(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-    },
+export const useCreatePipeline = createInvalidatingMutation({
+  mutationFn: (payload: PipelineCreate) => api.createPipeline(payload),
+  invalidates: () => [queryKeys.pipelines],
+});
+
+export const useImportPipeline = createInvalidatingMutation({
+  mutationFn: (payload: PipelineExport) => api.importPipeline(payload),
+  invalidates: () => [queryKeys.pipelines],
+});
+
+/** Is the prompt box usable on this engine (cortex#1774 S5). */
+export function usePipelineGeneratorStatus() {
+  return useQuery({
+    queryKey: queryKeys.pipelineGenerator,
+    queryFn: () => api.getPipelineGeneratorStatus(),
+    staleTime: 5 * 60_000,
   });
 }
 
-export function useImportPipeline() {
-  const qc = useQueryClient();
+export function useGeneratePipeline() {
   return useMutation({
-    mutationFn: (payload: PipelineExport) => api.importPipeline(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-    },
+    mutationFn: (prompt: string) => api.generatePipeline(prompt),
   });
 }
 
-export function useUpdatePipeline() {
-  const qc = useQueryClient();
+export function useInspectPipelineImportBackends() {
   return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: PipelineUpdate }) =>
-      api.updatePipeline(id, payload),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-      qc.invalidateQueries({ queryKey: queryKeys.pipeline(variables.id) });
-    },
+    mutationFn: (payload: PipelineExport) => api.inspectPipelineImportBackends(payload),
   });
 }
 
-export function useArchivePipeline() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.archivePipeline(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: queryKeys.pipelines });
-      qc.invalidateQueries({ queryKey: queryKeys.pipeline(id) });
-      // Pipelines reference agents — archiving a pipeline drops its
-      // agents' usage counts, so the /agents list cache is now stale.
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-    },
-  });
-}
+export const useUpdatePipeline = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: PipelineUpdate }) =>
+    api.updatePipeline(id, payload),
+  invalidates: ({ id }) => [queryKeys.pipelines, queryKeys.pipeline(id)],
+});
+
+export const useUpdatePipelineUiMetadata = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: PipelineUiMetadataPatch }) =>
+    api.updatePipelineUiMetadata(id, payload),
+  invalidates: ({ id }) => [
+    queryKeys.pipeline(id),
+    queryKeys.pipelineVersions(id),
+  ],
+});
+
+export const useArchivePipeline = createInvalidatingMutation({
+  mutationFn: (id: string) => api.archivePipeline(id),
+  // Pipelines reference agents — archiving a pipeline drops its agents'
+  // usage counts, so the /agents list cache is stale too.
+  invalidates: (id) => [
+    queryKeys.pipelines,
+    queryKeys.pipeline(id),
+    queryKeys.agents,
+  ],
+});
 
 export function useValidatePipeline() {
   return useMutation({
     mutationFn: (payload: PipelineCreate) => api.validatePipeline(payload),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
 
 export function useAgentsList(filters?: { role?: string }) {
   return useQuery({
@@ -197,118 +151,74 @@ export function useAgentsList(filters?: { role?: string }) {
   });
 }
 
-export function useCreateAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: AgentCreate) => api.createAgent(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-    },
-  });
-}
+export const useCreateAgent = createInvalidatingMutation({
+  mutationFn: (payload: AgentCreate) => api.createAgent(payload),
+  invalidates: () => [queryKeys.agents],
+});
 
-export function useAgent(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.agent(id) : ["agents", "noop"],
-    queryFn: () => (id ? api.getAgent(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
-  });
-}
+export const useAgent = createEntityQuery({
+  scope: "agents",
+  queryKey: queryKeys.agent,
+  queryFn: api.getAgent,
+});
 
-export function useAgentVersions(id: string | null) {
-  return useQuery({
-    queryKey: id ? queryKeys.agentVersions(id) : ["agents", "noop", "versions"],
-    queryFn: () =>
-      id ? api.listAgentVersions(id) : Promise.reject(new Error("no id")),
-    enabled: id != null,
-  });
-}
+export const useAgentUsage = createEntityQuery({
+  scope: "agents",
+  suffix: ["usage"],
+  queryKey: queryKeys.agentUsage,
+  queryFn: api.getAgentUsage,
+});
 
-export function useUpdateAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: AgentUpdate }) =>
-      api.updateAgent(id, payload),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-      qc.invalidateQueries({ queryKey: queryKeys.agent(variables.id) });
-      qc.invalidateQueries({ queryKey: queryKeys.agentVersions(variables.id) });
-    },
-  });
-}
+/**
+ * A python-func agent's callable docstring ("what this does", #747). Lazily
+ * enabled — only fetched for managed agents where it's meaningful.
+ */
+export const useAgentCallableInfo = createEntityQuery({
+  scope: "agents",
+  suffix: ["callable-info"],
+  queryKey: queryKeys.agentCallableInfo,
+  queryFn: api.getAgentCallableInfo,
+});
 
-export function useArchiveAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.archiveAgent(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-      qc.invalidateQueries({ queryKey: queryKeys.agent(id) });
-    },
-  });
-}
+export const useAgentExecutions = createEntityQuery({
+  scope: "agents",
+  suffix: ["executions"],
+  queryKey: queryKeys.agentExecutions,
+  queryFn: api.getAgentExecutions,
+});
 
-export function useImportAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: AgentExport) => api.importAgent(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.agents });
-    },
-  });
-}
+export const useAgentVersions = createEntityQuery({
+  scope: "agents",
+  suffix: ["versions"],
+  queryKey: queryKeys.agentVersions,
+  queryFn: api.listAgentVersions,
+});
+
+export const useUpdateAgent = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: AgentUpdate }) =>
+    api.updateAgent(id, payload),
+  invalidates: ({ id }) => [
+    queryKeys.agents,
+    queryKeys.agent(id),
+    queryKeys.agentVersions(id),
+  ],
+});
+
+export const useArchiveAgent = createInvalidatingMutation({
+  mutationFn: (id: string) => api.archiveAgent(id),
+  invalidates: (id) => [queryKeys.agents, queryKeys.agent(id)],
+});
+
+export const useImportAgent = createInvalidatingMutation({
+  mutationFn: (payload: AgentExport) => api.importAgent(payload),
+  invalidates: () => [queryKeys.agents],
+});
 
 export function useDryRunAgent() {
   // Stateless on the server (#103) — no cache invalidation. The mutation
   // is here purely for the loading/error/result UI on the Test panel.
   return useMutation({
     mutationFn: (payload: AgentDryRunRequest) => api.dryRunAgent(payload),
-  });
-}
-
-function useRunActionMutation<T>(action: (id: string) => Promise<T>) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: action,
-    onSuccess: (_data, runId) => {
-      qc.invalidateQueries({ queryKey: queryKeys.run(runId) });
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
-  });
-}
-
-export function useAbortRun() {
-  return useRunActionMutation(api.abortRun);
-}
-
-export function usePauseRun() {
-  return useRunActionMutation(api.pauseRun);
-}
-
-export function useResumeRun() {
-  return useRunActionMutation(api.resumeRun);
-}
-
-export function usePipelineVersions(
-  id: string | null,
-  options?: { enabled?: boolean },
-) {
-  const enabled = (options?.enabled ?? true) && id != null;
-  return useQuery({
-    queryKey: id ? queryKeys.pipelineVersions(id) : ["pipelines", "noop", "versions"],
-    queryFn: () =>
-      id ? api.listPipelineVersions(id) : Promise.reject(new Error("no id")),
-    enabled,
-  });
-}
-
-export function useTriggerRun() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: RunCreateRequest) => api.triggerRun(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
-    },
   });
 }
 
@@ -323,58 +233,95 @@ export function useProjectsList(filters?: { archived?: boolean }) {
   });
 }
 
-export function useProject(id: string | null) {
+export const useProject = createEntityQuery({
+  scope: "projects",
+  queryKey: queryKeys.project,
+  queryFn: api.getProject,
+});
+
+export const useCreateProject = createInvalidatingMutation({
+  mutationFn: (payload: ProjectCreate) => api.createProject(payload),
+  invalidates: () => [queryKeys.projects],
+});
+
+export const useUpdateProject = createInvalidatingMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: ProjectUpdate }) =>
+    api.updateProject(id, payload),
+  invalidates: ({ id }) => [queryKeys.projects, queryKeys.project(id)],
+});
+
+export const useArchiveProject = createInvalidatingMutation({
+  mutationFn: (id: string) => api.archiveProject(id),
+  invalidates: (id) => [queryKeys.projects, queryKeys.project(id)],
+});
+
+export function useValidateProjectEnv() {
+  return useMutation({
+    mutationFn: (payload: ValidateEnvRequest) => api.validateProjectEnv(payload),
+  });
+}
+
+export const useTriggerProjectRun = createInvalidatingMutation({
+  mutationFn: (params: {
+    id: string;
+    kind: string;
+    payload?: ProjectRunRequest;
+  }) => api.triggerProjectRun(params.id, params.kind, params.payload),
+  invalidates: () => [queryKeys.runs],
+});
+
+export function useWorkspaceStatus(projectId: string | null) {
   return useQuery({
-    queryKey: id ? queryKeys.project(id) : ["projects", "noop"],
-    queryFn: () => (id ? api.getProject(id) : Promise.reject(new Error("no id"))),
-    enabled: id != null,
+    queryKey: ["projects", projectId, "workspace"],
+    queryFn: () =>
+      api.request<{
+        exists: boolean;
+        path: string | null;
+        branch: string | null;
+        clean: boolean | null;
+        last_commit: string | null;
+      }>(`/projects/${encodeURIComponent(projectId!)}/workspace/status`),
+    enabled: projectId != null,
+    // Poll until the workspace exists (init runs in the background).
+    refetchInterval: refetchWhile((d) => !d.exists, 10_000),
   });
 }
 
-export function useCreateProject() {
+export function useInitWorkspace(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: ProjectCreate) => api.createProject(payload),
+    mutationFn: () =>
+      api.request<{ exists: boolean; path: string; branch: string; initialized: boolean }>(
+        `/projects/${encodeURIComponent(projectId)}/workspace/init`,
+        { method: "POST" },
+      ),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.projects });
+      qc.invalidateQueries({ queryKey: ["projects", projectId, "workspace"] });
+      qc.invalidateQueries({ queryKey: queryKeys.project(projectId) });
     },
   });
 }
 
-export function useUpdateProject() {
+export function useSyncWorkspace(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: ProjectUpdate }) =>
-      api.updateProject(id, payload),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: queryKeys.projects });
-      qc.invalidateQueries({ queryKey: queryKeys.project(variables.id) });
-    },
-  });
-}
-
-export function useArchiveProject() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.archiveProject(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: queryKeys.projects });
-      qc.invalidateQueries({ queryKey: queryKeys.project(id) });
-    },
-  });
-}
-
-export function useTriggerProjectRun() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (params: {
-      id: string;
-      kind: string;
-      payload?: ProjectRunRequest;
-    }) => api.triggerProjectRun(params.id, params.kind, params.payload),
+    mutationFn: () =>
+      api.request<{ exists: boolean; path: string; branch: string }>(
+        `/projects/${encodeURIComponent(projectId)}/workspace/sync`,
+        { method: "POST" },
+      ),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.runs });
+      qc.invalidateQueries({ queryKey: ["projects", projectId, "workspace"] });
     },
+  });
+}
+
+export function useProjectIssues(projectId: string | null) {
+  return useQuery({
+    queryKey: ["projects", projectId, "issues"],
+    queryFn: () => api.listProjectIssues(projectId!),
+    enabled: projectId != null,
+    staleTime: 60_000,
   });
 }
 
@@ -406,6 +353,19 @@ export function useCurrentUser() {
     queryKey: queryKeys.currentUser,
     queryFn: () => api.getCurrentUser(),
     staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
+export function useHealth() {
+  return useQuery({
+    queryKey: ["health"] as const,
+    queryFn: () => api.getHealth(),
+    // /health is cheap (single SELECT 1) but no point hammering it —
+    // the login page only needs the value once on mount, and any
+    // page mounted later wants a fresh probe rather than a 5-minute
+    // stale snapshot of "Database unreachable".
+    staleTime: 30 * 1000,
     retry: false,
   });
 }
@@ -450,6 +410,12 @@ export function useResetPassword() {
   });
 }
 
+export function useUpdateMyPassword() {
+  return useMutation({
+    mutationFn: (password: string) => api.updateMyPassword(password),
+  });
+}
+
 export function useRegister() {
   const qc = useQueryClient();
   return useMutation({
@@ -479,29 +445,18 @@ export function useAdminUsers(filters: { includeDeleted?: boolean } = {}) {
   });
 }
 
-export function useUpdateAdminUser() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (params: { id: string; payload: AdminUserUpdate }) =>
-      api.updateAdminUser(params.id, params.payload),
-    onSuccess: () => {
-      // Every variant of the admin-users list re-fetches; if an admin
-      // demotes themself the currentUser badge needs to flip too.
-      qc.invalidateQueries({ queryKey: queryKeys.adminUsers });
-      qc.invalidateQueries({ queryKey: queryKeys.currentUser });
-    },
-  });
-}
+export const useUpdateAdminUser = createInvalidatingMutation({
+  mutationFn: (params: { id: string; payload: AdminUserUpdate }) =>
+    api.updateAdminUser(params.id, params.payload),
+  // Every variant of the admin-users list re-fetches; if an admin
+  // demotes themself the currentUser badge needs to flip too.
+  invalidates: () => [queryKeys.adminUsers, queryKeys.currentUser],
+});
 
-export function useDeleteAdminUser() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.deleteAdminUser(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.adminUsers });
-    },
-  });
-}
+export const useDeleteAdminUser = createInvalidatingMutation({
+  mutationFn: (id: string) => api.deleteAdminUser(id),
+  invalidates: () => [queryKeys.adminUsers],
+});
 
 // ---------------------------------------------------------------------------
 // Admin — Audit log (#301, sub-C3)
@@ -510,7 +465,10 @@ export function useDeleteAdminUser() {
 export function useAuditEvents(
   filters: {
     eventType?: string;
+    eventTypePrefix?: string;
     userId?: string;
+    createdFrom?: string;
+    createdTo?: string;
     offset?: number;
     limit?: number;
   } = {},
@@ -542,15 +500,16 @@ export function useAdminApiTokens(filters: {
   });
 }
 
-export function useAdminRevokeApiToken() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.adminRevokeApiToken(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.adminApiTokens });
-    },
-  });
-}
+export const useAdminRevokeApiToken = createInvalidatingMutation({
+  mutationFn: (id: string) => api.adminRevokeApiToken(id),
+  invalidates: () => [queryKeys.adminApiTokens],
+});
+
+export const useCreateApiToken = createInvalidatingMutation({
+  mutationFn: (payload: { name: string; expires_in_days?: number | null }) =>
+    api.createApiToken(payload),
+  invalidates: () => [queryKeys.adminApiTokens],
+});
 
 // ---------------------------------------------------------------------------
 // Admin — Instance settings (#301, sub-C5)
@@ -567,5 +526,37 @@ export function useAdminSettings() {
     queryKey: queryKeys.adminSettings,
     queryFn: () => api.getAdminSettings(),
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** Instance env vars — admin-only, masked previews (#388). */
+export function useInstanceEnvVars() {
+  return useQuery({
+    queryKey: queryKeys.instanceEnvVars,
+    queryFn: () => api.listInstanceEnvVars(),
+  });
+}
+
+export const useUpsertInstanceEnvVar = createInvalidatingMutation({
+  mutationFn: ({ key, value }: { key: string; value: string }) =>
+    api.upsertInstanceEnvVar(key, value),
+  invalidates: () => [queryKeys.instanceEnvVars],
+});
+
+export const useDeleteInstanceEnvVar = createInvalidatingMutation({
+  mutationFn: (key: string) => api.deleteInstanceEnvVar(key),
+  invalidates: () => [queryKeys.instanceEnvVars],
+});
+
+/**
+ * Config assistant chat (#689). A plain mutation — the assistant panel owns
+ * the message history and sends the full transcript each turn.
+ */
+export function useAssistantChat() {
+  return useMutation({
+    mutationFn: (vars: {
+      messages: import("@/lib/api/types").AssistantMessage[];
+      context?: Record<string, unknown>;
+    }) => api.assistantChat(vars.messages, vars.context),
   });
 }

@@ -12,6 +12,7 @@ import {
 import { useAdminSettings } from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
 import type { AdminInstanceSettings } from "@/lib/api/types";
+import { InstanceEnvVarsCard } from "./_components/instance-env-vars-card";
 
 /**
  * Visual indicator for a presence flag. Green check when set, muted
@@ -96,6 +97,7 @@ export default function AdminSettingsPage() {
       <OAuthCard data={settings.data} />
       <CorsCard data={settings.data} />
       <StorageCard data={settings.data} />
+      <InstanceEnvVarsCard />
     </div>
   );
 }

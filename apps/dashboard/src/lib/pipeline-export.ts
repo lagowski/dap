@@ -43,20 +43,35 @@ export async function downloadPipelineExport(
   options: { bundle?: boolean } = {},
 ): Promise<void> {
   const payload = await exportPipeline(pipeline.id, { bundle: options.bundle });
+  const suffix = options.bundle ? ".pipeline-bundle.json" : ".pipeline.json";
+  saveJson(payload, `${slugFromPipeline(pipeline)}${suffix}`);
+}
+
+/** Trigger a browser download of ``payload`` as pretty-printed JSON. */
+function saveJson(payload: unknown, filename: string): void {
   const json = JSON.stringify(payload, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   try {
     const anchor = document.createElement("a");
     anchor.href = url;
-    const suffix = options.bundle ? ".pipeline-bundle.json" : ".pipeline.json";
-    anchor.download = `${slugFromPipeline(pipeline)}${suffix}`;
+    anchor.download = filename;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/**
+ * Download a bundle that is not in the database yet (the prompt box's
+ * generated pipeline, cortex#1774 S5). Returns the filename used.
+ */
+export function downloadPipelineBundle(bundle: unknown, name: string): string {
+  const filename = `${slugFromPipeline({ id: "pipeline", name })}.pipeline-bundle.json`;
+  saveJson(bundle, filename);
+  return filename;
 }
 
 /**

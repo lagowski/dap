@@ -18,7 +18,7 @@ services:
   dap:
     # Pull the published image once D3 (release pipeline, #335) lands.
     # Until then, ``docker compose build`` from the repo root works.
-    image: ghcr.io/rafeekpro/dap:${DAP_IMAGE_TAG:-latest}
+    image: ghcr.io/lagowski/dap:${DAP_IMAGE_TAG:-latest}
     # Uncomment to build from the local checkout instead of pulling:
     # build:
     #   context: ../..

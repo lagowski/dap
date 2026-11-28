@@ -132,3 +132,33 @@ describe("getEdgeLabel", () => {
     expect(getEdgeLabel(cmp("unknown_field", "==", 99))).toBe("");
   });
 });
+
+describe("classifyCondition — not (#930)", () => {
+  const not = (child: EdgeCondition): EdgeCondition => ({
+    type: "not",
+    children: [child],
+  });
+
+  it("flips pass to fail", () => {
+    expect(classifyCondition(not(cmp("review_approved", "==", true)))).toBe("fail");
+  });
+
+  it("flips fail to pass", () => {
+    expect(classifyCondition(not(cmp("review_status", "==", "rejected")))).toBe("pass");
+  });
+
+  it("does not guess an inverse for retry or max-attempts", () => {
+    expect(classifyCondition(not(cmp("retry_count", "<", 2)))).toBe("neutral");
+    expect(classifyCondition(not(cmp("attempt", ">=", 3)))).toBe("neutral");
+  });
+
+  it("double negation restores the category", () => {
+    expect(classifyCondition(not(not(cmp("review_approved", "==", true))))).toBe("pass");
+  });
+
+  it("not inside and is classified by its own inversion", () => {
+    expect(
+      classifyCondition(and(cmp("x", "==", 1), not(cmp("review_approved", "==", true)))),
+    ).toBe("fail");
+  });
+});

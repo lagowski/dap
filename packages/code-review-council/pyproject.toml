@@ -1,0 +1,45 @@
+[project]
+name = "code-review-council"
+version = "0.1.0"
+description = "Multi-agent code review with anti-hallucination filtering"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "Rafał Łagowski" },
+    { name = "Daniel Łagowski" },
+]
+dependencies = [
+    # Google Gen AI SDK — for GeminiProvider. Current/non-deprecated;
+    # ``google-generativeai`` (the older package) is end-of-life.
+    # Upper bound bumped to <3.0 in 2026-06 to match the ``uv.lock``
+    # metadata that PR #632 already wrote (dependabot bumped the lockfile
+    # without updating this source constraint, creating a drift that any
+    # fresh ``uv lock`` would silently revert). See follow-up tracking
+    # issue for the dependabot misconfiguration root cause.
+    "google-genai>=2.18.1,<4.0",
+    # OpenAI-compatible HTTP client for OpenRouterProvider. ``httpx``
+    # rather than the ``openai`` SDK because we only need raw chat-
+    # completions + JSON-object response_format, and a one-file httpx
+    # call keeps the surface area auditable. ``openai`` SDK adds 30+
+    # transitive deps for capabilities we don't use.
+    "httpx>=0.27.0,<1.0",
+    "pydantic>=2.9.0,<3.0",
+]
+
+[project.scripts]
+code-review-council = "code_review_council.cli:run"
+
+[project.urls]
+Homepage = "https://github.com/lagowski/dap"
+Repository = "https://github.com/lagowski/dap"
+Issues = "https://github.com/lagowski/dap/issues"
+"Author — Rafał Łagowski" = "https://www.linkedin.com/in/rafallagowski/"
+"Author — Daniel Łagowski" = "https://www.linkedin.com/in/daniellagowski/"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_review_council"]

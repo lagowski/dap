@@ -1,18 +1,9 @@
 /**
  * Per-runtime config field schemas for the AgentForm UI.
  *
- * Two truth sources today:
- *
- * - **api-call**, **bash**, **claude-code**, **codex**, **gemini-cli**,
- *   **http** are fully implemented in the engine. Their schemas mirror
- *   the adapters' real `validate_config`. Required fields here match
- *   what the adapter rejects.
- * - **aider** is an F0 stub whose `execute()` raises
- *   `NotImplementedError`. Its schema below is *aspirational* —
- *   it documents the shape a future PR will implement. To avoid
- *   blocking agent creation in the UI before the engine accepts those
- *   configs, stub-runtime fields are NOT marked `required`. Tighten
- *   them once the corresponding adapter lands.
+ * Every runtime below is implemented in the engine. The schemas mirror
+ * the adapters' real `validate_config`: required fields here match what
+ * the adapter rejects.
  *
  * Adding a runtime: drop a new entry below. The form picks it up
  * automatically and renders the right inputs.
@@ -63,8 +54,12 @@ const API_CALL_PROVIDERS: RuntimeFieldOption[] = [
   { value: "openai", label: "OpenAI (GPT-5, o-series)" },
   { value: "glm", label: "Z.AI GLM (no base_url needed)" },
   {
+    value: "openrouter",
+    label: "OpenRouter (multi-model gateway, no base_url needed)",
+  },
+  {
     value: "openai-compat",
-    label: "OpenAI-compatible custom (Together, OpenRouter, internal proxies, …)",
+    label: "OpenAI-compatible custom (Together, llama.cpp, internal proxies, …)",
   },
   { value: "gemini", label: "Google Gemini" },
 ];
@@ -82,6 +77,96 @@ const isProvider =
   (config: Record<string, unknown>): boolean =>
     wanted.includes(String(config.provider ?? "anthropic"));
 
+/** github runtime (#920, #921): show a field only for the ops that take it. */
+const forOps =
+  (...ops: string[]) =>
+  (config: Record<string, unknown>): boolean =>
+    ops.includes(String(config.op ?? "read_issue"));
+
+const hasBranch = (config: Record<string, unknown>): boolean =>
+  typeof config.branch === "string" && config.branch.trim() !== "";
+
+/**
+ * Declarative git workspace (#922), shared by every CLI runtime built on the
+ * backend's ``_BaseCliAdapter``. No field has a default: an agent that never
+ * sets them runs exactly as before, and the backend treats ``false`` / ``""``
+ * left behind by a cleared input as unset too.
+ */
+const GIT_WORKSPACE_FIELDS: RuntimeField[] = [
+  {
+    key: "workspace",
+    label: "Workspace",
+    kind: "text",
+    placeholder: "repo",
+    description:
+      "Directory the CLI runs in: absolute, or relative to the project's working directory. Defaults to the project's working directory.",
+  },
+  {
+    key: "branch",
+    label: "Branch",
+    kind: "text",
+    placeholder: "feat/my-change",
+    description:
+      "Checked out before the CLI runs: an existing branch as is, otherwise created from Base. The run is refused if the workspace has uncommitted changes.",
+  },
+  {
+    key: "base",
+    label: "Base branch",
+    kind: "text",
+    placeholder: "develop",
+    description: "Start point for a new Branch (origin/<base> preferred). Defaults to develop.",
+    visible: hasBranch,
+  },
+  {
+    key: "push",
+    label: "Push after run",
+    kind: "boolean",
+    description:
+      "Push Branch to origin after a successful run. Fast-forward only unless force-with-lease is on. Nothing is pushed if the CLI fails.",
+    visible: hasBranch,
+  },
+  {
+    key: "force_with_lease",
+    label: "Force with lease",
+    kind: "boolean",
+    description:
+      "Allow replacing a rewritten Branch, but only if origin still points where it did at checkout. Never a plain --force.",
+    visible: (config) => hasBranch(config) && config.push === true,
+  },
+  {
+    key: "require_nonempty_diff",
+    label: "Require a change",
+    kind: "boolean",
+    description:
+      "Fail the run if it added no commit to Branch (with Push on, uncommitted changes don't count: they wouldn't be pushed). Catches the run that looks green but did nothing.",
+    visible: hasBranch,
+  },
+  {
+    key: "append_only",
+    label: "Append-only history",
+    kind: "boolean",
+    description:
+      "Fail the run if it amended, rebased or reset commits that were on Branch before it started. Rewriting the run's own new commits is fine.",
+    visible: hasBranch,
+  },
+  {
+    key: "ancestry_guard",
+    label: "Never drop others' commits",
+    kind: "boolean",
+    description:
+      "Before pushing, fail if origin's Branch has commits this run doesn't, including ones already there at checkout, which force-with-lease can't see.",
+    visible: (config) => hasBranch(config) && config.push === true,
+  },
+  {
+    key: "token_env",
+    label: "Token env var name",
+    kind: "text",
+    placeholder: "GH_TOKEN",
+    description:
+      "Name of the env var (engine, instance or project env) holding the GitHub token for fetch and push. Enter the variable's name, never the token itself.",
+  },
+];
+
 /**
  * Ordered list of runtime ids the form / Test panel surface in
  * dropdowns. Single source of truth — both ``AgentForm`` and the
@@ -97,6 +182,7 @@ export const AGENT_RUNTIME_IDS = [
   "bash",
   "http",
   "python-func",
+  "github",
 ] as const;
 
 export type AgentRuntimeId = (typeof AGENT_RUNTIME_IDS)[number];
@@ -255,6 +341,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
           'JSON array of strings appended to the claude CLI invocation. Example: ["--allowed-tools","Read,Edit,Bash"]',
         placeholder: '["--allowed-tools", "Read,Edit"]',
       },
+      ...GIT_WORKSPACE_FIELDS,
     ],
   },
 
@@ -283,6 +370,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         kind: "number",
         description: "Optional. Max tokens spent on internal reasoning.",
       },
+      ...GIT_WORKSPACE_FIELDS,
     ],
   },
 
@@ -313,6 +401,7 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
           'JSON array of strings appended to the codex CLI invocation. Example: ["--sandbox", "workspace-write"]',
         placeholder: '["--sandbox", "workspace-write"]',
       },
+      ...GIT_WORKSPACE_FIELDS,
     ],
   },
 
@@ -406,8 +495,6 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
     ],
   },
 
-  // STUB — aider adapter is F0-stub. No issue tracked yet — fields are
-  // a placeholder so users can still pick the runtime in the form.
   aider: {
     runtime_id: "aider",
     fields: [
@@ -415,13 +502,180 @@ export const RUNTIME_SCHEMAS: Record<string, RuntimeConfigSchema> = {
         key: "model_id",
         label: "Model ID",
         kind: "text",
+        required: true,
+        placeholder: "claude-sonnet-4-5",
         description:
-          "Aspirational schema — adapter is a stub. Fields not enforced yet.",
+          "Required. Any model aider accepts (e.g. claude-sonnet-4-5, gpt-5, gemini/gemini-2.5-pro, openrouter/…). Aider reads the provider's key (ANTHROPIC_API_KEY, OPENAI_API_KEY, …) from the environment.",
       },
       {
         key: "binary_path",
         label: "Binary path",
         kind: "text",
+        placeholder: "/home/me/.local/bin/aider",
+        description: "Defaults to `aider` on PATH.",
+      },
+      {
+        key: "auto_commits",
+        label: "Auto-commit edits",
+        kind: "boolean",
+        default: true,
+        description:
+          "Aider commits each edit it applies. Keep on with push or require_nonempty_diff: with it off the edits stay uncommitted, so push is refused.",
+      },
+      {
+        key: "extra_args",
+        label: "Extra CLI args",
+        kind: "json",
+        description:
+          'JSON array of strings appended to the aider invocation. Example: ["--edit-format", "whole"]',
+        placeholder: '["--edit-format", "whole"]',
+      },
+      ...GIT_WORKSPACE_FIELDS,
+    ],
+  },
+
+  github: {
+    runtime_id: "github",
+    fields: [
+      {
+        key: "op",
+        label: "Operation",
+        kind: "select",
+        required: true,
+        default: "read_issue",
+        options: [
+          { value: "read_issue", label: "Read issue" },
+          { value: "read_pr", label: "Read pull request (incl. changed files)" },
+          { value: "comment", label: "Comment on issue / PR" },
+          { value: "update_issue_section", label: "Update a marked section of an issue" },
+          { value: "create_branch", label: "Create branch" },
+          { value: "open_pr", label: "Open pull request" },
+          { value: "merge_pr", label: "Merge pull request (pinned head)" },
+        ],
+      },
+      {
+        key: "repo",
+        label: "Repository",
+        kind: "text",
+        required: true,
+        placeholder: "owner/name or {{ state.repo }}",
+        description: "owner/name. Every text field accepts Jinja over the run's state, e.g. {{ state.repo }}.",
+      },
+      {
+        key: "issue",
+        label: "Issue number",
+        kind: "text",
+        placeholder: "42 or {{ state.extensions.issue_number }}",
+        description: "An issue or PR number (PRs accept issue comments too).",
+        visible: forOps("read_issue", "comment", "update_issue_section"),
+      },
+      {
+        key: "pr",
+        label: "Pull request number",
+        kind: "text",
+        placeholder: "12 or {{ state.extensions.pr_number }}",
+        visible: forOps("read_pr", "merge_pr"),
+      },
+      {
+        key: "body",
+        label: "Body",
+        kind: "text",
+        placeholder: "Markdown, or Jinja over the run's state",
+        description: "Comment text, or the PR description.",
+        visible: forOps("comment", "open_pr"),
+      },
+      {
+        key: "section",
+        label: "Section name",
+        kind: "text",
+        placeholder: "plan",
+        description:
+          "Replaces the text between <!-- dap:section:NAME --> and <!-- /dap:section:NAME --> in the issue body. Fails if the markers are missing or duplicated; writes nothing if the text is already there.",
+        visible: forOps("update_issue_section"),
+      },
+      {
+        key: "content",
+        label: "Section content",
+        kind: "text",
+        visible: forOps("update_issue_section"),
+      },
+      {
+        key: "branch",
+        label: "New branch",
+        kind: "text",
+        placeholder: "feat/my-change",
+        description: "Already existing at Base is a no-op; existing elsewhere fails.",
+        visible: forOps("create_branch"),
+      },
+      {
+        key: "head",
+        label: "Head branch",
+        kind: "text",
+        placeholder: "feat/my-change (or owner:branch from a fork)",
+        description: "If an open PR already exists for it, that PR is returned instead.",
+        visible: forOps("open_pr"),
+      },
+      {
+        key: "base",
+        label: "Base",
+        kind: "text",
+        placeholder: "develop",
+        description: "Branch name, or a full commit sha for New branch.",
+        visible: forOps("create_branch", "open_pr"),
+      },
+      {
+        key: "title",
+        label: "PR title",
+        kind: "text",
+        visible: forOps("open_pr"),
+      },
+      {
+        key: "draft",
+        label: "Open as draft",
+        kind: "boolean",
+        visible: forOps("open_pr"),
+      },
+      {
+        key: "expected_head_sha",
+        label: "Expected head sha",
+        kind: "text",
+        placeholder: "{{ state.extensions.github_pr.head.sha }}",
+        description:
+          "Required. The full sha of the head that was reviewed (e.g. from a read_pr node: {{ state.extensions.github_pr.head.sha }}). GitHub refuses the merge if the PR has moved since.",
+        visible: forOps("merge_pr"),
+      },
+      {
+        key: "method",
+        label: "Merge method",
+        kind: "select",
+        options: [
+          { value: "squash", label: "squash (default)" },
+          { value: "merge", label: "merge commit" },
+          { value: "rebase", label: "rebase" },
+        ],
+        visible: forOps("merge_pr"),
+      },
+      {
+        key: "token_env",
+        label: "Token env var name",
+        kind: "text",
+        placeholder: "GH_TOKEN",
+        description:
+          "Name of the env var (engine, instance or project env) holding the GitHub token. Defaults to GH_TOKEN. Enter the variable's name, never the token itself.",
+      },
+      {
+        key: "state_key",
+        label: "State key",
+        kind: "text",
+        placeholder: "github_issue / github_pr / github_comment / …",
+        description: "Where the result is written in the run's state.",
+      },
+      {
+        key: "api_url",
+        label: "API URL",
+        kind: "text",
+        placeholder: "https://api.github.com",
+        description: "Set only for GitHub Enterprise (https only).",
       },
     ],
   },

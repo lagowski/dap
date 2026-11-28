@@ -1,54 +1,89 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+/**
+ * Pipeline designer orchestrator (audit D1 slice 5).
+ *
+ * Post-split this file owns the designer state (React Flow nodes /
+ * edges + designer-domain edge metadata + selection) and the
+ * mutation handlers that drive it. Derived projections + server
+ * save / validate live in dedicated hooks:
+ *
+ * - ``use-pipeline-projections``    — derived memos (canonical-
+ *                                      shape lists, annotations,
+ *                                      annotated edges, selection
+ *                                      detail)
+ * - ``use-pipeline-save``           — buildPayload + validate /
+ *                                      create / update mutations +
+ *                                      handlers
+ * - ``reactflow-adapters``          — pure model → React Flow
+ *                                      shape conversion + stroke
+ *                                      colours
+ *
+ * Pre-split this file was 512 LOC; post-split it stays under 260.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import {
   Background,
   Controls,
   ReactFlow,
+  ReactFlowProvider,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
   type Connection,
   type Edge,
   type EdgeChange,
+  type EdgeTypes,
   type Node,
   type NodeChange,
   type OnConnect,
   type OnEdgesChange,
+  type OnMoveEnd,
   type OnNodesChange,
+  type Viewport,
+  type XYPosition,
+  useNodesInitialized,
+  useReactFlow,
+  useStore,
 } from "@xyflow/react";
-import { useAgentsList, useCreatePipeline, useUpdatePipeline, useValidatePipeline } from "@/hooks/api";
+
+import { useAgentsList } from "@/hooks/api";
 import {
-  annotationTooltip,
-  computeEdgeAnnotation,
-  END_SENTINEL,
-  formatEdgeLabel,
-  START_SENTINEL,
-  type EdgeAnnotation,
-} from "@/lib/edge-annotations";
+  arrangeDesignerGraph,
+  arrangeImprovesReadability,
+  designerHandleSides,
+  designerNodeBox,
+  FIT_MIN_ZOOM,
+  fitViewportToBoxes,
+  measuredNodeBox,
+  needsDesignerLayout,
+  restoreArrangeSnapshot,
+  savedViewportNeedsFit,
+  type ArrangeSnapshot,
+} from "@/lib/graph-layout";
 import type {
   Agent,
   EdgeCondition,
   Pipeline,
-  PipelineEdge,
-  PipelineNode,
-  ValidationResult,
+  RetryPolicy,
 } from "@/lib/api/types";
+
 import { AgentPalette } from "./agent-palette";
 import { Inspector } from "./inspector";
-import { DesignerToolbar } from "./toolbar";
 import {
-  DEFAULT_DEFAULTS,
-  STATE_SCHEMA_REF,
-  type DesignerEdge,
-  type DesignerNode,
-  type PipelineFormPayload,
-} from "./types";
-
-const EDGE_WARNING_STROKE = "#dc2626"; // red-600
-const EDGE_CONDITION_STROKE = "#3b82f6"; // blue-500
-const EDGE_DEFAULT_STROKE = "#94a3b8"; // slate-400
+  conditionalEdgeLabel,
+  parseEdgeWaypoints,
+  summarizeCondition,
+  toReactFlowEdge,
+  toReactFlowNode,
+  type EdgeWaypoints,
+} from "./reactflow-adapters";
+import { DesignerToolbar } from "./toolbar";
+import { usePipelineProjections } from "./use-pipeline-projections";
+import { useAutoSaveLayout, usePipelineSave } from "./use-pipeline-save";
+import { WaypointEdge } from "./waypoint-edge";
 
 interface PipelineDesignerProps {
   /** The persisted pipeline being edited; ``null`` for a fresh pipeline. */
@@ -64,12 +99,67 @@ interface PipelineDesignerProps {
 }
 
 const NEW_NODE_OFFSET = 80;
+const EDGE_TYPES: EdgeTypes = { waypoint: WaypointEdge };
 
-export function PipelineDesigner({
+type DesignerEdgeData = {
+  waypoints?: unknown;
+  onWaypointsChange?: (edgeId: string, waypoints: XYPosition[]) => void;
+};
+
+function designerEdgeData(data: unknown): DesignerEdgeData {
+  if (data == null || typeof data !== "object") return {};
+
+  const waypoints = Reflect.get(data, "waypoints");
+  const onWaypointsChange = Reflect.get(data, "onWaypointsChange");
+
+  return {
+    ...(waypoints !== undefined ? { waypoints } : {}),
+    ...(typeof onWaypointsChange === "function"
+      ? {
+          onWaypointsChange: (edgeId: string, nextWaypoints: XYPosition[]) => {
+            onWaypointsChange(edgeId, nextWaypoints);
+          },
+        }
+      : {}),
+  };
+}
+
+function parseSavedViewport(uiMetadata: Record<string, unknown> | undefined): Viewport | null {
+  const viewport = uiMetadata?.viewport;
+  if (!viewport || typeof viewport !== "object") return null;
+  const candidate = viewport as Partial<Viewport>;
+  if (
+    typeof candidate.x !== "number" ||
+    typeof candidate.y !== "number" ||
+    typeof candidate.zoom !== "number" ||
+    !Number.isFinite(candidate.x) ||
+    !Number.isFinite(candidate.y) ||
+    !Number.isFinite(candidate.zoom) ||
+    candidate.zoom < 0.1 ||
+    candidate.zoom > 4
+  ) {
+    return null;
+  }
+  return { x: candidate.x, y: candidate.y, zoom: candidate.zoom };
+}
+/** Why the view still has to be framed: the opening check, or a layout
+ *  change from Auto-arrange / Undo arrange. ``null`` once framed. */
+type FitReason = "open" | "arrange" | null;
+
+export function PipelineDesigner(props: PipelineDesignerProps) {
+  // The provider lets the designer read React Flow's store (pane size,
+  // measured nodes) to frame the graph (#1033 follow-up).
+  return (
+    <ReactFlowProvider>
+      <PipelineDesignerCanvas {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function PipelineDesignerCanvas({
   initialPipeline,
   seedFromPipeline = null,
 }: PipelineDesignerProps) {
-  const router = useRouter();
   const { data: agentsData } = useAgentsList();
   // Stable reference so memos that depend on `agents` don't re-run when
   // useAgentsList re-renders without a real data change.
@@ -93,21 +183,67 @@ export function PipelineDesigner({
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(seed?.description ?? "");
   const [entryPoint, setEntryPoint] = useState(seed?.entry_point ?? "");
-
-  const [nodes, setNodes] = useState<Node[]>(() => {
-    // Prefer positions stored in ui_metadata.node_positions (saved by
-    // buildPayload on every Save). Falls back to PipelineNode.position for
-    // older pipelines / first-load before any Save (#226).
+  // The opening graph, computed once. Prefer positions stored in
+  // ui_metadata.node_positions (saved by buildPayload on every Save); fall
+  // back to PipelineNode.position for older pipelines (#226). Layout guard
+  // (#1033): when a node has no usable position or two node boxes overlap
+  // (an imported bundle can stack every node), or when the graph cannot be
+  // shown at a readable zoom and the snake layout reads clearly better, run
+  // the layout; the layout autosave then persists it. Otherwise untouched.
+  const [initialGraph] = useState(() => {
     const savedPositions = seed?.ui_metadata?.node_positions as
       | Record<string, { x: number; y: number }>
       | undefined;
-    return (seed?.nodes ?? []).map((n) => {
+    const savedEdgeWaypoints = parseEdgeWaypoints(seed?.ui_metadata);
+    const openedNodes = (seed?.nodes ?? []).map((n) => {
       const pos = savedPositions?.[n.id];
       return toReactFlowNode(pos ? { ...n, position: pos } : n);
     });
+    const openedEdges = (seed?.edges ?? []).map((edge) =>
+      toReactFlowEdge(edge, savedEdgeWaypoints[edge.id] ?? []),
+    );
+    const arranged = arrangeDesignerGraph(openedNodes, openedEdges);
+    // Round 3: a graph without overlaps is also re-laid out when it cannot be
+    // shown readably (one 22-column row opened at zoom ~0.1).
+    const relayout =
+      needsDesignerLayout(openedNodes) ||
+      arrangeImprovesReadability(
+        openedNodes.map(designerNodeBox),
+        arranged.nodes.map(designerNodeBox),
+      );
+    if (!relayout) {
+      return { nodes: openedNodes, edges: openedEdges, arranged: false, snapshot: null };
+    }
+    return {
+      nodes: arranged.nodes,
+      edges: arranged.edges,
+      arranged: true,
+      snapshot: arranged.snapshot,
+    };
   });
-  const [edges, setEdges] = useState<Edge[]>(() =>
-    (seed?.edges ?? []).map(toReactFlowEdge),
+  // A re-laid-out graph ignores the saved viewport, which framed the old
+  // positions, and fits the view instead.
+  const [savedViewport] = useState(() =>
+    initialGraph.arranged ? null : parseSavedViewport(seed?.ui_metadata),
+  );
+  const [viewport, setViewport] = useState<Viewport | null>(savedViewport);
+  // Framing (#1033 follow-up): once React Flow has measured the nodes, fit
+  // the view to the whole graph (after the open-time re-layout, when the
+  // saved viewport shows no node or crops more than half the graph, after
+  // Auto-arrange / Undo arrange) and save that viewport.
+  const [fitReason, setFitReason] = useState<FitReason>("open");
+  const [openRefit, setOpenRefit] = useState(false);
+  const reactFlow = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  const paneWidth = useStore((s) => s.width);
+  const paneHeight = useStore((s) => s.height);
+
+  const [nodes, setNodes] = useState<Node[]>(initialGraph.nodes);
+  const [edges, setEdges] = useState<Edge[]>(initialGraph.edges);
+  // Positions and waypoints the last Auto-arrange replaced ("Undo arrange").
+  // An open-time re-layout can be undone too.
+  const [arrangeUndo, setArrangeUndo] = useState<ArrangeSnapshot | null>(
+    initialGraph.snapshot,
   );
 
   // Designer-domain edge metadata that React Flow doesn't know about.
@@ -127,7 +263,11 @@ export function PipelineDesigner({
     | { kind: "none" }
   >({ kind: "none" });
 
-  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  // Per-node LLM/backend assignments (#755 follow-up). Seeded from the pipeline
+  // so an edit doesn't drop them; the inspector's "LLM per node" panel edits it.
+  const [backendProfiles, setBackendProfiles] = useState<Record<string, unknown> | null>(
+    () => (seed?.backend_profiles as Record<string, unknown> | undefined) ?? null,
+  );
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -137,16 +277,16 @@ export function PipelineDesigner({
     (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
     [],
   );
-  const onConnect: OnConnect = useCallback(
-    (params: Connection) => {
-      const edgeId = `e_${Math.random().toString(36).slice(2, 8)}`;
-      setEdges((eds) =>
-        addEdge({ ...params, id: edgeId }, eds),
-      );
-      setEdgeMeta((meta) => ({ ...meta, [edgeId]: { condition: null, label: null } }));
-    },
-    [],
-  );
+  const onMoveEnd: OnMoveEnd = useCallback((_event, nextViewport) => {
+    setViewport(nextViewport);
+  }, []);
+  const onConnect: OnConnect = useCallback((params: Connection) => {
+    const edgeId = `e_${Math.random().toString(36).slice(2, 8)}`;
+    setEdges((eds) =>
+      addEdge({ ...params, id: edgeId, type: "waypoint", data: { waypoints: [] } }, eds),
+    );
+    setEdgeMeta((meta) => ({ ...meta, [edgeId]: { condition: null, label: null } }));
+  }, []);
 
   const handleAddNode = useCallback(
     (agentId: string, agentName: string) => {
@@ -209,13 +349,26 @@ export function PipelineDesigner({
         ...meta,
         [edgeId]: { ...(meta[edgeId] ?? { label: null, condition: null }), condition },
       }));
-      // Also update the React Flow edge label to indicate "if"
+      // Also update the React Flow edge label to show the condition (#1033)
       setEdges((eds) =>
         eds.map((e) =>
           e.id === edgeId
-            ? { ...e, label: condition ? "if" : undefined, animated: condition != null }
+            ? {
+                ...e,
+                label: condition ? summarizeCondition(condition) : undefined,
+                animated: condition != null,
+              }
             : e,
         ),
+      );
+    },
+    [],
+  );
+
+  const handleUpdateNodeRetry = useCallback(
+    (nodeId: string, retry: RetryPolicy | null) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, retry } } : n)),
       );
     },
     [],
@@ -233,210 +386,138 @@ export function PipelineDesigner({
     [],
   );
 
-  // Lifted from buildPayload so the Inspector can reuse the projections.
-  const designerNodes = useMemo<PipelineNode[]>(
-    () =>
-      nodes.map((n) => ({
-        id: n.id,
-        agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
-        position: { x: n.position.x, y: n.position.y },
-      })),
-    [nodes],
-  );
-  const designerEdges = useMemo<PipelineEdge[]>(
-    () =>
-      edges.map((e) => {
-        const meta = edgeMeta[e.id];
-        return {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          condition: meta?.condition ?? null,
-          label: meta?.label ?? null,
-        };
-      }),
-    [edges, edgeMeta],
-  );
-
-  const buildPayload = useCallback(
-    (): PipelineFormPayload => {
-      // Snapshot current node positions into ui_metadata so they survive
-      // page refresh. PipelineNode.position is the authoritative storage;
-      // node_positions here is an explicit UI-layer copy that the designer
-      // applies on load before ReactFlow's fitView can shift things (#226).
-      const nodePositions: Record<string, { x: number; y: number }> = {};
-      for (const n of designerNodes) {
-        nodePositions[n.id] = { x: n.position.x, y: n.position.y };
-      }
-      const existingMeta =
-        initialPipeline?.ui_metadata &&
-        typeof initialPipeline.ui_metadata === "object"
-          ? (initialPipeline.ui_metadata as Record<string, unknown>)
-          : {};
-      return {
-        name,
-        description,
-        schema_version: "langgraph/1.0",
-        state_schema_ref: STATE_SCHEMA_REF,
-        entry_point: entryPoint,
-        nodes: designerNodes,
-        edges: designerEdges,
-        defaults: DEFAULT_DEFAULTS,
-        ui_metadata: { ...existingMeta, node_positions: nodePositions },
-      };
-    },
-    [name, description, entryPoint, designerNodes, designerEdges, initialPipeline?.ui_metadata],
-  );
-
-  const validate = useValidatePipeline();
-  const create = useCreatePipeline();
-  const update = useUpdatePipeline();
-
-  const handleValidate = useCallback(async () => {
-    // Clear any previous result first — otherwise a stale "valid" sticks
-    // around if the next validation attempt fails (and the Save button
-    // would stay enabled based on the old success state).
-    setValidationResult(null);
-    try {
-      const result = await validate.mutateAsync(buildPayload());
-      setValidationResult(result);
-    } catch {
-      // The mutation's error state already drives the UI via submitError;
-      // swallow here to avoid an unhandled rejection in the dev overlay.
-    }
-  }, [buildPayload, validate]);
-
-  const handleSave = useCallback(async () => {
-    const payload = buildPayload();
-    try {
-      if (initialPipeline) {
-        const updated = await update.mutateAsync({
-          id: initialPipeline.id,
-          payload,
-        });
-        router.push(`/pipelines/${updated.id}/edit`);
-      } else {
-        const created = await create.mutateAsync(payload);
-        router.push(`/pipelines/${created.id}/edit`);
-      }
-    } catch {
-      // Save failure surfaces via create.error / update.error on the
-      // toolbar; swallow here to avoid the unhandled rejection.
-    }
-  }, [buildPayload, initialPipeline, create, update, router]);
-
-  // Single source-of-truth map: edge_id → EdgeAnnotation. Both the
-  // rendered edges and the inspector read from this so the chip on
-  // the canvas and the field list in the side panel can never drift.
-  const annotations = useMemo<Map<string, EdgeAnnotation>>(() => {
-    const agentsById = new Map<string, Agent>(agents.map((a) => [a.id, a]));
-    const agentForReactFlowNode = (nodeId: string): Agent | undefined => {
-      // Sentinels never resolve to an agent — return undefined so the
-      // empty-annotation branch below kicks in (no chip, no warning).
-      if (nodeId === START_SENTINEL || nodeId === END_SENTINEL) {
-        return undefined;
-      }
-      const node = nodes.find((n) => n.id === nodeId);
-      if (node === undefined) return undefined;
-      const agentId = String((node.data as { agentId?: string })?.agentId ?? "");
-      return agentsById.get(agentId);
-    };
-    const out = new Map<string, EdgeAnnotation>();
-    for (const e of edges) {
-      // Sentinel-touching edges have no contract to evaluate.
-      if (e.target === END_SENTINEL || e.source === START_SENTINEL) {
-        out.set(e.id, { fields: [], warning: false, unknown: false });
-        continue;
-      }
-      out.set(
-        e.id,
-        computeEdgeAnnotation(
-          agentForReactFlowNode(e.source),
-          agentForReactFlowNode(e.target),
+  const handleUpdateEdgeWaypoints = useCallback(
+    (edgeId: string, waypoints: XYPosition[]) => {
+      setEdges((eds) =>
+        eds.map((edge) =>
+          edge.id === edgeId
+            ? {
+                ...edge,
+                type: "waypoint",
+                data: { ...designerEdgeData(edge.data), waypoints },
+              }
+            : edge,
         ),
       );
+    },
+    [],
+  );
+
+  const handleAutoArrange = useCallback(() => {
+    const arranged = arrangeDesignerGraph(nodes, edges);
+    setNodes(arranged.nodes);
+    setEdges(arranged.edges);
+    setArrangeUndo(arranged.snapshot);
+    setFitReason("arrange");
+  }, [nodes, edges]);
+
+  const handleUndoArrange = useCallback(() => {
+    if (arrangeUndo == null) return;
+    const restored = restoreArrangeSnapshot(nodes, edges, arrangeUndo);
+    setNodes(restored.nodes);
+    setEdges(restored.edges);
+    setArrangeUndo(null);
+    setFitReason("arrange");
+  }, [nodes, edges, arrangeUndo]);
+
+  useEffect(() => {
+    if (fitReason == null) return;
+    if (nodes.length === 0) {
+      setFitReason(null);
+      return;
+    }
+    if (!nodesInitialized || paneWidth <= 0 || paneHeight <= 0) return;
+    const pane = { width: paneWidth, height: paneHeight };
+    const boxes = nodes.map(measuredNodeBox);
+    const keepSaved =
+      fitReason === "open" &&
+      savedViewport != null &&
+      !savedViewportNeedsFit(savedViewport, pane, boxes);
+    if (!keepSaved) {
+      const fitted = fitViewportToBoxes(boxes, pane);
+      if (fitted != null) {
+        void reactFlow.setViewport(fitted);
+        setViewport(fitted);
+        // A saved viewport that cropped the graph is replaced on the server too.
+        if (fitReason === "open" && savedViewport != null) setOpenRefit(true);
+      }
+    }
+    setFitReason(null);
+  }, [fitReason, nodes, nodesInitialized, paneWidth, paneHeight, reactFlow, savedViewport]);
+
+  // Handles face the neighbouring nodes (#1033 round 3): worked out from the
+  // positions, so a reopened snake graph draws its turns like Auto-arrange.
+  const renderedNodes = useMemo<Node[]>(() => {
+    const sides = designerHandleSides(nodes, edges);
+    return nodes.map((n) => {
+      const side = sides[n.id];
+      if (!side || (n.sourcePosition === side.source && n.targetPosition === side.target)) {
+        return n;
+      }
+      return { ...n, sourcePosition: side.source, targetPosition: side.target };
+    });
+  }, [nodes, edges]);
+  const { designerNodes, designerEdges, annotatedEdges, selectionDetail } =
+    usePipelineProjections({ nodes, edges, edgeMeta, agents, selection });
+  const renderedEdges = useMemo<Edge[]>(
+    () =>
+      annotatedEdges.map((edge) => ({
+        ...edge,
+        // A conditional edge is labelled with its condition, not "if" (#1033).
+        label: conditionalEdgeLabel(
+          edge.label,
+          edgeMeta[edge.id]?.condition,
+          edgeMeta[edge.id]?.label,
+        ),
+        type: "waypoint",
+        data: {
+          ...designerEdgeData(edge.data),
+          onWaypointsChange: handleUpdateEdgeWaypoints,
+        },
+      })),
+    [annotatedEdges, edgeMeta, handleUpdateEdgeWaypoints],
+  );
+  const edgeWaypoints = useMemo<EdgeWaypoints>(() => {
+    const out: EdgeWaypoints = {};
+    for (const edge of edges) {
+      const waypoints = designerEdgeData(edge.data).waypoints;
+      if (!Array.isArray(waypoints)) continue;
+      const valid = waypoints.filter(
+        (point): point is XYPosition =>
+          point != null &&
+          typeof point === "object" &&
+          typeof (point as Partial<XYPosition>).x === "number" &&
+          typeof (point as Partial<XYPosition>).y === "number" &&
+          Number.isFinite((point as Partial<XYPosition>).x) &&
+          Number.isFinite((point as Partial<XYPosition>).y),
+      );
+      if (valid.length > 0) {
+        out[edge.id] = valid.map((point) => ({ x: point.x, y: point.y }));
+      }
     }
     return out;
-  }, [edges, nodes, agents]);
+  }, [edges]);
 
-  // Decorate React Flow edges with field annotations (#62). Original
-  // ``edges`` stays the source of truth; we only rewrite cosmetic
-  // props (label / style / data) using the precomputed map above.
-  const annotatedEdges = useMemo<Edge[]>(() => {
-    return edges.map((e) => {
-      const annotation =
-        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
-      const meta = edgeMeta[e.id];
-      const hasCondition = meta?.condition != null;
-      const userLabel = meta?.label?.trim() ?? "";
-      const annotationLabel = formatEdgeLabel(annotation, hasCondition);
-      // User-set edge label takes priority — they wrote it deliberately.
-      // When unset we fall back to the auto annotation chip.
-      const label = userLabel.length > 0 ? userLabel : annotationLabel;
-      const stroke = annotation.warning
-        ? EDGE_WARNING_STROKE
-        : hasCondition
-          ? EDGE_CONDITION_STROKE
-          : EDGE_DEFAULT_STROKE;
-      return {
-        ...e,
-        label,
-        labelStyle: annotation.warning
-          ? { fill: EDGE_WARNING_STROKE, fontWeight: 600 }
-          : undefined,
-        labelBgStyle: annotation.warning ? { fill: "#fee2e2" } : undefined,
-        animated: hasCondition,
-        style: { stroke, strokeWidth: annotation.warning ? 2 : 1 },
-        data: {
-          ...(e.data as object | undefined),
-          tooltip: annotationTooltip(annotation),
-          annotation,
-        },
-      };
-    });
-  }, [edges, edgeMeta, annotations]);
-
-  // Compute current selection details for inspector. Pulls the
-  // edge's annotation from the shared ``annotations`` map so the
-  // inspector view never disagrees with the chip on the canvas.
-  const selectionDetail = useMemo<
-    | { kind: "node"; node: DesignerNode }
-    | { kind: "edge"; edge: DesignerEdge; annotation: EdgeAnnotation }
-    | { kind: "none" }
-  >(() => {
-    if (selection.kind === "node") {
-      const n = nodes.find((x) => x.id === selection.id);
-      if (!n) return { kind: "none" };
-      const node: DesignerNode = {
-        id: n.id,
-        agent_id: String((n.data as { agentId?: string })?.agentId ?? ""),
-        position: { x: n.position.x, y: n.position.y },
-      };
-      return { kind: "node", node };
-    }
-    if (selection.kind === "edge") {
-      const e = edges.find((x) => x.id === selection.id);
-      if (!e) return { kind: "none" };
-      const meta = edgeMeta[e.id];
-      const edge: DesignerEdge = {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        condition: meta?.condition ?? null,
-        label: meta?.label ?? null,
-      };
-      const annotation =
-        annotations.get(e.id) ?? { fields: [], warning: false, unknown: false };
-      return { kind: "edge", edge, annotation };
-    }
-    return { kind: "none" };
-  }, [selection, nodes, edges, edgeMeta, annotations]);
-
-  const isSaving = create.isPending || update.isPending;
-  const saveLabel = initialPipeline ? `Save v${initialPipeline.version + 1}` : "Save";
-  // Surface server-side errors (422 from validate / save) in the toolbar
-  // so the user sees the actual reason instead of just a dev-overlay flash.
-  const submitError = create.error ?? update.error ?? validate.error;
+  const save = usePipelineSave({
+    name,
+    description,
+    entryPoint,
+    designerNodes,
+    designerEdges,
+    initialPipeline,
+    viewport,
+    edgeWaypoints,
+    backendProfiles,
+  });
+  const layoutSave = useAutoSaveLayout({
+    pipelineId: initialPipeline?.id ?? null,
+    designerNodes,
+    existingUiMetadata: initialPipeline?.ui_metadata ?? null,
+    viewport,
+    edgeWaypoints,
+    saveOnOpen: initialGraph.arranged || openRefit,
+    framed: fitReason == null,
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -445,30 +526,41 @@ export function PipelineDesigner({
         description={description}
         onNameChange={setName}
         onDescriptionChange={setDescription}
-        onValidate={handleValidate}
-        onSave={handleSave}
-        validationResult={validationResult}
-        isValidating={validate.isPending}
-        isSaving={isSaving}
-        saveLabel={saveLabel}
-        submitError={submitError}
+        onValidate={save.handleValidate}
+        onSave={save.handleSave}
+        validationResult={save.validationResult}
+        isValidating={save.isValidating}
+        isSaving={save.isSaving}
+        saveLabel={save.saveLabel}
+        submitError={save.submitError}
+        layoutSaveStatus={layoutSave.status}
+        layoutSavedAt={layoutSave.savedAt}
+        layoutSaveError={layoutSave.error}
         pipelineId={initialPipeline?.id}
         pipelineVersion={initialPipeline?.version}
         pipeline={initialPipeline}
+        onAutoArrange={nodes.length > 0 ? handleAutoArrange : undefined}
+        onUndoArrange={arrangeUndo != null ? handleUndoArrange : undefined}
       />
       <div className="flex flex-1 overflow-hidden">
         <AgentPalette onAddNode={handleAddNode} />
         <div className="flex-1 bg-muted/30">
           <ReactFlow
-            nodes={nodes}
-            edges={annotatedEdges}
+            nodes={renderedNodes}
+            edges={renderedEdges}
+            edgeTypes={EDGE_TYPES}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={(_e, node) => setSelection({ kind: "node", id: node.id })}
             onEdgeClick={(_e, edge) => setSelection({ kind: "edge", id: edge.id })}
             onPaneClick={() => setSelection({ kind: "none" })}
-            fitView
+            onMoveEnd={onMoveEnd}
+            defaultViewport={savedViewport ?? undefined}
+            // React Flow's default minZoom (0.5) would clamp a fitted view of a
+            // wide graph; allow the engine's saved-viewport range instead.
+            minZoom={FIT_MIN_ZOOM}
+            maxZoom={4}
             proOptions={{ hideAttribution: true }}
           >
             <Background />
@@ -483,30 +575,14 @@ export function PipelineDesigner({
           entryPoint={entryPoint}
           onSetEntryPoint={setEntryPoint}
           onDeleteNode={handleDeleteNode}
+          onUpdateNodeRetry={handleUpdateNodeRetry}
           onDeleteEdge={handleDeleteEdge}
           onUpdateEdgeCondition={handleUpdateEdgeCondition}
           onUpdateEdgeLabel={handleUpdateEdgeLabel}
+          backendProfiles={backendProfiles}
+          onBackendProfilesChange={setBackendProfiles}
         />
       </div>
     </div>
   );
-}
-
-function toReactFlowNode(n: PipelineNode): Node {
-  return {
-    id: n.id,
-    type: "default",
-    position: n.position,
-    data: { label: n.id, agentId: n.agent_id },
-  };
-}
-
-function toReactFlowEdge(e: PipelineEdge): Edge {
-  return {
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    label: e.condition ? "if" : undefined,
-    animated: e.condition != null,
-  };
 }

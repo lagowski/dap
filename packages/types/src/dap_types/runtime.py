@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 RuntimeKind = Literal["cli", "api", "shell", "http"]
+
+# A synchronous sink invoked with each incremental stdout chunk an adapter
+# produces while a node executes (#662, Phase 3b-2a). The adapter calls it
+# best-effort: a raising sink is logged and swallowed, never failing the run,
+# and the callback never affects the returned ``RuntimeResult.output``. Only
+# subprocess-spawning CLI adapters stream through it today; the engine wires a
+# chunk-persisting callback in Phase 3b-2b.
+OutputCallback = Callable[[str], None]
 
 
 class RuntimeContext(BaseModel):
@@ -24,12 +33,20 @@ class RuntimeTask(BaseModel):
     budget_usd: float | None = None
     runtime_config: dict[str, Any] = Field(default_factory=dict)
     context: RuntimeContext = Field(default_factory=RuntimeContext)
+    # Instance-scoped env overlay (#388). Shared key/value store
+    # configured by the operator via ``/settings/admin/env-vars``.
+    # Decrypted at run start and threaded through every task. Layered
+    # between engine env (base) and project env vars, so project
+    # overrides still win on conflict, but every project picks up
+    # operator-set defaults (e.g. GitHub tokens) automatically without
+    # per-project configuration.
+    instance_env_vars: dict[str, str] = Field(default_factory=dict)
     # Project-scoped env overlay (#65). Subprocess-spawning adapters
-    # layer these onto the inherited engine env, *before* per-agent
-    # ``runtime_config.env`` is applied — so agent overrides still win,
-    # project env still beats engine env, engine env is the base.
-    # Empty dict for ad-hoc runs and api-call style adapters that
-    # don't spawn subprocesses.
+    # layer these onto the inherited engine env, *after* the instance
+    # overlay and *before* per-agent ``runtime_config.env`` is applied
+    # — so agent overrides still win, project env beats instance env,
+    # instance env beats engine env. Empty dict for ad-hoc runs and
+    # api-call style adapters that don't spawn subprocesses.
     project_env_vars: dict[str, str] = Field(default_factory=dict)
 
 
@@ -44,6 +61,35 @@ class RuntimeResult(BaseModel):
     cost_usd: float | None = None
     duration_ms: int = 0
     errors: list[str] = Field(default_factory=list)
+
+
+# Why a failed result failed, when the backend is to blame (#934). Adapters set
+# ``structured[ERROR_CATEGORY_KEY]`` to one of these and leave it absent for
+# anything else — a config error, a 4xx validation error, a failed test — because
+# switching model or provider can't fix those.
+#
+# - ``rate_limit`` — transient throttling; may recover on retry.
+# - ``out_of_credits`` — quota / credit exhausted; won't recover on retry.
+# - ``timeout`` — the call or the subprocess ran past its time budget.
+# - ``unavailable`` — 5xx, connection refused / dropped, binary missing.
+BackendErrorCategory = Literal["rate_limit", "out_of_credits", "timeout", "unavailable"]
+BACKEND_ERROR_CATEGORIES: Final[frozenset[str]] = frozenset(get_args(BackendErrorCategory))
+ERROR_CATEGORY_KEY: Final = "error_category"
+
+
+def error_category(result: RuntimeResult) -> BackendErrorCategory | None:
+    """The backend error category of a failed result, or ``None``."""
+    if result.success or not result.structured:
+        return None
+    category = result.structured.get(ERROR_CATEGORY_KEY)
+    if isinstance(category, str) and category in BACKEND_ERROR_CATEGORIES:
+        return cast(BackendErrorCategory, category)
+    return None
+
+
+def is_backend_error(result: RuntimeResult) -> bool:
+    """True when the result failed for a reason another backend might not have."""
+    return error_category(result) is not None
 
 
 class HealthStatus(BaseModel):
@@ -64,4 +110,8 @@ class RuntimeAdapter(Protocol):
 
     async def healthcheck(self) -> HealthStatus: ...
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult: ...
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult: ...

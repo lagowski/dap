@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import inspect
 import tempfile
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
+from dap_runtimes.adapters.python_func import resolve_callable
 from dap_types import Agent, RuntimeTask
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import ValidationError
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from dap_engine.api.deps import get_engine_config, get_registry, get_session
+from dap_engine.api.export_redaction import scrub_secret_like_keys
+from dap_engine.api.validation import (
+    http_422_on_validation_error,
+    http_500_on_export_revalidation_error,
+)
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
 from dap_engine.persistence.models import UserORM
 
@@ -35,40 +44,9 @@ from dap_engine.api.schemas import (
 )
 from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence import repository as repo
+from dap_engine.runtime_policy import runtime_policy_error
 
 router = APIRouter(prefix="/agents", tags=["agents"])
-
-
-_SECRET_KEY_PATTERNS = (
-    "api_key",
-    "apikey",
-    "token",
-    "secret",
-    "password",
-    "credential",
-)
-_REDACTED_PLACEHOLDER = "<redacted>"
-
-
-def _scrub_secret_like_keys(value: dict[str, Any]) -> dict[str, Any]:
-    """Best-effort redaction of keys whose name suggests a credential.
-
-    Secrets are *supposed* to live in environment variables — adapters
-    read API keys from ``os.environ``, not from ``runtime_config``. But
-    nothing in the schema enforces that, so old or hand-edited agents
-    may have a literal key sitting in ``runtime_config``. Exports are
-    portable artifacts (checked into git, shared between machines), so
-    we redact known-suspect keys before serialising.
-    """
-    redacted: dict[str, Any] = {}
-    for key, val in value.items():
-        if any(pattern in key.lower() for pattern in _SECRET_KEY_PATTERNS):
-            redacted[key] = _REDACTED_PLACEHOLDER
-        elif isinstance(val, dict):
-            redacted[key] = _scrub_secret_like_keys(val)
-        else:
-            redacted[key] = val
-    return redacted
 
 
 @router.get("")
@@ -96,6 +74,7 @@ def list_agents(
         "total": total,
         "offset": offset,
         "limit": limit,
+        "has_more": offset + limit < total,
     }
 
 
@@ -139,13 +118,8 @@ def import_agent(
     # Round-trip through model_dump → model_validate so that any future
     # field added to AgentExportPayload/AgentCreate flows automatically,
     # rather than relying on this function to be edited in lockstep.
-    try:
+    with http_422_on_validation_error():
         create_payload = AgentCreate.model_validate(payload.agent.model_dump())
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=exc.errors(),
-        ) from exc
     return repo.create_agent(session, create_payload, user_id=user.id)
 
 
@@ -159,6 +133,170 @@ def get_agent(
         return repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+class _PipelineUsageRef(BaseModel):
+    id: str
+    name: str
+
+
+class _ProjectBindingRef(BaseModel):
+    kind: str
+    pipeline_id: str
+
+
+class _ProjectUsageRef(BaseModel):
+    id: str
+    name: str
+    bindings: list[_ProjectBindingRef]
+
+
+class AgentUsageResponse(BaseModel):
+    """Where an agent is used: the pipelines that embed it and the projects
+    that (via those pipelines) depend on it (#697)."""
+
+    pipelines: list[_PipelineUsageRef]
+    projects: list[_ProjectUsageRef]
+
+
+@router.get("/{agent_id}/usage", response_model=AgentUsageResponse)
+def get_agent_usage(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> AgentUsageResponse:
+    # Gate on agent ownership first (404 for unknown / foreign ids) — only
+    # then leak pipeline / project names, per ``pipelines_using_agent``'s
+    # caller contract.
+    try:
+        repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    pipelines = repo.pipelines_using_agent(session, agent_id)
+    projects = repo.projects_using_pipelines(session, [pid for pid, _ in pipelines])
+    return AgentUsageResponse(
+        pipelines=[_PipelineUsageRef(id=pid, name=name) for pid, name in pipelines],
+        projects=[
+            _ProjectUsageRef(
+                id=proj_id,
+                name=proj_name,
+                bindings=[_ProjectBindingRef(kind=kind, pipeline_id=pid) for kind, pid in binds],
+            )
+            for proj_id, proj_name, binds in projects
+        ],
+    )
+
+
+class AgentCallableInfo(BaseModel):
+    """What a ``python-func`` agent's callable does — its docstring (#747).
+
+    For managed/cortex agents the prompt is inert and the real behaviour lives
+    in the Python callable. This surfaces the callable's own docstring as a
+    grounded "what this does", plus whether it currently resolves on the engine
+    (the same resolution as the readiness check). ``callable_path`` is null for
+    non-``python-func`` agents — they have no callable to describe.
+    """
+
+    callable_path: str | None
+    resolvable: bool
+    doc: str | None
+    error: str | None
+
+
+@router.get("/{agent_id}/callable-info", response_model=AgentCallableInfo)
+def get_agent_callable_info(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> AgentCallableInfo:
+    """Resolve a ``python-func`` agent's callable and return its docstring (#747).
+
+    Read-only, no execution: imports the module (as the adapter would) and reads
+    ``inspect.getdoc`` off the function. Returns an empty shell for
+    non-``python-func`` agents. Gated on agent ownership.
+    """
+    try:
+        agent = repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if agent.runtime_id != "python-func":
+        return AgentCallableInfo(callable_path=None, resolvable=False, doc=None, error=None)
+
+    raw_path = agent.runtime_config.get("callable_path")
+    callable_path = raw_path if isinstance(raw_path, str) else None
+    func, error = resolve_callable(raw_path)
+    doc = inspect.getdoc(func) if func is not None else None
+    return AgentCallableInfo(
+        callable_path=callable_path,
+        resolvable=error is None,
+        doc=doc,
+        error=error,
+    )
+
+
+class AgentExecutionRef(BaseModel):
+    """One node execution of an agent — summary for the activity list. The
+    heavy stdout / prompt stay behind the run-detail view (#697)."""
+
+    id: str
+    run_id: str
+    node_id: str
+    runtime_id: str
+    status: str
+    started_at: datetime
+    ended_at: datetime | None
+    duration_ms: int
+    tokens_used: int
+    cost_usd: float
+    error_message: str | None
+
+
+class AgentExecutionsResponse(BaseModel):
+    items: list[AgentExecutionRef]
+    total: int
+    offset: int
+    limit: int
+
+
+@router.get("/{agent_id}/executions", response_model=AgentExecutionsResponse)
+def get_agent_executions(
+    agent_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> AgentExecutionsResponse:
+    """This agent's node executions across runs, newest first — the debug /
+    activity log (#697). Gated on agent ownership first."""
+    try:
+        repo.get_agent(session, agent_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    rows, total = repo.node_executions_for_agent(session, agent_id, offset=offset, limit=limit)
+    return AgentExecutionsResponse(
+        items=[
+            AgentExecutionRef(
+                id=r.id,
+                run_id=r.run_id,
+                node_id=r.node_id,
+                runtime_id=r.runtime_id,
+                status=r.status,
+                started_at=r.started_at,
+                ended_at=r.ended_at,
+                duration_ms=r.duration_ms,
+                tokens_used=r.tokens_used,
+                cost_usd=r.cost_usd,
+                error_message=r.error_message,
+            )
+            for r in rows
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.put("/{agent_id}", response_model=Agent)
@@ -287,12 +425,12 @@ def build_agent_export_payload(agent: Agent) -> AgentExportPayload:
     against a future migration introducing data we can't export,
     not a routine error path.
     """
-    try:
+    with http_500_on_export_revalidation_error("agent"):
         return AgentExportPayload(
             name=agent.name,
             role=agent.role,
             runtime_id=agent.runtime_id,
-            runtime_config=_scrub_secret_like_keys(agent.runtime_config),
+            runtime_config=scrub_secret_like_keys(agent.runtime_config),
             prompt_template=agent.prompt_template,
             input_schema=list(agent.input_schema),
             output_schema=list(agent.output_schema),
@@ -300,11 +438,6 @@ def build_agent_export_payload(agent: Agent) -> AgentExportPayload:
             budget_limit_usd=agent.budget_limit_usd,
             timeout_ms=agent.timeout_ms,
         )
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Stored agent could not be re-validated for export: {exc.errors()}",
-        ) from exc
 
 
 @router.post("/{agent_id}/render-preview", response_model=RenderPreviewResponse)
@@ -493,6 +626,24 @@ async def dry_run_agent(
                 "Install the adapter or pick a different runtime."
             ),
         )
+    denial = runtime_policy_error(
+        source.runtime_id,
+        is_admin=user.is_superuser,
+        allow_bash_runtime_for_non_admin=config.allow_bash_runtime_for_non_admin,
+    )
+    if denial is not None:
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type="runtime_policy.denied",
+            event_data={
+                "surface": "agents.dry_run",
+                "runtime_id": source.runtime_id,
+                "reason": denial,
+            },
+        )
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=denial)
 
     # Budget cap. The lower of agent's own ``budget_limit_usd`` and the
     # engine-wide ``dry_run_budget_usd`` wins; if either declares a

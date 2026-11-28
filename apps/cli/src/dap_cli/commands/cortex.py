@@ -1,8 +1,13 @@
 """Cortex pipeline operations — implementation behind `dap project run/approve/reject/state cortex`.
 
-Calls the DAP engine REST API. Does NOT import from `cortex.*` directly —
-the cortex package lives in packages/cortex/ (Fase 1) and is loaded
-only via the bundle JSON that ships inside it.
+Calls the DAP engine REST API. Does NOT import Cortex runtime code (nodes,
+adapters, pipeline classes) from ``cortex.*`` — the cortex package lives in
+the external ``Dixter999/cortex-project`` repo (extracted from this monorepo
+in c3730a4) and ships to PyPI as ``dap-cortex``. The only ``cortex.*``
+touchpoint here is ``importlib.resources.files("cortex.dap_bundles")`` in
+``load_cortex_bundle()`` — a static-data lookup against the installed
+package namespace, no behavioural import. Distribution name is
+``dap-cortex``; the import namespace is ``cortex``.
 """
 
 from __future__ import annotations
@@ -12,7 +17,10 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +28,10 @@ from typing import Any
 
 import httpx
 from rich.console import Console
+from rich.live import Live
 from rich.progress import Progress, SpinnerColumn, TextColumn
+
+from dap_cli.http_utils import make_client
 
 console = Console()
 
@@ -38,6 +49,58 @@ _STATUS_STYLE: dict[str, str] = {
     "failed": "red",
     "aborted": "red",
 }
+
+# Per-node-status glyph + rich style for the live progress checklist (#662).
+# NodeStatus is Literal["pending","running","success","failed","skipped"].
+_NODE_GLYPH: dict[str, tuple[str, str]] = {
+    "success": ("✓", "green"),
+    "running": ("▶", "cyan"),
+    "pending": ("·", "dim"),
+    "failed": ("✗", "red"),
+    "skipped": ("↷", "yellow"),
+}
+# Glyph used for any status not in _NODE_GLYPH — resilient to engine changes.
+_NODE_GLYPH_UNKNOWN: tuple[str, str] = ("•", "white")
+
+
+def _format_elapsed(elapsed_s: float) -> str:
+    """Format seconds as ``Hh Mm Ss`` (hours dropped when zero)."""
+    total = int(elapsed_s)
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    return f"{minutes}m {seconds}s"
+
+
+def _format_progress(run: dict[str, Any], elapsed_s: float) -> str:
+    """Render a live per-node progress view as rich-console markup (#662 Phase 1).
+
+    Builds a header line (current node, or the run's ``final_status`` when no
+    node is active) plus a per-node checklist with status glyphs, in the
+    insertion order of ``node_statuses`` (≈ execution order). Resilient to a
+    missing/empty ``node_statuses`` and unknown status values.
+    """
+    current_node = run.get("current_node")
+    final_status = run.get("final_status", "running")
+    elapsed = _format_elapsed(elapsed_s)
+
+    if current_node:
+        header = f"[bold cyan]▶ {current_node}[/bold cyan]  [dim]({elapsed})[/dim]"
+    else:
+        style = _STATUS_STYLE.get(final_status, "white")
+        header = f"[{style}]{final_status.upper()}[/{style}]  [dim]({elapsed})[/dim]"
+
+    lines = [header]
+    # Defensive: the API contract is dict-or-absent, but guard against any
+    # non-dict (e.g. a list) so a malformed response can't crash the poll loop.
+    node_statuses = run.get("node_statuses")
+    if not isinstance(node_statuses, dict):
+        node_statuses = {}
+    for node_id, status in node_statuses.items():
+        glyph, style = _NODE_GLYPH.get(status, _NODE_GLYPH_UNKNOWN)
+        lines.append(f"  [{style}]{glyph}[/{style}] {node_id}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -68,10 +131,14 @@ def parse_issue_url(url: str) -> tuple[str, int]:
 
 
 def load_cortex_bundle() -> dict[str, Any]:
-    """Load cortex-full.pipeline-bundle.json from the installed cortex package.
+    """Load cortex-full.pipeline-bundle.json from the installed ``dap-cortex`` package.
 
-    Requires `cortex` package (packages/cortex/) to be installed in the
-    current Python environment. Raises ImportError with a clear message if not.
+    Requires the ``dap-cortex`` PyPI distribution (extracted from this
+    monorepo to ``Dixter999/cortex-project``) to be installed in the
+    current Python environment. Note: distribution name is ``dap-cortex``
+    but the import namespace is ``cortex`` — the bundle is looked up via
+    ``importlib.resources.files("cortex.dap_bundles")``. Raises
+    ImportError with a clear install instruction if not.
     """
     try:
         bundle_ref = importlib.resources.files("cortex.dap_bundles") / CORTEX_BUNDLE_NAME
@@ -79,10 +146,10 @@ def load_cortex_bundle() -> dict[str, Any]:
     except (ModuleNotFoundError, FileNotFoundError) as exc:
         raise ImportError(
             "Could not load the Cortex pipeline bundle.\n\n"
-            "The `cortex` package must be installed in this environment.\n"
-            "Run: uv add --workspace cortex\n\n"
-            "(This depends on packages/cortex/ being present in the DAP monorepo — "
-            "see Etapa 2 / dap#170 for the migration status.)"
+            "The `dap-cortex` package must be installed in this environment.\n"
+            "Run: pip install dap-cortex\n"
+            "Or:  uv add dap-cortex\n\n"
+            "Source: https://github.com/Dixter999/cortex-project"
         ) from exc
     return dict(json.loads(bundle_text))
 
@@ -92,8 +159,30 @@ def load_cortex_bundle() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _client(engine_url: str) -> httpx.Client:
-    return httpx.Client(base_url=engine_url.rstrip("/"), timeout=10.0)
+def _client(engine_url: str, token: str | None = None) -> httpx.Client:
+    """Short-lived request client — see :func:`dap_cli.http_utils.make_client`."""
+    return make_client(engine_url, token)
+
+
+def _events_client(engine_url: str, token: str | None = None) -> httpx.Client:
+    """Long-lived SSE stream client (``--follow``) — read timeout disabled.
+
+    See :func:`dap_cli.http_utils.make_client` (``streaming=True``).
+    """
+    return make_client(engine_url, token, streaming=True)
+
+
+def _export_token_to_env(token: str | None) -> None:
+    """Propagate an explicit ``--token`` into ``DAP_AUTH_TOKEN``.
+
+    The many internal helpers build their own ``_client(engine_url)`` and
+    resolve the token from the env, so a token passed only as a flag is
+    exported here once at the entrypoint. No-op for empty/whitespace tokens
+    (and a no-op overwrite when the value already came from the env var).
+    """
+    t = (token or "").strip()
+    if t:
+        os.environ["DAP_AUTH_TOKEN"] = t
 
 
 def check_engine(engine_url: str) -> None:
@@ -291,6 +380,9 @@ def _approve_gate(engine_url: str, run_id: str, node_id: str) -> None:
     with _client(engine_url) as client:
         resp = client.post(f"/runs/{run_id}/nodes/{node_id}/approve")
         resp.raise_for_status()
+    console.print(
+        f"[green]✓ Approval registered for {run_id[:8]} — run resuming in background[/green]"
+    )
 
 
 def _reject_gate(engine_url: str, run_id: str, node_id: str, reason: str) -> None:
@@ -323,7 +415,12 @@ def _find_pending_gate(engine_url: str, run_id: str) -> str | None:
 
 
 def _prompt_gate_approval(gate_node: str, no_interactive: bool) -> tuple[bool, str]:
-    """Return (approved, reason). In non-interactive mode always approves."""
+    """Return (approved, reason). In non-interactive mode always approves.
+
+    The caller (``_handle_gate``) holds ``console_lock`` across this whole prompt
+    under ``--follow`` so the tailer thread can't write mid-prompt; the node is
+    paused at the gate, so the tailer has nothing to emit meanwhile.
+    """
     if no_interactive:
         return True, ""
     console.print(f"\n[yellow]⏸  Paused at gate:[/yellow] [bold]{gate_node}[/bold]")
@@ -348,11 +445,47 @@ def _poll_until_settled(
     engine_url: str,
     run_id: str,
     label: str,
+    show_progress: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     """Poll GET /runs/{run_id} until status is terminal or paused.
 
-    Returns (final_status, last_run_dict).
+    Returns (final_status, last_run_dict). When ``show_progress`` is True a
+    live per-node progress view (header + per-node checklist + elapsed) is
+    rendered from ``current_node``/``node_statuses`` (#662 Phase 1); otherwise
+    a bare run-level spinner is shown.
     """
+    if not show_progress:
+        return _poll_until_settled_spinner(engine_url, run_id, label)
+
+    start = time.monotonic()
+    last_status = "running"
+    last_run: dict[str, Any] = {}
+    # Seed the first frame with the progress renderable (not the bare label
+    # string) so the view is consistent from the very first refresh.
+    initial = _format_progress({"final_status": "running"}, 0.0)
+    with Live(initial, console=console, transient=True, refresh_per_second=4) as live:
+        while True:
+            time.sleep(POLL_INTERVAL_SECONDS)
+            try:
+                last_run = _get_run(engine_url, run_id)
+            # httpx.HTTPError covers network/status failures; ValueError covers
+            # a malformed (non-JSON) engine response from resp.json().
+            except (httpx.HTTPError, ValueError) as exc:
+                console.print(f"[red]✗ Could not fetch run status: {exc}[/red]")
+                raise SystemExit(1) from exc
+            last_status = last_run.get("final_status", "running")
+            live.update(_format_progress(last_run, time.monotonic() - start))
+            if last_status in ("success", "failed", "aborted", "paused"):
+                break
+    return last_status, last_run
+
+
+def _poll_until_settled_spinner(
+    engine_url: str,
+    run_id: str,
+    label: str,
+) -> tuple[str, dict[str, Any]]:
+    """Bare run-level spinner poll loop (the ``--no-progress`` path)."""
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -386,33 +519,179 @@ def _handle_gate(
     run: dict[str, Any],
     watch_only: bool,
     no_interactive: bool,
+    console_lock: threading.Lock | None = None,
 ) -> bool:
-    """Handle a paused gate. Returns True to continue polling, False to stop."""
+    """Handle a paused gate. Returns True to continue polling, False to stop.
+
+    Under ``--follow`` a ``console_lock`` is shared with the SSE tailer thread.
+    The whole gate interaction (prompt + its console writes) is held under the
+    lock so the tailer can't write mid-prompt and corrupt the terminal — Rich's
+    ``Console`` is not thread-safe. With ``console_lock=None`` (the default, and
+    every non-follow caller) the body runs unguarded, exactly as before.
+    """
     gate_node = _find_pending_gate(engine_url, run_id)
     if not gate_node:
         gate_node = run.get("current_node") or "gate-phase1"
     gate_node = _known_gate_for_node(gate_node)
 
-    if watch_only:
-        console.print(
-            f"\n[yellow]⏸  Paused at:[/yellow] [bold]{gate_node}[/bold]  "
-            f"(--watch mode — not approving)"
-        )
-        console.print(f"  Approve with: dap project run cortex --run-id {run_id} approve")
-        return False
+    with _console_guard(console_lock):
+        if watch_only:
+            console.print(
+                f"\n[yellow]⏸  Paused at:[/yellow] [bold]{gate_node}[/bold]  "
+                f"(--watch mode — not approving)"
+            )
+            console.print(f"  Approve with: dap project run cortex --run-id {run_id} approve")
+            return False
 
-    approved, reason = _prompt_gate_approval(gate_node, no_interactive)
-    if not approved:
-        _reject_gate(engine_url, run_id, gate_node, reason)
-        return False
+        approved, reason = _prompt_gate_approval(gate_node, no_interactive)
+        if not approved:
+            _reject_gate(engine_url, run_id, gate_node, reason)
+            return False
 
-    console.print(f"[green]✓ Approving gate {gate_node}...[/green]")
-    try:
-        _approve_gate(engine_url, run_id, gate_node)
-    except httpx.HTTPError as exc:
-        console.print(f"[red]✗ Approve failed: {exc}[/red]")
-        raise SystemExit(1) from exc
+        console.print(f"[green]✓ Approving gate {gate_node}...[/green]")
+        try:
+            _approve_gate(engine_url, run_id, gate_node)
+        except httpx.HTTPError as exc:
+            console.print(f"[red]✗ Approve failed: {exc}[/red]")
+            raise SystemExit(1) from exc
     return True
+
+
+# ---------------------------------------------------------------------------
+# Live output tailer — SSE (#662 Phase 3d, `--follow`)
+# ---------------------------------------------------------------------------
+
+
+def _emit_event(
+    event: str, data: dict[str, Any], console_lock: threading.Lock | None = None
+) -> None:
+    """Render a single parsed SSE event to the terminal.
+
+    ``node_log`` content is printed verbatim (it already carries its own
+    newlines) so the stream reads like the node's own stdout. ``node_started`` /
+    ``node_finished`` get a terse dim transition line; everything else is
+    ignored. ``run_finished`` is handled by the caller (it stops the loop).
+
+    When ``console_lock`` is provided (``--follow``), each console write is held
+    under the lock so the tailer thread can't interleave with the main thread's
+    gate prompts (Rich ``Console`` is not thread-safe). When ``None`` the writes
+    happen exactly as before — no locking.
+    """
+    if event == "node_log":
+        content = data.get("content")
+        if isinstance(content, str) and content:
+            # Print without adding an extra newline — the chunk already has its
+            # own line breaks. ``console.out`` avoids rich markup interpretation
+            # so raw agent output (which may contain ``[`` etc.) prints intact.
+            with _console_guard(console_lock):
+                console.out(content, end="", highlight=False)
+    elif event == "node_started":
+        node_id = data.get("node_id", "?")
+        with _console_guard(console_lock):
+            console.print(f"[dim]▶ {node_id}[/dim]")
+    elif event == "node_finished":
+        node_id = data.get("node_id", "?")
+        status = data.get("status", "?")
+        duration_ms = data.get("duration_ms")
+        suffix = ""
+        if isinstance(duration_ms, (int, float)):
+            suffix = f" ({duration_ms / 1000:.1f}s)"
+        glyph = "✓" if status == "success" else "✗"
+        with _console_guard(console_lock):
+            console.print(f"[dim]{glyph} {node_id}{suffix}[/dim]")
+
+
+@contextmanager
+def _console_guard(console_lock: threading.Lock | None) -> Iterator[None]:
+    """Hold ``console_lock`` around a console write, or pass through when ``None``.
+
+    Keeps the non-``--follow`` path lock-free (and behaviourally identical) while
+    serialising the tailer thread against the main thread's gate prompts when a
+    shared lock is in play (#662 Phase 3d).
+    """
+    if console_lock is None:
+        yield
+        return
+    with console_lock:
+        yield
+
+
+def _dispatch_frame(
+    event_name: str | None,
+    data_buf: list[str],
+    console_lock: threading.Lock | None,
+) -> bool:
+    """Parse + emit one accumulated SSE frame. Returns True if it was ``run_finished``.
+
+    Shared by the in-loop blank-line terminator and the end-of-stream flush so
+    both paths handle ``run_finished`` (and the stop-streaming signal) the same.
+    """
+    if event_name is None or not data_buf:
+        return False
+    raw = "\n".join(data_buf)
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        _emit_event(event_name, payload, console_lock)
+        if event_name == "run_finished":
+            return True
+    return False
+
+
+def _stream_events(
+    engine_url: str,
+    run_id: str,
+    stop_event: threading.Event,
+    console_lock: threading.Lock | None = None,
+) -> None:
+    """Tail ``GET /runs/{run_id}/events`` (SSE), printing live node output.
+
+    Runs in a daemon thread alongside the main poll loop under ``--follow``.
+    Parses Server-Sent-Event frames (``event: <name>`` + accumulated ``data:``
+    lines, dispatched on the blank-line separator) and prints ``node_log``
+    content plus node transitions. Returns when ``run_finished`` arrives, when
+    ``stop_event`` is set, or when the stream drops — a dropped stream is
+    non-fatal (the main loop still drives gates/terminal detection), so any
+    transport/parse error prints a dim notice and returns rather than crashing
+    the run.
+
+    If the engine closes the stream right after the last ``data:`` line without
+    a trailing blank line, the final in-progress frame is flushed on EOF (SSE
+    treats end-of-stream as an implicit frame terminator), so a trailing
+    ``run_finished`` still stops the tailer cleanly.
+
+    ``console_lock``, when given, serialises every console write against the main
+    thread's gate prompts (Rich ``Console`` is not thread-safe). ``None`` keeps
+    the writes unguarded, exactly as the non-``--follow`` path.
+    """
+    try:
+        with (
+            _events_client(engine_url) as client,
+            client.stream("GET", f"/runs/{run_id}/events") as response,
+        ):
+            response.raise_for_status()
+            event_name: str | None = None
+            data_buf: list[str] = []
+            for line in response.iter_lines():
+                if stop_event.is_set():
+                    return
+                if line == "":
+                    # Blank line terminates a frame — dispatch and reset.
+                    if _dispatch_frame(event_name, data_buf, console_lock):
+                        return
+                    event_name = None
+                    data_buf = []
+                elif line.startswith("event:"):
+                    event_name = line[len("event:") :].strip()
+                elif line.startswith("data:"):
+                    data_buf.append(line[len("data:") :].lstrip())
+                # Any other line (e.g. ``id:``, comments) is ignored.
+            # EOF with an unterminated frame still in progress — flush it once.
+            _dispatch_frame(event_name, data_buf, console_lock)
+    except (httpx.HTTPError, ValueError) as exc:
+        console.print(f"[dim]  Live output stream ended: {exc}[/dim]")
 
 
 def poll_and_handle(
@@ -420,19 +699,62 @@ def poll_and_handle(
     run_id: str,
     no_interactive: bool,
     watch_only: bool,
+    show_progress: bool = True,
+    follow: bool = False,
 ) -> None:
-    """Poll run status and handle gates until completion or failure."""
+    """Poll run status and handle gates until completion or failure.
+
+    When ``follow`` is True, a daemon thread tails the run's SSE event stream
+    (``GET /runs/{run_id}/events``) and prints live node output to the terminal.
+    Under ``--follow`` the per-node progress spinner is suppressed (the streamed
+    output is the live view), but gate handling and terminal detection are
+    unchanged (#662 Phase 3d).
+    """
     start_time = time.monotonic()
     last_status = "running"
 
-    while True:
-        last_status, last_run = _poll_until_settled(engine_url, run_id, "Running pipeline...")
-        if last_status != "paused":
-            break
-        should_continue = _handle_gate(engine_url, run_id, last_run, watch_only, no_interactive)
-        if not should_continue:
-            return
-        time.sleep(3)
+    stop_event: threading.Event | None = None
+    tailer: threading.Thread | None = None
+    # One lock shared between the tailer thread and the main (gate) thread so
+    # their concurrent console writes don't interleave (Rich isn't thread-safe).
+    # ``None`` outside --follow keeps every write path unguarded, as before.
+    console_lock: threading.Lock | None = None
+    if follow:
+        # Streamed stdout is the live view — the spinner would clash with it.
+        show_progress = False
+        console_lock = threading.Lock()
+        stop_event = threading.Event()
+        tailer = threading.Thread(
+            target=_stream_events,
+            args=(engine_url, run_id, stop_event),
+            kwargs={"console_lock": console_lock},
+            daemon=True,
+        )
+        tailer.start()
+
+    try:
+        while True:
+            last_status, last_run = _poll_until_settled(
+                engine_url, run_id, "Running pipeline...", show_progress=show_progress
+            )
+            if last_status != "paused":
+                break
+            should_continue = _handle_gate(
+                engine_url,
+                run_id,
+                last_run,
+                watch_only,
+                no_interactive,
+                console_lock=console_lock,
+            )
+            if not should_continue:
+                return
+            time.sleep(3)
+    finally:
+        if stop_event is not None:
+            stop_event.set()
+        if tailer is not None:
+            tailer.join(timeout=2.0)
 
     # Final report
     elapsed = int(time.monotonic() - start_time)
@@ -532,8 +854,12 @@ def cortex_run(
     no_interactive: bool,
     watch: bool,
     workspace: str | None,
+    token: str | None = None,
+    show_progress: bool = True,
+    follow: bool = False,
 ) -> None:
     """Implement `dap project run cortex <issue-url>`."""
+    _export_token_to_env(token)
     # Parse URL
     try:
         repo, issue_number = parse_issue_url(issue_url)
@@ -587,11 +913,14 @@ def cortex_run(
         run_id=run_id,
         no_interactive=no_interactive,
         watch_only=watch,
+        show_progress=show_progress,
+        follow=follow,
     )
 
 
-def cortex_approve(run_id: str, engine_url: str) -> None:
+def cortex_approve(run_id: str, engine_url: str, token: str | None = None) -> None:
     """Implement `dap project approve cortex <run-id>`."""
+    _export_token_to_env(token)
     run = _get_run(engine_url, run_id)
     status = run.get("final_status")
     if status != "paused":
@@ -609,8 +938,9 @@ def cortex_approve(run_id: str, engine_url: str) -> None:
     console.print(f"[green]✓ Approved — run {run_id[:8]} resuming[/green]")
 
 
-def cortex_reject(run_id: str, reason: str, engine_url: str) -> None:
+def cortex_reject(run_id: str, reason: str, engine_url: str, token: str | None = None) -> None:
     """Implement `dap project reject cortex <run-id> [reason]`."""
+    _export_token_to_env(token)
     run = _get_run(engine_url, run_id)
     status = run.get("final_status")
     if status != "paused":
@@ -653,8 +983,11 @@ def _json_default(obj: object) -> str:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def cortex_state(run_id: str, engine_url: str, fmt: str = "table") -> None:
+def cortex_state(
+    run_id: str, engine_url: str, fmt: str = "table", token: str | None = None
+) -> None:
     """Implement `dap project state cortex <run-id>`."""
+    _export_token_to_env(token)
     try:
         run = _get_run(engine_url, run_id)
     except httpx.HTTPStatusError as exc:

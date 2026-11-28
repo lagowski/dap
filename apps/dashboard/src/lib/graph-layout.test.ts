@@ -1,6 +1,29 @@
 import { describe, it, expect } from "vitest";
-import type { Node, Edge } from "@xyflow/react";
-import { getLayoutedElements } from "./graph-layout";
+import { Position, type Node, type Edge } from "@xyflow/react";
+import {
+  arrangeDesignerGraph,
+  arrangeImprovesReadability,
+  backEdgeIds,
+  boxesOverlap,
+  designerHandleSides,
+  fitZoomFor,
+  READABLE_ZOOM,
+  REFERENCE_PANE,
+  snakeColumnsPerRow,
+  designerNodeBox,
+  layoutDesignerGraph,
+  needsDesignerLayout,
+  restoreArrangeSnapshot,
+  getLayoutedElements,
+  fitViewportToBoxes,
+  measuredNodeBox,
+  savedViewportNeedsFit,
+  visibleBoxFraction,
+  FIT_MAX_ZOOM,
+  type FlowViewport,
+  type NodeBox,
+  type PaneSize,
+} from "./graph-layout";
 
 const makeNode = (id: string): Node => ({
   id,
@@ -62,5 +85,410 @@ describe("getLayoutedElements", () => {
     const tightDist = Math.abs(tight[1].position.x - tight[0].position.x);
     const wideDist = Math.abs(wide[1].position.x - wide[0].position.x);
     expect(wideDist).toBeGreaterThan(tightDist);
+  });
+
+  describe("row wrapping (maxPerRow)", () => {
+    const linearChain = (n: number): { nodes: Node[]; edges: Edge[] } => {
+      const nodes = Array.from({ length: n }, (_, i) => makeNode(`n${i}`));
+      const edges = Array.from({ length: n - 1 }, (_, i) =>
+        makeEdge(`e${i}`, `n${i}`, `n${i + 1}`),
+      );
+      return { nodes, edges };
+    };
+
+    it("is backward-compatible: unset maxPerRow keeps a single row", () => {
+      const { nodes, edges } = linearChain(8);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges);
+      // Single LR row: every node shares the same y.
+      const ys = new Set(layouted.map((n) => Math.round(n.position.y)));
+      expect(ys.size).toBe(1);
+    });
+
+    it("is backward-compatible: maxPerRow=0 keeps a single row", () => {
+      const { nodes, edges } = linearChain(8);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow: 0,
+      });
+      const ys = new Set(layouted.map((n) => Math.round(n.position.y)));
+      expect(ys.size).toBe(1);
+    });
+
+    it("wraps a linear chain of N nodes into ceil(N/maxPerRow) rows", () => {
+      const N = 13;
+      const maxPerRow = 5;
+      const { nodes, edges } = linearChain(N);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow,
+      });
+
+      const byId = new Map(layouted.map((n) => [n.id, n.position]));
+      // Expect 3 distinct rows for 13 nodes at 5 per row.
+      const rowYs = [
+        ...new Set([...byId.values()].map((p) => Math.round(p.y))),
+      ].sort((a, b) => a - b);
+      expect(rowYs).toHaveLength(Math.ceil(N / maxPerRow));
+
+      // Row k holds columns [k*maxPerRow, ...] in left->right order.
+      for (let i = 0; i < N; i++) {
+        const pos = byId.get(`n${i}`)!;
+        const expectedRow = Math.floor(i / maxPerRow);
+        expect(Math.round(pos.y)).toBe(rowYs[expectedRow]);
+      }
+
+      // Within each row, x increases left->right with column index.
+      for (let row = 0; row < rowYs.length; row++) {
+        const start = row * maxPerRow;
+        const end = Math.min(start + maxPerRow, N);
+        let prevX = -Infinity;
+        for (let i = start; i < end; i++) {
+          const x = byId.get(`n${i}`)!.x;
+          expect(x).toBeGreaterThan(prevX);
+          prevX = x;
+        }
+      }
+    });
+
+    it("does not overlap wrapped rows vertically", () => {
+      const N = 12;
+      const maxPerRow = 5;
+      const { nodes, edges } = linearChain(N);
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow,
+      });
+      const rowYs = [
+        ...new Set(layouted.map((n) => Math.round(n.position.y))),
+      ].sort((a, b) => a - b);
+      // Consecutive rows must be separated by at least one node height.
+      for (let i = 1; i < rowYs.length; i++) {
+        expect(rowYs[i] - rowYs[i - 1]).toBeGreaterThan(40);
+      }
+    });
+
+    it("keeps branch nodes (shared rank) stacked in the same column", () => {
+      // root -> b1, root -> b2 (b1,b2 share a rank/column), then both -> join
+      const nodes = [
+        makeNode("root"),
+        makeNode("b1"),
+        makeNode("b2"),
+        makeNode("join"),
+      ];
+      const edges = [
+        makeEdge("e1", "root", "b1"),
+        makeEdge("e2", "root", "b2"),
+        makeEdge("e3", "b1", "join"),
+        makeEdge("e4", "b2", "join"),
+      ];
+      const { nodes: layouted } = getLayoutedElements(nodes, edges, {
+        maxPerRow: 5,
+      });
+      const byId = new Map(layouted.map((n) => [n.id, n.position]));
+      // Branch nodes share the same column → same x, different y, same row.
+      expect(Math.round(byId.get("b1")!.x)).toBe(
+        Math.round(byId.get("b2")!.x),
+      );
+      expect(Math.round(byId.get("b1")!.y)).not.toBe(
+        Math.round(byId.get("b2")!.y),
+      );
+    });
+
+    it("returns the same edge array when wrapping", () => {
+      const { nodes, edges } = linearChain(8);
+      const { edges: result } = getLayoutedElements(nodes, edges, {
+        maxPerRow: 5,
+      });
+      expect(result).toBe(edges);
+    });
+  });
+});
+
+describe("designer layout guard (#1033)", () => {
+  const placed = (id: string, x: number, y: number): Node => ({
+    id,
+    type: "default",
+    position: { x, y },
+    data: { label: id },
+  });
+  const anyOverlap = (nodes: Node[]) => {
+    const boxes = nodes.map(designerNodeBox);
+    return boxes.some((a, i) => boxes.slice(i + 1).some((b) => boxesOverlap(a, b)));
+  };
+
+  it("a bundle with every node at y=0 and x 100 px apart has no overlapping box after the guard", () => {
+    const nodes = ["a", "b", "c", "d", "e"].map((id, i) => placed(id, i * 100, 0));
+    const edges = [
+      makeEdge("e1", "a", "b"),
+      makeEdge("e2", "b", "c"),
+      makeEdge("e3", "b", "d"),
+      makeEdge("e4", "c", "e"),
+      makeEdge("e5", "d", "e"),
+    ];
+    expect(anyOverlap(nodes)).toBe(true);
+    expect(needsDesignerLayout(nodes)).toBe(true);
+
+    const { nodes: laidOut } = layoutDesignerGraph(nodes, edges);
+
+    expect(anyOverlap(laidOut)).toBe(false);
+    expect(needsDesignerLayout(laidOut)).toBe(false);
+  });
+
+  it("a node without a position triggers the layout", () => {
+    const missing = { ...placed("b", 0, 0), position: undefined } as unknown as Node;
+    expect(needsDesignerLayout([placed("a", 0, 0), missing])).toBe(true);
+  });
+
+  it("a graph without overlaps keeps its positions", () => {
+    const nodes = [placed("a", 0, 0), placed("b", 400, 0), placed("c", 0, 300)];
+    expect(needsDesignerLayout(nodes)).toBe(false);
+  });
+
+  it("Auto-arrange followed by undo restores the positions and waypoints", () => {
+    const nodes = [placed("a", 0, 0), placed("b", 400, 0), placed("c", 0, 300)];
+    const edges: Edge[] = [
+      { ...makeEdge("e1", "a", "b"), data: { waypoints: [{ x: 7, y: 9 }] } },
+      { ...makeEdge("e2", "b", "c"), data: { waypoints: [] } },
+      { ...makeEdge("e3", "c", "a"), data: { waypoints: [] } },
+    ];
+
+    const arranged = arrangeDesignerGraph(nodes, edges);
+    expect(arranged.nodes.map((n) => n.position)).not.toEqual(nodes.map((n) => n.position));
+
+    const restored = restoreArrangeSnapshot(arranged.nodes, arranged.edges, arranged.snapshot);
+    expect(restored.nodes.map((n) => n.position)).toEqual(nodes.map((n) => n.position));
+    expect(restored.edges.map((e) => (e.data as { waypoints: unknown }).waypoints)).toEqual([
+      [{ x: 7, y: 9 }],
+      [],
+      [],
+    ]);
+  });
+});
+
+// #1033 follow-up: the arranged graph must be framed by the view.
+function screenBox(box: NodeBox, vp: FlowViewport) {
+  return {
+    left: box.x * vp.zoom + vp.x,
+    top: box.y * vp.zoom + vp.y,
+    right: (box.x + box.width) * vp.zoom + vp.x,
+    bottom: (box.y + box.height) * vp.zoom + vp.y,
+  };
+}
+
+function expectAllInside(boxes: NodeBox[], vp: FlowViewport, pane: PaneSize) {
+  for (const box of boxes) {
+    const s = screenBox(box, vp);
+    expect(s.left, `${box.id} left`).toBeGreaterThanOrEqual(0);
+    expect(s.top, `${box.id} top`).toBeGreaterThanOrEqual(0);
+    expect(s.right, `${box.id} right`).toBeLessThanOrEqual(pane.width);
+    expect(s.bottom, `${box.id} bottom`).toBeLessThanOrEqual(pane.height);
+  }
+}
+
+describe("framing the arranged graph (#1033 follow-up)", () => {
+  const chain = (n: number) => {
+    const ids = Array.from({ length: n }, (_, i) => `n${i}`);
+    return {
+      nodes: ids.map(makeNode),
+      edges: ids.slice(1).map((id, i) => makeEdge(`e${i}`, ids[i], id)),
+    };
+  };
+
+  it.each([
+    ["receipt-ocr (4 nodes)", 4, { width: 900, height: 570 }],
+    ["issue-implementer (26 nodes)", 26, { width: 1100, height: 570 }],
+  ])(
+    "after the guard re-lays out a stacked %s bundle, every node box is inside the visible pane",
+    (_label, count, pane) => {
+      const { nodes, edges } = chain(count);
+      expect(needsDesignerLayout(nodes)).toBe(true);
+      const arranged = arrangeDesignerGraph(nodes, edges);
+      const boxes = arranged.nodes.map(measuredNodeBox);
+      const vp = fitViewportToBoxes(boxes, pane);
+      expect(vp).not.toBeNull();
+      expectAllInside(boxes, vp!, pane);
+      expect(vp!.zoom).toBeLessThanOrEqual(FIT_MAX_ZOOM);
+      expect(visibleBoxFraction(vp!, pane, boxes)).toBe(1);
+    },
+  );
+
+  it("the stale zoom-1.72 viewport crops a re-laid-out receipt-ocr graph and needs a fit", () => {
+    const { nodes, edges } = chain(4);
+    const boxes = arrangeDesignerGraph(nodes, edges).nodes.map(measuredNodeBox);
+    const pane = { width: 900, height: 570 };
+    const stale = { x: 0, y: 0, zoom: 1.72 };
+    expect(visibleBoxFraction(stale, pane, boxes)).toBeLessThan(1);
+    // A viewport framing no node at all needs a fit.
+    expect(savedViewportNeedsFit({ x: -50_000, y: 0, zoom: 1 }, pane, boxes)).toBe(true);
+  });
+
+  it("keeps a saved viewport that shows most of the graph", () => {
+    const { nodes, edges } = chain(4);
+    const boxes = arrangeDesignerGraph(nodes, edges).nodes.map(measuredNodeBox);
+    const pane = { width: 900, height: 570 };
+    const fitted = fitViewportToBoxes(boxes, pane)!;
+    expect(savedViewportNeedsFit(fitted, pane, boxes)).toBe(false);
+  });
+
+  it("asks for a fit when more than half the graph is cropped", () => {
+    const boxes: NodeBox[] = [0, 1, 2, 3].map((i) => ({
+      id: `b${i}`,
+      x: i * 200,
+      y: 0,
+      width: 100,
+      height: 40,
+    }));
+    const pane = { width: 250, height: 200 };
+    // Zoom 1 shows flow x 0..250: b0 and half of b1, 1.5 of 4 boxes.
+    expect(savedViewportNeedsFit({ x: 0, y: 0, zoom: 1 }, pane, boxes)).toBe(true);
+    // Zoom 0.5 shows flow x 0..500: b0..b2, 3 of 4 boxes.
+    expect(savedViewportNeedsFit({ x: 0, y: 0, zoom: 0.5 }, pane, boxes)).toBe(false);
+  });
+
+  it("uses measured node sizes when React Flow has them", () => {
+    const box = measuredNodeBox({
+      id: "a",
+      position: { x: 1, y: 2 },
+      measured: { width: 210, height: 64 },
+    });
+    expect(box).toEqual({ id: "a", x: 1, y: 2, width: 210, height: 64 });
+  });
+
+  it("returns null before the pane has a size or without nodes", () => {
+    expect(fitViewportToBoxes([], { width: 800, height: 600 })).toBeNull();
+    expect(
+      fitViewportToBoxes([{ id: "a", x: 0, y: 0, width: 10, height: 10 }], { width: 0, height: 0 }),
+    ).toBeNull();
+  });
+});
+
+// #1033 round 3: a long chain wraps into snake rows that read at zoom >= 0.4.
+describe("snake layout (#1033 round 3)", () => {
+  /** The designer pane in a 1600x900 window (palette and inspector aside). */
+  const PANE_1600x900: PaneSize = REFERENCE_PANE;
+
+  const stacked = (ids: string[]): Node[] =>
+    ids.map((id, i) => ({ id, type: "default", position: { x: i * 100, y: 0 }, data: { label: id } }));
+
+  const chainShape = (n: number) => {
+    const ids = Array.from({ length: n }, (_, i) => `n${i}`);
+    return { nodes: stacked(ids), edges: ids.slice(1).map((id, i) => makeEdge(`e${i}`, ids[i], id)) };
+  };
+
+  /** A 6-node chain, a fan-out into 5 branches of 5 nodes, a join, 5 more. */
+  const fanOutShape = () => {
+    const ids: string[] = [];
+    const edges: Edge[] = [];
+    const link = (a: string, b: string) => edges.push(makeEdge(`${a}-${b}`, a, b));
+    for (let i = 0; i < 6; i++) ids.push(`c${i}`);
+    for (let i = 1; i < 6; i++) link(`c${i - 1}`, `c${i}`);
+    for (let b = 0; b < 5; b++) {
+      for (let d = 0; d < 5; d++) {
+        ids.push(`b${b}_${d}`);
+        link(d === 0 ? "c5" : `b${b}_${d - 1}`, `b${b}_${d}`);
+      }
+    }
+    ids.push("join");
+    for (let b = 0; b < 5; b++) link(`b${b}_4`, "join");
+    for (let i = 0; i < 5; i++) {
+      ids.push(`t${i}`);
+      link(i === 0 ? "join" : `t${i - 1}`, `t${i}`);
+    }
+    return { nodes: stacked(ids), edges };
+  };
+
+  const overlaps = (nodes: Node[]) => {
+    const boxes = nodes.map(designerNodeBox);
+    return boxes.filter((a, i) => boxes.slice(i + 1).some((b) => boxesOverlap(a, b))).length;
+  };
+
+  it.each([
+    ["chain of 26", () => chainShape(26)],
+    ["chain plus 5x5 fan-out", fanOutShape],
+    ["4-node chain", () => chainShape(4)],
+  ])("%s: no overlap, every node in the pane, zoom >= 0.4", (_label, shape) => {
+    const { nodes, edges } = shape();
+    expect(needsDesignerLayout(nodes)).toBe(true);
+    const arranged = arrangeDesignerGraph(nodes, edges);
+    expect(overlaps(arranged.nodes)).toBe(0);
+    const boxes = arranged.nodes.map(measuredNodeBox);
+    const vp = fitViewportToBoxes(boxes, PANE_1600x900)!;
+    expect(vp.zoom).toBeGreaterThanOrEqual(READABLE_ZOOM);
+    expectAllInside(boxes, vp, PANE_1600x900);
+    // Idempotent: the arranged graph is neither stacked nor unreadable.
+    expect(needsDesignerLayout(arranged.nodes)).toBe(false);
+    expect(arrangeImprovesReadability(boxes, boxes)).toBe(false);
+  });
+
+  it("a chain of 26 wraps into rows of 6-8 that alternate direction", () => {
+    const { nodes, edges } = chainShape(26);
+    const laidOut = arrangeDesignerGraph(nodes, edges).nodes;
+    const ys = [...new Set(laidOut.map((n) => n.position.y))].sort((a, b) => a - b);
+    expect(ys.length).toBe(4);
+    const rows = ys.map((y) => laidOut.filter((n) => n.position.y === y));
+    for (const row of rows.slice(0, -1)) {
+      expect(row.length).toBeGreaterThanOrEqual(6);
+      expect(row.length).toBeLessThanOrEqual(8);
+    }
+    const xs = (row: Node[]) => row.map((n) => n.position.x); // in chain order
+    const ascending = (v: number[]) => v.every((x, i) => i === 0 || x > v[i - 1]);
+    const descending = (v: number[]) => v.every((x, i) => i === 0 || x < v[i - 1]);
+    expect(ascending(xs(rows[0]))).toBe(true);
+    expect(descending(xs(rows[1]))).toBe(true);
+    expect(ascending(xs(rows[2]))).toBe(true);
+    // A row ends straight above the next row's start.
+    expect(rows[0].at(-1)!.position.x).toBe(rows[1][0].position.x);
+  });
+
+  it("edges follow the turns: handles face the next node", () => {
+    const { nodes, edges } = chainShape(26);
+    const { nodes: laidOut, waypoints, sides } = layoutDesignerGraph(nodes, edges);
+    const perRow = snakeColumnsPerRow(26);
+    // Left-to-right row, right-to-left row, and the turn between them.
+    expect(sides.n1).toEqual({ source: Position.Right, target: Position.Left });
+    expect(sides[`n${perRow - 1}`]).toEqual({ source: Position.Bottom, target: Position.Left });
+    expect(sides[`n${perRow}`]).toEqual({ source: Position.Left, target: Position.Top });
+    expect(sides[`n${perRow + 1}`]).toEqual({ source: Position.Left, target: Position.Right });
+    // A plain chain needs no waypoints at all.
+    expect(Object.values(waypoints).every((w) => w.length === 0)).toBe(true);
+    // The sides come from geometry alone, so a reopened graph draws the same.
+    expect(designerHandleSides(laidOut, edges)).toEqual(sides);
+  });
+
+  it("a fan-out keeps its branches stacked inside its own row band", () => {
+    const { nodes, edges } = fanOutShape();
+    const laidOut = arrangeDesignerGraph(nodes, edges).nodes;
+    const by = new Map(laidOut.map((n) => [n.id, n.position]));
+    const chainY = by.get("c0")!.y;
+    const tailY = by.get("t4")!.y;
+    for (let b = 0; b < 5; b++) {
+      for (let d = 0; d < 5; d++) {
+        const y = by.get(`b${b}_${d}`)!.y;
+        expect(y).toBeGreaterThan(chainY);
+        expect(y).toBeLessThan(tailY);
+      }
+      // A branch stays on one line.
+      expect(new Set([0, 1, 2, 3, 4].map((d) => by.get(`b${b}_${d}`)!.y)).size).toBe(1);
+    }
+  });
+
+  it("a long single row (round 2's layout) is re-laid out on open; a readable one is not", () => {
+    const row = Array.from({ length: 22 }, (_, i) => ({
+      id: `n${i}`,
+      x: i * 270,
+      y: 0,
+      width: 150,
+      height: 40,
+    }));
+    expect(fitZoomFor(row, REFERENCE_PANE)).toBeLessThan(0.15);
+    const { nodes, edges } = chainShape(22);
+    const arranged = arrangeDesignerGraph(nodes, edges).nodes.map(designerNodeBox);
+    expect(arrangeImprovesReadability(row, arranged)).toBe(true);
+    expect(arrangeImprovesReadability(row.slice(0, 4), arranged)).toBe(false);
+  });
+
+  it("classifies loop edges as back-edges", () => {
+    const back = backEdgeIds(
+      ["a", "b", "c"],
+      [makeEdge("ab", "a", "b"), makeEdge("bc", "b", "c"), makeEdge("ca", "c", "a"), makeEdge("cc", "c", "c")],
+    );
+    expect([...back].sort()).toEqual(["ca", "cc"]);
   });
 });

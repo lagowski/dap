@@ -12,21 +12,30 @@ from typing import TYPE_CHECKING, Any
 
 from dap_runtimes import RuntimeRegistry
 from dap_types import Pipeline, PipelineState
-from dap_types.pipeline import PipelineEdge
+from dap_types.pipeline import PipelineEdge, RetryPolicy
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from dap_engine.auth.audit import record_audit_event
+from dap_engine.auth.encryption import EncryptionError, decrypt_value
+from dap_engine.execution.backend_profiles import (
+    merge_backend_profile_env_layers,
+    resolve_backend_profile,
+)
 from dap_engine.execution.conditions import evaluate_condition
 from dap_engine.execution.node_executor import NodeContext, make_node_fn
+from dap_engine.execution.retry_policy import retry_recursion_limit, retry_route
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
+    InstanceEnvVarORM,
     PipelineORM,
     PipelineVersionORM,
     ProjectORM,
     RunORM,
 )
+from dap_engine.runtime_policy import RuntimePolicyError, ensure_runtime_allowed
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -57,10 +66,18 @@ class RunnerInterrupt(Exception):
 
     Attributes:
         next_nodes: LangGraph nodes staged as next when the interrupt fired.
+        gate_state: Full graph state values at the interrupt checkpoint.
+            Stored on the Run row so the dashboard can surface gate context
+            (e.g. task_assignments) without querying the checkpoint store (#364).
     """
 
-    def __init__(self, next_nodes: list[str]) -> None:
+    def __init__(
+        self,
+        next_nodes: list[str],
+        gate_state: dict[str, Any] | None = None,
+    ) -> None:
         self.next_nodes = next_nodes
+        self.gate_state = gate_state
         super().__init__(f"Pipeline paused before: {next_nodes}")
 
 
@@ -87,11 +104,27 @@ class PipelineRunner:
         registry: RuntimeRegistry,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
         recursion_limit: int = DEFAULT_RECURSION_LIMIT,
+        instance_env_vars_key: str | None = None,
+        allow_bash_runtime_for_non_admin: bool = False,
+        actor_is_admin: bool = False,
     ) -> None:
         self.session = session
         self.registry = registry
         self.checkpointer = checkpointer
         self.recursion_limit = recursion_limit
+        # Fernet key for decrypting ``InstanceEnvVarORM.ciphertext`` at
+        # run start (#388). ``None`` is a no-op — the merge layer
+        # receives an empty overlay, and any instance vars sitting in
+        # the DB are silently ignored. The admin POST path enforces
+        # the key (rows can't be written without one); DELETE does not
+        # — removing a row whose ciphertext we couldn't decrypt is a
+        # legitimate cleanup path after a key rotation. The only way
+        # to end up here with rows-but-no-key is an operator rotating
+        # ``DAP_INSTANCE_ENV_VARS_KEY`` to ``None`` on restart;
+        # flagging that loudly is the orchestrator's job, not ours.
+        self.instance_env_vars_key = instance_env_vars_key
+        self.allow_bash_runtime_for_non_admin = allow_bash_runtime_for_non_admin
+        self.actor_is_admin = actor_is_admin
 
     async def run(
         self,
@@ -122,21 +155,27 @@ class PipelineRunner:
 
         # Pre-load agents referenced by the pipeline + verify they exist.
         agent_lookup = self._load_agents(pipeline)
+        self._enforce_runtime_policy(run_id, agent_lookup)
 
         # Project context (#65) — working_directory + env_vars overlay.
         # Bails out with a descriptive RunnerError when the bound project
         # has been archived between trigger and execution (e.g. resumed
         # paused run after the user archived the project).
         project_context = self._load_project_context(run_id)
+        instance_env_vars = self._load_instance_env_vars()
 
         graph = self._build_graph(
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
+            backend_profiles=pipeline_version_orm.backend_profiles,
             project_context=project_context,
+            instance_env_vars=instance_env_vars,
         )
 
-        config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        config: dict[str, Any] = {
+            "recursion_limit": retry_recursion_limit(pipeline, self.recursion_limit)
+        }
         if self.checkpointer is not None:
             config["configurable"] = {"thread_id": run_id}
 
@@ -155,15 +194,127 @@ class PipelineRunner:
         # and the graph stopped early, aget_state().next contains the gated node.
         # This is a normal stop — raise RunnerInterrupt so the caller marks the
         # run as paused rather than finalized (#164).
+        #
+        # Exception (#389): when the Run row carries
+        # ``initial_state.extensions.auto_approve = True``, drive the graph
+        # past each gate by re-invoking with ``None`` until no approval
+        # node is pending. The gate node code still executes — we only
+        # suppress the interrupt-before pause. The auto-approve resume
+        # loop has defensive caps (see ``_drive_auto_approve_loop``) so
+        # a misconfigured graph can't spin the background task forever.
         if approval_nodes and self.checkpointer is not None:
-            checkpoint_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
-            snap = await graph.aget_state(checkpoint_config)
-            pending = list(snap.next) if snap.next else []
-            if pending and any(n in approval_nodes for n in pending):
-                logger.info("run %s interrupted before approval node(s): %s", run_id, pending)
-                raise RunnerInterrupt(next_nodes=pending)
+            # Pin the auto-approve decision *once* — read from the Run row's
+            # persisted ``initial_state``, not the LangGraph snapshot, so
+            # a mid-run state_delta can't flip the flag (see
+            # ``_read_auto_approve_from_run``). Lazy: only evaluated when
+            # the pipeline can actually pause, keeping the no-gate hot
+            # path free of an extra DB read.
+            auto_approve = _read_auto_approve_from_run(self.session, run_id)
+            result = await self._drive_auto_approve_loop(
+                graph=graph,
+                run_id=run_id,
+                invoke_config=config,
+                approval_nodes=approval_nodes,
+                auto_approve=auto_approve,
+                last_result=result,
+            )
 
         return PipelineState.model_validate(result)
+
+    async def _drive_auto_approve_loop(
+        self,
+        *,
+        graph: Any,
+        run_id: str,
+        invoke_config: dict[str, Any],
+        approval_nodes: set[str],
+        auto_approve: bool,
+        last_result: Any,
+    ) -> Any:
+        """Resolve a graph that may have paused at an approval gate (#389).
+
+        Three exit paths:
+
+        - **Naturally exits** when no pending node is in ``approval_nodes``
+          — returns the most recent ``ainvoke`` result unchanged.
+        - **Raises ``RunnerInterrupt``** (normal pause path) when at
+          least one approval node is pending and ``auto_approve`` is
+          False. The orchestrator catches this and marks the run paused.
+        - **Raises ``RunnerError``** (defensive caps) when auto-approve
+          is enabled but the graph fails to advance: either the same
+          set of pending nodes appears two iterations in a row (genuine
+          no-progress) or the loop exceeds ``max(2 * |approval_nodes|, 8)``
+          iterations (a cyclic / over-gated graph). Both signal a
+          misconfiguration the operator must fix; failing fast is
+          safer than burning CPU on an infinite resume.
+
+        Extracted from ``run()`` so the cap logic is unit-testable
+        without spinning up a full LangGraph + DB stack (Copilot
+        review on PR #436).
+        """
+        checkpoint_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
+        snap = await graph.aget_state(checkpoint_config)
+        pending = list(snap.next) if snap.next else []
+
+        # Each ``ainvoke(None, ...)`` resets LangGraph's recursion_limit
+        # budget, so an upper bound on resume iterations is the only
+        # thing standing between a misconfigured graph and an infinite
+        # background loop. ``len(approval_nodes) * 2`` allows healthy
+        # pipelines two passes per gate before bailing; the floor of 8
+        # covers single-gate pipelines that might legitimately churn a
+        # few times during a complex resume.
+        max_resume_iterations = max(len(approval_nodes) * 2, 8)
+        iterations = 0
+        previous_pending: list[str] | None = None
+        result = last_result
+
+        while pending and any(n in approval_nodes for n in pending):
+            if not auto_approve:
+                logger.info("run %s interrupted before approval node(s): %s", run_id, pending)
+                raise RunnerInterrupt(
+                    next_nodes=pending,
+                    gate_state=snap.values if isinstance(snap.values, dict) else None,
+                )
+
+            if previous_pending is not None and pending == previous_pending:
+                msg = (
+                    f"auto-approve resume made no progress past nodes {pending} "
+                    f"for run {run_id} — likely cyclic or misconfigured "
+                    "approval_required_nodes."
+                )
+                logger.error(msg)
+                raise RunnerError(msg)
+
+            if iterations >= max_resume_iterations:
+                msg = (
+                    f"auto-approve exceeded {max_resume_iterations} resume "
+                    f"iterations for run {run_id} (still pending: {pending}) "
+                    "— refusing to spin further; check pipeline "
+                    "approval_required_nodes for cycles."
+                )
+                logger.error(msg)
+                raise RunnerError(msg)
+
+            logger.warning(
+                "run %s: auto_approve=True — skipping approval gate(s) %s",
+                run_id,
+                pending,
+            )
+            previous_pending = pending
+            iterations += 1
+            try:
+                result = await graph.ainvoke(None, config=invoke_config)
+            except Exception as exc:
+                logger.exception(
+                    "pipeline execution failed for run %s during auto-approve resume",
+                    run_id,
+                )
+                msg = f"Execution failed: {type(exc).__name__}: {exc}"
+                raise RunnerError(msg) from exc
+            snap = await graph.aget_state(checkpoint_config)
+            pending = list(snap.next) if snap.next else []
+
+        return result
 
     async def rewind_and_run(
         self,
@@ -194,12 +345,16 @@ class PipelineRunner:
 
         pipeline = self._pipeline_from_orm(pipeline_orm, pipeline_version_orm)
         agent_lookup = self._load_agents(pipeline)
+        self._enforce_runtime_policy(run_id, agent_lookup)
         project_context = self._load_project_context(run_id)
+        instance_env_vars = self._load_instance_env_vars()
         graph = self._build_graph(
             run_id=run_id,
             pipeline=pipeline,
             agent_lookup=agent_lookup,
+            backend_profiles=pipeline_version_orm.backend_profiles,
             project_context=project_context,
+            instance_env_vars=instance_env_vars,
         )
 
         base_config: dict[str, Any] = {"configurable": {"thread_id": run_id}}
@@ -207,9 +362,11 @@ class PipelineRunner:
         # Find the most recent checkpoint where `target_node` is the next
         # step to execute. aget_state_history yields newest-first.
         target_config: dict[str, Any] | None = None
+        target_values: Any = None
         async for snapshot in graph.aget_state_history(base_config):
             if target_node in (snapshot.next or ()):
                 target_config = snapshot.config
+                target_values = snapshot.values
                 break
 
         if target_config is None:
@@ -222,13 +379,22 @@ class PipelineRunner:
         # Branch from the historical checkpoint: aupdate_state writes a new
         # checkpoint and returns its config; subsequent ainvoke runs from it.
         if mode == REWIND_SKIP:
-            new_config = await graph.aupdate_state(target_config, values={}, as_node=target_node)
+            # A skipped node counts as passed: clear its retry counter (#932)
+            # so its router follows the normal edges, not retry_to.
+            skip_values: dict[str, Any] = {}
+            if any(n.id == target_node and n.retry is not None for n in pipeline.nodes):
+                skip_values["node_attempts"] = _without_node_attempts(target_values, target_node)
+            new_config = await graph.aupdate_state(
+                target_config, values=skip_values, as_node=target_node
+            )
         else:  # retry
             # values=None + no as_node → no logical change, but we still get
             # a new branch tip from which the target node will run again.
             new_config = await graph.aupdate_state(target_config, values=None)
 
-        invoke_config: dict[str, Any] = {"recursion_limit": self.recursion_limit}
+        invoke_config: dict[str, Any] = {
+            "recursion_limit": retry_recursion_limit(pipeline, self.recursion_limit)
+        }
         invoke_config["configurable"] = new_config["configurable"]
 
         try:
@@ -250,12 +416,49 @@ class PipelineRunner:
         run_id: str,
         pipeline: Pipeline,
         agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
+        backend_profiles: dict[str, Any] | None = None,
         project_context: _ProjectContext | None = None,
+        instance_env_vars: dict[str, str] | None = None,
     ) -> Any:
         builder = StateGraph(PipelineState)
+        # Snapshot per-graph-build so every node sees the same overlay
+        # (instance vars loaded once per ``run()`` — see
+        # ``_load_instance_env_vars``).
+        instance_overlay: dict[str, str] = dict(instance_env_vars or {})
+        project_env_overlay = dict(project_context.env_vars) if project_context else None
+        backend_profile_env_layers = merge_backend_profile_env_layers(
+            instance_env_vars=instance_overlay,
+            project_env_vars=project_env_overlay,
+        )
 
         for node in pipeline.nodes:
             agent, version = agent_lookup[node.agent_id]
+            resolved_backend = resolve_backend_profile(
+                backend_profiles=backend_profiles,
+                node_id=node.id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                agent_role=agent.role,
+                base_runtime_id=version.runtime_id,
+                base_runtime_config=version.runtime_config,
+                env_layers=backend_profile_env_layers,
+            )
+            # Every runtime the node may fall back to (#935) must be allowed too.
+            for backend in (resolved_backend, *resolved_backend.fallbacks):
+                try:
+                    ensure_runtime_allowed(
+                        backend.runtime_id,
+                        is_admin=self.actor_is_admin,
+                        allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
+                    )
+                except RuntimePolicyError as exc:
+                    self._record_runtime_policy_denial(
+                        run_id=run_id,
+                        runtime_id=backend.runtime_id,
+                        reason=str(exc),
+                        surface="runner.build_graph",
+                    )
+                    raise RunnerError("Runtime policy denied for pipeline node") from exc
             ctx = NodeContext(
                 run_id=run_id,
                 node_id=node.id,
@@ -263,12 +466,18 @@ class PipelineRunner:
                 agent_version=version,
                 registry=self.registry,
                 session=self.session,
+                runtime_id=resolved_backend.runtime_id,
+                runtime_config=resolved_backend.runtime_config,
                 runtime_overrides=(node.overrides.runtime_config if node.overrides else None),
                 timeout_override_ms=(node.overrides.timeout_ms if node.overrides else None),
                 project_working_directory=(
                     project_context.working_directory if project_context else None
                 ),
-                project_env_vars=(dict(project_context.env_vars) if project_context else None),
+                project_env_vars=project_env_overlay,
+                instance_env_vars=dict(instance_overlay),
+                retry=node.retry,
+                profile_id=resolved_backend.profile_id,
+                fallbacks=resolved_backend.fallbacks,
             )
             builder.add_node(node.id, make_node_fn(ctx))  # type: ignore[call-overload]
 
@@ -283,9 +492,17 @@ class PipelineRunner:
         for edge in pipeline.edges:
             edges_by_source.setdefault(edge.source, []).append(edge)
 
+        # A node with a ``retry`` block (#932) gets a router that picks
+        # between its normal edges, ``retry_to`` and ``on_failure``.
+        retry_policies = {n.id: n.retry for n in pipeline.nodes if n.retry is not None}
+        for node_id, policy in retry_policies.items():
+            _add_retry_edges(builder, node_id, policy, edges_by_source.get(node_id, []))
+
         for source, edges in edges_by_source.items():
             if source in (START, "__start__"):
                 continue  # entry edge already handled above
+            if source in retry_policies:
+                continue  # wired by _add_retry_edges above
             if all(e.condition is None for e in edges):
                 # Single straight edge per source. Multiple unconditional edges
                 # would be ambiguous — pick the first.
@@ -302,6 +519,39 @@ class PipelineRunner:
             checkpointer=self.checkpointer,
             interrupt_before=interrupt_nodes or [],
         )
+
+    def _load_instance_env_vars(self) -> dict[str, str]:
+        """Load + decrypt the instance env-var overlay (#388).
+
+        Called once per ``run()`` / ``rewind_and_run()`` so paused runs
+        that resume after the operator added a new instance var pick
+        it up automatically (per the issue's "merge at runtime, not
+        copy" mandate).
+
+        Returns an empty dict when:
+        - No Fernet key is configured (legacy / minimal deployments).
+        - The table has no rows (fresh install, no operator config yet).
+
+        Raises ``RunnerError`` when a row was written with a different
+        Fernet key — failing the run loudly is safer than dropping a
+        secret silently and letting subprocesses miss credentials
+        they expect. The operator's recovery path is "rotate
+        ``DAP_INSTANCE_ENV_VARS_KEY`` back, or re-create the affected
+        keys via ``/settings/admin/env-vars``".
+        """
+        if not self.instance_env_vars_key:
+            return {}
+        rows = self.session.execute(select(InstanceEnvVarORM)).scalars().all()
+        if not rows:
+            return {}
+        decrypted: dict[str, str] = {}
+        for row in rows:
+            try:
+                decrypted[row.key] = decrypt_value(row.ciphertext, key=self.instance_env_vars_key)
+            except EncryptionError as exc:
+                msg = f"Failed to decrypt instance env var {row.key!r}: {exc}"
+                raise RunnerError(msg) from exc
+        return decrypted
 
     def _load_project_context(self, run_id: str) -> _ProjectContext | None:
         """Resolve the run's project, if any, into a ``_ProjectContext``.
@@ -329,6 +579,52 @@ class PipelineRunner:
             working_directory=project.working_directory,
             env_vars=dict(project.env_vars),
         )
+
+    def _enforce_runtime_policy(
+        self,
+        run_id: str,
+        agent_lookup: dict[str, tuple[AgentORM, AgentVersionORM]],
+    ) -> None:
+        """Defensive runtime gate for background/resume execution."""
+        for _agent, version in agent_lookup.values():
+            try:
+                ensure_runtime_allowed(
+                    version.runtime_id,
+                    is_admin=self.actor_is_admin,
+                    allow_bash_runtime_for_non_admin=self.allow_bash_runtime_for_non_admin,
+                )
+            except RuntimePolicyError as exc:
+                self._record_runtime_policy_denial(
+                    run_id=run_id,
+                    runtime_id=version.runtime_id,
+                    reason=str(exc),
+                    surface="runner.agent_preflight",
+                )
+                raise RunnerError("Runtime policy denied for pipeline run") from exc
+
+    def _record_runtime_policy_denial(
+        self,
+        *,
+        run_id: str,
+        runtime_id: str,
+        reason: str,
+        surface: str,
+    ) -> None:
+        run = self.session.get(RunORM, run_id)
+        try:
+            record_audit_event(
+                self.session,
+                user_id=(run.user_id if run is not None else None),
+                event_type="runtime_policy.denied",
+                event_data={
+                    "surface": surface,
+                    "run_id": run_id,
+                    "runtime_id": runtime_id,
+                    "reason": reason,
+                },
+            )
+        except Exception:
+            logger.exception("audit-log write failed for runtime policy denial on run %s", run_id)
 
     # -----------------------------------------------------------------------
     # ORM helpers
@@ -396,13 +692,51 @@ def _resolve_target(target: str) -> Any:
     return target
 
 
-def _add_conditional_edges(
-    builder: StateGraph[PipelineState, None, PipelineState, PipelineState],
-    source: str,
-    edges: list[PipelineEdge],
-) -> None:
-    """Wire conditional edges from `source` based on EdgeCondition matching."""
+def _read_auto_approve_from_run(session: Session, run_id: str) -> bool:
+    """Return True iff the Run row's persisted ``initial_state.extensions
+    .auto_approve`` is the literal boolean ``True`` (#389).
 
+    Why the Run row, not the LangGraph snapshot:
+        ``snap.values.extensions`` is part of the mutable pipeline state.
+        Node executors merge arbitrary keys into ``extensions`` via
+        ``state_delta`` (see ``_route_extensions`` in
+        ``node_executor.py``), so a node — buggy, malicious, or simply
+        templated by an attacker-controlled prompt — could flip
+        ``auto_approve = True`` mid-run and silently bypass every
+        downstream gate. The ``run.triggered`` audit log wouldn't
+        capture it either, since that's already been written.
+
+        The Run row's ``initial_state`` is persisted at trigger time and
+        never touched again. Reading from there pins auto-approve as a
+        trigger-time, operator-controlled decision for the whole run
+        (and across resume).
+
+    Defensive against malformed rows — only the literal boolean ``True``
+    enables the bypass; other truthy values (strings, numbers, nested
+    dicts) deliberately do *not* trigger it.
+    """
+    run = session.get(RunORM, run_id)
+    if run is None:
+        return False
+    initial_state = run.initial_state
+    if not isinstance(initial_state, dict):
+        return False
+    extensions = initial_state.get("extensions")
+    if not isinstance(extensions, dict):
+        return False
+    return extensions.get("auto_approve") is True
+
+
+def _without_node_attempts(values: Any, node_id: str) -> dict[str, int]:
+    """``node_attempts`` from a checkpoint's values, minus ``node_id``."""
+    raw = values.get("node_attempts") if isinstance(values, dict) else None
+    if raw is None:
+        raw = getattr(values, "node_attempts", None) or {}
+    return {k: v for k, v in raw.items() if k != node_id}
+
+
+def _edge_chooser(edges: list[PipelineEdge]) -> tuple[Any, set[str]]:
+    """Return ``(chooser, targets)`` for a source's edges, matched in order."""
     # Pre-extract for closure capture.
     edge_specs = [(e.condition, _resolve_target(e.target)) for e in edges]
 
@@ -415,8 +749,39 @@ def _add_conditional_edges(
 
     # LangGraph's add_conditional_edges needs a path_map. Build the union of
     # possible targets so the framework knows the node graph topology.
-    targets = {target for _, target in edge_specs}
-    targets.add(END)
-    path_map = {t: t for t in targets}
+    targets = {str(target) for _, target in edge_specs}
+    targets.add(str(END))
+    return chooser, targets
 
-    builder.add_conditional_edges(source, chooser, path_map)
+
+def _add_conditional_edges(
+    builder: StateGraph[PipelineState, None, PipelineState, PipelineState],
+    source: str,
+    edges: list[PipelineEdge],
+) -> None:
+    """Wire conditional edges from `source` based on EdgeCondition matching."""
+    chooser, targets = _edge_chooser(edges)
+    builder.add_conditional_edges(source, chooser, {t: t for t in targets})
+
+
+def _add_retry_edges(
+    builder: StateGraph[PipelineState, None, PipelineState, PipelineState],
+    source: str,
+    policy: RetryPolicy,
+    edges: list[PipelineEdge],
+) -> None:
+    """Route `source` by its retry counter: normal edges, ``retry_to`` or ``on_failure``."""
+    normal, targets = _edge_chooser(edges)
+    retry_to = str(_resolve_target(policy.retry_to))
+    on_failure = str(_resolve_target(policy.on_failure))
+
+    def chooser(state: PipelineState) -> str:
+        route = retry_route(node_id=source, policy=policy, state=state)
+        if route == "retry":
+            return retry_to
+        if route == "failure":
+            return on_failure
+        return str(normal(state))
+
+    targets |= {retry_to, on_failure}
+    builder.add_conditional_edges(source, chooser, {t: t for t in targets})

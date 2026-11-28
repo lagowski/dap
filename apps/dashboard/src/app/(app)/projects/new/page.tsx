@@ -34,9 +34,8 @@ export default function NewProjectPage() {
                 repo_url: values.repo_url,
                 default_branch: values.default_branch,
                 env_vars: values.env_vars,
-                // pipelines stay empty — bind on the detail page
-                // where the user can pick from real pipelines.
-                pipelines: {},
+                pipelines: values.pipelines,
+                auto_approve_nodes: values.auto_approve_nodes,
               });
               router.push(`/projects/${created.id}`);
             }}

@@ -16,29 +16,17 @@ Verifies:
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.models import UserORM
 from fastapi.testclient import TestClient
 
+# The ``client`` fixture lives in ``tests/smoke/conftest.py`` — a plain
+# ``TestClient`` against a fresh engine with default test config.
+# This file does its own ``/auth/register`` + admin-promotion dance
+# below, so the no-upfront-auth ``client`` shape matches what we need.
+
 PASSWORD = "test-password-123"
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-admin-users-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="admin-users-smoke-secret",
-    )
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
 
 
 def _register(c: TestClient, email: str) -> str:

@@ -4,8 +4,8 @@ The Pydantic ``Agent`` model owns:
 
 - the legacy-dict → ``[]`` coercion (so existing DB rows survive the
   shape change without a migration), and
-- the unknown-field rejection (so callers get a descriptive error
-  instead of a silent ignore).
+- schema reference validation: PipelineState fields and extension fields
+  are accepted, malformed references are rejected with a descriptive error.
 
 These tests run the model directly — the API layer reuses the same
 helpers in ``apps/engine/.../api/schemas.py``, exercised in
@@ -82,16 +82,29 @@ def test_known_field_names_pass() -> None:
     assert agent.output_schema == ["test_files", "tests_generated"]
 
 
-def test_unknown_field_in_input_schema_raises() -> None:
-    with pytest.raises(ValidationError) as exc:
-        Agent.model_validate(_agent_kwargs(input_schema=["definitely_not_real"]))
-    assert "definitely_not_real" in str(exc.value)
+def test_extension_field_names_pass() -> None:
+    agent = Agent.model_validate(
+        _agent_kwargs(
+            input_schema=["issue_number", "extensions.pr_url"],
+            output_schema=["files_changed", "__audit"],
+        )
+    )
+    assert agent.input_schema == ["issue_number", "extensions.pr_url"]
+    assert agent.output_schema == ["files_changed", "__audit"]
 
 
-def test_unknown_field_in_output_schema_raises() -> None:
+def test_malformed_field_in_input_schema_raises() -> None:
     with pytest.raises(ValidationError) as exc:
-        Agent.model_validate(_agent_kwargs(output_schema=["bogus_field"]))
-    assert "bogus_field" in str(exc.value)
+        Agent.model_validate(_agent_kwargs(input_schema=["extensions."]))
+    assert "unsupported field" in str(exc.value)
+    assert "extensions." in str(exc.value)
+
+
+def test_malformed_field_in_output_schema_raises() -> None:
+    with pytest.raises(ValidationError) as exc:
+        Agent.model_validate(_agent_kwargs(output_schema=["repo.url"]))
+    assert "unsupported field" in str(exc.value)
+    assert "repo.url" in str(exc.value)
 
 
 def test_duplicate_field_names_raise() -> None:

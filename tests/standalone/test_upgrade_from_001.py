@@ -110,6 +110,8 @@ def _create_pre_v03_database(db_path: Path) -> None:
             initial_state={},
             final_status="succeeded",
             started_at=now,
+            created_at=now,
+            updated_at=now,
         )
         session.add_all([project, pipeline, agent, run])
         session.commit()
@@ -157,7 +159,7 @@ def _try_login(db_path: Path, email: str, password: str) -> bool:
             "/auth/jwt/login",
             data={"username": email, "password": password},
         )
-    return 200 <= response.status_code < 300
+    return bool(200 <= response.status_code < 300)
 
 
 def _extract_password(stdout_text: str) -> str | None:

@@ -17,46 +17,38 @@ ownership boundary is established by the API route, which gates
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Sequence
-from typing import Final
+from datetime import datetime
+from typing import Any
 
 from dap_types import (
     NodeExecutionLog,
+    NodeOutputChunk,
     PipelineState,
     Run,
     StateSnapshot,
 )
-from sqlalchemy import ColumnElement, func, select, update
+from sqlalchemy import ColumnElement, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
-from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.domain.run_state_machine import (
+    RESUMABLE_STATUSES,
+    REVIVABLE_STATUSES,
+    TERMINAL_STATUSES,
+)
+from dap_engine.persistence._common import ConflictError, NotFoundError, _new_id, _now
+from dap_engine.persistence.base import ownership_filter
 from dap_engine.persistence.models import (
     NodeExecutionLogORM,
+    NodeOutputChunkORM,
     RunORM,
     StateSnapshotORM,
 )
 
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see runs they triggered.
-    """
-    if is_admin:
-        return []
-    return [RunORM.user_id == actor_id]
-
-
-# Statuses considered terminal — once a run lands in any of these,
-# ``finalize_run`` / ``pause_run`` short-circuit so a stray late cancel
-# can't overwrite the run's recorded outcome (#257).
-_TERMINAL_STATUSES: Final = frozenset({"success", "failed", "aborted"})
+logger = logging.getLogger("dap.engine.persistence.runs")
 
 
 def _run_from_orm(
@@ -72,6 +64,8 @@ def _run_from_orm(
         trigger_source=run.trigger_source,  # type: ignore[arg-type]
         initial_state=PipelineState.model_validate(run.initial_state),
         current_node=run.current_node,
+        paused_at_node=run.paused_at_node,
+        gate_payload=run.gate_payload,
         node_statuses=(
             node_statuses_override  # type: ignore[arg-type]
             if node_statuses_override is not None
@@ -79,10 +73,13 @@ def _run_from_orm(
         ),
         final_status=run.final_status,  # type: ignore[arg-type]
         failure_reason=run.failure_reason,
+        gate_expires_at=run.gate_expires_at,
         started_at=run.started_at,
         ended_at=run.ended_at,
         tokens_used=run.tokens_used,
         cost_usd=run.cost_usd,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
     )
 
 
@@ -93,6 +90,18 @@ def _state_snapshot_from_orm(snapshot: StateSnapshotORM) -> StateSnapshot:
         node_id=snapshot.node_id,
         timestamp=snapshot.timestamp,
         state=PipelineState.model_validate(snapshot.state),
+    )
+
+
+def _output_chunk_from_orm(chunk: NodeOutputChunkORM) -> NodeOutputChunk:
+    return NodeOutputChunk(
+        id=chunk.id,
+        run_id=chunk.run_id,
+        node_id=chunk.node_id,
+        execution_id=chunk.execution_id,
+        stream=chunk.stream,
+        content=chunk.content,
+        created_at=chunk.created_at,
     )
 
 
@@ -125,8 +134,11 @@ def list_runs(
     is_admin: bool,
     pipeline_id: str | None = None,
     final_status: str | None = None,
+    final_statuses: Sequence[str] | None = None,
     project_id: str | None = None,
     only_unscoped: bool = False,
+    started_from: datetime | None = None,
+    started_to: datetime | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[Run], int]:
@@ -138,15 +150,20 @@ def list_runs(
     router enforces the mapping from query string to one of these.
     """
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(RunORM, actor_id=actor_id, is_admin=is_admin))
     if pipeline_id is not None:
         where_clauses.append(RunORM.pipeline_id == pipeline_id)
-    if final_status is not None:
-        where_clauses.append(RunORM.final_status == final_status)
+    statuses = list(final_statuses or ([final_status] if final_status is not None else []))
+    if statuses:
+        where_clauses.append(RunORM.final_status.in_(statuses))
     if only_unscoped:
         where_clauses.append(RunORM.project_id.is_(None))
     elif project_id is not None:
         where_clauses.append(RunORM.project_id == project_id)
+    if started_from is not None:
+        where_clauses.append(RunORM.started_at >= started_from)
+    if started_to is not None:
+        where_clauses.append(RunORM.started_at <= started_to)
 
     total = session.scalar(select(func.count()).select_from(RunORM).where(*where_clauses)) or 0
 
@@ -160,6 +177,32 @@ def list_runs(
     return [_run_from_orm(r) for r in runs_orm], total
 
 
+def node_executions_for_agent(
+    session: Session,
+    agent_id: str,
+    *,
+    offset: int = 0,
+    limit: int = 50,
+) -> tuple[list[NodeExecutionLogORM], int]:
+    """Node executions for an agent across all runs, newest first (#697).
+
+    Ownership-agnostic (impact / debug view) — the caller gates on the agent
+    first, same contract as ``pipelines_using_agent``. Returns ORM rows; the
+    API maps them to a summary so the heavy ``stdout`` / ``prompt_xml`` stay
+    behind the run-detail view.
+    """
+    where = NodeExecutionLogORM.agent_id == agent_id
+    total = session.scalar(select(func.count()).select_from(NodeExecutionLogORM).where(where)) or 0
+    rows = session.scalars(
+        select(NodeExecutionLogORM)
+        .where(where)
+        .order_by(NodeExecutionLogORM.started_at.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return list(rows), total
+
+
 def get_run(
     session: Session,
     run_id: str,
@@ -170,6 +213,35 @@ def get_run(
     run = session.get(RunORM, run_id)
     if run is None:
         raise NotFoundError(f"Run not found: {run_id}")
+    # Defensive guard against the cross-run data bleed reported in #636
+    # (2026-06-02): a GET /runs/{114_id} returned data from a different
+    # run row (#104's ``ended_at`` / ``final_status`` / ``node_statuses``).
+    # Root cause wasn't identified during the read-only investigation —
+    # none of caching / session re-use / async-race in the candidate
+    # list matched the code shape. If SQLAlchemy ever returns a row
+    # whose PK doesn't match the requested id (identity-map quirk,
+    # connection-pool state leak, response-lifecycle mutation, etc.),
+    # refuse to leak cross-run data and surface the bug with full
+    # context so we can finally diagnose the actual mechanism.
+    if run.id != run_id:
+        logger.error(
+            "#636 cross-run data leak detected — refusing to return wrong row. "
+            "requested_id=%s returned_id=%s returned_user_id=%s "
+            "actor_id=%s is_admin=%s session_id=%s "
+            "identity_map_size=%s",
+            run_id,
+            run.id,
+            run.user_id,
+            actor_id,
+            is_admin,
+            id(session),
+            len(session.identity_map),
+        )
+        raise RuntimeError(
+            f"#636 cross-run leak: requested {run_id}, got {run.id}. "
+            "Logged at dap.engine.persistence.runs ERROR level — please "
+            "paste the journald entry into the issue."
+        )
     if not is_admin and run.user_id != actor_id:
         # Anti-enumeration: cross-user lookup looks indistinguishable
         # from "doesn't exist".
@@ -194,6 +266,46 @@ def get_run(
     # causing unexpected churn during polling.
     node_statuses_override = {log.node_id: log.status for log in logs} if logs else None
     return _run_from_orm(run, node_statuses_override=node_statuses_override)
+
+
+def delete_run(
+    session: Session,
+    run_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> None:
+    """Delete a run and **every** row that references it, children-first (#700).
+
+    Ownership-gated: a non-owner (non-admin) gets ``NotFoundError`` — the same
+    anti-enumeration rule as every other run lookup. An in-flight run (not in
+    a terminal ``final_status``) raises ``ConflictError`` — abort it first.
+
+    The cascade is explicit and bottom-up so no orphaned rows are ever left
+    behind. A run has three child tables and no grandchildren
+    (``node_output_chunks``, ``node_execution_logs``, ``state_snapshots`` —
+    all FK ``runs.id``). If a new child table is ever added, the #700 smoke
+    test (which asserts every child table is empty after delete) will fail
+    until it's wired in here. The deletes run in the caller's transaction, so
+    they commit atomically with the ``run.deleted`` audit row.
+    """
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
+        # Anti-enumeration: cross-user delete is indistinguishable from "missing".
+        raise NotFoundError(f"Run not found: {run_id}")
+    if run.final_status not in TERMINAL_STATUSES:
+        raise ConflictError(
+            f"Run {run_id} is {run.final_status!r} (in-flight); abort it before deleting."
+        )
+
+    # Children first (no inter-child FKs, so sibling order is irrelevant),
+    # then the run row itself.
+    session.execute(delete(NodeOutputChunkORM).where(NodeOutputChunkORM.run_id == run_id))
+    session.execute(delete(NodeExecutionLogORM).where(NodeExecutionLogORM.run_id == run_id))
+    session.execute(delete(StateSnapshotORM).where(StateSnapshotORM.run_id == run_id))
+    session.execute(delete(RunORM).where(RunORM.id == run_id))
 
 
 def get_run_state(
@@ -273,20 +385,29 @@ def create_run(
         ended_at=None,
         tokens_used=0,
         cost_usd=0.0,
+        created_at=now,
+        updated_at=now,
     )
     session.add(run)
     session.flush()
+    audit_data: dict[str, Any] = {
+        "run_id": run.id,
+        "pipeline_id": pipeline_id,
+        "pipeline_version": pipeline_version,
+        "project_id": project_id,
+        "trigger_source": trigger_source,
+    }
+    # Record ``dangerously-auto-approve`` (#389) only when the operator
+    # opted in — its *presence* in the audit row is the signal that gates
+    # were intentionally bypassed. Stamping ``False`` on every row would
+    # dilute that signal for log investigations.
+    if initial_state.extensions.get("auto_approve") is True:
+        audit_data["auto_approve"] = True
     record_audit_event(
         session,
         user_id=user_id,
         event_type="run.triggered",
-        event_data={
-            "run_id": run.id,
-            "pipeline_id": pipeline_id,
-            "pipeline_version": pipeline_version,
-            "project_id": project_id,
-            "trigger_source": trigger_source,
-        },
+        event_data=audit_data,
     )
     return run
 
@@ -311,6 +432,7 @@ def finalize_run(
     run_id: str,
     *,
     final_status: str,
+    failure_reason: str | None = None,
 ) -> None:
     """Mark a run as completed (success/failed/aborted) and aggregate metrics.
 
@@ -325,20 +447,30 @@ def finalize_run(
     commits ``finalize_run("failed")`` and the outer ``except
     CancelledError`` handler then calls ``finalize_run("aborted")`` from
     a fresh session; the second call no-ops.
+
+    ``failure_reason`` (#381): when the orchestrator detects a defensive
+    failure (e.g. pipeline finished without setting a terminal
+    ``final_status``), the reason lands in ``runs.failure_reason`` so
+    the dashboard surfaces it next to the red badge. ``None`` leaves
+    the column untouched — succeeding runs and aborts don't write a
+    reason. Same column shape used by ``mark_stale_running_runs_as_failed``.
     """
     tokens, cost = _compute_run_totals(session, run_id)
+    values: dict[str, Any] = {
+        "final_status": final_status,
+        "ended_at": _now(),
+        "tokens_used": tokens,
+        "cost_usd": cost,
+    }
+    if failure_reason is not None:
+        values["failure_reason"] = failure_reason
     stmt = (
         update(RunORM)
         .where(
             RunORM.id == run_id,
-            RunORM.final_status.notin_(_TERMINAL_STATUSES),
+            RunORM.final_status.notin_(TERMINAL_STATUSES),
         )
-        .values(
-            final_status=final_status,
-            ended_at=_now(),
-            tokens_used=tokens,
-            cost_usd=cost,
-        )
+        .values(**values)
     )
     result = session.execute(stmt)
     # ``CursorResult.rowcount`` exposed only at runtime; static type is
@@ -354,8 +486,26 @@ def finalize_run(
     session.flush()
 
 
-def pause_run(session: Session, run_id: str) -> None:
+def pause_run(
+    session: Session,
+    run_id: str,
+    *,
+    paused_at_node: str | None = None,
+    gate_payload: dict[str, Any] | None = None,
+    gate_expires_at: datetime | None = None,
+) -> None:
     """Mark a run as paused without setting ended_at (resumable).
+
+    ``paused_at_node`` records the gate node that triggered the interrupt
+    so the dashboard can show a targeted "Approve" action instead of the
+    generic "Resume" button (#363).
+
+    ``gate_payload`` stores task assignments and other gate context so the
+    dashboard can render them without querying the checkpoint store (#364).
+
+    ``gate_expires_at`` is the deadline for approval (#582). After this
+    timestamp, ``mark_expired_gate_runs_as_failed`` will fail the run with
+    failure_reason="gate approval timed out".
 
     Idempotent and race-safe (#257), same atomic-UPDATE pattern as
     ``finalize_run``. A late pause attempt on an already-terminal run
@@ -363,17 +513,24 @@ def pause_run(session: Session, run_id: str) -> None:
     ``None`` and erase the recorded outcome.
     """
     tokens, cost = _compute_run_totals(session, run_id)
+    values: dict[str, object] = {
+        "final_status": "paused",
+        "tokens_used": tokens,
+        "cost_usd": cost,
+    }
+    if paused_at_node is not None:
+        values["paused_at_node"] = paused_at_node
+    if gate_payload is not None:
+        values["gate_payload"] = gate_payload
+    if gate_expires_at is not None:
+        values["gate_expires_at"] = gate_expires_at
     stmt = (
         update(RunORM)
         .where(
             RunORM.id == run_id,
-            RunORM.final_status.notin_(_TERMINAL_STATUSES),
+            RunORM.final_status.notin_(TERMINAL_STATUSES),
         )
-        .values(
-            final_status="paused",
-            tokens_used=tokens,
-            cost_usd=cost,
-        )
+        .values(**values)
     )
     result = session.execute(stmt)
     if result.rowcount == 0:  # type: ignore[attr-defined]
@@ -400,8 +557,14 @@ def try_claim_resume(session: Session, run_id: str) -> bool:
     """
     stmt = (
         update(RunORM)
-        .where(RunORM.id == run_id, RunORM.final_status == "paused")
-        .values(final_status="running", ended_at=None, failure_reason=None)
+        .where(RunORM.id == run_id, RunORM.final_status.in_(RESUMABLE_STATUSES))
+        .values(
+            final_status="running",
+            ended_at=None,
+            failure_reason=None,
+            paused_at_node=None,
+            gate_payload=None,
+        )
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
     # CursorResult exposes .rowcount, which the static Result[Any] type does not.
@@ -423,7 +586,7 @@ def try_claim_revive(session: Session, run_id: str) -> bool:
     """
     stmt = (
         update(RunORM)
-        .where(RunORM.id == run_id, RunORM.final_status.in_(("paused", "failed")))
+        .where(RunORM.id == run_id, RunORM.final_status.in_(REVIVABLE_STATUSES))
         .values(final_status="running", ended_at=None, failure_reason=None)
     )
     # session.execute(update(...)) returns CursorResult at runtime — only
@@ -456,6 +619,35 @@ def mark_stale_running_runs_as_failed(session: Session, *, reason: str) -> int:
     return count
 
 
+def mark_expired_gate_runs_as_failed(session: Session) -> int:
+    """Fail paused runs whose gate approval deadline has passed (#582).
+
+    Selects runs with ``final_status='paused'`` and ``gate_expires_at < now``.
+    Sets ``final_status='failed'``, ``ended_at=now``, and
+    ``failure_reason='gate approval timed out'``.  Returns the count updated.
+
+    Called on engine startup alongside ``mark_stale_running_runs_as_failed``
+    and can be called periodically by a background task in future iterations.
+    Runs with ``gate_expires_at IS NULL`` are not touched (legacy or noop gate).
+    """
+    now = _now()
+    runs = session.scalars(
+        select(RunORM).where(
+            RunORM.final_status == "paused",
+            RunORM.gate_expires_at.is_not(None),
+            RunORM.gate_expires_at < now,
+        ),
+    ).all()
+    count = 0
+    for run in runs:
+        run.final_status = "failed"
+        run.ended_at = now
+        run.failure_reason = "gate approval timed out"
+        count += 1
+    session.flush()
+    return count
+
+
 def get_run_node_log(
     session: Session,
     run_id: str,
@@ -480,3 +672,102 @@ def get_run_node_log(
     if log is None:
         raise NotFoundError(f"Node log not found: {run_id}/{node_id}")
     return _node_log_from_orm(log)
+
+
+def list_run_node_logs(
+    session: Session,
+    run_id: str,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> list[NodeExecutionLog]:
+    """Return all node execution logs for a run ordered by started_at.
+
+    Non-admins only see logs for their own runs (anti-enumeration: a
+    cross-user lookup is indistinguishable from "not found").
+    Returns an empty list when the run has no logs yet (e.g. pre-execution).
+    """
+    run = session.get(RunORM, run_id)
+    if run is None:
+        raise NotFoundError(f"Run not found: {run_id}")
+    if not is_admin and run.user_id != actor_id:
+        raise NotFoundError(f"Run not found: {run_id}")
+    logs = session.scalars(
+        select(NodeExecutionLogORM)
+        .where(NodeExecutionLogORM.run_id == run_id)
+        .order_by(NodeExecutionLogORM.started_at)
+    ).all()
+    return [_node_log_from_orm(log) for log in logs]
+
+
+def append_output_chunk(
+    session: Session,
+    *,
+    run_id: str,
+    node_id: str,
+    content: str,
+    execution_id: str | None = None,
+    stream: str = "stdout",
+) -> NodeOutputChunk:
+    """Append one node-output chunk and return it with a populated ``id``.
+
+    Adapters call this per stdout/stderr flush (Phase 3b-2). The returned
+    chunk's ``id`` is the autoincrement monotonic cursor the SSE endpoint
+    pages on. ``session.flush()`` populates the id before mapping; the
+    caller commits.
+
+    No ownership check: this is a write primitive on the execution path,
+    same contract as ``finalize_run`` / ``create_run`` — the ownership
+    boundary is established at the API route.
+    """
+    chunk = NodeOutputChunkORM(
+        run_id=run_id,
+        node_id=node_id,
+        execution_id=execution_id,
+        stream=stream,
+        content=content,
+        created_at=_now(),
+    )
+    session.add(chunk)
+    session.flush()
+    return _output_chunk_from_orm(chunk)
+
+
+def list_output_chunks_since(
+    session: Session,
+    run_id: str,
+    *,
+    after_id: int,
+    limit: int = 500,
+) -> list[NodeOutputChunk]:
+    """Return chunks for ``run_id`` with ``id > after_id`` ascending by id.
+
+    The incremental cursor read driving the SSE ``node_log`` stream:
+    ``after_id`` is the last chunk id the client has already seen (0 to
+    start from the run's first chunk). ``limit`` bounds the page so a
+    single tick can't materialise an unbounded backlog.
+    """
+    chunks = session.scalars(
+        select(NodeOutputChunkORM)
+        .where(NodeOutputChunkORM.run_id == run_id, NodeOutputChunkORM.id > after_id)
+        .order_by(NodeOutputChunkORM.id)
+        .limit(limit)
+    ).all()
+    return [_output_chunk_from_orm(c) for c in chunks]
+
+
+def latest_output_chunk_id(session: Session, run_id: str) -> int:
+    """Return the highest chunk id for ``run_id``, or ``0`` if none exist.
+
+    Used by the SSE endpoint as the connect cursor so a connecting client
+    streams only chunks produced *after* connect (no replay of history).
+    """
+    # coalesce(..., 0) guarantees a 0 (not NULL) for empty runs; the
+    # explicit None check only satisfies scalar()'s ``int | None`` return
+    # type and never coerces a real (falsy) value to 0.
+    result = session.scalar(
+        select(func.coalesce(func.max(NodeOutputChunkORM.id), 0)).where(
+            NodeOutputChunkORM.run_id == run_id
+        )
+    )
+    return int(result) if result is not None else 0

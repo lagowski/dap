@@ -3,8 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
-import { useTriggerRun, usePipelineVersions } from "@/hooks/api";
+import {
+  useCurrentUser,
+  useTriggerRun,
+  usePipelineVersions,
+  usePipelineReadiness,
+} from "@/hooks/api";
 import { formatApiError } from "@/lib/api/client";
+import {
+  parseInitialState,
+  parsePipelineVersion,
+  withAutoApprove,
+} from "@/lib/run-trigger-options";
+import { PipelineReadinessNotice } from "@/components/pipeline-readiness-notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,21 +45,28 @@ export function TriggerRunDialog({
 }: TriggerRunDialogProps) {
   const router = useRouter();
   const trigger = useTriggerRun();
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser.data?.is_superuser === true;
 
   const [open, setOpen] = useState(false);
   const [versionStr, setVersionStr] = useState<string>("current");
   const [stateText, setStateText] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
 
   // Defer the (potentially heavy) versions fetch until the user opens the
   // dialog — the pipelines list page renders one TriggerRunDialog per row.
   const versions = usePipelineVersions(pipelineId, { enabled: open });
+  // Pre-run readiness (#710): resolve python-func callables when the dialog
+  // opens so a missing package (e.g. dap-cortex) shows here, not as a 422.
+  const readiness = usePipelineReadiness(pipelineId, { enabled: open });
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) {
       // Clear transient state so a reopen doesn't show stale errors.
       setParseError(null);
+      setAutoApprove(false);
       trigger.reset();
     }
   };
@@ -57,31 +75,18 @@ export function TriggerRunDialog({
     e.preventDefault();
     setParseError(null);
 
-    let initialState: Record<string, unknown> = {};
-    if (stateText.trim().length > 0) {
-      try {
-        initialState = JSON.parse(stateText);
-        if (typeof initialState !== "object" || initialState == null || Array.isArray(initialState)) {
-          throw new Error("initial_state must be a JSON object");
-        }
-      } catch (err) {
-        setParseError(err instanceof Error ? err.message : "Invalid JSON");
-        return;
-      }
+    const parsed = parseInitialState(stateText);
+    if (!parsed.ok) {
+      setParseError(parsed.error);
+      return;
     }
-
-    const parsedVersion =
-      versionStr === "current" ? undefined : Number(versionStr);
-    const pipelineVersion =
-      parsedVersion !== undefined && Number.isFinite(parsedVersion)
-        ? parsedVersion
-        : undefined;
+    const pipelineVersion = parsePipelineVersion(versionStr, "current");
 
     trigger.mutate(
       {
         pipeline_id: pipelineId,
         ...(pipelineVersion !== undefined ? { pipeline_version: pipelineVersion } : {}),
-        initial_state: initialState,
+        initial_state: withAutoApprove(parsed.value, isAdmin && autoApprove),
       },
       {
         onSuccess: (run) => {
@@ -109,6 +114,8 @@ export function TriggerRunDialog({
           </DialogHeader>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
+            <PipelineReadinessNotice readiness={readiness.data} />
+
             <div className="space-y-1.5">
               <Label htmlFor="pipeline-version">Pipeline version</Label>
               <select
@@ -144,6 +151,29 @@ export function TriggerRunDialog({
                 Merged over PipelineState defaults. Leave empty for an empty state.
               </p>
             </div>
+
+            {isAdmin ? (
+              <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-primary"
+                  checked={autoApprove}
+                  aria-describedby="trigger-auto-approve-description"
+                  onChange={(event) => setAutoApprove(event.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">
+                    Skip all approval gates for this run
+                  </span>
+                  <span
+                    id="trigger-auto-approve-description"
+                    className="block text-xs text-muted-foreground"
+                  >
+                    Sets extensions.auto_approve for this trigger only.
+                  </span>
+                </span>
+              </label>
+            ) : null}
 
             {parseError ? (
               <p className="text-xs text-destructive" role="alert">

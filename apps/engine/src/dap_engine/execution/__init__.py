@@ -1,3 +1,4 @@
+from dap_engine.execution.batch_runner import execute_batch_run_background
 from dap_engine.execution.conditions import evaluate_condition
 from dap_engine.execution.run_orchestrator import (
     execute_rewind_background,
@@ -24,6 +25,7 @@ __all__ = [
     "RunnerInterrupt",
     "ValidationResult",
     "evaluate_condition",
+    "execute_batch_run_background",
     "execute_rewind_background",
     "execute_run_background",
     "validate_pipeline_dag",

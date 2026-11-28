@@ -2,7 +2,7 @@
 name: Bug
 about: Błąd w istniejącej funkcjonalności
 title: "fix: "
-labels: bug
+labels: bug, type:bug
 ---
 
 ## Opis

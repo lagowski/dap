@@ -20,28 +20,14 @@ import uuid
 from collections.abc import Sequence
 
 from dap_types import Project
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.contracts import ProjectCreate, ProjectUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.persistence.base import get_owned_or_not_found, ownership_filter
 from dap_engine.persistence.models import PipelineORM, ProjectORM
-
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Centralised so every list query gets the rule without copy-paste.
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see rows they own.
-    """
-    if is_admin:
-        return []
-    return [ProjectORM.user_id == actor_id]
 
 
 def _project_from_orm(project: ProjectORM) -> Project:
@@ -54,6 +40,7 @@ def _project_from_orm(project: ProjectORM) -> Project:
         default_branch=project.default_branch,
         pipelines=dict(project.pipelines),
         env_vars=dict(project.env_vars),
+        auto_approve_nodes=list(project.auto_approve_nodes or []),
         created_at=project.created_at,
         updated_at=project.updated_at,
         archived_at=project.archived_at,
@@ -126,6 +113,8 @@ def create_project(
     workflows). For non-admin creators, every bound pipeline_id must
     be owned by the creator.
     """
+    if not is_admin and payload.auto_approve_nodes:
+        raise PermissionError("auto_approve_nodes requires an admin user")
     _validate_pipeline_bindings(session, payload.pipelines, actor_id=user_id, is_admin=is_admin)
     now = _now()
     project = ProjectORM(
@@ -138,6 +127,7 @@ def create_project(
         default_branch=payload.default_branch,
         pipelines=dict(payload.pipelines),
         env_vars=dict(payload.env_vars),
+        auto_approve_nodes=list(payload.auto_approve_nodes),
         created_at=now,
         updated_at=now,
         archived_at=None,
@@ -169,6 +159,8 @@ def update_project(
         # Anti-enumeration: cross-user lookup looks indistinguishable
         # from "doesn't exist".
         raise NotFoundError(f"Project not found: {project_id}")
+    if not is_admin and list(payload.auto_approve_nodes) != list(project.auto_approve_nodes or []):
+        raise PermissionError("auto_approve_nodes requires an admin user")
     _validate_pipeline_bindings(session, payload.pipelines, actor_id=actor_id, is_admin=is_admin)
 
     project.name = payload.name
@@ -178,6 +170,7 @@ def update_project(
     project.default_branch = payload.default_branch
     project.pipelines = dict(payload.pipelines)
     project.env_vars = dict(payload.env_vars)
+    project.auto_approve_nodes = list(payload.auto_approve_nodes)
     project.updated_at = _now()
     session.flush()
     record_audit_event(
@@ -222,11 +215,9 @@ def get_project(
     is_admin: bool,
 ) -> Project:
     """Fetch a project. Non-admins only see their own."""
-    project = session.get(ProjectORM, project_id)
-    if project is None:
-        raise NotFoundError(f"Project not found: {project_id}")
-    if not is_admin and project.user_id != actor_id:
-        raise NotFoundError(f"Project not found: {project_id}")
+    project = get_owned_or_not_found(
+        session, ProjectORM, project_id, actor_id=actor_id, is_admin=is_admin, label="Project"
+    )
     return _project_from_orm(project)
 
 
@@ -240,7 +231,7 @@ def list_projects(
     limit: int = 50,
 ) -> tuple[Sequence[Project], int]:
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(ProjectORM, actor_id=actor_id, is_admin=is_admin))
     if not archived:
         where_clauses.append(ProjectORM.archived_at.is_(None))
 
@@ -254,3 +245,42 @@ def list_projects(
         .limit(limit)
     ).all()
     return [_project_from_orm(p) for p in projects_orm], total
+
+
+def projects_using_pipelines(
+    session: Session,
+    pipeline_ids: list[str],
+    *,
+    limit: int = 500,
+) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """Reverse-lookup: projects whose workflow bindings reference any of
+    ``pipeline_ids``.
+
+    Returns ``(project_id, project_name, [(kind, pipeline_id)])`` per project.
+    Ownership-agnostic by design (impact view) — the caller gates on the
+    agent / pipeline first, same contract as ``pipelines_using_agent``.
+
+    The ``LIKE`` over the serialized ``pipelines`` JSON is a *coarse* SQL
+    candidate pre-filter — it keeps us from loading the whole projects table
+    into memory. It may over-match (a substring of one id appearing inside an
+    unrelated value); correctness is guaranteed by the exact ``pid in wanted``
+    check below, which drops any false positive before it reaches the caller.
+    ``limit`` caps the candidate set.
+    """
+    wanted = set(pipeline_ids)
+    if not wanted:
+        return []
+    bindings_text = cast(ProjectORM.pipelines, String)
+    candidate_query = (
+        select(ProjectORM)
+        .where(or_(*(bindings_text.contains(pid) for pid in sorted(wanted))))
+        .limit(limit)
+    )
+    out: list[tuple[str, str, list[tuple[str, str]]]] = []
+    for project in session.scalars(candidate_query).all():
+        matches = sorted(
+            (kind, pid) for kind, pid in (project.pipelines or {}).items() if pid in wanted
+        )
+        if matches:
+            out.append((project.id, project.name, matches))
+    return out

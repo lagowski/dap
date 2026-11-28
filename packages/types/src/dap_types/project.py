@@ -59,6 +59,12 @@ class Project(BaseModel):
     # like ``WORKSPACE_NAME`` or feature flags.
     env_vars: dict[str, str] = Field(default_factory=dict)
 
+    # Node IDs that the engine auto-approves without waiting for a human
+    # POST /runs/{id}/nodes/{node_id}/approve (#477). Applies to every run
+    # triggered under this project. Per-run initial_state.extensions.auto_approve_nodes
+    # overrides this list for that specific run.
+    auto_approve_nodes: list[str] = Field(default_factory=list)
+
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None

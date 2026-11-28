@@ -15,7 +15,13 @@ from typing import Any
 import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -50,7 +56,11 @@ class TriggerStubAdapter:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.received_tasks.append(task)
         return RuntimeResult(success=True, output="executed", duration_ms=1)
 
@@ -84,23 +94,37 @@ def _create_agent(client: TestClient) -> str:
     return str(response.json()["id"])
 
 
-def _create_pipeline(client: TestClient, agent_id: str) -> str:
+def _create_pipeline(
+    client: TestClient,
+    agent_id: str,
+    *,
+    backend_profiles: dict[str, Any] | None = None,
+) -> str:
+    payload: dict[str, Any] = {
+        "name": "Trigger Pipeline",
+        "description": "",
+        "schema_version": "langgraph/1.0",
+        "state_schema_ref": "PipelineState.v1",
+        "entry_point": "n1",
+        "nodes": [{"id": "n1", "agent_id": agent_id, "position": {"x": 0, "y": 0}}],
+        "edges": [{"id": "e1", "source": "n1", "target": "__end__"}],
+        "defaults": {
+            "max_attempts": 3,
+            "budget_limit_usd": 5.0,
+            "approval_required_nodes": [],
+            # This suite verifies run trigger / backend-profile resolution, not
+            # terminal-status enforcement (#628). Opt out so a residual
+            # ``running`` keeps the legacy "no node raised = success"
+            # semantics these tests rely on.
+            "requires_terminal_final_status": False,
+        },
+    }
+    if backend_profiles is not None:
+        payload["backend_profiles"] = backend_profiles
+
     response = client.post(
         "/pipelines",
-        json={
-            "name": "Trigger Pipeline",
-            "description": "",
-            "schema_version": "langgraph/1.0",
-            "state_schema_ref": "PipelineState.v1",
-            "entry_point": "n1",
-            "nodes": [{"id": "n1", "agent_id": agent_id, "position": {"x": 0, "y": 0}}],
-            "edges": [{"id": "e1", "source": "n1", "target": "__end__"}],
-            "defaults": {
-                "max_attempts": 3,
-                "budget_limit_usd": 5.0,
-                "approval_required_nodes": [],
-            },
-        },
+        json=payload,
     )
     assert response.status_code == 201
     return str(response.json()["id"])
@@ -142,6 +166,62 @@ def test_trigger_run_e2e(
     node_log = client.get(f"/runs/{run_id}/nodes/n1").json()
     assert node_log["node_id"] == "n1"
     assert node_log["status"] == "success"
+
+
+def test_trigger_run_resolves_backend_profile_default(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """A selected backend profile can override runtime id and runtime config."""
+    client, registry, default_stub = client_with_stub
+    alt_stub = TriggerStubAdapter()
+    alt_stub.id = "trigger-stub-profile"
+    alt_stub.display_name = "Trigger Stub Profile"
+    registry.register(alt_stub)
+
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(
+        client,
+        agent_id,
+        backend_profiles={
+            "available": {
+                "profile-a": {
+                    "runtime_id": "trigger-stub-profile",
+                    "runtime_config": {
+                        "profile_marker": "profile-a",
+                        "api_key": "$PROFILE_API_KEY",
+                    },
+                    "requires_env": ["PROFILE_API_KEY"],
+                    "requires_service": None,
+                }
+            },
+            "agent_assignments": {"default_profile": "profile-a", "overrides": {}},
+        },
+    )
+    project_id = _create_project(client, env_vars={"PROFILE_API_KEY": "profile-secret"})
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {"repo": "demo"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    run_id = response.json()["id"]
+    completed = _wait_for_completion(client, run_id)
+    assert completed["final_status"] == "success"
+
+    assert default_stub.received_tasks == []
+    assert len(alt_stub.received_tasks) == 1
+    task = alt_stub.received_tasks[0]
+    assert task.runtime_config["profile_marker"] == "profile-a"
+    assert task.runtime_config["api_key"] == "profile-secret"
+    assert task.runtime_config["env"]["PROFILE_API_KEY"] == "profile-secret"
+    assert "__pipeline_state" in task.runtime_config
+
+    node_log = client.get(f"/runs/{run_id}/nodes/n1").json()
+    assert node_log["runtime_id"] == "trigger-stub-profile"
 
 
 def test_trigger_run_404_unknown_pipeline(
@@ -490,3 +570,64 @@ def test_caller_initial_state_overrides_project_defaults(
     fetched = client.get(f"/runs/{run_id}").json()
     assert fetched["initial_state"]["repo"] == "explicit-repo"
     assert fetched["initial_state"]["branch"] == "feature"
+
+
+def test_project_default_branch_injected_into_extensions(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """Project default_branch is injected into extensions.branch so cortex
+    git-branch node uses it as the PR base without manual trigger config."""
+    client, _registry, _stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(
+        client,
+        repo_url="https://example.com/proj.git",
+        default_branch="develop",
+    )
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    fetched = client.get(f"/runs/{run_id}").json()
+    extensions = fetched["initial_state"].get("extensions") or {}
+    assert extensions.get("branch") == "develop"
+
+
+def test_caller_extensions_branch_overrides_project_default_branch(
+    client_with_stub: tuple[TestClient, RuntimeRegistry, TriggerStubAdapter],
+) -> None:
+    """Caller can override extensions.branch; project default_branch is the fallback."""
+    client, _registry, _stub = client_with_stub
+    agent_id = _create_agent(client)
+    pipeline_id = _create_pipeline(client, agent_id)
+    project_id = _create_project(
+        client,
+        repo_url="https://example.com/proj.git",
+        default_branch="develop",
+    )
+
+    response = client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {"extensions": {"branch": "hotfix"}},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    fetched = client.get(f"/runs/{run_id}").json()
+    extensions = fetched["initial_state"].get("extensions") or {}
+    assert extensions.get("branch") == "hotfix"

@@ -12,7 +12,7 @@ import json
 import os
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from dap_runtimes import ClaudeCodeAdapter
@@ -45,6 +45,7 @@ def _task(
     timeout_ms: int = 60_000,
     env: dict[str, str] | None = None,
     project_env_vars: dict[str, str] | None = None,
+    use_subscription: Any = None,
 ) -> RuntimeTask:
     runtime_config: dict[str, Any] = {"model_id": model_id}
     if binary_path is not None:
@@ -53,6 +54,8 @@ def _task(
         runtime_config["extra_args"] = extra_args
     if env is not None:
         runtime_config["env"] = env
+    if use_subscription is not None:
+        runtime_config["use_subscription"] = use_subscription
     return RuntimeTask(
         execution_id="exec-1",
         prompt_xml="<agent_prompt><role>impl</role><task>do it</task></agent_prompt>",
@@ -73,8 +76,14 @@ def _success_payload(
     total_cost_usd: float = 0.0125,
     session_id: str = "sess-1",
     num_turns: int = 3,
+    extra_lines: list[str] | None = None,
 ) -> bytes:
-    return json.dumps(
+    """Return stream-json NDJSON bytes — one event per line.
+
+    Includes optional leading events (e.g. assistant turn events) before the
+    required ``result`` event to exercise the NDJSON parser.
+    """
+    result_event = json.dumps(
         {
             "type": "result",
             "subtype": "success",
@@ -93,7 +102,9 @@ def _success_payload(
                 "service_tier": "standard",
             },
         }
-    ).encode("utf-8")
+    )
+    lines = (extra_lines or []) + [result_event]
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 # _build_subprocess_mock moved to tests/smoke/conftest.py — shared across
@@ -208,12 +219,13 @@ async def test_execute_success_extracts_result_and_usage(with_api_key: None) -> 
     assert result.structured["num_turns"] == 3
     assert result.structured["timed_out"] is False
 
-    # Verify CLI invocation shape
+    # Verify CLI invocation shape — stream-json for reliable usage extraction (#472)
     argv = create_mock.call_args.args
     assert argv[0].endswith("claude") or argv[0] == "claude"
     assert "--print" in argv
     assert "--output-format" in argv
-    assert "json" in argv
+    assert "stream-json" in argv
+    assert "json" not in argv  # plain json format must NOT be used
     assert "--model" in argv
     assert "claude-opus-4-7" in argv
 
@@ -227,8 +239,9 @@ async def test_execute_passes_prompt_via_stdin(with_api_key: None) -> None:
     ):
         await adapter.execute(_task())
 
-    call_kwargs = proc.communicate.call_args.kwargs
-    assert call_kwargs["input"].decode("utf-8").startswith("<agent_prompt>")
+    # Prompt is now fed via the streamed stdin write (#662), not communicate().
+    sent = proc.stdin.write.call_args.args[0]
+    assert sent.decode("utf-8").startswith("<agent_prompt>")
 
 
 async def test_execute_with_extra_args(with_api_key: None) -> None:
@@ -316,6 +329,154 @@ async def test_execute_with_cache_tokens(with_api_key: None) -> None:
     assert result.structured["usage"]["cache_read_input_tokens"] == 1000
 
 
+async def test_stream_json_with_leading_turn_events(with_api_key: None) -> None:
+    """result event is correctly found even when preceded by assistant turn events."""
+    turn_event = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "thinking..."}],
+            },
+        }
+    )
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(
+        stdout=_success_payload(
+            text="final answer",
+            input_tokens=50,
+            output_tokens=25,
+            extra_lines=[turn_event, turn_event],
+        )
+    )
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task())
+
+    assert result.success is True
+    assert result.output == "final answer"
+    assert result.tokens_used == 75  # 50 + 25
+
+
+async def test_missing_usage_falls_back_to_zero(with_api_key: None) -> None:
+    """If the result event has no usage field, tokens_used is 0 (graceful fallback)."""
+    payload = json.dumps(
+        {"type": "result", "subtype": "success", "result": "done", "is_error": False}
+    )
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=(payload + "\n").encode("utf-8"))
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task())
+
+    assert result.success is True
+    assert result.tokens_used == 0
+    assert result.cost_usd is None
+
+
+# ---------------------------------------------------------------------------
+# Subscription mode (#625) — opt-in, drops --print, skips cost/token telemetry
+# ---------------------------------------------------------------------------
+
+
+async def test_default_config_uses_print_and_meters(with_api_key: None) -> None:
+    """Default (use_subscription unset) → --print present, cost/tokens populated."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=_success_payload(text="metered"))
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        result = await adapter.execute(_task())
+
+    argv = create_mock.call_args.args
+    assert "--print" in argv
+    assert result.success is True
+    assert result.tokens_used == 300  # 100 input + 200 output
+    assert result.cost_usd == pytest.approx(0.0125)
+
+
+async def test_subscription_mode_omits_print(with_api_key: None) -> None:
+    """use_subscription=True → CLI argv must NOT contain --print."""
+    adapter = ClaudeCodeAdapter()
+    # Subscription mode produces no stream-json result event; plain text on stdout.
+    proc = build_subprocess_mock(stdout=b"done working\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        result = await adapter.execute(_task(use_subscription=True))
+
+    argv = create_mock.call_args.args
+    assert "--print" not in argv
+    assert result.success is True
+
+
+async def test_subscription_mode_uses_skip_permissions(with_api_key: None) -> None:
+    """Subscription mode must pass --dangerously-skip-permissions so the
+    non-interactive CLI never blocks on a permission prompt."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=b"done\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)) as create_mock,
+    ):
+        await adapter.execute(_task(use_subscription=True))
+
+    argv = create_mock.call_args.args
+    assert "--dangerously-skip-permissions" in argv
+    assert "--model" in argv
+    assert "claude-opus-4-7" in argv
+
+
+async def test_subscription_mode_skips_cost_and_tokens(with_api_key: None) -> None:
+    """Subscription mode is not metered per-call → cost_usd None, tokens 0."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=b"agent finished the task\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        result = await adapter.execute(_task(use_subscription=True))
+
+    assert result.success is True
+    assert result.output == "agent finished the task\n"
+    assert result.cost_usd is None
+    # tokens unset (None), not 0 — "not metered" rather than "zero usage".
+    assert result.tokens_used is None
+    assert result.structured is not None
+    assert result.structured["provider"] == "claude-code"
+    assert result.structured["subscription"] is True
+
+
+async def test_subscription_mode_passes_prompt_via_stdin(with_api_key: None) -> None:
+    """Even without --print the prompt is fed via stdin so the CLI terminates."""
+    adapter = ClaudeCodeAdapter()
+    proc = build_subprocess_mock(stdout=b"ok\n")
+    with (
+        patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
+        patch(_PATCH_PATH, AsyncMock(return_value=proc)),
+    ):
+        await adapter.execute(_task(use_subscription=True))
+
+    # Prompt is now fed via the streamed stdin write (#662), not communicate().
+    sent = proc.stdin.write.call_args.args[0]
+    assert sent.decode("utf-8").startswith("<agent_prompt>")
+
+
+async def test_subscription_must_be_bool(with_api_key: None) -> None:
+    """``use_subscription`` must be a boolean — anything else fails validation."""
+    adapter = ClaudeCodeAdapter()
+    with patch(_WHICH_PATH, return_value="/usr/local/bin/claude"):
+        result = await adapter.execute(_task(use_subscription="yes"))
+    assert result.success is False
+    assert any("use_subscription" in e for e in result.errors)
+
+
 # ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------
@@ -356,12 +517,15 @@ async def test_unparseable_json_returns_descriptive_error(
     assert any("not parse" in e.lower() for e in result.errors)
 
 
-async def test_non_object_payload_returns_descriptive_error(
+async def test_no_result_event_returns_descriptive_error(
     with_api_key: None,
 ) -> None:
-    """Valid JSON that isn't an object (e.g. an array) shouldn't crash the adapter."""
+    """stdout with no result event (e.g. only assistant events or a JSON array) fails gracefully."""
     adapter = ClaudeCodeAdapter()
-    proc = build_subprocess_mock(stdout=b"[1, 2, 3]")
+    # No result event — only a non-result line
+    proc = build_subprocess_mock(
+        stdout=json.dumps({"type": "assistant", "message": "thinking"}).encode("utf-8") + b"\n"
+    )
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),
         patch(_PATCH_PATH, AsyncMock(return_value=proc)),
@@ -369,7 +533,7 @@ async def test_non_object_payload_returns_descriptive_error(
         result = await adapter.execute(_task())
 
     assert result.success is False
-    assert any("expected object" in e for e in result.errors)
+    assert any("result event" in e.lower() or "parse" in e.lower() for e in result.errors)
 
 
 async def test_non_dict_usage_returns_descriptive_error(
@@ -456,18 +620,10 @@ async def test_timeout_kills_long_running_command(with_api_key: None) -> None:
 async def test_cancellation_kills_subprocess(with_api_key: None) -> None:
     adapter = ClaudeCodeAdapter()
 
-    # Build a subprocess whose communicate hangs forever — we cancel
-    # the outer task to verify the adapter cleans up.
-    async def hang(*_args: Any, **_kwargs: Any) -> tuple[bytes, bytes]:
-        await asyncio.Event().wait()
-        return (b"", b"")  # unreachable; satisfies the type-checker
-
-    proc = MagicMock()
+    # Build a subprocess whose stdout read hangs forever (#662) — we cancel
+    # the outer task to verify the adapter tears the subprocess down.
+    proc = build_subprocess_mock(hang=True, pid=99999)
     proc.returncode = None
-    proc.pid = 99999
-    proc.communicate = hang
-    proc.wait = AsyncMock(return_value=-9)
-    proc.kill = MagicMock()
 
     with (
         patch(_WHICH_PATH, return_value="/usr/local/bin/claude"),

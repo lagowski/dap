@@ -45,25 +45,40 @@ WORKDIR /build
 # because each pyproject.toml declares ``readme = "README.md"`` and
 # hatchling refuses to build without it.
 COPY pyproject.toml uv.lock README.md ./
-COPY apps/cli/pyproject.toml apps/cli/README.md ./apps/cli/
+# hatch_build.py is dap-cli's wheel build hook (it adds the ``dap demo``
+# example when examples/ is present; .dockerignore keeps it out, so the
+# hook is a no-op here). hatchling refuses to build if the file is missing.
+COPY apps/cli/pyproject.toml apps/cli/README.md apps/cli/hatch_build.py ./apps/cli/
 COPY apps/engine/pyproject.toml apps/engine/README.md ./apps/engine/
-COPY packages/cortex/pyproject.toml packages/cortex/README.md ./packages/cortex/
 COPY packages/prompt-dsl/pyproject.toml packages/prompt-dsl/README.md ./packages/prompt-dsl/
 COPY packages/runtimes/pyproject.toml packages/runtimes/README.md ./packages/runtimes/
 COPY packages/types/pyproject.toml packages/types/README.md ./packages/types/
+COPY packages/database/pyproject.toml packages/database/README.md ./packages/database/
+# ``code-review-council`` is a workspace member used by the CI gate
+# (gemini_review.py). It's not a runtime dependency of the engine,
+# but it has to be physically present here because
+# ``uv sync --all-packages`` below refuses to plan when a workspace
+# member is missing from the filesystem. Cost is negligible (~2KB
+# of .py + httpx/pydantic already in the engine's transitive deps).
+# If we ever want to slim the engine image, switch the second-pass
+# sync to ``--package dap-engine --package dap-cli`` instead.
+COPY packages/code-review-council/pyproject.toml packages/code-review-council/README.md ./packages/code-review-council/
 
 # Create empty package stubs so the dep resolver can validate the
 # workspace layout without touching real source. They get overwritten
 # in the COPY below.
 RUN mkdir -p apps/cli/src/dap_cli apps/engine/src/dap_engine \
-    packages/cortex/src/cortex packages/prompt-dsl/src/dap_prompt_dsl \
+    packages/prompt-dsl/src/dap_prompt_dsl \
     packages/runtimes/src/dap_runtimes packages/types/src/dap_types \
+    packages/code-review-council/src/code_review_council \
+    packages/database/src/dap_database \
     && touch apps/cli/src/dap_cli/__init__.py \
     && touch apps/engine/src/dap_engine/__init__.py \
-    && touch packages/cortex/src/cortex/__init__.py \
     && touch packages/prompt-dsl/src/dap_prompt_dsl/__init__.py \
     && touch packages/runtimes/src/dap_runtimes/__init__.py \
-    && touch packages/types/src/dap_types/__init__.py
+    && touch packages/types/src/dap_types/__init__.py \
+    && touch packages/code-review-council/src/code_review_council/__init__.py \
+    && touch packages/database/src/dap_database/__init__.py
 
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
@@ -78,10 +93,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Now copy the actual first-party source.
 COPY apps/cli/src ./apps/cli/src
 COPY apps/engine/src ./apps/engine/src
-COPY packages/cortex/src ./packages/cortex/src
 COPY packages/prompt-dsl/src ./packages/prompt-dsl/src
 COPY packages/runtimes/src ./packages/runtimes/src
 COPY packages/types/src ./packages/types/src
+COPY packages/code-review-council/src ./packages/code-review-council/src
+COPY packages/database/src ./packages/database/src
 
 # Second-pass sync: install every workspace member (--all-packages)
 # as **non-editable** wheels so the source tree doesn't need to be
@@ -108,7 +124,7 @@ FROM node:${NODE_VERSION}-slim AS dashboard-builder
 WORKDIR /build/apps/dashboard
 
 RUN --mount=type=cache,target=/root/.cache/corepack \
-    corepack enable && corepack prepare pnpm@10.0.0 --activate
+    corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 # Lockfile first — pnpm cache survives source edits.
 COPY apps/dashboard/package.json apps/dashboard/pnpm-lock.yaml ./
@@ -117,7 +133,19 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 COPY apps/dashboard/ ./
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm build
+# THE BUILD MUST FAIL HERE, NOT IN THE CONTAINER. `next build` happily emits a standalone
+# tree missing a file the server resolves at RUNTIME, so the first symptom was a
+# MODULE_NOT_FOUND at `docker run` — on three unrelated pull requests, none of which had
+# touched JavaScript. The assertion below names the cause at the stage that produced it.
+RUN pnpm build && \
+    esm=$(ls -d .next/standalone/node_modules/.pnpm/next@*/node_modules/@swc/helpers/esm \
+          2>/dev/null | head -1) && \
+    test -f "$esm/_interop_require_default.js" || { \
+      echo "FATAL: the standalone bundle has no @swc/helpers/esm tree."; \
+      echo "next/dist/server/require-hook.js resolves @swc/helpers/esm/* at runtime, but"; \
+      echo "@swc/helpers declares main=cjs/index.cjs, so the file tracer copies cjs/ only."; \
+      echo "Fix: outputFileTracingIncludes in apps/dashboard/next.config.ts."; \
+      exit 1; }
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +216,10 @@ VOLUME /data
 USER dap
 WORKDIR /home/dap
 
-EXPOSE 7333 3000
+# Ports come from the ENV block above (#778 Phase 4) — the single place
+# the numbers appear in the image definition. entrypoint.sh and the
+# HEALTHCHECK read the same variables at runtime.
+EXPOSE ${PORT_ENGINE} ${PORT_DASHBOARD}
 
 # 30s start_period covers cold-start migrations + uv resolve on big DBs.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
@@ -196,8 +227,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 
 LABEL org.opencontainers.image.title="DAP" \
       org.opencontainers.image.description="Deterministic Agent Pipeline — engine + dashboard, all-in-one" \
-      org.opencontainers.image.source="https://github.com/rafeekpro/dap" \
+      org.opencontainers.image.source="https://github.com/lagowski/dap" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="rafeekpro"
+      org.opencontainers.image.vendor="lagowski"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

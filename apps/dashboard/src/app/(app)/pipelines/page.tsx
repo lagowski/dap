@@ -1,24 +1,59 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, Play, Plus, Upload } from "lucide-react";
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Play,
+  Plus,
+  Upload,
+} from "lucide-react";
 import {
   useArchivePipeline,
   useImportPipeline,
+  useInspectPipelineImportBackends,
   usePipelinesList,
   useProject,
 } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
 import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TriggerRunDialog } from "@/components/trigger-run-dialog";
-import type { PipelineExport } from "@/lib/api/types";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
+import { BackendProfileImportDialog } from "@/components/pipelines/backend-profile-import-dialog";
+import type {
+  BackendProfilesInspectionResponse,
+  PipelineExport,
+} from "@/lib/api/types";
+import {
+  bundleHasBackendProfiles,
+  hasInspectableProfiles,
+} from "@/lib/backend-profile-import";
 
 const ID_PREFIX = 8;
+
+// Split the flat list into "Cortex" (system templates, name starts with
+// "Cortex") and "Custom" (everything else the operator made) so the table
+// is scannable. Cortex first, Custom second.
+const PIPELINE_GROUP_ORDER = ["Cortex", "Custom"] as const;
+type PipelineGroup = (typeof PIPELINE_GROUP_ORDER)[number];
+
+function pipelineGroup(name: string): PipelineGroup {
+  return /^\s*cortex/i.test(name) ? "Cortex" : "Custom";
+}
+
+interface BackendProfileDialogState {
+  bundle: PipelineExport;
+  inspection: BackendProfilesInspectionResponse;
+}
 
 export default function PipelinesPage() {
   const router = useRouter();
@@ -26,24 +61,34 @@ export default function PipelinesPage() {
   const { activeProjectId } = useActiveProject();
   const { data: activeProject } = useProject(activeProjectId);
   const importPipeline = useImportPipeline();
+  const inspectBackends = useInspectPipelineImportBackends();
   const archive = useArchivePipeline();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [backendDialog, setBackendDialog] =
+    useState<BackendProfileDialogState | null>(null);
+  const confirmDestructive = useConfirmDestructive();
 
   const handleImportClick = () => {
     setImportError(null);
     fileInputRef.current?.click();
   };
 
-  const handleArchive = (id: string, name: string) => {
-    if (
-      !window.confirm(
-        `Archive pipeline "${name}"? Run history is preserved; the pipeline disappears from the list. Agents it used stay intact.`,
-      )
-    ) {
+  const handleArchive = async (id: string, name: string) => {
+    const ok = await confirmDestructive({
+      title: "Archive pipeline",
+      description: `Archive pipeline "${name}"? Run history is preserved; the pipeline disappears from the list. Agents it used stay intact.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(id);
+  };
+
+  const importBundle = async (bundle: PipelineExport) => {
+    const created = await importPipeline.mutateAsync(bundle);
+    router.push(`/pipelines/${created.id}/edit`);
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -72,8 +117,24 @@ export default function PipelinesPage() {
     }
 
     try {
-      const created = await importPipeline.mutateAsync(parsed);
-      router.push(`/pipelines/${created.id}/edit`);
+      if (bundleHasBackendProfiles(parsed)) {
+        const inspection = await inspectBackends.mutateAsync(parsed);
+        if (hasInspectableProfiles(inspection)) {
+          setBackendDialog({ bundle: parsed, inspection });
+          return;
+        }
+      }
+      await importBundle(parsed);
+    } catch (err) {
+      setImportError(formatApiError(err));
+    }
+  };
+
+  const handleConfiguredImport = async (bundle: PipelineExport) => {
+    setImportError(null);
+    try {
+      await importBundle(bundle);
+      setBackendDialog(null);
     } catch (err) {
       setImportError(formatApiError(err));
     }
@@ -95,6 +156,36 @@ export default function PipelinesPage() {
     return out;
   }, [activeProject]);
 
+  // Group + order pipelines (Cortex first, Custom second); drop empty groups.
+  const groupedPipelines = useMemo(() => {
+    const items = data?.items ?? [];
+    const by = new Map<PipelineGroup, typeof items>();
+    for (const p of items) {
+      const g = pipelineGroup(p.name);
+      const arr = by.get(g) ?? [];
+      arr.push(p);
+      by.set(g, arr);
+    }
+    return PIPELINE_GROUP_ORDER.filter((g) => by.has(g)).map((g) => ({
+      group: g,
+      items: by.get(g)!,
+    }));
+  }, [data]);
+
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleGroup = (g: string) =>
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(g)) {
+        next.delete(g);
+      } else {
+        next.add(g);
+      }
+      return next;
+    });
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -107,11 +198,14 @@ export default function PipelinesPage() {
           ) : null}
         </div>
         <div className="flex items-center gap-2">
+          {/* sr-only (not display:none) — some Chromium builds refuse to
+              open the native file dialog when .click() targets a
+              display:none input; an off-screen input fires reliably. */}
           <input
             ref={fileInputRef}
             type="file"
             accept="application/json,.json"
-            className="hidden"
+            className="sr-only"
             onChange={handleFileChange}
             aria-hidden="true"
           />
@@ -119,10 +213,12 @@ export default function PipelinesPage() {
             variant="outline"
             size="sm"
             onClick={handleImportClick}
-            disabled={importPipeline.isPending}
+            disabled={importPipeline.isPending || inspectBackends.isPending}
           >
             <Upload className="h-4 w-4 mr-1" />
-            {importPipeline.isPending ? "Importing…" : "Import JSON"}
+            {importPipeline.isPending || inspectBackends.isPending
+              ? "Importing…"
+              : "Import JSON"}
           </Button>
           <Button asChild size="sm">
             <Link href="/pipelines/new">
@@ -145,7 +241,7 @@ export default function PipelinesPage() {
         </p>
       ) : null}
 
-      {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {isPending && <LoadingState />}
       {isError && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">
@@ -174,70 +270,137 @@ export default function PipelinesPage() {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((pipeline) => {
-                const boundKinds = boundKindsByPipeline.get(pipeline.id) ?? [];
+              {groupedPipelines.map(({ group, items }) => {
+                const isCollapsed = collapsedGroups.has(group);
                 return (
-                <tr
-                  key={pipeline.id}
-                  className="border-b last:border-0 hover:bg-muted/30"
-                >
-                  <td className="px-4 py-3 font-medium">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span>{pipeline.name}</span>
-                      {boundKinds.map((kind) => (
-                        <Badge
-                          key={kind}
-                          variant="info"
-                          className="font-mono text-[10px]"
+                  <Fragment key={group}>
+                    <tr className="border-b bg-muted/40">
+                      <td colSpan={6} className="px-2 py-1.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleGroup(group)}
+                          aria-expanded={!isCollapsed}
+                          className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
                         >
-                          {kind}
-                        </Badge>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground text-xs max-w-md truncate">
-                    {pipeline.description || "—"}
-                  </td>
-                  <td className="px-4 py-3 tabular-nums">
-                    <Badge variant="secondary">{pipeline.nodes.length}</Badge>
-                  </td>
-                  <td className="px-4 py-3 tabular-nums">v{pipeline.version}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    {pipeline.id.slice(0, ID_PREFIX)}…
-                  </td>
-                  <td className="px-4 py-3 text-right space-x-2">
-                    <TriggerRunDialog
-                      pipelineId={pipeline.id}
-                      pipelineName={pipeline.name}
-                      currentVersion={pipeline.version}
-                    >
-                      {(open) => (
-                        <Button variant="outline" size="sm" onClick={open}>
-                          <Play className="h-3.5 w-3.5 mr-1" />
-                          Run
-                        </Button>
-                      )}
-                    </TriggerRunDialog>
-                    <Button asChild variant="outline" size="sm">
-                      <Link href={`/pipelines/${pipeline.id}/edit`}>Edit</Link>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={archive.isPending}
-                      onClick={() => handleArchive(pipeline.id, pipeline.name)}
-                    >
-                      <Archive className="h-3.5 w-3.5 mr-1" />
-                      Archive
-                    </Button>
-                  </td>
-                </tr>
+                          {isCollapsed ? (
+                            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                          )}
+                          {group}
+                          <Badge variant="secondary" className="ml-1">
+                            {items.length}
+                          </Badge>
+                        </button>
+                      </td>
+                    </tr>
+                    {!isCollapsed &&
+                      items.map((pipeline) => {
+                        const boundKinds =
+                          boundKindsByPipeline.get(pipeline.id) ?? [];
+                        return (
+                          <tr
+                            key={pipeline.id}
+                            className="border-b last:border-0 hover:bg-muted/30"
+                          >
+                            <td className="px-4 py-2 font-medium">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{pipeline.name}</span>
+                                {boundKinds.map((kind) => (
+                                  <Badge
+                                    key={kind}
+                                    variant="info"
+                                    className="font-mono text-[10px]"
+                                  >
+                                    {kind}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 text-muted-foreground text-xs max-w-xs truncate">
+                              {pipeline.description || "—"}
+                            </td>
+                            <td className="px-4 py-2 tabular-nums">
+                              <Badge variant="secondary">
+                                {pipeline.nodes.length}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2 tabular-nums">
+                              v{pipeline.version}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+                              {pipeline.id.slice(0, ID_PREFIX)}…
+                            </td>
+                            <td className="px-4 py-2 text-right space-x-1 whitespace-nowrap">
+                              <TriggerRunDialog
+                                pipelineId={pipeline.id}
+                                pipelineName={pipeline.name}
+                                currentVersion={pipeline.version}
+                              >
+                                {(open) => (
+                                  <Tooltip label="Run pipeline">
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={open}
+                                      aria-label="Run pipeline"
+                                    >
+                                      <Play className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </Tooltip>
+                                )}
+                              </TriggerRunDialog>
+                              <Tooltip label="Edit pipeline">
+                                <Button
+                                  asChild
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                >
+                                  <Link
+                                    href={`/pipelines/${pipeline.id}/edit`}
+                                    aria-label="Edit pipeline"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </Link>
+                                </Button>
+                              </Tooltip>
+                              <Tooltip label="Archive pipeline">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  aria-label="Archive pipeline"
+                                  disabled={archive.isPending}
+                                  onClick={() =>
+                                    handleArchive(pipeline.id, pipeline.name)
+                                  }
+                                >
+                                  <Archive className="h-3.5 w-3.5" />
+                                </Button>
+                              </Tooltip>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </Fragment>
                 );
               })}
             </tbody>
           </table>
         </Card>
       )}
+      {backendDialog ? (
+        <BackendProfileImportDialog
+          open
+          bundle={backendDialog.bundle}
+          inspection={backendDialog.inspection}
+          pending={importPipeline.isPending}
+          onCancel={() => setBackendDialog(null)}
+          onConfirm={handleConfiguredImport}
+        />
+      ) : null}
     </div>
   );
 }

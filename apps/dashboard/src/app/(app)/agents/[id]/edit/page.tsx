@@ -1,7 +1,8 @@
 "use client";
 
 import { useId, useState, use } from "react";
-import { useRouter } from "next/navigation";
+import { LoadingState } from "@/components/ui/spinner";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy, Download } from "lucide-react";
 import { useAgent, useUpdateAgent } from "@/hooks/api";
@@ -10,11 +11,15 @@ import { formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentForm, type AgentFormValues } from "@/components/agents/agent-form";
+import { agentFormAssistantContext } from "@/components/agents/agent-form/types";
+import { ManagedAgentBanner } from "@/components/agents/managed-agent-banner";
 import { AgentTabs, type AgentTab } from "@/components/agents/agent-tabs";
 import {
   AgentTestPanel,
   type VariantBOverrides,
 } from "@/components/agents/agent-test-panel";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
+import { usePublishAssistantContext } from "@/components/assistant/assistant-context";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function EditAgentPage({
@@ -24,9 +29,24 @@ export default function EditAgentPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: agent, isPending, isError, error } = useAgent(id);
   const update = useUpdateAgent();
-  const [tab, setTab] = useState<AgentTab>("form");
+  // #724 part 4 — consume the "agent-test" prefill on first render. The
+  // caller (the run-detail panel's "Open in agent tester" button) stashes
+  // {target:"agent-test", values:{agent_id, input_state}} then navigates
+  // here with ?tab=test. Read the values once, seed the test panel's
+  // initial context with the JSON-stringified input state, and let the
+  // URL hint drop us on the Test tab.
+  const { consumePrefill } = useAssistantPrefill();
+  const [prefill] = useState(() => consumePrefill("agent-test"));
+  const initialTab: AgentTab =
+    searchParams?.get("tab") === "test" ? "test" : "form";
+  const [tab, setTab] = useState<AgentTab>(initialTab);
+  const [initialContextText] = useState(() => {
+    const inputState = prefill?.input_state;
+    return inputState != null ? JSON.stringify(inputState, null, 2) : undefined;
+  });
   const [snapshot, setSnapshot] = useState<{
     values: AgentFormValues;
     valid: boolean;
@@ -42,8 +62,12 @@ export default function EditAgentPage({
   const formPanelId = useId();
   const testPanelId = useId();
 
+  // Publish the (non-secret) edited agent shape to the assistant (#689 phase 2).
+  // Before the early returns so the hook order stays stable across renders.
+  usePublishAssistantContext(agentFormAssistantContext(snapshot?.values, "edit"));
+
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (
@@ -95,6 +119,8 @@ export default function EditAgentPage({
           </Button>
         </div>
       </div>
+
+      <ManagedAgentBanner agent={agent} />
 
       <AgentTabs
         tab={tab}
@@ -152,6 +178,7 @@ export default function EditAgentPage({
             <AgentTestPanel
               draft={draft}
               draftBlockedReason={draftBlockedReason}
+              initialContextText={initialContextText}
               onPromoteVariantB={(overrides) => {
                 setPromoted(overrides);
                 // Bump key → AgentForm remounts with the merged

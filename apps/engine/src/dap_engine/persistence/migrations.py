@@ -1,35 +1,67 @@
 """In-code schema migrations (#109).
 
-Run **after** ``Base.metadata.create_all`` in the engine lifespan.
+**Frozen as of v0.3.x (audit E6).** New schema changes land as
+Alembic revisions under ``dap_engine/alembic/versions/`` — do NOT
+extend ``MIGRATIONS[]``. This file stays so the legacy idempotent
+upgrade path keeps working for pre-Alembic dev DBs.
 
-Why this exists:
+Run **after** ``Base.metadata.create_all`` and **before**
+``_apply_alembic_migrations`` in the engine lifespan (see
+``persistence/db.py``).
+
+Coexistence contract (audit E6):
+    The engine's startup sequence is:
+
+    1. ``Base.metadata.create_all(engine)`` — creates every table
+       currently declared by the ORM. No-op for existing tables.
+    2. ``apply_migrations(engine)`` — this module. Idempotent. On a
+       fresh DB the ALTER bodies short-circuit via ``_column_exists``
+       guards; on a pre-#109 dev DB they bring the schema forward to
+       v0.3.x baseline.
+    3. ``_apply_alembic_migrations(engine)`` — ``alembic upgrade
+       head``. The baseline revision (``0001_baseline``) is a no-op
+       marker; future revisions chain from there. On first Alembic
+       run against an existing DB this just creates
+       ``alembic_version`` and stamps the baseline.
+
+    Net effect: pre-existing dev DBs keep upgrading through
+    ``MIGRATIONS[]`` (no operator action required), then Alembic
+    takes over for everything that lands after v0.3.x.
+
+Why this exists at all:
     SQLAlchemy's ``create_all`` only creates *new* tables. It doesn't
     ALTER existing ones, so any column added in a later release is
     invisible on a pre-existing dev DB. We hit this with
     ``runs.project_id`` (#64); the ORM then crashed every list-runs
-    call until the operator hand-applied the ALTER.
+    call until the operator hand-applied the ALTER. The legacy
+    migrations close that gap for everything that landed before
+    Alembic was introduced.
 
-Why not Alembic (yet):
-    At v0.x scale (single-user, SQLite, dev-grade) the few schema
-    changes per release fit comfortably in a hand-written list. The
-    intent is to switch to Alembic once schema stabilises and we get
-    a second deployment that needs migrations applied independently
-    — see #109 for the rationale.
+Why this list is frozen:
+    The original justification ("dev-grade, single-user SQLite") no
+    longer holds — multi-user OAuth shipped in v0.3.0 and ops want
+    versioned schema management. New schema changes use Alembic so
+    that:
+    - ``alembic revision --autogenerate`` writes migration boilerplate
+      automatically from ORM diff.
+    - ``alembic history`` / ``current`` give operators a clear
+      "what's applied vs. pending" view.
+    - Multi-deployment ops can apply migrations out-of-band
+      (``cd apps/engine && alembic upgrade head``) without spinning
+      up the engine process.
 
-Contract for new migrations:
+Historic contract for the 18 frozen migrations (no longer extended):
     - Pure SQL, idempotent. ``ALTER TABLE … IF NOT EXISTS`` doesn't
       exist in SQLite — guard with ``_column_exists`` (which uses
       SQLAlchemy's ``Inspector``, not f-string PRAGMA) before the
       ALTER instead.
     - Forward-only. We don't track down-migrations.
-    - Append to :data:`MIGRATIONS` in order. Names are stable string
-      keys recorded in ``schema_migrations``; never rename a name once
-      it ships, or operators will re-run the migration on next start.
+    - Stable string names recorded in ``schema_migrations``; never
+      rename a name once it shipped, or operators will re-run the
+      migration on next start.
     - Each migration runs in its own transaction with an atomic
       INSERT OR IGNORE claim on its name, so concurrent engine
       instances racing the same SQLite file don't double-apply.
-      A failure rolls the transaction back (including the claim)
-      and stops lifespan startup loudly.
 """
 
 from __future__ import annotations
@@ -628,6 +660,66 @@ def _015_promote_system_user_to_legacy_admin(conn: Connection) -> None:
     )
 
 
+def _018_create_instance_env_vars_table(conn: Connection) -> None:
+    """#388 — instance-level env vars (shared across projects, merged at runtime).
+
+    Fresh DBs already have this from ``Base.metadata.create_all``; this
+    migration only fires on pre-#388 dev DBs. The column types mirror
+    the ORM declarations (``InstanceEnvVarORM``) so SQLite and Postgres
+    agree. The unique index on ``key`` lets upserts target the row in
+    one query (``SELECT ... WHERE key = ?``) instead of scanning.
+    """
+    inspector = inspect(conn)
+    if inspector.has_table("instance_env_vars"):
+        return
+
+    is_pg = conn.dialect.name == "postgresql"
+    id_type = "UUID" if is_pg else "VARCHAR(36)"
+    ts_type = "TIMESTAMP WITH TIME ZONE" if is_pg else "TIMESTAMP"
+
+    conn.execute(
+        text(
+            f"""
+            CREATE TABLE instance_env_vars (
+                id {id_type} PRIMARY KEY,
+                key VARCHAR(255) NOT NULL,
+                ciphertext TEXT NOT NULL,
+                preview VARCHAR(8) NOT NULL,
+                created_at {ts_type} NOT NULL,
+                updated_at {ts_type} NOT NULL,
+                CONSTRAINT uq_instance_env_vars_key UNIQUE (key)
+            )
+            """
+        )
+    )
+
+
+def _017_runs_add_gate_payload(conn: Connection) -> None:
+    """#364 — store gate context (task_assignments, spec) on the Run row.
+
+    Allows the dashboard to display task assignments when a run is paused at
+    an approval gate, without querying the LangGraph checkpoint store.
+    Fresh DBs already have the column from ``create_all``.
+    """
+    if _column_exists(conn, "runs", "gate_payload"):
+        return
+    col_type = "JSONB" if conn.dialect.name == "postgresql" else "TEXT"
+    conn.execute(text(f"ALTER TABLE runs ADD COLUMN gate_payload {col_type}"))
+
+
+def _016_runs_add_paused_at_node(conn: Connection) -> None:
+    """#363 — store which gate node caused the run to pause.
+
+    Allows the dashboard to show a targeted "Approve" action instead of
+    the generic "Resume" button when a run is paused at an approval gate.
+    Fresh DBs already have the column from ``create_all``; this guards
+    upgrades from pre-#363 dev DBs.
+    """
+    if _column_exists(conn, "runs", "paused_at_node"):
+        return
+    conn.execute(text("ALTER TABLE runs ADD COLUMN paused_at_node TEXT"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(name="001_runs_add_project_id", apply=_001_runs_add_project_id),
     Migration(
@@ -658,6 +750,12 @@ MIGRATIONS: list[Migration] = [
     Migration(
         name="015_promote_system_user_to_legacy_admin",
         apply=_015_promote_system_user_to_legacy_admin,
+    ),
+    Migration(name="016_runs_add_paused_at_node", apply=_016_runs_add_paused_at_node),
+    Migration(name="017_runs_add_gate_payload", apply=_017_runs_add_gate_payload),
+    Migration(
+        name="018_create_instance_env_vars_table",
+        apply=_018_create_instance_env_vars_table,
     ),
 ]
 

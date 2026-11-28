@@ -1,34 +1,26 @@
 """Tests for ``GET /agents/{id}/export`` and ``POST /agents/import`` (#94).
 
 Round-trip + the full set of 422 paths (extra field, unknown
-runtime_id, unknown PipelineState field in input_schema,
-schema_version mismatch).
+runtime_id, malformed schema field reference, schema_version mismatch).
 """
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
-
-from tests.smoke._auth import authed_test_client
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory(prefix="dap-agent-export-") as tmp:
-        config = EngineConfig(
-            db_path=str(Path(tmp) / "state.db"),
-            auth_jwt_secret="smoke-secret",
-        )
-        app = create_app(config)
-        with authed_test_client(app) as c:
-            yield c
+def client(authed_client: TestClient) -> TestClient:
+    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
+
+    Kept as a local alias because most test bodies in this file already
+    take a ``client: TestClient`` parameter; renaming them all would
+    bloat the X1 diff without changing behaviour.
+    """
+    return authed_client
 
 
 def _agent_payload(**overrides: Any) -> dict[str, Any]:
@@ -99,6 +91,8 @@ def test_export_redacts_secret_like_keys(client: TestClient) -> None:
         runtime_config={
             "provider": "anthropic",
             "model_id": "claude-haiku-4-5",
+            "max_tokens": 1024,
+            "tokenizer": "claude",
             "api_key": "sk-ant-live-secret-XYZ",
             "auth_token": "bearer-XYZ",
             "nested": {"openai_api_key": "sk-live-secret"},
@@ -110,6 +104,8 @@ def test_export_redacts_secret_like_keys(client: TestClient) -> None:
     runtime = body["agent"]["runtime_config"]
     assert runtime["provider"] == "anthropic"
     assert runtime["model_id"] == "claude-haiku-4-5"
+    assert runtime["max_tokens"] == 1024
+    assert runtime["tokenizer"] == "claude"
     assert runtime["api_key"] == "<redacted>"
     assert runtime["auth_token"] == "<redacted>"
     assert runtime["nested"]["openai_api_key"] == "<redacted>"
@@ -141,6 +137,24 @@ def test_round_trip_preserves_all_portable_fields(client: TestClient) -> None:
     assert imported["constraints"] == created["constraints"]
     assert imported["budget_limit_usd"] == created["budget_limit_usd"]
     assert imported["timeout_ms"] == created["timeout_ms"]
+
+
+def test_round_trip_preserves_extension_schema_fields(client: TestClient) -> None:
+    created = client.post(
+        "/agents",
+        json=_agent_payload(
+            input_schema=["issue_number", "extensions.pr_url"],
+            output_schema=["files_changed", "__audit"],
+        ),
+    ).json()
+    exported = client.get(f"/agents/{created['id']}/export").json()
+
+    response = client.post("/agents/import", json=exported)
+    assert response.status_code == 201, response.text
+    imported = response.json()
+
+    assert imported["input_schema"] == ["issue_number", "extensions.pr_url"]
+    assert imported["output_schema"] == ["files_changed", "__audit"]
 
 
 # ---------------------------------------------------------------------------
@@ -203,28 +217,28 @@ def test_import_rejects_unknown_runtime_id(client: TestClient) -> None:
     assert "no adapter" in detail
 
 
-def test_import_rejects_unknown_field_in_input_schema(client: TestClient) -> None:
+def test_import_rejects_malformed_field_in_input_schema(client: TestClient) -> None:
     response = client.post(
         "/agents/import",
         json={
             "schema_version": "agent-export/1",
-            "agent": _agent_payload(input_schema=["definitely_not_a_field"]),
+            "agent": _agent_payload(input_schema=["extensions."]),
         },
     )
     assert response.status_code == 422
-    assert "definitely_not_a_field" in str(response.json()["detail"])
+    assert "extensions." in str(response.json()["detail"])
 
 
-def test_import_rejects_unknown_field_in_output_schema(client: TestClient) -> None:
+def test_import_rejects_malformed_field_in_output_schema(client: TestClient) -> None:
     response = client.post(
         "/agents/import",
         json={
             "schema_version": "agent-export/1",
-            "agent": _agent_payload(output_schema=["bogus_output"]),
+            "agent": _agent_payload(output_schema=["repo.url"]),
         },
     )
     assert response.status_code == 422
-    assert "bogus_output" in str(response.json()["detail"])
+    assert "repo.url" in str(response.json()["detail"])
 
 
 def test_import_rejects_blank_name(client: TestClient) -> None:

@@ -18,7 +18,13 @@ from typing import Any
 import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -44,7 +50,11 @@ class FlakeyAdapter:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.calls.append(task.execution_id)
         if len(self.calls) <= self.fail_first:
             return RuntimeResult(
@@ -121,6 +131,10 @@ def _create_pipeline(client: TestClient, agent_id: str, num_nodes: int = 2) -> s
                 "max_attempts": 3,
                 "budget_limit_usd": 5.0,
                 "approval_required_nodes": [],
+                # This suite verifies retry/skip behavior, not terminal-status
+                # enforcement (#628). Opt out so a residual ``running`` keeps the
+                # legacy "no node raised = success" semantics these tests rely on.
+                "requires_terminal_final_status": False,
             },
         },
     )

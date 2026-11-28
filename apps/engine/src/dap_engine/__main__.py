@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 import os
+import shlex
 
 import uvicorn
 
-from dap_engine.app import EngineConfig, create_app, parse_cors_origins
+from dap_engine.app import EngineConfig, create_app, parse_cors_origins, parse_retention_days
+from dap_engine.logging import configure_logging
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    configure_logging()
 
     config = EngineConfig(
         db_path=os.environ.get("DAP_DB_PATH", "./.dap/state.db"),
@@ -26,9 +23,18 @@ def main() -> None:
         host=os.environ.get("DAP_ENGINE_HOST", "127.0.0.1"),
         port=int(os.environ.get("DAP_ENGINE_PORT", "7333")),
         dry_run_budget_usd=float(os.environ.get("DAP_DRY_RUN_BUDGET_USD", "0.50")),
+        # Prompt-box generator (cortex#1774 S5): e.g.
+        # ``cortex pipeline new --json --out /srv/dap-generated``. Unset → off.
+        pipeline_generator_command=(
+            shlex.split(os.environ.get("DAP_PIPELINE_GENERATOR_COMMAND", "")) or None
+        ),
+        pipeline_generator_timeout_seconds=float(
+            os.environ.get("DAP_PIPELINE_GENERATOR_TIMEOUT_SECONDS", "600")
+        ),
         # PG checkpointer pool sizing — only used when DAP_DATABASE_URL is set.
         pg_pool_min_size=int(os.environ.get("DAP_PG_POOL_MIN_SIZE", "4")),
         pg_pool_max_size=int(os.environ.get("DAP_PG_POOL_MAX_SIZE", "10")),
+        pg_pool_reconnect_timeout=float(os.environ.get("DAP_PG_POOL_RECONNECT_TIMEOUT", "300")),
         # Comma-separated CORS allow-list — None falls back to the local-dev
         # default in EngineConfig (#259).
         cors_origins=parse_cors_origins(os.environ.get("DAP_CORS_ORIGINS")),
@@ -63,6 +69,38 @@ def main() -> None:
         oauth_github_client_secret=os.environ.get("DAP_OAUTH_GITHUB_CLIENT_SECRET"),
         oauth_google_client_id=os.environ.get("DAP_OAUTH_GOOGLE_CLIENT_ID"),
         oauth_google_client_secret=os.environ.get("DAP_OAUTH_GOOGLE_CLIENT_SECRET"),
+        # Template registry (#385). CSV of trusted hostnames the
+        # ``/pipelines/import-from-url`` endpoint will fetch from.
+        # Empty (default) → endpoint returns 422 (opt-in feature).
+        template_registry_allowed_hosts=[
+            h.strip()
+            for h in os.environ.get("DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        ],
+        template_registry_auth_token=(
+            os.environ.get("DAP_TEMPLATE_REGISTRY_AUTH_TOKEN", "").strip() or None
+        ),
+        # Fernet key for the instance env-var store (#388). Must persist
+        # across restarts — encrypted rows written today must decrypt
+        # tomorrow. Generate with:
+        #   python -c 'from cryptography.fernet import Fernet; \
+        #              print(Fernet.generate_key().decode())'
+        # When unset the admin write paths refuse (503), so the operator
+        # can't accidentally store rows that won't decrypt on restart.
+        instance_env_vars_key=(os.environ.get("DAP_INSTANCE_ENV_VARS_KEY", "").strip() or None),
+        allow_bash_runtime_for_non_admin=(
+            os.environ.get("DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        ),
+        # EU AI Act interaction log (#722). Enabled by default; retention
+        # window in days drives the startup purge (0 = keep forever).
+        interaction_log_enabled=(
+            os.environ.get("DAP_INTERACTION_LOG_ENABLED", "1").strip().lower()
+            not in ("0", "false", "no", "off")
+        ),
+        interaction_log_retention_days=parse_retention_days(
+            os.environ.get("DAP_INTERACTION_LOG_RETENTION_DAYS")
+        ),
     )
 
     app = create_app(config)

@@ -2,14 +2,17 @@ name: Release
 
 # Triggered by ``git push`` of a ``v*.*.*`` tag (or ``v*.*.*-rc*`` for
 # pre-releases). Builds every first-party wheel, ships the dashboard
-# bundle inside dap-cli, publishes to PyPI via trusted-publisher
-# OIDC, builds a multi-platform Docker image, pushes to GHCR, and
-# creates a GitHub Release with the auto-generated changelog
-# between this tag and the previous one.
+# bundle inside dap-cli, publishes to PyPI via trusted-publisher OIDC,
+# builds a multi-platform Docker image, pushes to GHCR, and creates a
+# GitHub Release with the auto-generated changelog between this tag
+# and the previous one.
 #
 # Operator-side prerequisites (one-time, see docs/release.md):
-#   1. Each PyPI package registered with this repo as a trusted
-#      publisher (no API token required).
+#   1. Each PyPI project has a trusted-publisher rule pointing at
+#      this repo + ``release.yml`` + ``pypi`` environment. No
+#      long-lived API token needs to live in the repo — the
+#      ``pypa/gh-action-pypi-publish`` step mints a short-lived OIDC
+#      token at the moment of publish.
 #   2. ``contents: write`` + ``id-token: write`` + ``packages: write``
 #      permissions enabled at the workflow level (declared below).
 #
@@ -36,9 +39,14 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  UV_VERSION: "0.8.15"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
+
 jobs:
   # ---------------------------------------------------------------
-  # Stage 1: build all six first-party wheels (+ sdist for each).
+  # Stage 1: build all five published first-party wheels (+ sdist for each).
   # The dap-cli wheel gets the dashboard bundle staged into it
   # before the build runs.
   # ---------------------------------------------------------------
@@ -49,7 +57,7 @@ jobs:
       version: ${{ steps.tag.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need the full history so ``git log`` can render the
           # changelog between the previous tag and this one.
@@ -80,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for pkg in packages/types packages/runtimes packages/prompt-dsl packages/cortex apps/engine apps/cli; do
+          for pkg in packages/types packages/runtimes packages/prompt-dsl apps/engine apps/cli; do
               actual=$(grep -E '^version = ' "${pkg}/pyproject.toml" | head -1 | sed -E 's/version = "(.*)"/\1/')
               if [[ "${actual}" != "${EXPECTED}" ]]; then
                   echo "::error file=${pkg}/pyproject.toml::version=${actual} but tag is v${EXPECTED}"
@@ -96,19 +104,22 @@ jobs:
           fi
 
       - name: Set up Node (for dashboard bundle)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.0.0 --activate
-
-      - uses: astral-sh/setup-uv@v3
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
         with:
-          version: "0.5.18"
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
+
+      - name: Check release metadata
+        run: uv run --frozen python scripts/check-release-metadata.py
 
       - name: Build dashboard bundle
         # This stages apps/cli/src/dap_cli/_dashboard/ — must run
@@ -123,21 +134,35 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for pkg in packages/types packages/runtimes packages/prompt-dsl packages/cortex apps/engine apps/cli; do
+          for pkg in packages/types packages/runtimes packages/prompt-dsl apps/engine apps/cli; do
               echo "==> building $pkg"
-              uv build --out-dir dist/ "$pkg"
+              uv build --no-sources --out-dir dist/ "$pkg"
           done
           ls -la dist/
 
       - name: Upload wheels artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels
           path: dist/
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # Stage 2: publish wheels + sdists to PyPI via trusted-publisher.
+  # Stage 2: publish wheels + sdists to PyPI via trusted-publisher OIDC.
+  #
+  # Auth model: ``pypa/gh-action-pypi-publish`` reads the OIDC token
+  # automatically when the workflow has ``id-token: write`` (declared
+  # at the workflow level above). No ``password:`` parameter — the
+  # short-lived OIDC token is minted at publish time by PyPI's
+  # trusted-publisher rule for each project.
+  #
+  # ``environment: pypi`` scopes publishing to a specific GitHub
+  # Environment. PyPI's trusted-publisher rule for each of the six
+  # projects requires environment name ``pypi`` to match — see
+  # ``docs/release.md`` for the one-time registration steps.
+  # Attach required-reviewers / tag-pattern restrictions to this
+  # environment in repo settings if you want manual release gating.
+  #
   # Skipped on workflow_dispatch (no tag → no release).
   # ---------------------------------------------------------------
   publish-pypi:
@@ -145,16 +170,13 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     environment:
-      # GitHub environment that PyPI's trusted-publisher rules point
-      # at. The token is minted JIT via OIDC — no long-lived secret
-      # needs to live in the repo. See docs/release.md for setup.
       name: pypi
       url: https://pypi.org/project/dap-cli/
     timeout-minutes: 10
 
     steps:
       - name: Download wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wheels
           path: dist/
@@ -183,17 +205,17 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up QEMU
         # arm64 cross-build needs QEMU on x86 runners.
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -202,7 +224,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build + push multi-platform image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -243,12 +265,12 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Download wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wheels
           path: dist/
@@ -285,7 +307,7 @@ jobs:
           cat release_notes.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # ``v${VERSION}`` is the tag that triggered this run.
           tag_name: ${{ github.ref_name }}

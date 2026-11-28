@@ -37,19 +37,6 @@ def with_api_key() -> Iterator[None]:
             os.environ["ANTHROPIC_API_KEY"] = original
 
 
-@pytest.fixture
-def without_any_api_key() -> Iterator[None]:
-    """Strip every provider env var so healthcheck reports unavailable."""
-    keys = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY")
-    saved = {k: os.environ.pop(k, None) for k in keys}
-    try:
-        yield
-    finally:
-        for k, v in saved.items():
-            if v is not None:
-                os.environ[k] = v
-
-
 def _task(**runtime_config_overrides: Any) -> RuntimeTask:
     runtime_config: dict[str, Any] = {
         "provider": "anthropic",
@@ -88,7 +75,7 @@ def _mock_message(text: str = "ok", **usage_overrides: int) -> SimpleNamespace:
 
 
 async def test_healthcheck_without_any_provider_configured(
-    without_any_api_key: None,
+    no_provider_env: None,
 ) -> None:
     adapter = ApiCallAdapter()
     health = await adapter.healthcheck()
@@ -132,6 +119,8 @@ def test_provider_registry_holds_only_metadata() -> None:
         # module_path is the stringly-named module, not the imported module
         assert isinstance(info.module_path, str)
         assert info.module_path.startswith("dap_runtimes.adapters._providers._")
+        assert info.config_fields
+        assert any(field.key == "model_id" and field.required for field in info.config_fields)
 
 
 async def test_unknown_provider_returns_error(with_api_key: None) -> None:
@@ -165,7 +154,7 @@ async def test_default_provider_is_anthropic(with_api_key: None) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_missing_api_key_returns_error(without_any_api_key: None) -> None:
+async def test_missing_api_key_returns_error(no_provider_env: None) -> None:
     adapter = ApiCallAdapter()
     result = await adapter.execute(_task())
     assert result.success is False

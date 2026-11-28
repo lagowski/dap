@@ -1,239 +1,392 @@
+<p align="center"><a href="docs/quick-start.md"><picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/banner-light.png">
+  <img alt="DAP: deterministic agent pipelines, the state machine decides what runs next, never the model" src="docs/images/banner.png" width="100%">
+</picture></a></p>
+
+<p align="center"><b>Deterministic agent pipelines: the state machine decides what runs next, never the model.</b><br>
+<a href="#installation">Install</a> · <a href="#demo">Demo</a> · <a href="#how-it-works">How it works</a> · <a href="docs/architecture.md">Docs</a> · <a href="docs/why-dap.md">Why DAP</a></p>
+
+<p align="center">
+<a href="https://github.com/lagowski/dap/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lagowski/dap/ci.yml?branch=develop&style=flat-square&labelColor=1a1a1a&label=CI"></a>
+<a href="https://pypi.org/project/dap-cli/"><img alt="PyPI: dap-cli" src="https://img.shields.io/badge/pypi-dap--cli-e0643c?style=flat-square&labelColor=1a1a1a"></a>
+<a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-e0643c?style=flat-square&labelColor=1a1a1a"></a>
+<img alt="Python 3.13+" src="https://img.shields.io/badge/python-3.13%2B-e0643c?style=flat-square&labelColor=1a1a1a">
+<img alt="10 runtime adapters" src="https://img.shields.io/badge/runtimes-10-e0643c?style=flat-square&labelColor=1a1a1a">
+</p>
+
 # DAP — Deterministic Agent Pipeline
 
-[![CI](https://github.com/rafeekpro/dap/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rafeekpro/dap/actions/workflows/ci.yml)
+## Demo
 
-DAP is a self-hostable, multi-user system for building and executing **deterministic agent pipelines**. Pipelines are versioned DAGs of agents — each agent renders a Jinja → XML prompt and dispatches it to a runtime adapter (Anthropic / OpenAI / Gemini / GLM SDK, claude-code / gemini-cli / codex / aider CLIs, plain bash, or HTTP). Execution runs on LangGraph with full pause / resume / abort / retry / skip control. Anti-emergent by design: the state machine, not the model, decides what runs next.
+<p align="center"><img alt="DAP dashboard: import the example pipeline, run it, the run pauses at the human approval gate" src="docs/images/demo.gif" width="900"></p>
 
-## Install paths
+<sub>Screenshots of the real dashboard running the example python-func pipeline from <code>examples/</code> on local SQLite.</sub>
 
-Three supported install paths, in order of complexity:
+## How it works
 
-1. **PyPI** — `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`. Single-machine. The wheel ships with the bundled Next.js dashboard; `dap start` spawns the dashboard alongside the engine when `node` is on `PATH`, and runs engine-only otherwise (the CLI prints a hint).
-2. **Docker** — `ghcr.io/rafeekpro/dap:0.3.0` for shared / production deployments. See [`examples/standalone/`](examples/standalone/) for a working compose file with SQLite (default) or Postgres.
-3. **Source** — for contributors. The `scripts/setup` + `scripts/dev` flow below.
+<p align="center"><img alt="How DAP works: dashboard or CLI, engine, LangGraph state machine, prompt DSL, runtime adapter, approval gate, database" src="docs/images/how-it-works.png" width="100%"></p>
 
-See [**docs/self-hosting.md**](docs/self-hosting.md) for full deployment, OAuth setup, production checklist, and troubleshooting.
+The dashboard and CLI talk REST to the FastAPI engine. LangGraph walks the versioned DAG and picks every next node;
+each node renders a Jinja to XML prompt and hands it to one runtime adapter. Approval gates interrupt the run until a
+human approves, and every step is stored in SQLite or Postgres.
 
-### Upgrading from 0.0.1
+> **Project status:** active development. The latest tagged release is **v0.4.0** (on PyPI as
+> `dap-cli` and on GHCR as `ghcr.io/lagowski/dap`); `develop` is well ahead of that tag (see
+> [CHANGELOG.md](CHANGELOG.md) → *Unreleased* and the release map in
+> [docs/architecture.md](docs/architecture.md#what-has-been-built)).
+> **DAP is self-hosted only. There is no public hosted service.** You run the engine and
+> dashboard on your own machine or server.
 
-v0.3.0 introduces multi-user auth on top of the existing engine. The first time you start it against a pre-v0.3 `.dap/state.db`, the auto-migration creates a `legacy-admin@local` admin and **prints the generated password exactly once on stdout**:
+## Description
 
+DAP is a self-hostable, multi-user system for building and running **deterministic agent
+pipelines**. A pipeline is a versioned DAG of agents. Each agent renders a Jinja → XML
+prompt and sends it to a runtime adapter: the Anthropic, OpenAI, Gemini, GLM or OpenRouter
+SDKs; the claude-code, gemini-cli, codex or aider CLIs; GitHub operations; plain bash; an
+in-process Python function; or HTTP. Execution runs on LangGraph with pause, resume, abort,
+retry and skip, live progress for each node, and human approval gates. The design is
+anti-emergent: the state machine decides what runs next, never the model.
+
+## Visuals
+
+### How the parts fit together
+
+```mermaid
+flowchart LR
+  user([Browser]) --> dash["apps/dashboard<br/>Next.js :3000"]
+  cli["apps/cli<br/>dap"] -->|REST + API token| engine
+  dash -->|REST| engine["apps/engine<br/>FastAPI + LangGraph :7333"]
+  engine --> db[("SQLite .dap/state.db<br/>or PostgreSQL")]
+  engine --> dsl["packages/prompt-dsl<br/>Jinja → XML"]
+  engine --> rt["packages/runtimes<br/>10 adapters"]
+  rt --> sdk["api-call: Anthropic / OpenAI / Gemini / GLM / OpenRouter"]
+  rt --> clis["claude-code / gemini-cli / codex / aider"]
+  rt --> other["github / bash / python-func / http"]
+  types["packages/types<br/>shared Pydantic models"] -.-> engine
+  types -.-> rt
 ```
-Migrated single-user install. Bootstrap admin: legacy-admin@local
-with password=<random>. Change immediately at /admin/users.
-```
 
-Capture the password from the engine log on first boot. If you miss it: `dap init --force --admin-email=legacy-admin@local --admin-password=<new>` re-promotes the existing row with the new password. Existing pipelines / agents / projects / runs are preserved and owned by the legacy admin — re-assign ownership from `/admin/users` as you onboard your team.
+## Installation
 
-Scripts that hit `localhost:7333` unauthenticated need an API token now (`/admin/api-tokens` → mint → set `Authorization: Bearer dap_*`). See [`docs/auth.md`](docs/auth.md#api-tokens) for the lifecycle.
+**Try it in one command:** `pipx run dap-cli demo`. It starts a throwaway instance (a temp
+SQLite database, removed on Ctrl-C), runs the example pipeline (greet → shout → gate) up to
+its human-approval gate and prints the run's dashboard URL and a one-time admin login, so you
+can approve the gate in the UI. No API key, `gh` login or network. `dap demo --no-dashboard`
+approves the gate itself and exits.
 
-## Requirements (source install)
+There are three supported install paths, from simplest to most involved:
 
-- Python 3.13+
+1. **PyPI**: `pipx install dap-cli && dap init --admin-email=you@example.com && dap start`.
+   This runs on a single machine. The wheel bundles the Next.js dashboard. `dap start`
+   starts the dashboard alongside the engine when `node` is on `PATH`, and otherwise runs
+   the engine only (the CLI prints a hint).
+2. **Docker**: `ghcr.io/lagowski/dap:0.4.0`, for shared or production deployments.
+   [`examples/standalone/`](examples/standalone/) has a working compose file, with SQLite
+   (the default) or Postgres.
+3. **Source**: for contributors, and the only way to get what's on `develop`. See below.
+
+**Installing for the first time?** [**docs/quick-start.md**](docs/quick-start.md) helps you
+pick a path with three questions, then gives copy-paste commands for it. For deployment, the
+production checklist and troubleshooting, see [docs/self-hosting.md](docs/self-hosting.md).
+For local-only, LAN and SSH tunnel setups, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### Requirements (source install)
+
+- Python 3.13+ (`.python-version` pins 3.13)
 - [uv](https://docs.astral.sh/uv/) 0.8+
 - Node 22+
 - pnpm 9+
 
-`scripts/setup` checks all four for you, so you don't need to verify by hand. If you do want to install them yourself: `pyenv install 3.13 && pyenv local 3.13`, `curl -LsSf https://astral.sh/uv/install.sh | sh`, `nvm install 22 && nvm use 22`, `corepack enable && corepack prepare pnpm@latest --activate`.
+`scripts/setup` checks all four for you. To install them yourself:
+`pyenv install 3.13 && pyenv local 3.13`, `curl -LsSf https://astral.sh/uv/install.sh | sh`,
+`nvm install 22 && nvm use 22`, `corepack enable && corepack prepare pnpm@9.15.9 --activate`.
 
-## Install (from source)
+Optional, depending on the runtimes you use: the `claude`, `gemini`, `codex` or `aider`
+CLIs on `PATH`, and `gh auth login` for the example bundles that call GitHub.
+
+### Install from source
 
 ```bash
-git clone https://github.com/rafeekpro/dap && cd dap
+git clone https://github.com/lagowski/dap && cd dap
 ./scripts/setup
 ```
 
-`scripts/setup` is idempotent and walks you through:
+`scripts/setup` is idempotent. It:
 
-1. Pre-flights Python / uv / Node / pnpm versions. Each missing or too-old tool fails with a one-line install hint.
-2. Copies `.env.example` → `.env.local` if it doesn't exist (gitignored — your provider keys stay local).
-3. `uv sync --all-packages` (Python deps for the engine, runtimes, types, prompt-dsl, CLI).
-4. `pnpm install` in `apps/dashboard` (Next.js + React Flow).
-5. Activates `.githooks/pre-push` (blocks accidental pushes to `main` / `develop`).
+1. Checks the Python, uv, Node and pnpm versions. A missing or too-old tool fails with a
+   one-line install hint.
+2. Copies `.env.example` to `.env.local` if `.env.local` doesn't exist. `.env.local` is
+   gitignored, so your provider keys stay local.
+3. Runs `uv sync --all-packages`, which installs the Python deps for the engine, runtimes,
+   types, prompt-dsl and CLI.
+4. Runs `pnpm install` in `apps/dashboard`.
+5. Turns on `.githooks/pre-push`, which blocks accidental pushes to `main` and `develop`.
 
-After it finishes, edit `.env.local` and add at least one provider key — see [Provider keys](#provider-keys) below.
+When it finishes, edit `.env.local` and add at least one provider key (see
+[Configuration](#configuration)).
 
-## Run
+### Upgrading from 0.0.1
+
+Multi-user auth arrived in v0.3. The first start against a pre-v0.3 `.dap/state.db` creates a
+`legacy-admin@local` admin and prints its generated password **once**, on stdout; scripts
+that called `localhost:7333` without auth then need an API token. The steps are in
+[docs/self-hosting.md](docs/self-hosting.md#upgrading-from-001).
+
+## Usage
+
+### Run the stack
 
 ```bash
 ./scripts/dev
 ```
 
-Brings up engine on `http://127.0.0.1:7333` and dashboard on `http://localhost:3000` in one terminal. Both log streams are prefixed (`[engine] …` / `[dashboard] …`); Ctrl+C tears the whole stack down cleanly.
+This starts the engine on `http://127.0.0.1:7333` and the dashboard on
+`http://localhost:3000` in one terminal. Each log line is prefixed `[engine]` or
+`[dashboard]`, and Ctrl+C stops both. `./scripts/dev --install` runs `scripts/setup` first,
+then starts both.
 
-If you want install + immediate launch in one go:
-
-```bash
-./scripts/dev --install      # delegates to scripts/setup, then starts both
-```
-
-If you'd rather drive each side from its own terminal — useful when debugging one side in isolation:
+To run each side in its own terminal (useful when debugging one of them):
 
 ```bash
-# 1. Backend — engine + CLI + runtimes
+# 1. Backend: engine + CLI + runtimes
 uv sync --all-packages
 set -a; source .env.local; set +a
 uv run dap-engine                         # binds 127.0.0.1:7333
 
-# 2. Dashboard — in a second terminal
+# 2. Dashboard, in a second terminal
 cd apps/dashboard
 pnpm dev                                  # http://localhost:3000
 ```
 
-## First pipeline — try it now
+With the PyPI install, use `dap start`, `dap stop` and `dap status` instead.
 
-The repo ships an importable example bundle that exercises the whole stack without you wiring anything by hand:
+### First pipeline (no API key)
 
-1. Open `http://localhost:3000/pipelines` and click **Import JSON**.
-2. Pick `examples/pipelines/github-issue-triage.pipeline-bundle.json`.
-3. The engine creates the bundled agents (one bash, two GLM api-call, two more bash) and wires them into a 5-node DAG (`fetch_issues → select_issue → load_prd → enrich → create_branch`). You land on `/pipelines/<id>/edit`.
-4. Hit **Run** to trigger it. The page redirects to the live run view — you'll see each node's status, prompt, output, and cost as it executes.
+The first pipeline runs your own Python, so it needs no API key, no `gh auth` and no
+extra files. It is [`examples/python-func-pipeline`](examples/python-func-pipeline/), the
+one in the demo: `greet → shout → gate → end`.
 
-Prerequisites for running this specific bundle: `gh auth login` on the host, `GLM_API_KEY` in `.env.local`, and a `docs/PRD.md` in whatever repo the engine is started from. See `examples/pipelines/README.md` for details. The agents and pipeline structure are all editable from the dashboard once imported — the bundle is a starting point, not a black box.
+1. Stop the stack if it is running, install the example package into the engine venv, then
+   start the stack again (the engine imports the node code from its own venv):
 
-## Working with agents
+   ```bash
+   uv pip install -e examples/python-func-pipeline
+   ./scripts/dev
+   ```
 
-Each agent has:
+2. Open `http://localhost:3000/pipelines`, click **Import JSON** and pick
+   `examples/python-func-pipeline/example.pipeline-bundle.json`. The engine creates three
+   `python-func` agents and wires them into the DAG. You land on `/pipelines/<id>/edit`.
+3. Click **Run**. The live run view shows `greet` and `shout` finish, then the run waits at
+   the `gate` node for a human.
+4. Approve the gate. The run ends with status `success` and `extensions.greeting_loud` set
+   to `HELLO, WORLD!`.
 
-- A **runtime** (`api-call` for SDK calls, `claude-code` / `gemini-cli` / `codex` / `aider` for agentic CLIs, `bash` for shell, `http` for arbitrary REST).
-- A **prompt template** (Jinja → XML, validated against `PipelineState`).
-- An **`input_schema`** / **`output_schema`** declaring which `PipelineState` fields the agent reads and writes.
-- A **role** (`task_selector`, `prompt_builder`, `test_author`, `implementer`, `verifier`, `post_check`, or any custom string).
+How the nodes are written: [`docs/python-func-pipelines.md`](docs/python-func-pipelines.md).
 
-### Test a single agent — dry-run panel
+### Second pipeline: with real tools
 
-On `/agents/<id>/edit` (or `/agents/new`) the **Test** panel runs the agent end-to-end against sample state without persisting anything: no `Run` row, no `NodeExecutionLog`, no state-machine effects. You see the rendered XML prompt, the actual runtime output, and a soft check of the structured output against `output_schema`. Cost is bounded by `DAP_DRY_RUN_BUDGET_USD` (default $0.50).
+`examples/pipelines/github-issue-triage.pipeline-bundle.json` calls GitHub and an LLM. Before
+you import it you need:
 
-`POST /agents/dry-run` is the same thing programmatically — the panel POSTs your draft (so you can test edits before saving).
+- `gh auth login` on the host (its `bash` nodes run `gh`),
+- `GLM_API_KEY` in `.env.local` (its two `api-call` nodes use GLM), then restart the engine,
+- a `docs/PRD.md` in the repo the engine is started from.
 
-### Render preview
+Import it the same way. The engine creates the bundled agents (one bash, two GLM api-call,
+two more bash) and wires them into a 5-node DAG
+(`fetch_issues → select_issue → load_prd → enrich → create_branch`). Click **Run**. The
+live run view shows each node's status, prompt, output and cost as it runs.
 
-`POST /agents/<id>/render-preview` compiles the prompt against a sample state and returns the XML without invoking the runtime. Useful to catch Jinja syntax errors / undefined vars before burning tokens.
+Other bundles in [`examples/pipelines/`](examples/pipelines/): `github-read-issue-comment`
+(the `github` runtime), `tester-coder-retry` (retry loops), `team-collaboration` and
+`cortex-github-issue`. Everything stays editable from the dashboard once it's imported.
 
-### Archive an agent
+### Agents, pipelines and logs
 
-`/agents` has an **Archive** action. The engine refuses (HTTP 409) if any non-archived pipeline still references the agent, listing the blocking pipelines so you can detach or archive them first. The "Used in" column on the same page shows how many pipelines reference each agent.
+An agent is a runtime plus a prompt template, input/output schemas and a role; a pipeline
+wires agents into a DAG in the React Flow designer (`/pipelines/new`), with conditional
+edges, retry loops, approval gates and fallback chains. Every node execution is logged with
+its exact prompt, output, tokens and cost. From a terminal, `dap project run`, `approve`,
+`reject` and `state` drive a run.
 
-Archiving is soft — run history keeps the agent reference intact; the agent just disappears from pickers and the active list.
+- [docs/usage.md](docs/usage.md): agents (test panel, render preview, archive, versions),
+  pipelines (designer, running, approval gates) and logs.
+- [docs/pipelines.md](docs/pipelines.md): retry loops, workspace diff state, fallback chains.
+- [docs/projects.md](docs/projects.md): projects and the `dap project` workflow.
 
-### Versions
+### Use the review council in your repo
 
-Every save bumps the agent's version. `/agents/<id>/versions` lists all of them; pipelines pin to the current version on save. Future pipeline edits can pin to a different version explicitly.
+DAP's Code Review Council runs scoped AI reviewers (security, correctness and others) on a pull request,
+then an arbiter drops duplicates and low-confidence findings before one review comment is posted. It is a
+one-file GitHub Actions workflow and needs only a Gemini or OpenRouter API key:
 
-## Working with pipelines
+```yaml
+- uses: lagowski/dap/review@v0.4.0
+  with:
+    api-key: ${{ secrets.GEMINI_API_KEY }}
+```
 
-`/pipelines/new` and `/pipelines/<id>/edit` open the React Flow designer:
+The full copy-paste workflow, inputs, project-context file and the local CLI
+(`code-review-council --base main --head HEAD`) are in [review/README.md](review/README.md).
 
-- Drag agents from the picker onto the canvas.
-- Wire edges; conditional edges support `field == value` / `field != value` / `is_null` etc against `PipelineState`.
-- The Inspector panel (right side) shows agent details inline (prompt, schemas, runtime config) plus a **State after this node** view that walks back through the DAG and shows the cumulative `output_schema` of every upstream agent — so you can see what fields exist in state by the time execution reaches the selected node.
-- **Validate** button runs cohesion checks (every declared `input_schema` field must be written by some upstream node).
+## Configuration
 
-### Run a pipeline
-
-From `/pipelines`, **Run** opens a dialog where you can fill optional `initial_state` JSON, then triggers the run and redirects to `/runs/<id>`. The run page shows each node's status as it executes, plus controls:
-
-- **Pause / Resume / Abort** mid-run.
-- On a stopped (failed / paused / aborted) run: click any node and pick **Retry** (re-execute) or **Skip** (mark done, advance state machine).
-
-### Logs
-
-Every node execution writes a row to `node_execution_logs` in `./.dap/state.db`:
-
-| Column | Content |
-|---|---|
-| `prompt_xml` | Exact prompt sent to the runtime (post-Jinja) |
-| `stdout` / `stderr` | Raw runtime output |
-| `output_json` | Parsed `<output>{…}</output>` block |
-| `tokens_used` / `cost_usd` / `duration_ms` | Telemetry |
-| `status` / `error_message` | success / failed / timeout / abort |
-
-Three ways to inspect:
-
-- Dashboard: `/runs/<id>` → click a node.
-- API: `GET /runs/<id>/nodes/<node_id>`.
-- Direct: `sqlite3 .dap/state.db "select * from node_execution_logs where run_id = '<id>';"`.
-
-State snapshots after each node land in `state_snapshots`; the run summary lives in `runs.node_statuses`.
-
-## Provider keys
-
-The engine reads provider keys from process env (or `.env.local` via `scripts/dev`). You only need keys for providers you actually call:
-
-| Provider | Env var | Used by |
-|---|---|---|
-| Anthropic | `ANTHROPIC_API_KEY` | `api-call` (provider=`anthropic`), `claude-code` CLI fallback |
-| OpenAI | `OPENAI_API_KEY` | `api-call` (provider=`openai`), `codex` CLI |
-| Google Gemini | `GEMINI_API_KEY` | `api-call` (provider=`gemini`), `gemini-cli` CLI |
-| Z.AI GLM | `GLM_API_KEY` | `api-call` (provider=`glm`) — first-class OpenAI-compatible |
-
-CLI runtimes (`claude-code`, `gemini-cli`) also accept their own OAuth login (`claude code` → `Pro`/`Max` plan, `gemini auth login` → Advanced) instead of an API key.
-
-For custom OpenAI-compatible providers (Together, OpenRouter, internal proxies, Ollama): the agent's `runtime_config` declares `api_key_env`; export whatever env var name it uses. See [`docs/providers.md`](docs/providers.md) for the full provider matrix and per-provider recipes.
-
-The `bash` runtime needs no provider key but **runs commands with the engine's privileges** — see the security note in [`packages/runtimes/README.md`](packages/runtimes/README.md).
-
-## Documentation
-
-- [`docs/self-hosting.md`](docs/self-hosting.md) — deployment paths (PyPI / Docker / source), production checklist, OAuth setup, troubleshooting.
-- [`docs/auth.md`](docs/auth.md) — email+password, GitHub OAuth, Google OAuth, API tokens. Provider-app setup walkthroughs.
-- [`docs/admin-guide.md`](docs/admin-guide.md) — operator manual for `/admin/*` (users, audit log, API tokens) + recovery procedures (lost admin password, JWT secret rotation, corrupted SQLite).
-- [`docs/security.md`](docs/security.md) — threat model, secrets handling, password / JWT / API-token internals, reverse-proxy hardening, GDPR / soft-delete semantics, explicit "out of scope" list.
-- [`docs/architecture.md`](docs/architecture.md) — components, state schema, Run lifecycle, LangGraph checkpoint model.
-- [`docs/projects.md`](docs/projects.md) — projects (workspace layer): binding workflow kinds to pipelines, env layering, multi-pipeline patterns.
-- [`docs/providers.md`](docs/providers.md) — provider matrix and per-provider setup recipes.
-- [`docs/runtimes.md`](docs/runtimes.md) — adding a new runtime adapter.
-- [`docs/release.md`](docs/release.md) — release pipeline, per-tag publishing, rollback procedures.
-- [`packages/runtimes/README.md`](packages/runtimes/README.md) — per-runtime config reference.
-- [`examples/pipelines/`](examples/pipelines/) — importable pipeline bundles + their READMEs.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — branching, PR flow, commit style.
-- Engine API reference: `http://127.0.0.1:7333/docs` (FastAPI auto-docs while the engine runs).
+The engine reads its settings from the process environment at startup only, so restart it
+after a change. `scripts/dev` loads `.env.local`; [`.env.example`](.env.example) has the
+commented template. To start you need one provider key for the providers you call
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GLM_API_KEY` or
+`OPENROUTER_API_KEY`), and `DAP_AUTH_JWT_SECRET` for anything that restarts or has more than
+one replica. Every engine, auth, provider and CLI variable with its default is in
+[docs/configuration.md](docs/configuration.md); [docs/self-hosting.md](docs/self-hosting.md)
+explains the production settings.
 
 ## Repository layout
 
 ```
 apps/
-  engine/      FastAPI + LangGraph + SQLAlchemy — runs pipelines, exposes REST
-  dashboard/   Next.js 15 + React Flow + TanStack Query — visual editor + run viewer
-  cli/         Typer-based dap CLI (init, start, stop, status)
+  engine/      FastAPI + LangGraph + SQLAlchemy + Alembic: runs pipelines, serves the REST API
+  dashboard/   Next.js 16 + React 19 + React Flow + TanStack Query: designer and run viewer
+  cli/         Typer CLI `dap` (init, start, stop, status, project run/approve/reject/state)
 packages/
-  types/       Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
-  runtimes/    Runtime adapter implementations
-  prompt-dsl/  Jinja2 → XML prompt compiler with sandboxing + schema validation
+  types/                Shared Pydantic types (Agent, Pipeline, Run, PipelineState, RuntimeTask)
+  runtimes/             The 10 runtime adapters (api-call has 5 built-in providers + openai-compat)
+  prompt-dsl/           Jinja2 → XML prompt compiler with sandboxing and schema validation
+  database/             Shared SQLAlchemy engine and session factories (SQLite WAL / PostgreSQL)
+  code-review-council/  Multi-agent PR reviewer (security/correctness/db/perf/frontend + arbiter);
+                        currently not run by any CI workflow
 examples/
-  pipelines/   Importable .pipeline-bundle.json examples
+  pipelines/            Importable .pipeline-bundle.json examples
+  python-func-pipeline/ Runnable python-func pipeline example (logic package + bundle JSON)
+  ops-pipeline/         Bundle for command-execution issues
+  standalone/           Docker compose file for the standalone install
 scripts/
-  setup        First-run installer (pre-flight, .env, deps, hooks)
-  dev          Day-to-day launcher (engine + dashboard + log multiplexing)
+  setup        First-run installer (version checks, .env, deps, hooks)
+  dev          Day-to-day launcher (engine + dashboard, combined logs)
 tests/smoke/   Cross-package end-to-end tests (FastAPI TestClient + real adapters)
+e2e/           Playwright browser e2e (see e2e/COVERAGE.md for scope)
 ```
 
-## Common commands
+### Architectural invariants
+
+1. **LangGraph controls flow; runtimes run steps.** Edges and conditions live in the
+   pipeline definition, not in agents.
+2. **Prompts are code.** They are compiled from a template plus a state projection,
+   validated against an XML schema, and versioned per agent.
+3. **State is the single source of truth.** Adapter output is parsed into a state diff.
+   Nothing outside `PipelineState` survives from one node to the next.
+4. **Autonomy is local, not global.** A runtime may use tools internally, but never decides
+   what runs next in the pipeline.
+5. **Runtimes execute; they don't plan.** Even agentic runtimes (`claude-code`, `codex`,
+   `aider`) get compiled XML with an explicit task and an output contract.
+
+### Documentation
+
+- [docs/quick-start.md](docs/quick-start.md): pick an install path. **Start here.**
+- [docs/why-dap.md](docs/why-dap.md): why DAP exists, a dated timeline of its design
+  decisions, and what is in and out of scope.
+- [DEPLOYMENT.md](DEPLOYMENT.md): local-only, LAN and SSH tunnel setups.
+- [docs/self-hosting.md](docs/self-hosting.md): deployment paths, production checklist,
+  OAuth, troubleshooting.
+- [docs/auth.md](docs/auth.md): email+password, GitHub and Google OAuth, API tokens.
+- [docs/admin-guide.md](docs/admin-guide.md): `/admin/*` (users, audit log, API tokens) and
+  recovery procedures.
+- [docs/security.md](docs/security.md): threat model, secrets handling, auth internals,
+  reverse-proxy hardening, what's out of scope.
+- [docs/architecture.md](docs/architecture.md): packages, service layer, state schema, run
+  lifecycle, LangGraph checkpoints.
+- [docs/usage.md](docs/usage.md): agents, pipelines, approval gates and logs in the dashboard.
+- [docs/configuration.md](docs/configuration.md): every environment variable with its default.
+- [docs/projects.md](docs/projects.md): projects, workflow kinds, env layering.
+- [docs/providers.md](docs/providers.md) and [docs/runtimes.md](docs/runtimes.md): the
+  provider matrix, and how to add a runtime adapter.
+- [docs/pipelines.md](docs/pipelines.md): retry loops, workspace diff state, `not`
+  conditions, backend fallback chains.
+- [docs/python-func-pipelines.md](docs/python-func-pipelines.md): pipelines whose nodes run
+  your own Python code.
+- [docs/database-migrations.md](docs/database-migrations.md),
+  [docs/database-indexes.md](docs/database-indexes.md),
+  [docs/dependency-updates.md](docs/dependency-updates.md),
+  [docs/testing.md](docs/testing.md), [docs/release.md](docs/release.md).
+- [packages/runtimes/README.md](packages/runtimes/README.md): config reference for each
+  runtime.
+
+## Roadmap
+
+Open work is tracked in [GitHub issues](https://github.com/lagowski/dap/issues); the release
+pipeline is described in [docs/release.md](docs/release.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full rules. In short:
+
+- Branch from `develop` (`issue/<number>-<slug>`), open a PR against `develop`, and merge
+  only when CI is green. `develop → main` PRs are releases. Never push directly to `main` or
+  `develop`; the pre-push hook and branch protection both block it.
+- Every issue gets `type:`, `area:` and `size:` labels when it's created.
+- CI (`.github/workflows/ci.yml`) runs ruff (lint and format), mypy, pytest with coverage,
+  three smoke shards, a pip-audit CVE scan, and the dashboard's API-type drift check,
+  typecheck, lint, tests and build. CodeQL and e2e run in their own workflows.
+- An AI review (`.github/workflows/gemini-review.yml`, check `gemini-review`) runs on PRs
+  into `develop` and `main`. A PR from a fork is reviewed after a maintainer adds the
+  `safe-to-review` label.
+
+Run the same checks locally:
 
 ```bash
-# Backend
-uv run pytest                             # all smoke tests
-uv run ruff check apps packages           # lint
-uv run ruff format apps packages          # format
-uv run mypy apps packages tests           # type-check
-uv run dap-engine                         # serve engine on :7333
-uv run dap --help                         # CLI
+# Python (repo root)
+uv run ruff check apps packages tests
+uv run ruff format --check apps packages tests
+uv run mypy apps packages tests
+uv run pytest -q -m "not integration" --ignore=tests/standalone  # fast gate
+uv run pytest -q -m integration tests/smoke                       # smoke integration
 
-# Dashboard (run from apps/dashboard)
-pnpm dev                                  # next dev
-pnpm build                                # production build
-pnpm typecheck                            # tsc --noEmit
-pnpm lint                                 # eslint
+# Dashboard (apps/dashboard)
+pnpm check:api      # generated API types match the engine's OpenAPI (pnpm gen:api to fix)
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+
+# Browser e2e (e2e/)
+npx playwright test --project=app
 ```
 
-## Architectural invariants
+## License
 
-1. **LangGraph controls flow, runtimes execute steps.** Edges and conditions live in the pipeline definition, not in agents.
-2. **Prompts are code.** Compiled from a template + state projection, validated against an XML schema, versioned per agent.
-3. **State is the single source of truth.** Adapter output is parsed into a state diff; nothing outside `PipelineState` survives across nodes.
-4. **Autonomy is local, not global.** A runtime may use tools internally, but never decides *what runs next* in the pipeline.
-5. **Runtimes are executors, not planners.** Even agentic runtimes (`claude-code`, `codex`) receive compiled XML with an explicit task and an output contract.
+DAP is released under the [MIT License](LICENSE).
 
-## Status
+Copyright © 2026 **Rafał Łagowski** ([LinkedIn](https://www.linkedin.com/in/rafallagowski/)) and **Daniel Łagowski** ([LinkedIn](https://www.linkedin.com/in/daniellagowski/)).
 
-Backend (engine, runtimes, prompt-dsl) and the dashboard MVP are functional. See open issues and the `v0.1` milestone on GitHub for what's next.
+MIT is permissive: you may use, copy, modify and distribute the software freely, **but the
+copyright and permission notice above must be kept in all copies or substantial portions of
+the Software**. In practice, if you use or redistribute DAP (or any of its packages), keep
+the `LICENSE` file and this attribution to the authors.
+
+<!-- veracrew:delivery:start -->
+## What has been delivered
+
+_Generated by VeraCrew from its walk records for `lagowski/dap` on every promotion (#2169). Edits between these markers are overwritten._
+
+```mermaid
+flowchart LR
+  R1382["req-docs-1040<br/>milestone · #1040, #1044"]
+  R1387["req-review-1043<br/>milestone · #1043"]
+  R1382 --> R1387
+  classDef done fill:#E2EEE7,stroke:#2F6B55,color:#1F2328;
+  classDef now fill:#F5EAD3,stroke:#8A5A0B,color:#1F2328;
+  class R1382,R1387 done;
+  i1040["#1040"]
+  R1382 -.- i1040
+  i1044["#1044 · after #1040"]
+  R1382 -.- i1044
+  i1040 --> i1044
+  classDef waited fill:#F3F4F6,stroke:#6B7280,color:#1F2328,stroke-dasharray:4 3;
+  class i1044 waited;
+```
+
+| run | promoted | items delivered |
+|---|---|---|
+| req-docs-1040 (milestone) | 2026-11-27 | #1040 docs(readme): zero-key first pipeline first, fix runtime badge count, drop the stars badge<br>#1044 docs: "Why DAP": design notes with the project's timeline and a focused-scope statement |
+| req-review-1043 (milestone) | 2026-11-27 | #1043 feat(review): Code Review Council as a reusable GitHub Action (`uses: lagowski/dap/review@v0.4.0`) (PR #1054 outside the collector) |
+<!-- veracrew:delivery:end -->

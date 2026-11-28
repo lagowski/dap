@@ -258,6 +258,81 @@ dashboard surfaces both flows under `/admin/api-tokens`.
 
 ---
 
+## Private template registry (`POST /pipelines/import-from-url`)
+
+Self-host teams often want to share canonical pipeline bundles
+across instances — same template authored once, imported from a
+private git repo into dev / STG / prod DAP without copy-pasting
+JSON over Slack. The `import-from-url` endpoint enables exactly
+this; the engine fetches a `.pipeline-bundle.json` from a trusted
+URL and runs it through the same import code path as the existing
+file-upload `/pipelines/import`.
+
+This is **not** a public marketplace — there's no discovery
+surface, no community ratings, no trust audit. Operators control
+the allow-list themselves, only hosts they pick are reachable, and
+every successful import lands an audit-log entry tagged with the
+source URL.
+
+### Setup
+
+Two env vars on the engine:
+
+```bash
+# Required — comma-separated literal hostnames. Empty = feature off.
+DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS=raw.githubusercontent.com,gitlab.internal.com
+
+# Optional — Bearer token attached to every outbound fetch.
+# Useful for private GH/GL repos that need a PAT.
+DAP_TEMPLATE_REGISTRY_AUTH_TOKEN=ghp_xxxxxxxxxxxxxxxx
+```
+
+When `DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS` is empty (default), the
+endpoint returns 422 with `"import-from-url is disabled"` — the
+feature is strictly opt-in.
+
+### Use
+
+```bash
+curl -X POST https://<engine>/pipelines/import-from-url \
+    -H "authorization: bearer dap_<your-api-token>" \
+    -H "content-type: application/json" \
+    -d '{"url":"https://raw.githubusercontent.com/myorg/dap-templates/main/code-review.pipeline-bundle.json"}'
+# → 201 Created, body is the new Pipeline row (same shape as POST /pipelines/import).
+```
+
+The bundle is validated, agents are registered, the pipeline is
+created and owned by the *importing user* (not the URL author).
+Each operator gets their own copy on import — same flow as the
+file-upload path, just sourced from a URL.
+
+### Security model
+
+- **SSRF guard**: hostname must match a literal entry in the
+  allow-list (no wildcards, no regex). `0.0.0.0` and
+  `169.254.169.254` (cloud metadata) are blocked even if
+  accidentally allow-listed.
+- **HTTPS-only** for remote hosts; only `localhost` /
+  `127.0.0.1` can use plain HTTP (for dev mocks).
+- **Response cap**: 10 MB. Beyond that → 413 with no parse attempt.
+- **Timeout**: 10 s.
+- **Audit trail**: `pipeline.imported_from_url` event with
+  `event_data={"url": "...", "pipeline_id": "..."}`. Visible in
+  `/admin/audit-log`.
+- **Redirects disabled**: the fetcher refuses to follow redirects.
+  If your registry serves redirects, fetch the final URL directly.
+
+### Iteration roadmap
+
+- **Iter 1 (this release)**: bare endpoint + env-driven allow-list.
+- **Iter 2**: dashboard "Import from URL" button + static `index.json`
+  catalog support (browse available templates from a registry).
+- **Iter 3**: multi-kind bundles (agent libraries, project
+  templates, runtime presets); per-host token configuration;
+  "promote pipeline → template" from the UI.
+
+---
+
 ## Where to look when things break
 
 | Symptom | Look at |

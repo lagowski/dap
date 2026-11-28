@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from dap_runtimes import RuntimeRegistry
-from dap_types import PipelineState
+from dap_types import PipelineDefaults, PipelineState
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -32,12 +33,160 @@ from dap_engine.execution.runner import (
     RunnerInterrupt,
 )
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
+from dap_engine.persistence.models import PipelineORM, PipelineVersionORM, RunORM
 
 logger = logging.getLogger("dap.engine.execution.orchestrator")
 
 
-async def execute_run_background(
+def _auto_approve_node_aliases(node_id: str) -> frozenset[str]:
+    """Return accepted aliases for a configured auto-approve gate name.
+
+    Cortex-facing project payloads historically used ``gate-phase1`` while
+    the bundled pipeline node IDs use ``phase1_gate``. Accept both forms so
+    existing projects keep working and direct pipeline node IDs still match.
+    """
+    aliases = {node_id}
+    if node_id.startswith("gate-") and len(node_id) > len("gate-"):
+        aliases.add(f"{node_id.removeprefix('gate-')}_gate")
+    if node_id.endswith("_gate") and len(node_id) > len("_gate"):
+        aliases.add(f"gate-{node_id.removesuffix('_gate')}")
+    return frozenset(aliases)
+
+
+def _auto_approve_nodes_for_run(session: Session, run_id: str) -> frozenset[str]:
+    """Return accepted auto_approve_nodes names from the run's initial_state.
+
+    Reads ``initial_state.extensions.auto_approve_nodes`` from the DB row so
+    the check works for both initial and resumed executions (the list is
+    always stored in the original initial_state at trigger time). The returned
+    set includes compatibility aliases such as ``gate-phase1`` ↔
+    ``phase1_gate`` (#587).
+    """
+    run_orm = session.get(RunORM, run_id)
+    if run_orm is None:
+        return frozenset()
+    extensions: dict[str, Any] = (run_orm.initial_state or {}).get("extensions") or {}
+    nodes = extensions.get("auto_approve_nodes")
+    if not isinstance(nodes, list):
+        return frozenset()
+    aliases: set[str] = set()
+    for node in nodes:
+        if isinstance(node, str):
+            aliases.update(_auto_approve_node_aliases(node))
+    return frozenset(aliases)
+
+
+def _gate_node_from_interrupt(
+    interrupt: RunnerInterrupt, version_orm: PipelineVersionORM
+) -> str | None:
+    """Return the first approval-gate node staged in *interrupt*, or None.
+
+    Filters ``interrupt.next_nodes`` to the pipeline's
+    ``approval_required_nodes`` so a non-gate node appearing earlier in the
+    list (which LangGraph may stage alongside the gate) doesn't shadow the
+    real gate id stored in the Run row (#363 Copilot review).
+    """
+    approval_nodes = set(
+        PipelineDefaults.model_validate(version_orm.defaults).approval_required_nodes
+    )
+    return next((n for n in interrupt.next_nodes if n in approval_nodes), None)
+
+
+_TERMINAL_FINAL_STATUSES: frozenset[str] = frozenset({"success", "failed", "aborted"})
+
+
+def _gate_expires_at(version_orm: PipelineVersionORM) -> datetime:
+    """Return the gate approval deadline based on pipeline defaults (#582)."""
+    defaults = PipelineDefaults.model_validate(version_orm.defaults)
+    return datetime.now(tz=UTC) + timedelta(seconds=defaults.gate_timeout_seconds)
+
+
+def _resolve_terminal_status(
+    final_state: PipelineState,
+    *,
+    requires_terminal: bool,
+) -> tuple[str, str | None]:
+    """Map a runner-completed ``PipelineState`` to the row-level final status.
+
+    Used by ``execute_run_background`` and ``execute_rewind_background``
+    after the runner returns cleanly. Returns ``(status, failure_reason)``
+    where ``failure_reason`` is non-None only on the defensive failure
+    paths so the caller knows whether to persist a reason.
+
+    Behaviour (#381, default flipped 2026-06 per #628):
+
+    - Explicit terminal values (``success`` / ``failed`` / ``aborted``)
+      pass through unchanged. The orchestrator must never overwrite a
+      deliberate node-set status.
+    - When ``requires_terminal=True`` (now the default per #628, set
+      from ``PipelineDefaults.requires_terminal_final_status``), a
+      residual ``running`` means *no node ever set a terminal status*
+      and is treated as ``failed`` with an operator-readable reason.
+      A residual ``paused`` would also be a bug (a real pause raises
+      ``RunnerInterrupt`` long before this code runs) and any other
+      value is rejected on the same grounds.
+    - When ``requires_terminal=False`` (opt-out, only applies to
+      pipelines that explicitly set the flag in their imported
+      bundle defaults), a non-terminal ``final_status`` is silently
+      coerced to ``success``. This preserves the historical
+      "no node raised" = "successful run" contract for pipelines that
+      legitimately don't manage state-level ``final_status``. NB:
+      existing pipelines in the DB still have whatever ``defaults``
+      JSON they were imported with — the default change applies only
+      to NEW bundle imports going forward.
+    """
+    status = final_state.final_status
+    if status in _TERMINAL_FINAL_STATUSES:
+        return status, None
+
+    if not requires_terminal:
+        # Historical default: trust that the runner completing without
+        # exceptions means the pipeline reached its goal, even if no
+        # node bothered to set state.final_status.
+        return "success", None
+
+    if status == "running":
+        return "failed", (
+            "pipeline finished without setting a terminal final_status "
+            "(a node likely returned success without updating state on refusal)"
+        )
+    if status == "paused":
+        return "failed", (
+            "pipeline finished with final_status='paused' but the runner "
+            "did not signal a real pause — treating as failure"
+        )
+    return "failed", f"pipeline finished with unknown final_status={status!r}"
+
+
+def _gate_payload_from_interrupt(interrupt: RunnerInterrupt) -> dict[str, Any] | None:
+    """Return a serialisable gate payload for storage on the Run row (#364).
+
+    Extracts task_assignments (and optionally spec/description) from
+    ``interrupt.gate_state`` so the dashboard can show gate context without
+    querying the checkpoint store directly.
+    Returns None when gate_state is absent or contains no useful context.
+    """
+    state = interrupt.gate_state
+    if not state:
+        return None
+    # Pull the fields the dashboard needs; ignore everything else to keep
+    # the stored payload small and pipeline-agnostic.
+    extensions: dict[str, Any] = state.get("extensions") or {}
+    task_assignments = extensions.get("task_assignments")
+    if not task_assignments:
+        return None
+    payload: dict[str, Any] = {"task_assignments": task_assignments}
+    # Carry description/spec if present — useful for Reject feedback UX.
+    if spec := extensions.get("spec"):
+        payload["spec"] = spec
+    # Surface finalize warnings so the dashboard can show non-blocking
+    # issues without querying the checkpoint store (#583).
+    if finalize_warnings := extensions.get("finalize_warnings"):
+        payload["finalize_warnings"] = finalize_warnings
+    return payload
+
+
+async def execute_run_background(  # noqa: PLR0915
     *,
     run_id: str,
     pipeline_id: str,
@@ -48,6 +197,9 @@ async def execute_run_background(
     run_registry: RunRegistry,
     checkpointer: BaseCheckpointSaver[Any],
     resume: bool,
+    instance_env_vars_key: str | None = None,
+    allow_bash_runtime_for_non_admin: bool = False,
+    actor_is_admin: bool = False,
 ) -> None:
     """Run the pipeline in a fresh DB session and finalize the Run row."""
     try:
@@ -73,6 +225,9 @@ async def execute_run_background(
                 session=bg_session,
                 registry=registry,
                 checkpointer=checkpointer,
+                instance_env_vars_key=instance_env_vars_key,
+                allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+                actor_is_admin=actor_is_admin,
             )
             try:
                 final_state = await runner.run(
@@ -82,13 +237,48 @@ async def execute_run_background(
                     initial_state=initial_state,
                     resume=resume,
                 )
-            except RunnerInterrupt:
-                # Graph paused at an approval-required node (interrupt_before).
-                # This is a normal stop — mark run as paused so the operator
-                # can resume via POST /runs/{id}/resume or approve via
-                # POST /runs/{id}/nodes/{node_id}/approve (#164).
-                repo.pause_run(bg_session, run_id)
+            except RunnerInterrupt as interrupt:
+                paused_at_node = _gate_node_from_interrupt(interrupt, version_orm)
+                repo.pause_run(
+                    bg_session,
+                    run_id,
+                    paused_at_node=paused_at_node,
+                    gate_payload=_gate_payload_from_interrupt(interrupt),
+                    gate_expires_at=_gate_expires_at(version_orm),
+                )
                 bg_session.commit()
+                # Auto-resume if this gate is in the run's auto_approve_nodes (#477).
+                if paused_at_node is not None:
+                    auto_nodes = _auto_approve_nodes_for_run(bg_session, run_id)
+                    if paused_at_node in auto_nodes:
+                        logger.info("auto-approving gate %s for run %s", paused_at_node, run_id)
+                        if repo.try_claim_resume(bg_session, run_id):
+                            bg_session.commit()
+                            # Spawn resume without re-registering: the current
+                            # task is still in the registry and run_registry
+                            # raises if we try to register a second slot while
+                            # the first is non-done. The run is now in "running"
+                            # state (try_claim_resume set it), so any concurrent
+                            # POST /approve will see it as non-paused and 409.
+                            resume_task = asyncio.create_task(
+                                execute_run_background(
+                                    run_id=run_id,
+                                    pipeline_id=pipeline_id,
+                                    pipeline_version=pipeline_version,
+                                    initial_state=None,
+                                    session_factory=session_factory,
+                                    registry=registry,
+                                    run_registry=run_registry,
+                                    checkpointer=checkpointer,
+                                    resume=True,
+                                    instance_env_vars_key=instance_env_vars_key,
+                                    allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+                                    actor_is_admin=actor_is_admin,
+                                )
+                            )
+                            resume_task.add_done_callback(
+                                lambda task: None if task.cancelled() else task.exception()
+                            )
                 return
             except RunnerError as exc:
                 logger.exception("run %s failed: %s", run_id, exc)
@@ -96,10 +286,18 @@ async def execute_run_background(
                 bg_session.commit()
                 return
 
-            final_status = final_state.final_status
-            if final_status not in {"success", "failed", "aborted"}:
-                final_status = "success"
-            repo.finalize_run(bg_session, run_id, final_status=final_status)
+            requires_terminal = PipelineDefaults.model_validate(
+                version_orm.defaults
+            ).requires_terminal_final_status
+            final_status, failure_reason = _resolve_terminal_status(
+                final_state, requires_terminal=requires_terminal
+            )
+            repo.finalize_run(
+                bg_session,
+                run_id,
+                final_status=final_status,
+                failure_reason=failure_reason,
+            )
             bg_session.commit()
     except asyncio.CancelledError:
         # Cancelled via pause() or abort(). Distinguish via was_paused() flag —
@@ -137,6 +335,9 @@ async def execute_rewind_background(
     registry: RuntimeRegistry,
     run_registry: RunRegistry,
     checkpointer: BaseCheckpointSaver[Any],
+    instance_env_vars_key: str | None = None,
+    allow_bash_runtime_for_non_admin: bool = False,
+    actor_is_admin: bool = False,
 ) -> None:
     """Run a retry/skip rewind in a fresh DB session and finalize the Run row."""
     try:
@@ -162,6 +363,9 @@ async def execute_rewind_background(
                 session=bg_session,
                 registry=registry,
                 checkpointer=checkpointer,
+                instance_env_vars_key=instance_env_vars_key,
+                allow_bash_runtime_for_non_admin=allow_bash_runtime_for_non_admin,
+                actor_is_admin=actor_is_admin,
             )
             try:
                 final_state = await runner.rewind_and_run(
@@ -171,8 +375,14 @@ async def execute_rewind_background(
                     target_node=target_node,
                     mode=mode,
                 )
-            except RunnerInterrupt:
-                repo.pause_run(bg_session, run_id)
+            except RunnerInterrupt as interrupt:
+                repo.pause_run(
+                    bg_session,
+                    run_id,
+                    paused_at_node=_gate_node_from_interrupt(interrupt, version_orm),
+                    gate_payload=_gate_payload_from_interrupt(interrupt),
+                    gate_expires_at=_gate_expires_at(version_orm),
+                )
                 bg_session.commit()
                 return
             except CheckpointNotFoundError as exc:
@@ -186,10 +396,18 @@ async def execute_rewind_background(
                 bg_session.commit()
                 return
 
-            final_status = final_state.final_status
-            if final_status not in {"success", "failed", "aborted"}:
-                final_status = "success"
-            repo.finalize_run(bg_session, run_id, final_status=final_status)
+            requires_terminal = PipelineDefaults.model_validate(
+                version_orm.defaults
+            ).requires_terminal_final_status
+            final_status, failure_reason = _resolve_terminal_status(
+                final_state, requires_terminal=requires_terminal
+            )
+            repo.finalize_run(
+                bg_session,
+                run_id,
+                final_status=final_status,
+                failure_reason=failure_reason,
+            )
             bg_session.commit()
     except asyncio.CancelledError:
         was_paused = run_registry.was_paused(run_id)

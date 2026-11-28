@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-from dap_engine.app import EngineConfig, create_app
+from dap_engine.version import __version__
 from fastapi.testclient import TestClient
 
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-smoke-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
+# The ``client`` fixture lives in ``tests/smoke/conftest.py``. The shared
+# fixture adds an ``auth_jwt_secret`` default — these tests don't hit
+# the auth subsystem, but the extra config field is harmless.
 
 
 def test_health_endpoint(client: TestClient) -> None:
@@ -27,7 +18,7 @@ def test_health_endpoint(client: TestClient) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["service"] == "dap-engine"
-    assert body["version"] == "0.0.1"
+    assert body["version"] == __version__
     assert body["db_dialect"] == "sqlite"
     assert "timestamp" in body
 
@@ -45,8 +36,10 @@ def test_runtimes_list(client: TestClient) -> None:
         "claude-code",
         "gemini-cli",
         "codex",
+        "agent",
         "aider",
         "python-func",
+        "github",
     }
     for adapter in body:
         assert "displayName" in adapter

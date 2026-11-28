@@ -3,14 +3,21 @@
  *
  * All endpoints throw `ApiError` on non-2xx responses; callers handle via
  * TanStack Query's error state.
+ *
+ * This module remains the compatibility barrel. New resource-scoped imports
+ * can use `@/lib/api/client/{runs,agents,pipelines,projects,settings,admin}`.
  */
 
 import type {
   AdminApiToken,
   AdminInstanceSettings,
+  InstanceEnvVarListing,
   AdminUser,
   AdminUserUpdate,
   Agent,
+  AgentExecutions,
+  AgentUsage,
+  AgentCallableInfo,
   AuditEvent,
   AuditEventFilters,
   AgentCreate,
@@ -18,15 +25,24 @@ import type {
   AgentDryRunResponse,
   AgentExport,
   AgentUpdate,
+  AssistantChatResponse,
+  AssistantMessage,
+  BackendProfilesInspectionResponse,
   CurrentUser,
+  ErrorExplanation,
   LoginCredentials,
   NodeExecutionLog,
   PaginatedList,
   Pipeline,
   PipelineCreate,
+  GeneratedPipeline,
   PipelineExport,
+  PipelineGeneratorStatus,
   PipelineState,
+  PipelineUiMetadataPatch,
   PipelineUpdate,
+  PipelineUsage,
+  PipelineReadiness,
   Project,
   ProjectCreate,
   ProjectRunRequest,
@@ -36,6 +52,8 @@ import type {
   RunCreateRequest,
   SettingsView,
   StateSnapshot,
+  ValidateEnvRequest,
+  ValidateEnvResponse,
   ValidationResult,
 } from "./types";
 
@@ -97,7 +115,7 @@ export function formatApiError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init?: RequestInit & { json?: unknown; skipAuthRedirect?: boolean },
 ): Promise<T> {
@@ -160,6 +178,9 @@ async function request<T>(
 export async function listRuns(params: {
   pipelineId?: string;
   finalStatus?: string;
+  statuses?: string[];
+  from?: string;
+  to?: string;
   /**
    * Project scope (#64 / #68). Pass a project id to scope the list,
    * the literal string ``"null"`` for ad-hoc-only (runs without
@@ -172,6 +193,9 @@ export async function listRuns(params: {
   const search = new URLSearchParams();
   if (params.pipelineId) search.set("pipeline_id", params.pipelineId);
   if (params.finalStatus) search.set("final_status", params.finalStatus);
+  for (const status of params.statuses ?? []) search.append("status", status);
+  if (params.from) search.set("from", params.from);
+  if (params.to) search.set("to", params.to);
   if (params.projectId) search.set("project_id", params.projectId);
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   if (params.limit !== undefined) search.set("limit", String(params.limit));
@@ -191,6 +215,10 @@ export async function getRunStateHistory(id: string): Promise<StateSnapshot[]> {
   return request<StateSnapshot[]>(`/runs/${encodeURIComponent(id)}/state/history`);
 }
 
+export async function getRunNodeLogs(runId: string): Promise<NodeExecutionLog[]> {
+  return request<NodeExecutionLog[]>(`/runs/${encodeURIComponent(runId)}/nodes`);
+}
+
 export async function getRunNodeLog(
   runId: string,
   nodeId: string,
@@ -198,6 +226,32 @@ export async function getRunNodeLog(
   return request<NodeExecutionLog>(
     `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}`,
   );
+}
+
+/**
+ * Explanation + suggested actions for a failed node (#691). ``ai=true`` asks the
+ * configured LLM for a richer explanation (falls back to deterministic).
+ */
+export async function getNodeErrorExplanation(
+  runId: string,
+  nodeId: string,
+  ai = false,
+): Promise<ErrorExplanation> {
+  const qs = ai ? "?ai=1" : "";
+  return request<ErrorExplanation>(
+    `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/explain${qs}`,
+  );
+}
+
+/** Config assistant chat turn (#689). */
+export async function assistantChat(
+  messages: AssistantMessage[],
+  context?: Record<string, unknown>,
+): Promise<AssistantChatResponse> {
+  return request<AssistantChatResponse>("/assistant/chat", {
+    method: "POST",
+    json: { messages, context: context ?? null },
+  });
 }
 
 export async function triggerRun(payload: RunCreateRequest): Promise<Run> {
@@ -212,12 +266,24 @@ export async function abortRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${encodeURIComponent(id)}/abort`, { method: "POST" });
 }
 
+/** Delete a run and all its children (cascade). Terminal runs only (#700). */
+export async function deleteRun(id: string): Promise<void> {
+  return request<void>(`/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function pauseRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${encodeURIComponent(id)}/pause`, { method: "POST" });
 }
 
 export async function resumeRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${encodeURIComponent(id)}/resume`, { method: "POST" });
+}
+
+export async function approveGate(runId: string, nodeId: string): Promise<Run> {
+  return request<Run>(
+    `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/approve`,
+    { method: "POST" },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +296,14 @@ export async function listPipelines(): Promise<PaginatedList<Pipeline>> {
 
 export async function getPipeline(id: string): Promise<Pipeline> {
   return request<Pipeline>(`/pipelines/${encodeURIComponent(id)}`);
+}
+
+export async function getPipelineUsage(id: string): Promise<PipelineUsage> {
+  return request<PipelineUsage>(`/pipelines/${encodeURIComponent(id)}/usage`);
+}
+
+export async function getPipelineReadiness(id: string): Promise<PipelineReadiness> {
+  return request<PipelineReadiness>(`/pipelines/${encodeURIComponent(id)}/readiness`);
 }
 
 export async function getPipelineVersion(
@@ -251,6 +325,16 @@ export async function updatePipeline(
 ): Promise<Pipeline> {
   return request<Pipeline>(`/pipelines/${encodeURIComponent(id)}`, {
     method: "PUT",
+    json: payload,
+  });
+}
+
+export async function updatePipelineUiMetadata(
+  id: string,
+  payload: PipelineUiMetadataPatch,
+): Promise<void> {
+  await request<void>(`/pipelines/${encodeURIComponent(id)}/ui-metadata`, {
+    method: "PATCH",
     json: payload,
   });
 }
@@ -278,8 +362,33 @@ export async function exportPipeline(
   );
 }
 
+/** Whether the engine has a prompt-box generator configured (cortex#1774 S5). */
+export async function getPipelineGeneratorStatus(): Promise<PipelineGeneratorStatus> {
+  return request<PipelineGeneratorStatus>("/pipelines/generate");
+}
+
+/**
+ * Ask the engine's generator for a pipeline bundle from a plain-words prompt.
+ * Nothing is imported: pass ``bundle`` to ``importPipeline`` (or download it).
+ */
+export async function generatePipeline(prompt: string): Promise<GeneratedPipeline> {
+  return request<GeneratedPipeline>("/pipelines/generate", {
+    method: "POST",
+    json: { prompt },
+  });
+}
+
 export async function importPipeline(payload: PipelineExport): Promise<Pipeline> {
   return request<Pipeline>("/pipelines/import", { method: "POST", json: payload });
+}
+
+export async function inspectPipelineImportBackends(
+  payload: PipelineExport,
+): Promise<BackendProfilesInspectionResponse> {
+  return request<BackendProfilesInspectionResponse>(
+    "/pipelines/import/inspect-backends",
+    { method: "POST", json: payload },
+  );
 }
 
 export async function archivePipeline(id: string): Promise<void> {
@@ -308,6 +417,27 @@ export async function listAgents(params: {
 
 export async function getAgent(id: string): Promise<Agent> {
   return request<Agent>(`/agents/${encodeURIComponent(id)}`);
+}
+
+export async function getAgentUsage(id: string): Promise<AgentUsage> {
+  return request<AgentUsage>(`/agents/${encodeURIComponent(id)}/usage`);
+}
+
+export async function getAgentCallableInfo(id: string): Promise<AgentCallableInfo> {
+  return request<AgentCallableInfo>(`/agents/${encodeURIComponent(id)}/callable-info`);
+}
+
+export async function getAgentExecutions(
+  id: string,
+  params: { offset?: number; limit?: number } = {},
+): Promise<AgentExecutions> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return request<AgentExecutions>(
+    `/agents/${encodeURIComponent(id)}/executions${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export async function createAgent(payload: AgentCreate): Promise<Agent> {
@@ -396,6 +526,43 @@ export async function triggerProjectRun(
     `/projects/${encodeURIComponent(id)}/run/${encodeURIComponent(kind)}`,
     { method: "POST", json: payload ?? {} },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Project GitHub issues (#368)
+// ---------------------------------------------------------------------------
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  url: string;
+  labels: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listProjectIssues(
+  projectId: string,
+  state: "open" | "closed" | "all" = "open",
+): Promise<GitHubIssue[]> {
+  return request<GitHubIssue[]>(
+    `/projects/${encodeURIComponent(projectId)}/issues?state=${state}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Env var validation (#350)
+// ---------------------------------------------------------------------------
+
+export async function validateProjectEnv(
+  payload: ValidateEnvRequest,
+): Promise<ValidateEnvResponse> {
+  return request<ValidateEnvResponse>("/projects/validate-env", {
+    method: "POST",
+    json: payload,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +677,43 @@ export async function listAdminUsers(params: {
   return request<PaginatedList<AdminUser>>(`/users${qs ? `?${qs}` : ""}`);
 }
 
+export interface HealthResponse {
+  status: string;
+  service: string;
+  version: string;
+  db_dialect: "sqlite" | "postgresql";
+  db_reachable: boolean;
+  timestamp: string;
+}
+
+/**
+ * Engine health probe. Public endpoint — no auth required — so the
+ * login page can call this before the user has a cookie. Used to
+ * surface the DB connection state on the login form.
+ */
+export async function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>("/health", { skipAuthRedirect: true });
+}
+
+/**
+ * Update the current user's password. PATCH /users/me is the
+ * fastapi-users default; the engine's UserManager.validate_password
+ * runs server-side (minimum length only today; see
+ * apps/engine/src/dap_engine/auth/users.py) and surfaces the failure
+ * as a 400 with detail message.
+ *
+ * The endpoint does NOT require the current password — that gate is
+ * the caller's responsibility. The /account page verifies the
+ * current password by attempting a login first so a stolen-cookie
+ * attacker can't change the password without knowing the old one.
+ */
+export async function updateMyPassword(password: string): Promise<void> {
+  await request<CurrentUser>("/users/me", {
+    method: "PATCH",
+    json: { password },
+  });
+}
+
 /**
  * Patch a user — admin-only when targeting someone other than self.
  * The engine uses the fastapi-users default ``PATCH /users/{id}``,
@@ -553,7 +757,10 @@ export async function listAuditEvents(
 ): Promise<PaginatedList<AuditEvent>> {
   const search = new URLSearchParams();
   if (params.eventType) search.set("event_type", params.eventType);
+  if (params.eventTypePrefix) search.set("event_type_prefix", params.eventTypePrefix);
   if (params.userId) search.set("user_id", params.userId);
+  if (params.createdFrom) search.set("created_from", params.createdFrom);
+  if (params.createdTo) search.set("created_to", params.createdTo);
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   const qs = search.toString();
@@ -598,6 +805,33 @@ export async function adminRevokeApiToken(id: string): Promise<void> {
   });
 }
 
+export interface ApiTokenCreateResult {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  /** Raw ``dap_<...>`` token — returned once, never retrievable again. */
+  token: string;
+}
+
+/**
+ * Mint a new API token for the current user. The engine returns the raw
+ * value exactly once (it only stores the hash), so callers must surface it
+ * immediately. JWT-only endpoint — the dashboard session carries the JWT.
+ */
+export async function createApiToken(payload: {
+  name: string;
+  expires_in_days?: number | null;
+}): Promise<ApiTokenCreateResult> {
+  return request<ApiTokenCreateResult>("/auth/api-tokens", {
+    method: "POST",
+    json: payload,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Admin — Instance settings (#301, sub-C5)
 // ---------------------------------------------------------------------------
@@ -609,4 +843,25 @@ export async function adminRevokeApiToken(id: string): Promise<void> {
  */
 export async function getAdminSettings(): Promise<AdminInstanceSettings> {
   return request<AdminInstanceSettings>("/settings/admin");
+}
+
+/** Instance env vars — admin-only, masked previews (never the raw value) (#388). */
+export async function listInstanceEnvVars(): Promise<InstanceEnvVarListing> {
+  return request<InstanceEnvVarListing>("/settings/admin/env-vars");
+}
+
+export async function upsertInstanceEnvVar(
+  key: string,
+  value: string,
+): Promise<InstanceEnvVarListing> {
+  return request<InstanceEnvVarListing>("/settings/admin/env-vars", {
+    method: "POST",
+    json: { [key]: value },
+  });
+}
+
+export async function deleteInstanceEnvVar(key: string): Promise<void> {
+  await request<void>(`/settings/admin/env-vars/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
 }

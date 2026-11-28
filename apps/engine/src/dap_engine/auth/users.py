@@ -25,7 +25,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
-from fastapi import Depends, Request, Response
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi_users import (
     BaseUserManager,
     FastAPIUsers,
@@ -231,6 +231,154 @@ class UserManager(UUIDIDMixin, BaseUserManager[UserORM, uuid.UUID]):
             event_data={"email": user.email},
         )
 
+    async def on_after_update(
+        self,
+        user: UserORM,
+        update_dict: dict[str, object],
+        request: Request | None = None,
+    ) -> None:
+        """Audit self-service password rotations.
+
+        fastapi-users calls this hook after every successful
+        ``PATCH /users/me`` — but we only want to audit the case
+        that has security relevance, which is a password change.
+        Email / display-name updates are profile noise; the audit
+        log should stay scannable for security events. We key on the
+        presence of ``"password"`` in ``update_dict`` (set by
+        fastapi-users' ``update()`` when the schema field is
+        non-None — the hashed version lives under ``hashed_password``
+        in the DB row, but the hook receives the original
+        plaintext-field key).
+
+        Distinct event type from ``user.password_reset`` (the
+        forgot-password email flow): a change requires the current
+        session token, so different threat model and different
+        downstream incident-response handling. The audit row never
+        carries the password value, only the event + actor email.
+
+        Why this hook and not a PATCH-route side effect — keeping
+        it on the manager means future direct calls to ``manager
+        .update(...)`` (e.g. an admin-side password override) get
+        audited automatically without each callsite re-implementing
+        the side effect.
+        """
+        if "password" not in update_dict:
+            return
+        logging.getLogger("dap.engine.auth").info(
+            "user.password_changed", extra={"user_id": str(user.id)}
+        )
+        await record_audit_event_async(
+            self.user_db.session,  # type: ignore[attr-defined]
+            user_id=user.id,
+            event_type="user.password_changed",
+            event_data={"email": user.email},
+        )
+
+    async def oauth_callback(
+        self,
+        oauth_name: str,
+        access_token: str,
+        account_id: str,
+        account_email: str,
+        expires_at: int | None = None,
+        refresh_token: str | None = None,
+        request: Request | None = None,
+        *,
+        associate_by_email: bool = False,
+        is_verified_by_default: bool = False,
+    ) -> UserORM:
+        """Audit OAuth account linking via the standard callback.
+
+        fastapi-users' default ``oauth_callback`` collapses three
+        cases into one method:
+
+        1. **Token refresh** — the (provider, account_id) pair was
+           already linked to this user. Just rotating credentials,
+           no new attack surface.
+        2. **Link to existing user** — a user with this email
+           already exists (password-account or other-OAuth), and
+           ``associate_by_email=True`` permits attaching a new
+           OAuth account. This is a genuine security event —
+           grants a brand new authentication path.
+        3. **New user via OAuth** — no user matched by provider
+           account_id or by email. fastapi-users creates the user
+           and fires ``on_after_register`` (which we already audit
+           as ``user.registered``).
+
+        We want to audit ONLY case 2 — case 1 is noise (no new
+        attack surface), case 3 is already covered by
+        ``user.registered``. We probe state BEFORE delegating to
+        the parent so we can tell which branch the parent took:
+
+        - If ``get_by_oauth_account`` finds a user → case 1.
+        - Else, if ``associate_by_email`` AND ``get_by_email``
+          finds a user → case 2.
+        - Else → case 3.
+
+        The parent call sequence (try get_by_oauth_account →
+        get_by_email → create) is preserved exactly; we only add
+        the audit on the case-2 path. Worth noting: a future
+        fastapi-users update that reorders the branches would
+        change our branch detection — the audit semantics stay
+        correct because we re-derive the case from the SAME state
+        the parent reads, but a smoke test (test_auth_oauth_audit)
+        pins the behaviour.
+        """
+        # Imports kept local: fastapi-users' exception module isn't
+        # used anywhere else in this file, and pulling it to the top
+        # would force every test that imports ``UserManager`` to
+        # also depend on the fastapi-users internal import layout.
+        from fastapi_users import exceptions as fa_exc  # noqa: PLC0415
+
+        is_new_link_to_existing_user = False
+        try:
+            await self.get_by_oauth_account(oauth_name, account_id)
+            # Case 1 — token refresh on an already-linked account.
+        except fa_exc.UserNotExists:
+            if associate_by_email:
+                try:
+                    await self.get_by_email(account_email)
+                    # Case 2 — link to a user that already exists
+                    # by email. This is the audit-worthy case.
+                    is_new_link_to_existing_user = True
+                except fa_exc.UserNotExists:
+                    # Case 3 — brand new user. ``user.registered``
+                    # fires via the parent's ``on_after_register``.
+                    pass
+
+        user = await super().oauth_callback(
+            oauth_name,
+            access_token,
+            account_id,
+            account_email,
+            expires_at=expires_at,
+            refresh_token=refresh_token,
+            request=request,
+            associate_by_email=associate_by_email,
+            is_verified_by_default=is_verified_by_default,
+        )
+
+        if is_new_link_to_existing_user:
+            logging.getLogger("dap.engine.auth").info(
+                "oauth.linked",
+                extra={
+                    "user_id": str(user.id),
+                    "provider": oauth_name,
+                    "account_email": account_email,
+                },
+            )
+            await record_audit_event_async(
+                self.user_db.session,  # type: ignore[attr-defined]
+                user_id=user.id,
+                event_type="oauth.linked",
+                event_data={
+                    "provider": oauth_name,
+                    "account_email": account_email,
+                },
+            )
+
+        return user
+
     async def delete(
         self,
         user: UserORM,
@@ -398,3 +546,49 @@ current_active_user_jwt_only = fastapi_users.current_user(
     active=True,
     get_enabled_backends=_jwt_only_backends,
 )
+
+
+def _enforce_admin(user: UserORM) -> UserORM:
+    """Common ``is_superuser`` gate — 404 (not 403) for anti-enumeration."""
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found",
+        )
+    return user
+
+
+def require_admin_user(
+    user: UserORM = Depends(current_active_user),
+) -> UserORM:
+    """FastAPI dependency that gates an endpoint to admins.
+
+    Anti-enumeration policy: non-admins get ``404 Not Found`` rather
+    than ``403 Forbidden`` so a caller can't tell admin-only endpoints
+    apart from genuinely-missing ones. Anonymous callers fall through
+    to ``current_active_user`` and get ``401`` from fastapi-users.
+
+    Centralizes a check that was previously hand-rolled in 4 places
+    (audit_routes, admin_users, settings admin endpoints). Audit
+    finding E2 — see
+    ``.claude/plans/chce-zebys-zrobil-pelny-snuggly-unicorn.md``.
+
+    For endpoints that must refuse API tokens (e.g. API-token CRUD
+    itself), use :func:`require_admin_user_jwt_only` instead.
+    """
+    return _enforce_admin(user)
+
+
+def require_admin_user_jwt_only(
+    user: UserORM = Depends(current_active_user_jwt_only),
+) -> UserORM:
+    """JWT-only admin gate — refuses API tokens.
+
+    Same anti-enumeration policy as :func:`require_admin_user` (non-
+    admin → 404), but builds on :data:`current_active_user_jwt_only`
+    so a leaked CLI API token can't be used to manage *other* API
+    tokens (or perform any admin action gated by this dep). Mirrors
+    the JWT-only trust boundary the API-token CRUD already uses for
+    its own routes — see ``_jwt_only_backends`` above.
+    """
+    return _enforce_admin(user)

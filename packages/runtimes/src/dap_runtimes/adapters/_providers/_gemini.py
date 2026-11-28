@@ -5,10 +5,20 @@ from __future__ import annotations
 import os
 from typing import Any, Final
 
+import httpx
 from google import genai
 from google.genai import errors as genai_errors
 
-from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
+from dap_runtimes.adapters._error_category import (
+    category_for_status,
+    category_for_transport_error,
+)
+from dap_runtimes.adapters._providers._base import (
+    ProviderError,
+    ProviderResult,
+    calculate_cost_usd,
+    classify_provider_failure,
+)
 
 ID: Final = "gemini"
 DEFAULT_ENV_VAR: Final = "GEMINI_API_KEY"
@@ -22,8 +32,6 @@ PRICING: Final[dict[str, tuple[float, float]]] = {
     "gemini-2.0-flash": (0.10, 0.40),
     "gemini-2.0-flash-exp": (0.10, 0.40),
 }
-
-TOKENS_PER_MILLION: Final = 1_000_000
 
 
 def env_var_for(_config: dict[str, Any]) -> str:
@@ -67,10 +75,32 @@ async def call(
         response = await client.aio.models.generate_content(**request_kwargs)
     except genai_errors.APIError as exc:
         # google-genai raises a single APIError class with a status code on it.
+        # Gemini reports quota exhaustion as 429 RESOURCE_EXHAUSTED.
         status = getattr(exc, "code", None)
-        raise ProviderError(f"Gemini API error {status}: {exc}") from exc
+        status_code = status if isinstance(status, int) else None
+        category = classify_provider_failure(str(exc), status_code=status_code)
+        prefix = (
+            "Out of credits / quota"
+            if category == "out_of_credits"
+            else "Rate limited"
+            if category == "rate_limit"
+            else f"Gemini API error {status}"
+        )
+        # A 5xx (503 UNAVAILABLE when the model is overloaded) is a backend error
+        # too (#934); the message keeps its generic prefix.
+        raise ProviderError(
+            f"{prefix}: {exc}", category=category or category_for_status(status_code)
+        ) from exc
+    except httpx.RequestError as exc:
+        # google-genai does not wrap transport failures in APIError: after its own
+        # retries, httpx timeouts and connection errors come through as-is (#934).
+        # Its aiohttp path is a known gap: aiohttp is not a dap dependency, so
+        # genai only takes that path when something else installs it.
+        raise ProviderError(
+            f"Gemini call failed: {exc}", category=category_for_transport_error(exc)
+        ) from exc
     except Exception as exc:
-        # Network / unexpected — surface generically.
+        # Unexpected — surface generically.
         raise ProviderError(f"Gemini call failed: {exc}") from exc
 
     output_text = response.text or ""
@@ -147,8 +177,9 @@ def _calculate_cost(
     output_tokens: int,
 ) -> float | None:
     """USD cost from token counts. None for unknown models."""
-    pricing = PRICING.get(model_id)
-    if pricing is None:
-        return None
-    input_rate, output_rate = pricing
-    return (input_tokens * input_rate + output_tokens * output_rate) / TOKENS_PER_MILLION
+    return calculate_cost_usd(
+        model_id=model_id,
+        pricing=PRICING,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )

@@ -12,6 +12,10 @@ Usage shape:
   with Jinja2 placeholders. Rendered against ``{prompt_xml,
   runtime_config}``; the result is the request body. String fields are
   templated; numbers / booleans / lists pass through as-is.
+- ``runtime_config.body`` — optional. A request body sent as-is, never
+  rendered; when set it replaces ``request_template``. It is what an agent
+  model sends when it calls http as a tool (#1037): a model-supplied template
+  would render with ``runtime_config`` (static headers, auth) in scope.
 - ``runtime_config.response_extractor`` — dict mapping result keys to
   JSONPath expressions over the response body. Each match is lifted
   into ``RuntimeResult`` (e.g. ``{"output": "$.response",
@@ -43,12 +47,35 @@ import time
 from typing import Any, Final
 
 import httpx
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    BackendErrorCategory,
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
-from jsonpath_ng.ext import parse as jsonpath_parse
+from jsonpath_ng import JSONPath
+from jsonpath_ng.ext.parser import ExtendedJsonPathParser
 
+from dap_runtimes.adapters._error_category import (
+    category_for_status,
+    category_for_transport_error,
+    with_category,
+)
 from dap_runtimes.adapters.base import BaseAdapter
+
+
+def jsonpath_parse(expr: str) -> JSONPath:
+    """Parse a JSONPath expression with jsonpath-ng's extended (filter) syntax.
+
+    Goes through ``ExtendedJsonPathParser`` rather than ``jsonpath_ng.ext.parse``:
+    jsonpath-ng >= 1.10 ships ``py.typed`` and that module-level helper is untyped.
+    """
+    return ExtendedJsonPathParser().parse(expr)
+
 
 logger = logging.getLogger("dap.runtimes.http")
 
@@ -70,9 +97,37 @@ class HttpAdapter(BaseAdapter):
         """Adapter is always available — per-agent URL + auth are checked at execute time."""
         return HealthStatus(available=True, version=f"httpx {httpx.__version__}")
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    def tool_input_schema(self) -> dict[str, Any]:
+        """The input an agent model may give this runtime as a tool (#1022).
+
+        The request's data only: ``method`` and a plain ``body``, sent as-is.
+        ``url``, ``auth``, ``headers``, ``request_template`` and
+        ``response_extractor`` stay in the tool's static config, so a model can't
+        point the call at its own host, name an env var to send as credentials,
+        or template static config into the body (#1037).
+        """
+        return {
+            "type": "object",
+            "properties": {
+                "method": {"type": "string", "enum": sorted(ALLOWED_METHODS)},
+                "body": {
+                    "type": ["object", "array", "string"],
+                    "description": "The request body, sent as-is (not templated)",
+                },
+            },
+            "additionalProperties": False,
+        }
+
+    async def execute(  # noqa: PLR0911
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message.
+        # on_output ignored: http doesn't spawn a subprocess. Streaming is wired
+        # only for subprocess adapters in Phase 3b-2a (#662).
+        del on_output
         config = task.runtime_config
 
         validation_error = _validate_config(config)
@@ -82,15 +137,20 @@ class HttpAdapter(BaseAdapter):
         method = str(config.get("method", DEFAULT_METHOD)).upper()
         url = config["url"]
 
-        # Render request body via sandboxed Jinja2 over the template tree.
+        # A plain ``body`` is sent as-is (#1037); otherwise render the request
+        # body via sandboxed Jinja2 over the template tree.
         try:
-            body = _render_template(
-                config["request_template"],
-                _build_template_env(),
-                {
-                    "prompt_xml": task.prompt_xml,
-                    "runtime_config": config,
-                },
+            body = (
+                config["body"]
+                if "body" in config
+                else _render_template(
+                    config["request_template"],
+                    _build_template_env(),
+                    {
+                        "prompt_xml": task.prompt_xml,
+                        "runtime_config": config,
+                    },
+                )
             )
         except TemplateError as exc:
             return _failed(
@@ -124,12 +184,14 @@ class HttpAdapter(BaseAdapter):
                     duration_ms=_elapsed_ms(start),
                     url=url,
                     timed_out=True,
+                    category="timeout",
                 )
             except httpx.RequestError as exc:
                 return _failed(
                     f"HTTP request failed: {exc}",
                     duration_ms=_elapsed_ms(start),
                     url=url,
+                    category=category_for_transport_error(exc),
                 )
 
         duration_ms = _elapsed_ms(start)
@@ -147,6 +209,7 @@ class HttpAdapter(BaseAdapter):
                 duration_ms=duration_ms,
                 url=url,
                 status_code=response.status_code,
+                category=category_for_status(response.status_code),
             )
 
         try:
@@ -203,8 +266,10 @@ def _validate_config(config: dict[str, Any]) -> str | None:  # noqa: PLR0911,PLR
     if not isinstance(method, str) or method.upper() not in ALLOWED_METHODS:
         return f"runtime_config.method must be one of {sorted(ALLOWED_METHODS)}"
 
-    template = config.get("request_template")
-    if not isinstance(template, (dict, list, str)):
+    if "body" in config:
+        if not isinstance(config["body"], (dict, list, str)):
+            return "runtime_config.body must be a dict / list / string"
+    elif not isinstance(config.get("request_template"), (dict, list, str)):
         return (
             "runtime_config.request_template is required "
             "(dict / list / string with Jinja2 placeholders)"
@@ -478,6 +543,7 @@ def _failed(
     url: str | None = None,
     status_code: int | None = None,
     timed_out: bool = False,
+    category: BackendErrorCategory | None = None,
 ) -> RuntimeResult:
     structured: dict[str, Any] = {
         "provider": "http",
@@ -492,5 +558,5 @@ def _failed(
         output="",
         duration_ms=duration_ms,
         errors=[message],
-        structured=structured,
+        structured=with_category(structured, category),
     )

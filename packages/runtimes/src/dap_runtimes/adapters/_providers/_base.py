@@ -11,6 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from dap_types import BackendErrorCategory
+
+TOKENS_PER_MILLION = 1_000_000
+_HTTP_TOO_MANY_REQUESTS = 429
+
 
 @dataclass
 class ProviderResult:
@@ -36,4 +41,88 @@ class ProviderError(Exception):
 
     The api-call adapter catches this and surfaces ``str(error)`` in
     the ``RuntimeResult.errors`` list.
+
+    ``category`` (#692, #934) classifies the failure so callers and the UI can
+    react to a backend failure distinctly from a config error. One of
+    ``dap_types.BackendErrorCategory``:
+
+    - ``"out_of_credits"`` — quota / credit exhausted; will NOT recover on
+      retry (top up or switch provider/runtime).
+    - ``"rate_limit"`` — transient throttling; may recover on retry.
+    - ``"timeout"`` — the API call timed out.
+    - ``"unavailable"`` — connection error or a 5xx from the provider.
+    - ``None`` — anything else (auth, bad request, unknown model, ...).
+
+    The api-call adapter copies it to ``RuntimeResult.structured["error_category"]``.
     """
+
+    def __init__(self, message: str, *, category: BackendErrorCategory | None = None) -> None:
+        super().__init__(message)
+        self.category = category
+
+
+def classify_provider_failure(
+    text: str,
+    *,
+    status_code: int | None = None,
+) -> BackendErrorCategory | None:
+    """Best-effort category for a provider failure (#692).
+
+    Keyed on the error *text* (plus an optional HTTP status) so it works
+    across SDKs without depending on provider-specific exception fields.
+    Returns ``"out_of_credits"``, ``"rate_limit"``, or ``None``.
+
+    Order matters: out-of-credits is checked first because providers often
+    deliver it *as* a 429 (e.g. OpenAI ``insufficient_quota``), and we must
+    not mislabel a non-recoverable billing failure as a transient one.
+    """
+    haystack = (text or "").lower()
+    out_of_credits_markers = (
+        "insufficient_quota",
+        "insufficient quota",
+        "credit balance",
+        "billing_hard_limit",
+        "billing hard limit",
+        "out of credits",
+        "exceeded your current quota",
+        "plan and billing",
+    )
+    if any(marker in haystack for marker in out_of_credits_markers):
+        return "out_of_credits"
+    if (
+        status_code == _HTTP_TOO_MANY_REQUESTS
+        or "rate limit" in haystack
+        or "too many requests" in haystack
+        or "resource_exhausted" in haystack
+        or "resource exhausted" in haystack
+    ):
+        return "rate_limit"
+    return None
+
+
+def calculate_cost_usd(
+    *,
+    model_id: str,
+    pricing: dict[str, tuple[float, float]],
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_write_multiplier: float = 1.0,
+    cache_read_multiplier: float = 1.0,
+) -> float | None:
+    """Return USD cost for token usage, or ``None`` for unknown models.
+
+    Provider modules own their pricing tables, but the arithmetic is
+    shared so cache-aware providers and simple input/output providers
+    cannot drift in how they normalize "USD per 1M tokens".
+    """
+    rates = pricing.get(model_id)
+    if rates is None:
+        return None
+    input_rate, output_rate = rates
+    input_cost = input_tokens * input_rate
+    cache_creation_cost = cache_creation_tokens * input_rate * cache_write_multiplier
+    cache_read_cost = cache_read_tokens * input_rate * cache_read_multiplier
+    output_cost = output_tokens * output_rate
+    return (input_cost + cache_creation_cost + cache_read_cost + output_cost) / TOKENS_PER_MILLION

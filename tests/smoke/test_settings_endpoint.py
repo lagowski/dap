@@ -3,22 +3,10 @@
 from __future__ import annotations
 
 import os
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 
-import pytest
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
 
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-settings-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"))
-    app = create_app(config)
-    with TestClient(app) as c:
-        yield c
+# The ``client`` fixture lives in ``tests/smoke/conftest.py``.
 
 
 def test_settings_returns_three_sections(client: TestClient) -> None:
@@ -72,6 +60,9 @@ def test_settings_glm_provider_uses_glm_api_key_env(client: TestClient) -> None:
     glm = next(p for p in body["providers"] if p["id"] == "glm")
     assert glm["default_env_var"] == "GLM_API_KEY"
     assert "GLM" in glm["display_name"]
+    fields = {field["key"]: field for field in glm["config_fields"]}
+    assert fields["model_id"]["required"] is True
+    assert "base_url" not in fields
 
 
 def test_settings_provider_configured_reflects_env_state(
@@ -98,6 +89,9 @@ def test_settings_openai_compat_default_env_is_null(client: TestClient) -> None:
     assert compat["default_env_var"] is None
     # And `configured` is always False at the provider level.
     assert compat["configured"] is False
+    fields = {field["key"]: field for field in compat["config_fields"]}
+    assert fields["base_url"]["required"] is True
+    assert fields["api_key_env"]["required"] is True
 
 
 def test_settings_engine_section_has_paths_and_version(client: TestClient) -> None:
@@ -124,7 +118,13 @@ def test_settings_isolates_per_adapter_healthcheck_failures(
 ) -> None:
     """A buggy adapter shouldn't take down the rest of the settings table."""
     from dap_runtimes.adapters.base import BaseAdapter
-    from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+    from dap_types import (
+        HealthStatus,
+        OutputCallback,
+        RuntimeKind,
+        RuntimeResult,
+        RuntimeTask,
+    )
 
     class BrokenAdapter(BaseAdapter):
         id = "broken-test"
@@ -134,7 +134,11 @@ def test_settings_isolates_per_adapter_healthcheck_failures(
         async def healthcheck(self) -> HealthStatus:
             raise RuntimeError("simulated adapter failure")
 
-        async def execute(self, _task: RuntimeTask) -> RuntimeResult:
+        async def execute(
+            self,
+            _task: RuntimeTask,
+            on_output: OutputCallback | None = None,
+        ) -> RuntimeResult:
             raise NotImplementedError
 
     # Register the broken adapter alongside the defaults via the running

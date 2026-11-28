@@ -1,14 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { AlertCircle, ArrowLeft, CheckCircle2, Copy, Download, Package, Play } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  Copy,
+  Download,
+  LayoutGrid,
+  Lightbulb,
+  Package,
+  Play,
+  Undo2,
+} from "lucide-react";
 import type { Pipeline, ValidationResult } from "@/lib/api/types";
 import { formatApiError } from "@/lib/api/client";
+import type { AutoSaveLayoutStatus } from "./use-pipeline-save";
+import { distinctSuggestions } from "./validation-suggestions";
 import { downloadPipelineExportWithAlert } from "@/lib/pipeline-export";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TriggerRunDialog } from "@/components/trigger-run-dialog";
+import { PipelineUsageDialog } from "./pipeline-usage-dialog";
 
 interface DesignerToolbarProps {
   name: string;
@@ -25,6 +39,9 @@ interface DesignerToolbarProps {
    *  Surfaced inline so users see the reason instead of just the
    *  Next.js dev-mode unhandled-rejection overlay. */
   submitError?: unknown;
+  layoutSaveStatus?: AutoSaveLayoutStatus;
+  layoutSavedAt?: Date | null;
+  layoutSaveError?: string | null;
   /** Set when editing an existing saved pipeline — enables the
    *  "Run", "Clone", and "Export JSON" buttons. None of those make
    *  sense before the pipeline has an id. */
@@ -34,6 +51,11 @@ interface DesignerToolbarProps {
    *  download filename slug, plus ``id`` for the API call. ``null``
    *  while the user is creating a new pipeline (no Export yet). */
   pipeline?: Pipeline | null;
+  /** Re-run the dagre layout on the canvas (#1033); hidden when unset. */
+  onAutoArrange?: () => void;
+  /** Restore the positions and waypoints the last Auto-arrange replaced;
+   *  shown only right after an arrange. */
+  onUndoArrange?: () => void;
 }
 
 export function DesignerToolbar({
@@ -48,9 +70,14 @@ export function DesignerToolbar({
   isSaving,
   saveLabel,
   submitError,
+  layoutSaveStatus = "idle",
+  layoutSavedAt,
+  layoutSaveError,
   pipelineId,
   pipelineVersion,
   pipeline,
+  onAutoArrange,
+  onUndoArrange,
 }: DesignerToolbarProps) {
   const canSave = !isSaving && name.length > 0 && validationResult?.valid !== false;
   const canRun = pipelineId != null && pipelineVersion != null;
@@ -88,6 +115,23 @@ export function DesignerToolbar({
         </div>
 
         <div className="flex items-center gap-2">
+          <LayoutSaveStatus
+            status={layoutSaveStatus}
+            savedAt={layoutSavedAt}
+            error={layoutSaveError}
+          />
+          {onAutoArrange ? (
+            <Button type="button" variant="outline" size="sm" onClick={onAutoArrange}>
+              <LayoutGrid className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+              Auto-arrange
+            </Button>
+          ) : null}
+          {onUndoArrange ? (
+            <Button type="button" variant="ghost" size="sm" onClick={onUndoArrange}>
+              <Undo2 className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+              Undo arrange
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -105,6 +149,7 @@ export function DesignerToolbar({
           >
             {isSaving ? "Saving…" : saveLabel}
           </Button>
+          {pipelineId != null ? <PipelineUsageDialog pipelineId={pipelineId} /> : null}
           {canCloneOrExport ? (
             <>
               <Button asChild type="button" variant="outline" size="sm">
@@ -202,9 +247,70 @@ export function DesignerToolbar({
               </li>
             ))}
           </ul>
+          {(() => {
+            const suggestions = distinctSuggestions([
+              ...validationResult.errors,
+              ...validationResult.warnings,
+            ]);
+            if (suggestions.length === 0) return null;
+            return (
+              <div className="ml-5 mt-1.5 space-y-1 border-t border-amber-200/60 pt-1.5 dark:border-amber-900/40">
+                <div className="flex items-center gap-1.5 font-medium text-amber-800 dark:text-amber-300">
+                  <Lightbulb className="h-3.5 w-3.5" />
+                  Suggested fixes
+                </div>
+                <ul className="space-y-0.5">
+                  {suggestions.map((s, i) => (
+                    <li
+                      key={`s-${i}`}
+                      className="list-disc text-muted-foreground marker:text-amber-500"
+                    >
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
+  );
+}
+
+function LayoutSaveStatus({
+  status,
+  savedAt,
+  error,
+}: {
+  status: AutoSaveLayoutStatus;
+  savedAt?: Date | null;
+  error?: string | null;
+}) {
+  if (status === "idle") return null;
+  if (status === "saving") {
+    return (
+      <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
+        Saving layout...
+      </span>
+    );
+  }
+  if (status === "error") {
+    return (
+      <span
+        className="text-xs text-destructive"
+        title={error ?? undefined}
+        role="status"
+        aria-live="polite"
+      >
+        Layout save failed
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
+      Saved {savedAt ? savedAt.toLocaleTimeString() : ""}
+    </span>
   );
 }
 

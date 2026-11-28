@@ -7,7 +7,276 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet — v0.3.0 just shipped. Next changes land here._
+## [0.4.0] — 2026-11-28
+
+Half a year of `develop` since v0.3.0. Headlines: the agent tool-loop
+runtime (Anthropic, OpenAI, OpenRouter, Gemini; #813), the `github` and
+`aider` runtimes with declarative git workspaces and push guards (#810),
+live run output over SSE and `dap project run --follow` (#662), retry,
+workspace state and fallback (#811), backend profiles per node, the in-app
+config assistant and AI error explanations (#689, #691), the interaction
+log (#722), the pipeline designer rework (orthogonal edges, waypoints,
+auto-arrange, fit view; #1033), the prompt box on New pipeline and
+`dap pipeline export --hub`. The full set is below; agent-tool hardening is
+under **Security**.
+
+### Added
+- **Agent tool-loop runtime (#813)** — a bounded, deterministic tool loop
+  on Anthropic, then OpenAI/OpenRouter and a Gemini dialect.
+- **Live run output (#662)** — node stdout streams to
+  `node_output_chunks`, an SSE run-events endpoint feeds the dashboard's
+  live-output panel, and `dap project run --follow` streams it in the CLI.
+- **Retry, workspace state and fallback (#811)**.
+- **Backend profiles** — inspected and configured on bundle import,
+  resolved at runtime, and assignable per node from the designer's
+  LLM-per-node panel.
+- **In-app config assistant (#689)** — a right-dock chat grounded in the
+  docs and the current page, with navigate/doc/prefill actions, Markdown
+  replies and a `claude-code` subscription path; AI-assisted error
+  explanation on failed nodes (#691).
+- **Agent and pipeline usage** — `GET /agents/{id}/usage`,
+  `GET /agents/{id}/executions` and `GET /pipelines/{id}/usage`, shown as
+  *Used in* / *Activity* on the dashboard (#697); "Open in agent tester"
+  from a run node (#724); pre-run readiness checks and fail-fast preflight
+  for `python-func` callables (#710).
+- **Dashboard** — two-step new-agent and new-pipeline flows with grouped
+  templates, run-detail tabs and node navigation, API token creation and an
+  instance environment-variables editor in admin Settings, audit-log
+  drill-down and filters, run deletion with a children-first cascade, gate
+  approval deadlines with a countdown, managed (Cortex) agents grouped as a
+  package with a side-effects acknowledgement before a dry run (#739).
+- **API** — `has_more` on paginated lists, `created_at`/`updated_at` on the
+  run list; provider out-of-credits is told apart from rate limiting.
+- **Prompt box on New pipeline** — describe an automation in plain words and
+  the engine's generator returns a pipeline bundle: open it in the canvas (a
+  normal import, so every import check applies) or download the JSON. The
+  generator is an operator-configured command (`DAP_PIPELINE_GENERATOR_COMMAND`,
+  e.g. cortex's `pipeline new --json`); unset, the box is hidden and
+  `POST /pipelines/generate` answers 503. Requests are audited as
+  `pipeline.generated`.
+- **`aider` runtime (#929, follow-up to #810)** — `aider` is no longer a
+  stub. It runs on the shared CLI base like `codex` and `gemini-cli`, so the
+  git workspace keys and guards (#922, #923) apply to it. The prompt reaches
+  aider through `--message-file /dev/stdin`; output is aider's text, with
+  tokens and session cost read from its `Tokens:` lines. Auto-commits stay
+  on by default; `auto_commits: false` adds `--no-auto-commits` and is
+  refused together with `push`. aider never runs suggested shell commands,
+  tests or lint commands, keeps its history out of the workspace, and its
+  cache is excluded locally so it can't dirty the tree for the guards. The
+  model's provider key is checked against the merged env before the run. The dashboard shows the aider fields with the git workspace
+  fields.
+- **`github` runtime and git workspace docs, plus an example pipeline (#919,
+  completes #810)** — `docs/runtimes.md` gains a built-in runtime
+  reference: every `github` op with its params and outputs, and the git
+  workspace keys and push guards on the CLI code runtimes.
+  `examples/pipelines/github-read-issue-comment.pipeline-bundle.json` reads
+  an issue and comments on it using only `github` nodes; a test imports it
+  and runs it through the real engine. The assistant corpus knows both.
+- **`github` runtime: write operations (#921, part of #810)** — `comment`,
+  `update_issue_section` (replaces the text between
+  `<!-- dap:section:NAME -->` markers; idempotent, and refuses missing or
+  duplicated markers), `create_branch` (from a branch or a sha; a no-op if
+  the branch already exists there), `open_pr` (returns the existing open PR
+  for that head) and `merge_pr` (squash by default). `merge_pr` requires
+  `expected_head_sha`, so GitHub refuses the merge if the PR moved after it
+  was reviewed. Each op returns the affected number, URL or sha into state.
+  Branch names are restricted to characters that can't reshape the request
+  URL.
+- **`github` runtime: read operations (#920, part of #810)** — a new runtime
+  for GitHub REST operations as pipeline nodes. `op: read_issue` returns an
+  issue's title, body, state, labels and URL; `op: read_pr` adds draft/merged
+  state, mergeability, head/base ref and sha, and every changed file
+  (paginated). `repo` and the number can be Jinja templates over the run's
+  state, and the result lands in state (default `github_issue` /
+  `github_pr`). The token is named by env var (`token_env`, default
+  `GH_TOKEN`), resolved through the usual env layering, sent only as an
+  `Authorization` header, and scrubbed from every message. Pagination never
+  follows a link off the configured API. `api_url` supports GitHub
+  Enterprise.
+- **Push guards on CLI code runtimes (#923, part of #810)** — three opt-in
+  checks run after a successful run and before any push, so a failing guard
+  never reaches the remote: `require_nonempty_diff` (the run must add a
+  commit; with `push`, uncommitted leftovers don't count), `append_only` (no
+  amend, rebase or reset over commits that predate the run) and
+  `ancestry_guard` (never drop commits someone else pushed, including ones
+  `force_with_lease` can't see). A failed guard names itself and lists the
+  commits involved.
+- **Git workspace config on CLI code runtimes (#922, part of #810)** — the
+  `claude-code`, `codex` and `gemini-cli` runtimes accept optional
+  `workspace`, `branch`, `base`, `push`, `force_with_lease` and
+  `token_env` keys. The branch is checked out before the CLI runs (refused
+  on uncommitted changes), and after a successful run it can be pushed
+  (fast-forward only, or `--force-with-lease` pinned to the tip seen at
+  checkout). The GitHub token is named by env var, reaches git only through
+  `GIT_CONFIG_*` env, and is scrubbed from every message. With none of the
+  keys set, behaviour is unchanged. The agent editor shows the new fields
+  and no longer drops them on save.
+- **Live run progress (#581, #592)** — the run view now streams
+  per-node execution state while a pipeline runs: the currently
+  executing node (with a spinner), a status timeline, the active
+  phase, and the gate status. The `Run` model exposes
+  `current_node`, `paused_at_node`, `node_statuses`, and a
+  `gate_payload` (task assignments, spec, `finalize_warnings`) so
+  the dashboard renders progress and inline gate approval by
+  polling `GET /runs/{id}` instead of querying the checkpoint store.
+- **Finalize → gate routing (#584, #585, #586)** — finalize nodes
+  that signal "READY" route to an auto-approvable gate; "NEEDS_WORK"
+  routes to a gate added to `approval_required_nodes`, forcing human
+  review. Gate payloads now carry `finalize_warnings` (non-blocking
+  spec issues) so the UI can show them without a checkpoint lookup.
+- **Backend profiles (#574, #575, #576)** — pipeline bundles can
+  declare named backend profiles (env-var / CLI-tool requirements)
+  and assign agents to them. `POST /pipelines/import/inspect-backends`
+  previews profile availability (non-secret) before import; the
+  engine resolves the active profile per agent at run time and
+  injects its runtime config into the executor.
+- **Designer autosave + edge waypoints (#578, #579)** —
+  `PATCH /pipelines/{id}/ui-metadata` debounce-saves canvas layout
+  (node positions, pan/zoom) without creating a new version; React
+  Flow edges persist control points so operators can route edges
+  around nodes for readability.
+- **Terminal CLI workflow (`dap project`)** — `dap project
+  run/approve/reject/state` drives a pipeline end-to-end from the
+  shell against the engine REST API (currently the `cortex` GitHub
+  issue-resolution pipeline, imported from the external `dap-cortex`
+  package). Supports `--watch`, `--no-interactive`, and table/JSON
+  state output.
+- **Opt-in terminal-status enforcement (#381)** — new
+  ``PipelineDefaults.requires_terminal_final_status`` flag (default
+  ``false``). When a pipeline opts in, the orchestrator treats a run
+  that finishes with ``final_status='running'`` (or any other
+  non-terminal value) as a **failed** run with a clear
+  ``failure_reason`` recorded on the Run row instead of silently
+  coercing it to ``success``. Targets the cortex case where
+  ``pr-merger`` refuses to merge but the node-level result is
+  ``success``: the bundle now flips the flag on, so a refused merge
+  surfaces as red in the UI. Generic pipelines without the flag keep
+  the historical "no node raised" = "successful run" contract.
+  ``finalize_run`` gains an optional ``failure_reason`` argument that
+  routes into the existing ``runs.failure_reason`` column (introduced
+  in #260).
+- **Private template registry (#385, Iter 1)** — new endpoint
+  `POST /pipelines/import-from-url` lets operators import
+  pipeline bundles from a trusted private URL (e.g. a
+  company-internal git repo with `.pipeline-bundle.json`
+  files). Off by default; activates when
+  `DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS` is set to a CSV of
+  literal hostnames. Optional Bearer token via
+  `DAP_TEMPLATE_REGISTRY_AUTH_TOKEN` for private repos. SSRF
+  guard (literal hostname match, loopback-bypass blocked,
+  HTTPS-only except for dev localhost), 10 MB response cap,
+  10 s timeout, `pipeline.imported_from_url` audit event on
+  every successful import. Internal refactor — both
+  `/pipelines/import` and the new endpoint delegate to a
+  shared `_materialise_pipeline_import()` helper.
+  See `docs/auth.md` "Private template registry" section.
+- `docs/quick-start.md` — single-page install guide with a
+  3-question decision tree (Path A: local single-user via pipx +
+  SQLite, Path B: VPS self-host via Docker compose, Path C:
+  production with managed Postgres + TLS reverse proxy). Pulls
+  together the install paths previously scattered across
+  README + self-hosting.md + admin-guide.md into one
+  copy-pasteable flow. Each path includes preflight checks,
+  exact commands, verification steps, and pointers into deeper
+  docs.
+- `docs/quick-start.md` "Runtime adapters" section — explains
+  the 7 runtimes (api-call, claude-code, gemini-cli, codex,
+  aider, bash, http), the three Docker strategies for CLI
+  runtimes (api-call-only, custom image with OAuth mount,
+  no-Docker pipx), and a single-stop "where the config lives"
+  map covering engine startup env, per-agent `runtime_config`,
+  per-run state, and provider OAuth state directories. Aimed at
+  operators choosing between "pay per token" vs "reuse my
+  Claude Code Pro subscription" deployments.
+
+### Fixed
+- **Docs: `requires_terminal_final_status` defaults to `true` (#919)** —
+  `docs/runtimes.md` still said `false`, which leads to pipelines whose
+  runs all end `failed`. It also said unknown keys a node returns are
+  dropped; they're merged into `state.extensions`.
+- **`merge_pr` hint pointed at the wrong state path (#919)** — the
+  docstring and the agent editor suggested
+  `{{ state.github_pr.head.sha }}`; `read_pr` results land in
+  `state.extensions`, so the working template is
+  `{{ state.extensions.github_pr.head.sha }}`.
+- **CLI code runtimes push the configured branch, not `HEAD` (#923)** — if
+  the CLI ended its turn on another branch, the #922 push sent that
+  branch's commits under the configured branch's name. Every read after the
+  run is now pinned to `refs/heads/<branch>`.
+
+- **Stale pool connections after DB reconnect (#580)** — runs no
+  longer fail instantly when the SQLAlchemy pool holds a connection
+  the database has since dropped; dead connections are recycled
+  before use.
+- **Run base branch (#593)** — triggering a run with a `project_id`
+  now injects the project's `default_branch` into
+  `extensions.branch`, so git-aware nodes (e.g. a PR merger) use the
+  correct base without the caller repeating it on every trigger.
+- **Auto-approve node aliases** — auto-approve now matches gate
+  nodes referenced by alias, not just their canonical id.
+
+### Changed
+- **Engine internals refactored for ownership boundaries (#556–#568,
+  #572, #573)** — the persistence layer (agent / auth / pipeline /
+  project / run / settings ORM models) and the run API routes (read,
+  batch, intervention, lifecycle) were split into focused modules;
+  dashboard API hooks and client facades were likewise separated.
+  Behaviour-preserving; documented in `docs/architecture.md`.
+- **Release tooling (#569)** — release adds cross-package version /
+  compatibility checks (`scripts/check-release-metadata.py`) so a
+  tag can't ship mismatched workspace versions.
+- **CI path-aware skips (#570, #571)** — workflows skip jobs whose
+  paths weren't touched, failing open if classification is
+  inconclusive.
+- **Package READMEs rewritten in English** (`packages/types/`,
+  `packages/prompt-dsl/`, `packages/runtimes/`, `apps/cli/`,
+  `apps/engine/`). These READMEs feed PyPI's "long
+  description" field on each project page; the originals carried
+  Polish content that looked unfinished to international
+  visitors. Each is now a self-contained professional summary
+  covering: what the package does, what's inside, installation,
+  a quick-start code example, compatibility matrix, and cross-links
+  into the deeper docs/. Picked up by PyPI on the next release
+  (v0.3.1+); no immediate re-publish needed.
+- PyPI publish reverted to trusted-publisher OIDC; no long-lived
+  API token in the repo. See `docs/release.md` for setup details
+  and the v0.3.0 "bootstrap mode" history note.
+
+### Removed
+- `secrets.PYPI_API_TOKEN` is no longer referenced by any workflow.
+  Operators should delete the secret manually
+  (`gh secret delete PYPI_API_TOKEN --repo rafeekpro/dap`).
+
+### Security
+- **Agent tool hardening (#1020, #1022, #1037)** — the agent tool loop no
+  longer merges model input over the tool config unfiltered (a
+  prompt-injected model could set `api_url`/`token_env` on the `github`
+  tool and send the token to its own host). Each runtime declares a closed
+  tool input schema; the default schema is closed; every call refuses
+  `__`-prefixed keys, a fixed deny-list (`url`, `api_url`, `base_url`,
+  `env`, `cwd`, `command`, `auth`, `headers`, `request_template`, …) and any
+  `*_env` key, compared case-folded, plus unlisted object- and list-valued
+  keys. The `http` tool takes a plain `body`, sent as-is, instead of a
+  templated `request_template`.
+- **Hub export scrubbing (#1016)** — `dap pipeline export --hub` exports
+  structure only (no prompts, runtime config, env var names or backend
+  profiles), refuses the export if a URL, IP, email, absolute path, token,
+  private host or credential assignment survives, and scrubs client names.
+- **Secret/PII redaction for interaction logs (#722)** — model call and
+  assistant transcripts are redacted before they are stored; the admin
+  API and a retention window cover the EU AI Act interaction log.
+- **Audit hardening (#778)** — ownership and audit gaps found in the
+  security review are closed, with a coverage floor on the audit paths.
+- **Assistant action links (#727)** — LLM-supplied `href`s are restricted
+  to in-app paths and known docs.
+- **Dispatch deny for self-fix-dangerous projects (#641)** — UUID-pinned,
+  so a renamed project can't slip past it.
+- **Dependency CVEs** — floors or bumps for cryptography, pyjwt,
+  python-multipart, starlette, langgraph-checkpoint(-postgres),
+  langgraph-sdk, langsmith, msgpack, dnspython, pyasn1, certifi, filelock
+  and opentelemetry-api (#791, #800, #644, #849, #858, #944, #967, #970);
+  the Python CVE scan now also runs against `develop` daily (#899), and
+  `.github/workflows/` is code-owner locked (#786).
 
 ## [0.3.0] — 2026-05-12
 

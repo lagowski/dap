@@ -21,7 +21,13 @@ from dap_engine.persistence.models import (
     UserORM,
 )
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -43,11 +49,37 @@ class SlowStubAdapter:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, _task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        _task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         await asyncio.sleep(self.sleep_seconds)
         return RuntimeResult(
             success=True, output="slow", duration_ms=int(self.sleep_seconds * 1000)
         )
+
+
+def _project_payload(*, name: str = "lifecycle-test-project", **overrides: Any) -> dict[str, Any]:
+    """Build a minimal POST /projects payload.
+
+    Mirrors the helper of the same name in ``test_ownership_projects.py``;
+    duplicated here to avoid cross-test-file import coupling (importing
+    private helpers from sibling test modules is a code smell). Move to
+    a shared ``tests/smoke/_helpers.py`` if a third test file needs the
+    same shape.
+    """
+    payload: dict[str, Any] = {
+        "name": name,
+        "description": "",
+        "working_directory": None,
+        "repo_url": None,
+        "default_branch": "main",
+        "pipelines": {},
+        "env_vars": {},
+    }
+    payload.update(overrides)
+    return payload
 
 
 def _create_agent(client: TestClient, runtime_id: str = "slow-stub") -> str:
@@ -116,7 +148,20 @@ def _wait_for_status(
 
 
 def test_post_runs_returns_immediately(slow_client: tuple[TestClient, RuntimeRegistry]) -> None:
-    """Even with a 2s adapter, POST /runs should return in <500ms (async)."""
+    """Even with a 2s adapter, POST /runs returns well before the adapter finishes.
+
+    The guarantee is that the endpoint is **async** — the response
+    lands before the registered adapter's ``sleep_seconds=2.0`` is
+    over. The threshold is set generously vs. the adapter duration:
+    a synchronous code path would block ~2s and trip the assert,
+    while a healthy async path completes in milliseconds.
+
+    Earlier the threshold was 500ms; that flaked on busy CI runners
+    (one run came in at 0.517s, failing despite still proving async
+    behaviour). 1.0s keeps the semantic guarantee (2× faster than
+    adapter sleep — synchronous would still be detected) with
+    double the CI headroom.
+    """
     client, _ = slow_client
     agent_id = _create_agent(client)
     pipeline_id = _create_pipeline(client, agent_id)
@@ -131,7 +176,7 @@ def test_post_runs_returns_immediately(slow_client: tuple[TestClient, RuntimeReg
     assert response.status_code == 201
     body = response.json()
     assert body["final_status"] == "running"
-    assert elapsed < 0.5, f"POST /runs took {elapsed:.3f}s — should be async!"
+    assert elapsed < 1.0, f"POST /runs took {elapsed:.3f}s — should be async!"
 
     # Wait for completion to clean up (avoid leaking the task)
     _wait_for_status(client, body["id"], {"success", "failed", "aborted"})
@@ -315,3 +360,51 @@ def test_stale_running_runs_marked_failed_on_startup() -> None:
         run = client2.get("/runs/stale-run-id").json()
         assert run["final_status"] == "failed"
         assert run["ended_at"] is not None
+
+
+def test_post_runs_self_fix_dangerous_project_returns_403(
+    authed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dispatching against a project on the self-fix-dangerous denylist returns 403.
+
+    Background: the 2026-06-01 incident reproduced a destructive failure mode where
+    dispatching cortex against the DAP project itself ran pytest fixtures that
+    wiped the entire app DB. The fix is a server-side dispatch-deny on a small
+    set of UUIDs declared as ``_SELF_FIX_DANGEROUS_PROJECT_IDS`` in ``api/runs.py``.
+
+    This test uses monkeypatch to add the test-created project's UUID to that
+    set so the assertion doesn't depend on the production UUID being in the
+    test DB (which it isn't and shouldn't be). The PRODUCTION protection is
+    the constant's hardcoded entry; the TEST verifies the *mechanism* works
+    for any UUID added to the set.
+    """
+    agent_id = _create_agent(authed_client)
+    pipeline_id = _create_pipeline(authed_client, agent_id)
+    project_response = authed_client.post(
+        "/projects",
+        json=_project_payload(pipelines={"develop": pipeline_id}),
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    # Make this project "dangerous" for the duration of this test.
+    monkeypatch.setattr(
+        "dap_engine.api.runs._SELF_FIX_DANGEROUS_PROJECT_IDS",
+        frozenset({project_id}),
+    )
+
+    response = authed_client.post(
+        "/runs",
+        json={
+            "pipeline_id": pipeline_id,
+            "project_id": project_id,
+            "initial_state": {},
+        },
+    )
+    assert response.status_code == 403, f"expected 403, got {response.status_code}: {response.text}"
+    detail = response.json()["detail"]
+    assert isinstance(detail, dict), f"detail should be structured: {detail!r}"
+    assert detail["code"] == "dispatch_denied_self_fix_dangerous"
+    assert detail["project_id"] == project_id
+    assert "2026-06-01" in detail["message"]

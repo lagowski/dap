@@ -33,12 +33,20 @@ class PipelineState(BaseModel):
     # ---- EXECUTION LOOP ----
     max_attempts: int = 3
     attempt: int = 0
+    # Per-node attempt counter for ``PipelineNode.retry`` loops (#931);
+    # defaults to empty so snapshots persisted before it existed still load.
+    node_attempts: dict[str, int] = Field(default_factory=dict)
     tests_passed: bool = False
     last_test_output: str = ""
 
     # ---- IMPLEMENTATION ----
     modified_files: list[str] = Field(default_factory=list)
     implementation_notes: str | None = None
+    # What a code runtime run with a ``branch`` changed (#933), reported by the
+    # git workspace after the run. Empty defaults so older snapshots still load.
+    changed_files: list[str] = Field(default_factory=list)
+    commits_since_base: list[dict[str, str]] = Field(default_factory=list)
+    diff_stats: dict[str, int] = Field(default_factory=dict)
 
     # ---- VERIFICATION ----
     verification_status: VerificationStatus = "pending"
@@ -53,6 +61,21 @@ class PipelineState(BaseModel):
         description=(
             "Per-pipeline extra state. Keys are pipeline-defined. "
             "Values must be JSON-serializable. "
+            "Reserved keys (engine-defined): "
+            "``auto_approve`` (bool, #389) — when True, the runner "
+            "skips every ``interrupt_before`` approval gate so the run "
+            "executes end-to-end without pausing. Operator-only flag, "
+            "intentionally named to mirror Claude Code's "
+            "``--dangerously-skip-permissions``. "
+            "``execution_target`` (str, #611) — hostname or node label "
+            "of the remote host that the Cortex executor node will "
+            "SSH into to run commands. "
+            "``execution_commands`` (list[str], #611) — ordered list of "
+            "shell commands to execute on the remote host. Must be a "
+            "``list`` when present; a bare string is rejected with 422. "
+            "``execution_env`` (dict[str, str], #611) — environment "
+            "variables to export on the remote host before running "
+            "``execution_commands``."
         ),
     )
 

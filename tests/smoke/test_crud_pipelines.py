@@ -2,28 +2,25 @@
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 from dap_engine.app import EngineConfig, create_app
+from dap_engine.persistence.models import AuditLogORM
 from fastapi.testclient import TestClient
-
-from tests.smoke._auth import authed_test_client
+from sqlalchemy import select
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-crud-pipelines-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="smoke-secret",
-    )
-    app = create_app(config)
-    with authed_test_client(app) as c:
-        yield c
+def client(authed_client: TestClient) -> TestClient:
+    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
+
+    Kept as a local alias because most test bodies in this file already
+    take a ``client: TestClient`` parameter; renaming them all would
+    bloat the X1 diff without changing behaviour.
+    """
+    return authed_client
 
 
 def _create_minimal_agent(client: TestClient, name: str) -> str:
@@ -147,6 +144,151 @@ def test_update_pipeline_creates_new_version(
     assert body["version"] == 2
     assert body["description"] == "Updated description"
     assert len(body["nodes"]) == 3
+
+
+_BACKEND_PROFILES = {
+    "available": {
+        "anthropic": {
+            "runtime_id": "api-call",
+            "runtime_config": {"provider": "anthropic", "model_id": "claude-sonnet-4-6"},
+        },
+        "openai": {
+            "runtime_id": "api-call",
+            "runtime_config": {"provider": "openai", "model_id": "gpt-4o"},
+        },
+    },
+    "agent_assignments": {"default_profile": "anthropic", "overrides": {"verify": "openai"}},
+}
+
+
+def test_update_preserves_backend_profiles_when_payload_omits_them(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    """A PUT without backend_profiles (e.g. the designer layout save) must carry
+    the prior version's per-node LLM assignments forward, not wipe them."""
+    created = client.post(
+        "/pipelines", json=_pipeline_payload(agents, backend_profiles=_BACKEND_PROFILES)
+    ).json()
+    assert created["backend_profiles"] == _BACKEND_PROFILES
+
+    # Plain update — the default payload has no backend_profiles key.
+    response = client.put(
+        f"/pipelines/{created['id']}", json=_pipeline_payload(agents, description="v2")
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == 2
+    assert body["backend_profiles"] == _BACKEND_PROFILES  # preserved, not clobbered
+
+
+def test_update_replaces_backend_profiles_when_payload_includes_them(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    """An explicit backend_profiles value (the LLM-per-node panel saving) replaces
+    the prior assignments."""
+    created = client.post(
+        "/pipelines", json=_pipeline_payload(agents, backend_profiles=_BACKEND_PROFILES)
+    ).json()
+
+    next_profiles = {
+        "available": _BACKEND_PROFILES["available"],
+        "agent_assignments": {"default_profile": "openai", "overrides": {}},
+    }
+    response = client.put(
+        f"/pipelines/{created['id']}",
+        json=_pipeline_payload(agents, backend_profiles=next_profiles),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["backend_profiles"] == next_profiles
+
+
+def test_patch_pipeline_ui_metadata_merges_without_new_version(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    created = client.post(
+        "/pipelines",
+        json=_pipeline_payload(
+            agents,
+            ui_metadata={
+                "node_positions": {"select_task": {"x": 0, "y": 0}},
+                "custom": {"keep": True},
+            },
+        ),
+    ).json()
+    pipeline_id = created["id"]
+
+    response = client.patch(
+        f"/pipelines/{pipeline_id}/ui-metadata",
+        json={
+            "ui_metadata": {
+                "viewport": {"x": -120, "y": 80, "zoom": 0.75},
+                "node_positions": {"select_task": {"x": 50, "y": 60}},
+            }
+        },
+    )
+    assert response.status_code == 204, response.text
+
+    fetched = client.get(f"/pipelines/{pipeline_id}").json()
+    assert fetched["version"] == 1
+    assert fetched["ui_metadata"] == {
+        "node_positions": {"select_task": {"x": 50, "y": 60}},
+        "custom": {"keep": True},
+        "viewport": {"x": -120, "y": 80, "zoom": 0.75},
+    }
+    versions = client.get(f"/pipelines/{pipeline_id}/versions").json()
+    assert [v["version"] for v in versions] == [1]
+
+    with client.app.state.session_factory() as session:  # type: ignore[attr-defined]
+        audit = session.scalar(
+            select(AuditLogORM)
+            .where(AuditLogORM.event_type == "pipeline.ui_metadata_updated")
+            .order_by(AuditLogORM.created_at.desc())
+        )
+    assert audit is not None
+    assert audit.event_data == {
+        "pipeline_id": pipeline_id,
+        "version": 1,
+        "keys": ["node_positions", "viewport"],
+    }
+
+
+def test_patch_pipeline_ui_metadata_requires_auth(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> None:
+    app = create_app(engine_config_factory())
+    with TestClient(app) as plain_client:
+        response = plain_client.patch(
+            "/pipelines/anything/ui-metadata",
+            json={"ui_metadata": {"viewport": {"x": 0, "y": 0, "zoom": 1}}},
+        )
+
+    assert response.status_code in {401, 403}
+
+
+def test_patch_pipeline_ui_metadata_rejects_invalid_viewport_zoom(
+    client: TestClient,
+    agents: dict[str, str],
+) -> None:
+    created = client.post("/pipelines", json=_pipeline_payload(agents)).json()
+
+    response = client.patch(
+        f"/pipelines/{created['id']}/ui-metadata",
+        json={"ui_metadata": {"viewport": {"x": 0, "y": 0, "zoom": 10}}},
+    )
+
+    assert response.status_code == 422
+
+
+def test_patch_unknown_pipeline_ui_metadata_returns_404(client: TestClient) -> None:
+    response = client.patch(
+        "/pipelines/missing/ui-metadata",
+        json={"ui_metadata": {"viewport": {"x": 0, "y": 0, "zoom": 1}}},
+    )
+
+    assert response.status_code == 404
 
 
 def test_pipeline_version_history(

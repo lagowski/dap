@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from dap_runtimes import create_default_registry
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +20,9 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from dap_engine.api.agents import router as agents_router
+from dap_engine.api.assistant import router as assistant_router
 from dap_engine.api.health import router as health_router
+from dap_engine.api.interactions import router as interactions_router
 from dap_engine.api.pipelines import router as pipelines_router
 from dap_engine.api.projects import router as projects_router
 from dap_engine.api.runs import router as runs_router
@@ -32,6 +36,25 @@ from dap_engine.auth.db import create_async_engine_for_url, make_async_session_f
 from dap_engine.auth.oauth import make_github_client, make_google_client
 from dap_engine.auth.schemas import UserCreate, UserRead, UserUpdate
 from dap_engine.auth.users import auth_backend, configure_jwt
+
+# Config moved to ``dap_engine.config`` (#778 Phase 2) — re-exported here
+# because ~50 call sites (tests, CLI bootstrap, api/deps) import these
+# names from ``dap_engine.app``. New code: import from dap_engine.config.
+from dap_engine.config import (
+    DEFAULT_CORS_ORIGINS,
+    AuthConfig,
+    CryptoConfig,
+    DatabaseConfig,
+    EngineConfig,
+    EngineConfigKwargs,
+    InteractionLogConfig,
+    OAuthConfig,
+    RuntimePolicyConfig,
+    ServerConfig,
+    TemplateRegistryConfig,
+    parse_cors_origins,
+    parse_retention_days,
+)
 from dap_engine.execution import RunRegistry
 from dap_engine.persistence import repository as repo
 from dap_engine.persistence.db import (
@@ -40,7 +63,29 @@ from dap_engine.persistence.db import (
     detect_dialect,
     make_session_factory,
     pg_conn_string,
+    redact_database_url,
 )
+from dap_engine.persistence.interaction_log import purge_interactions
+from dap_engine.version import __version__
+
+# ``create_app`` is defined here; everything else is re-exported from
+# ``dap_engine.config`` (#778 Phase 2) for the legacy import path.
+__all__ = [
+    "DEFAULT_CORS_ORIGINS",
+    "AuthConfig",
+    "CryptoConfig",
+    "DatabaseConfig",
+    "EngineConfig",
+    "EngineConfigKwargs",
+    "InteractionLogConfig",
+    "OAuthConfig",
+    "RuntimePolicyConfig",
+    "ServerConfig",
+    "TemplateRegistryConfig",
+    "create_app",
+    "parse_cors_origins",
+    "parse_retention_days",
+]
 
 logger = logging.getLogger("dap.engine")
 
@@ -51,6 +96,7 @@ async def _pg_pooled_checkpointer(
     *,
     min_size: int,
     max_size: int,
+    reconnect_timeout: float = 300.0,
 ) -> AsyncIterator[AsyncPostgresSaver]:
     """Yield an AsyncPostgresSaver backed by a psycopg AsyncConnectionPool.
 
@@ -83,6 +129,7 @@ async def _pg_pooled_checkpointer(
         # checkpoint write arrives, causing PoolTimeout (#238).  Set to 1 h
         # so connections survive the full pipeline (~40 min).
         max_idle=3600.0,
+        reconnect_timeout=reconnect_timeout,
         kwargs={
             "autocommit": True,
             "prepare_threshold": 0,
@@ -103,105 +150,36 @@ async def _pg_pooled_checkpointer(
         yield AsyncPostgresSaver(conn=pool)
 
 
-# Local-dev defaults: dashboard on :3000, alt port :7332. Override at
-# deploy time via ``EngineConfig.cors_origins`` or the ``DAP_CORS_ORIGINS``
-# env var (#259).
-DEFAULT_CORS_ORIGINS: list[str] = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:7332",
-    "http://127.0.0.1:7332",
-]
+def _verify_postgres_reachable(db_url: str) -> None:
+    """Probe the configured Postgres with a short-timeout SELECT 1.
 
+    Runs BEFORE ``create_engine_for_postgresql`` because that factory
+    also calls ``Base.metadata.create_all()`` (and on a fresh DB, runs
+    migrations) — both of which open a real connection. Letting that
+    fail first would dump a raw SQLAlchemy traceback to the operator,
+    bypassing the redacted CRITICAL log + sys.exit(1) path this
+    function is meant to provide.
 
-def parse_cors_origins(raw: str | None) -> list[str] | None:
-    """Parse ``DAP_CORS_ORIGINS`` (comma-separated origins) into a list.
-
-    Returns ``None`` when the env var is unset or empty after stripping —
-    callers treat that as "use the default local-dev list". Whitespace
-    around individual entries is trimmed; empty entries are dropped so a
-    trailing comma doesn't produce a bogus origin string.
+    The probe uses ``psycopg`` directly (not SQLAlchemy) for the same
+    reason and so we can set a sane ``connect_timeout``; the default
+    is ~unbounded which means a network-unreachable host hangs the
+    startup for tens of seconds before failing. (#391)
     """
-    if not raw:
-        return None
-    parts = [p.strip() for p in raw.split(",")]
-    cleaned = [p for p in parts if p]
-    return cleaned or None
-
-
-@dataclass
-class EngineConfig:
-    db_path: str = "./.dap/state.db"
-    # When set, takes precedence over db_path.  Prefix determines dialect:
-    #   sqlite://…        → SQLite (same as db_path)
-    #   postgresql+asyncpg://…  → PostgreSQL
-    database_url: str | None = None
-    host: str = "127.0.0.1"
-    port: int = 7333
-    # Hard cap for ``POST /agents/dry-run`` (#103). Each invocation pays
-    # real LLM tokens, so we refuse calls whose agent ``budget_limit_usd``
-    # (the top-level field on Agent / AgentDryRunDraft, not anything inside
-    # ``runtime_config``) exceeds this. Belt-and-suspenders against a runaway
-    # form value or a forgotten zero default in the UI.
-    dry_run_budget_usd: float = 0.50
-    # PostgreSQL checkpointer pool sizing (#187, #238).
-    # AsyncPostgresSaver serialises checkpoint ops behind a Lock, so only 1
-    # connection is in flight at a time — max_size governs burst concurrency
-    # across simultaneous runs, not within one.  min_size=4 matches the
-    # psycopg_pool default and keeps enough warm connections for the gate
-    # checkpoint write that arrives after a long idle Phase 1.
-    pg_pool_min_size: int = 4
-    pg_pool_max_size: int = 10
-    # CORS origins permitted on the engine's REST API (#259). ``None``
-    # means "fall back to ``DEFAULT_CORS_ORIGINS``" — the local-dev list.
-    # Production deployments override via env var ``DAP_CORS_ORIGINS``
-    # (parsed in ``__main__``) or by passing ``cors_origins=[...]`` here.
-    cors_origins: list[str] | None = None
-    # Auth (v0.3, see #299).
-    # ``auth_jwt_secret``: required for any auth-protected route.  Tests
-    # set a deterministic value; production reads ``DAP_AUTH_JWT_SECRET``
-    # in ``__main__`` and refuses to start with a default. We accept None
-    # here only to keep the dataclass default-constructible; the lifespan
-    # generates a per-process random secret in that case (sufficient for
-    # local dev where every restart invalidates outstanding tokens).
-    auth_jwt_secret: str | None = None
-    auth_access_ttl_seconds: int = 60 * 15
-    # Password-reset token logging (sub-B3 review).
-    #
-    # When ``True``, the ``UserManager.on_after_forgot_password`` hook
-    # logs the raw reset token at WARNING level. Useful for self-hosted
-    # dev / one-operator instances that have no email delivery yet —
-    # the operator copies the token out of stdout and hands it to the
-    # user. **Off by default** because reset tokens are credentials;
-    # production log aggregation would otherwise routinely contain
-    # account-takeover material. Set via ``DAP_AUTH_LOG_RESET_TOKENS``.
-    auth_log_reset_tokens: bool = False
-    # OAuth (v0.3, sub-A2). Each provider is opt-in: when both
-    # client_id and client_secret are set the corresponding /auth/<provider>
-    # router is mounted; otherwise nothing is exposed for that provider.
-    # Self-host installs can run with email+password only and add OAuth
-    # later by setting these env vars and restarting.
-    oauth_github_client_id: str | None = None
-    oauth_github_client_secret: str | None = None
-    oauth_google_client_id: str | None = None
-    oauth_google_client_secret: str | None = None
-    # Post-login redirect for OAuth callbacks (sub-B5).
-    #
-    # When set, fastapi-users' OAuth callback redirects the browser to
-    # this URL with the access token as a ``?token=<jwt>`` query
-    # parameter, instead of returning JSON. The dashboard's
-    # ``/api/auth/oauth/callback`` handler reads the token, sets the
-    # httpOnly cookie, and lands the user on the home page — turning
-    # the OAuth dance into the same cookie-only auth surface password
-    # login uses.
-    #
-    # In dev this points at the dashboard's local URL
-    # (``http://localhost:3000/api/auth/oauth/callback``); production
-    # operators set ``DAP_AUTH_OAUTH_REDIRECT_URL`` to the
-    # equivalent dashboard URL. When ``None`` (no dashboard wired)
-    # the callback falls back to returning JSON — useful for
-    # CLI-only deployments.
-    auth_oauth_redirect_url: str | None = None
+    try:
+        with psycopg.connect(pg_conn_string(db_url), connect_timeout=5) as conn:
+            conn.execute("SELECT 1")
+    except Exception as e:
+        safe_url = redact_database_url(db_url)
+        logger.critical(
+            "DAP_DATABASE_URL is set (%s) but the database is unreachable: %s",
+            safe_url,
+            e,
+        )
+        logger.critical(
+            "Refusing to silently fall back to SQLite. Fix the URL or check "
+            "network access (VPN, firewall, DB up?), then restart.",
+        )
+        sys.exit(1)
 
 
 def _setup_auth(cfg: EngineConfig) -> tuple[Any, Any, str]:
@@ -241,7 +219,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     auth_async_engine, async_session_factory, oauth_state_secret = _setup_auth(cfg)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: PLR0915
         # Determine dialect from DAP_DATABASE_URL or fall back to SQLite path.
         db_url = cfg.database_url
         dialect = detect_dialect(db_url) if db_url else "sqlite"
@@ -249,6 +227,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         checkpointer_ctx: Any
         if dialect == "postgresql":
             assert db_url is not None
+            # Probe before create_engine_for_postgresql — that factory
+            # opens a connection via create_all() and migrations, so an
+            # unreachable URL would otherwise fail there with a raw
+            # SQLAlchemy traceback (bypassing the redacted CRITICAL log
+            # + clean sys.exit(1) below). (#391)
+            _verify_postgres_reachable(db_url)
             engine = create_engine_for_postgresql(db_url)
             # Pooled AsyncPostgresSaver — concurrent checkpoint ops parallelize
             # across up to cfg.pg_pool_max_size psycopg connections instead of
@@ -257,6 +241,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
                 pg_conn_string(db_url),
                 min_size=cfg.pg_pool_min_size,
                 max_size=cfg.pg_pool_max_size,
+                reconnect_timeout=cfg.pg_pool_reconnect_timeout,
             )
             db_label = db_url.split("@", 1)[-1] if "@" in db_url else db_url
         else:
@@ -270,15 +255,39 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
         registry = create_default_registry()
         run_registry = RunRegistry()
 
-        # Recover stale runs left by previous crashes
+        # Recover stale runs left by previous crashes and expired gate pauses (#582)
         with session_factory() as cleanup_session:
             stale_count = repo.mark_stale_running_runs_as_failed(
                 cleanup_session,
                 reason="engine restarted before run completed",
             )
+            expired_count = repo.mark_expired_gate_runs_as_failed(cleanup_session)
             cleanup_session.commit()
         if stale_count > 0:
             logger.warning("marked %d stale running run(s) as failed", stale_count)
+        if expired_count > 0:
+            logger.warning("marked %d expired gate run(s) as failed", expired_count)
+
+        # Interaction-log retention sweep (#722). retention_days <= 0 means
+        # keep forever (operator-managed retention). Best-effort: a purge
+        # failure (locked DB, transient connection error) must not stop the
+        # engine from starting — unlike the schema migrations above, missing
+        # one sweep is harmless (the next boot retries).
+        if cfg.interaction_log.enabled and cfg.interaction_log.retention_days > 0:
+            cutoff = datetime.now(UTC) - timedelta(days=cfg.interaction_log.retention_days)
+            try:
+                with session_factory() as purge_session:
+                    purged = purge_interactions(purge_session, older_than=cutoff)
+                    purge_session.commit()
+            except Exception:
+                logger.exception("interaction-log retention purge failed; continuing startup")
+            else:
+                if purged > 0:
+                    logger.info(
+                        "purged %d interaction-log record(s) older than %d days",
+                        purged,
+                        cfg.interaction_log.retention_days,
+                    )
 
         async with AsyncExitStack() as stack:
             checkpointer = await stack.enter_async_context(checkpointer_ctx)
@@ -294,6 +303,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
             app.state.runtime_registry = registry
             app.state.run_registry = run_registry
             app.state.checkpointer = checkpointer
+            # Expose the underlying pool (if any) for the /health endpoint
+            # to read pool stats without opening a fresh connection (#580).
+            app.state.checkpointer_pool = getattr(checkpointer, "pool", None)
             app.state.async_session_factory = async_session_factory
             app.state.auth_async_engine = auth_async_engine
 
@@ -320,7 +332,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
 
     app = FastAPI(
         title="dap-engine",
-        version="0.0.1",
+        version=__version__,
         lifespan=lifespan,
     )
 
@@ -338,6 +350,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     app.include_router(projects_router)
     app.include_router(runs_router)
     app.include_router(settings_router)
+    app.include_router(assistant_router)
 
     # Auth routes (v0.3, see #299).
     # Existing endpoints are NOT yet auth-protected — that lands in a
@@ -392,6 +405,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:  # noqa: PLR0915
     # into ``audit_log`` from the auth subsystem + ownership repos;
     # this router exposes them to the admin panel.
     app.include_router(audit_router)
+    app.include_router(interactions_router)
 
     # OAuth routers — only mounted when both credentials are present.
     # ``associate_by_email=True`` lets a user with an existing local

@@ -1,10 +1,15 @@
 /**
- * Hand-rolled mirror of dap_types Pydantic models.
+ * Dashboard API type facade.
  *
- * For full type sync run `pnpm gen:api` (requires running engine on
- * NEXT_PUBLIC_DAP_ENGINE_URL) — this writes types.gen.ts. The hand-rolled
- * shapes here are a stable subset used by F6 MVP screens.
+ * Server-owned request/response contracts are generated into
+ * `types.gen.ts` from the engine OpenAPI schema (`pnpm gen:api`).
+ * This file keeps dashboard-only convenience aliases and tightens a
+ * few defaulted response fields that the UI receives as normalized values.
  */
+
+import type { components } from "./types.gen";
+
+type ApiSchema<Name extends keyof components["schemas"]> = components["schemas"][Name];
 
 export type AgentRole =
   | "task_selector"
@@ -15,39 +20,63 @@ export type AgentRole =
   | "post_check"
   | string;
 
-export interface Agent {
-  id: string;
-  name: string;
-  role: AgentRole;
-  version: number;
-  runtime_id: string;
+type AgentPayloadDefaults = {
   runtime_config: Record<string, unknown>;
-  prompt_template: string;
   input_schema: string[];
   output_schema: string[];
   constraints: string[];
   budget_limit_usd: number | null;
   timeout_ms: number;
-  created_at: string;
-  updated_at: string;
-  is_active: boolean;
-  // Populated only on list responses. null on detail/create/update endpoints;
-  // undefined on responses from older engines that predate the field.
-  used_in_pipelines?: number | null;
-}
+};
 
-export interface AgentCreate {
-  name: string;
+export type Agent = Omit<
+  ApiSchema<"Agent">,
+  keyof AgentPayloadDefaults | "role"
+> &
+  AgentPayloadDefaults & {
+    role: AgentRole;
+    // Populated only on list responses. null on detail/create/update endpoints;
+    // undefined on responses from older engines that predate the field.
+    used_in_pipelines?: number | null;
+  };
+
+/** Where an agent is used — pipelines that embed it + projects that bind those (#697). */
+export type AgentUsage = ApiSchema<"AgentUsageResponse">;
+
+/** A python-func agent's callable docstring + resolvability (#747). */
+export type AgentCallableInfo = ApiSchema<"AgentCallableInfo">;
+
+/** A page of an agent's node executions across runs — the activity log (#697). */
+export type AgentExecutions = ApiSchema<"AgentExecutionsResponse">;
+export type AgentExecution = ApiSchema<"AgentExecutionRef">;
+
+/** Projects that bind a pipeline, and as which workflow kind(s) (#697). */
+export type PipelineUsage = ApiSchema<"PipelineUsageResponse">;
+/** Prompt box (cortex#1774 S5): a generated bundle, ready for ``POST /pipelines/import``. */
+export type GeneratedPipeline = ApiSchema<"GeneratedPipeline">;
+export type PipelineGeneratorStatus = ApiSchema<"PipelineGeneratorStatus">;
+
+/** Pre-run readiness of a pipeline's python-func callables (#710). */
+export type PipelineReadiness = ApiSchema<"PipelineReadinessResponse">;
+export type NodeReadiness = ApiSchema<"NodeReadiness">;
+
+/** Deterministic explanation + suggested actions for a failed node (#691). */
+export type ErrorExplanation = ApiSchema<"ErrorExplanation">;
+export type SuggestedAction = ApiSchema<"SuggestedAction">;
+
+/** Config assistant chat (#689). */
+export type AssistantMessage = ApiSchema<"AssistantMessage">;
+export type AssistantChatRequest = ApiSchema<"AssistantChatRequest">;
+export type AssistantChatResponse = ApiSchema<"AssistantChatResponse">;
+export type AssistantAction = ApiSchema<"AssistantAction">;
+
+export type AgentCreate = Omit<
+  ApiSchema<"AgentCreate">,
+  "timeout_ms" | "role"
+> & {
   role: string;
-  runtime_id: string;
-  runtime_config?: Record<string, unknown>;
-  prompt_template: string;
-  input_schema?: string[];
-  output_schema?: string[];
-  constraints?: string[];
-  budget_limit_usd?: number | null;
   timeout_ms?: number;
-}
+};
 
 // ---- Agent dry-run (#103 / #104) ----
 
@@ -56,30 +85,26 @@ export interface AgentCreate {
  * caller hasn't persisted the agent yet (the New / dirty Edit form).
  * Mirrors the server's ``AgentDryRunDraft`` field-by-field.
  */
-export interface AgentDryRunDraft {
-  name: string;
-  role: string;
-  runtime_id: string;
-  runtime_config: Record<string, unknown>;
-  prompt_template: string;
-  input_schema: string[];
-  output_schema: string[];
-  constraints: string[];
-  budget_limit_usd: number | null;
-  timeout_ms: number;
-}
+export type AgentDryRunDraft = Omit<
+  ApiSchema<"AgentDryRunDraft">,
+  keyof AgentPayloadDefaults | "role"
+> &
+  AgentPayloadDefaults & {
+    role: string;
+  };
 
 /**
  * Body of ``POST /agents/dry-run`` — exactly one of ``agent_id`` (saved)
  * or ``draft`` (inline) must be set. ``context`` is the sample state
  * the prompt template renders against.
  */
-export interface AgentDryRunRequest {
-  agent_id?: string;
-  agent_version?: number;
-  draft?: AgentDryRunDraft;
+export type AgentDryRunRequest = Omit<
+  ApiSchema<"AgentDryRunRequest">,
+  "context" | "draft"
+> & {
+  draft?: AgentDryRunDraft | null;
   context: Record<string, unknown>;
-}
+};
 
 /**
  * Soft check of the runtime's structured payload against the agent's
@@ -126,28 +151,22 @@ export const AGENT_EXPORT_SCHEMA_VERSION = "agent-export/1";
  * Portable subset of an agent — no per-installation fields. Mirrors
  * ``AgentExportPayload`` on the server.
  */
-export interface AgentExportPayload {
-  name: string;
-  role: string;
-  runtime_id: string;
-  runtime_config: Record<string, unknown>;
-  prompt_template: string;
-  input_schema: string[];
-  output_schema: string[];
-  constraints: string[];
-  budget_limit_usd: number | null;
-  timeout_ms: number;
-}
+export type AgentExportPayload = Omit<
+  ApiSchema<"AgentExportPayload">,
+  keyof AgentPayloadDefaults | "role"
+> &
+  AgentPayloadDefaults & {
+    role: string;
+  };
 
-export interface AgentExport {
-  schema_version: string;
+export type AgentExport = Omit<ApiSchema<"AgentExport">, "agent"> & {
   agent: AgentExportPayload;
-}
+};
 
 // ---- Pipeline import / export (#124) ----
 
 /** Stable export schema version. Bump only when the shape changes incompatibly. */
-export const PIPELINE_EXPORT_SCHEMA_VERSION = "pipeline-export/1";
+export const PIPELINE_EXPORT_SCHEMA_VERSION = "pipeline-export/2";
 
 /**
  * Portable subset of a pipeline — no per-installation fields. Mirrors
@@ -169,13 +188,15 @@ export interface PipelineExportPayload {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   /** Dashboard layout metadata (node positions etc.) — preserved through export/import (#226). */
   ui_metadata?: Record<string, unknown>;
 }
 
 export interface PipelineExport {
-  schema_version: typeof PIPELINE_EXPORT_SCHEMA_VERSION;
+  schema_version: "pipeline-export/1" | "pipeline-export/2";
+  min_dap_version?: string | null;
   pipeline: PipelineExportPayload;
   /**
    * Optional bundle (#126) — when present, the importer creates the
@@ -190,7 +211,13 @@ export interface PipelineExport {
    * ``undefined`` and a missing key as "no bundle".
    */
   bundled_agents?: Record<string, AgentExportPayload>;
+  /** Optional pipeline-export/2 backend profile metadata. */
+  backend_profiles?: Record<string, unknown> | null;
 }
+
+export type BackendProfileInspection = ApiSchema<"BackendProfileInspection">;
+export type BackendProfilesInspectionResponse =
+  ApiSchema<"BackendProfilesInspectionResponse">;
 
 // ---- Projects (#63 / #67) ----
 
@@ -208,6 +235,8 @@ export interface Project {
   default_branch: string;
   /** Workflow kind → pipeline_id. Recommended kinds get first-class UI. */
   pipelines: Record<string, string>;
+  /** Approval gate node ids that should auto-resume for project-triggered runs. */
+  auto_approve_nodes: string[];
   /** Project-scoped env (#65). Layered onto subprocess env. */
   env_vars: Record<string, string>;
   created_at: string;
@@ -223,6 +252,7 @@ export interface ProjectCreate {
   repo_url?: string | null;
   default_branch?: string;
   pipelines?: Record<string, string>;
+  auto_approve_nodes?: string[];
   env_vars?: Record<string, string>;
 }
 
@@ -241,6 +271,7 @@ export interface ProjectUpdate {
   repo_url: string | null;
   default_branch: string;
   pipelines: Record<string, string>;
+  auto_approve_nodes: string[];
   env_vars: Record<string, string>;
 }
 
@@ -264,6 +295,12 @@ export const RECOMMENDED_PIPELINE_KINDS = [
 
 export type RecommendedPipelineKind = (typeof RECOMMENDED_PIPELINE_KINDS)[number];
 
+// ---- Env var validation (#350) ----
+
+export type ValidateEnvRequest = ApiSchema<"ValidateEnvRequest">;
+export type EnvVarValidationResult = ApiSchema<"EnvVarValidationResult">;
+export type ValidateEnvResponse = ApiSchema<"ValidateEnvResponse">;
+
 // ---- Settings (dashboard /settings page) ----
 
 export interface RuntimeStatus {
@@ -280,6 +317,13 @@ export interface ProviderStatus {
   display_name: string;
   default_env_var: string | null;
   configured: boolean;
+  config_fields: ProviderConfigField[];
+}
+
+export interface ProviderConfigField {
+  key: string;
+  required: boolean;
+  description: string;
 }
 
 export interface EngineInfo {
@@ -324,12 +368,29 @@ export interface ComparisonCondition {
   value: string | number | boolean | null;
 }
 
+export type LogicalOperator = "and" | "or" | "not";
+
+/** ``and``/``or`` take any number of children; ``not`` takes exactly one (#930). */
 export interface LogicalCondition {
-  type: "and" | "or";
+  type: LogicalOperator;
   children: EdgeCondition[];
 }
 
 export type EdgeCondition = ComparisonCondition | LogicalCondition;
+
+/** Per-node bounded retry loop (#931; runtime routing is #932). */
+export interface RetryPolicy {
+  /** Retries after the first attempt; the engine accepts 1-20. */
+  max_retries: number;
+  /** Node to re-enter while retries remain; must loop back to this node. */
+  retry_to: string;
+  /** Node id or ``__end__`` once retries are spent. */
+  on_failure: string;
+  /** Bare ``state.extensions`` key that receives the failure reason. */
+  feedback_into?: string | null;
+  /** Condition that marks the attempt as failed. */
+  short_circuit_on?: EdgeCondition | null;
+}
 
 export interface PipelineNode {
   id: string;
@@ -340,6 +401,7 @@ export interface PipelineNode {
     budget_limit_usd?: number;
     timeout_ms?: number;
   } | null;
+  retry?: RetryPolicy | null;
 }
 
 export interface PipelineEdge {
@@ -364,12 +426,15 @@ export interface Pipeline {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   created_at: string;
   updated_at: string;
   is_active: boolean;
   /** Dashboard-private layout metadata (node positions, etc.). Not used by the engine. */
   ui_metadata?: Record<string, unknown>;
+  /** Per-node LLM/backend assignments resolved by the engine at run time. */
+  backend_profiles?: Record<string, unknown> | null;
 }
 
 export type FinalStatus = "running" | "success" | "failed" | "aborted" | "paused";
@@ -388,13 +453,20 @@ export interface PipelineState {
   test_generation_errors: string[];
   max_attempts: number;
   attempt: number;
+  /** Per-node attempt counter for retry loops (#931). */
+  node_attempts?: Record<string, number>;
   tests_passed: boolean;
   last_test_output: string;
   modified_files: string[];
   implementation_notes: string | null;
+  /** What a code runtime run with a branch changed (#933). */
+  changed_files?: string[];
+  commits_since_base?: { sha: string; subject: string; author: string }[];
+  diff_stats?: Record<string, number>;
   verification_status: "pending" | "approved" | "rejected";
   verification_reason: string | null;
   final_status: FinalStatus;
+  extensions: Record<string, unknown>;  // per-pipeline extra state (#64)
 }
 
 export interface Run {
@@ -409,6 +481,18 @@ export interface Run {
   trigger_source: "dashboard" | "cli" | "api";
   initial_state: PipelineState;
   current_node: string | null;
+  /** Gate node the run is staged before when final_status=="paused" (#363). */
+  paused_at_node: string | null;
+  /** Task assignments + optional spec stored at gate interrupt time (#364). */
+  gate_payload: {
+    task_assignments?: Array<{
+      /** Cortex dispatcher emits this as "task" (see dispatcher.py). */
+      task: string;
+      agent: string;
+      priority?: string;
+    }>;
+    spec?: string;
+  } | null;
   node_statuses: Record<string, NodeStatus>;
   final_status: FinalStatus;
   /**
@@ -417,6 +501,12 @@ export interface Run {
    * restart; `null` for runs that finished normally.
    */
   failure_reason: string | null;
+  /**
+   * Gate approval deadline (#582). ISO-8601 UTC string set when the run
+   * pauses at a gate node. `null` for runs that predate this field or
+   * use the noop gate path (auto-approved gates clear it).
+   */
+  gate_expires_at: string | null;
   started_at: string;
   ended_at: string | null;
   tokens_used: number;
@@ -481,6 +571,7 @@ export interface PipelineCreate {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   ui_metadata?: Record<string, unknown>;
 }
@@ -497,8 +588,13 @@ export interface PipelineUpdate {
     max_attempts: number;
     budget_limit_usd: number;
     approval_required_nodes: string[];
+    requires_terminal_final_status?: boolean;
   };
   ui_metadata?: Record<string, unknown>;
+}
+
+export interface PipelineUiMetadataPatch {
+  ui_metadata: Record<string, unknown>;
 }
 
 export interface ValidationResult {
@@ -543,16 +639,7 @@ export interface RegisterCredentials {
  * ``created_at`` / ``last_login_at`` / ``deleted_at`` so the admin
  * table can show "joined", "last active", and the soft-delete state.
  */
-export interface AdminUser {
-  id: string;
-  email: string;
-  is_active: boolean;
-  is_superuser: boolean;
-  is_verified: boolean;
-  created_at: string | null;
-  last_login_at: string | null;
-  deleted_at: string | null;
-}
+export type AdminUser = ApiSchema<"AdminUserRead">;
 
 /**
  * Fields the dashboard's "edit user" actions toggle. Matches
@@ -574,17 +661,17 @@ export interface AdminUserUpdate {
  * legitimate "no actor" events (pre-auth failures, system events)
  * without faking values.
  */
-export interface AuditEvent {
-  id: string;
-  user_id: string | null;
-  event_type: string;
-  event_data: Record<string, unknown> | null;
-  created_at: string;
-}
+export type AuditEvent = ApiSchema<"AuditEventRead">;
 
 export interface AuditEventFilters {
   eventType?: string;
+  /** Match a whole event family by prefix (e.g. ``agent.``). */
+  eventTypePrefix?: string;
   userId?: string;
+  /** ISO 8601 — only events at or after this instant. */
+  createdFrom?: string;
+  /** ISO 8601 — only events at or before this instant. */
+  createdTo?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -601,17 +688,7 @@ export interface AuditEventFilters {
  * substring *after* ``dap_``); the raw token itself only exists in
  * the response of the create endpoint.
  */
-export interface AdminApiToken {
-  id: string;
-  name: string;
-  prefix: string;
-  created_at: string;
-  expires_at: string | null;
-  last_used_at: string | null;
-  revoked_at: string | null;
-  owner_id: string;
-  owner_email: string;
-}
+export type AdminApiToken = ApiSchema<"AdminApiTokenRead">;
 
 // ---------------------------------------------------------------------------
 // Admin — Instance settings (#301, sub-C5)
@@ -627,6 +704,10 @@ export interface AdminOAuthProvider {
   client_id_configured: boolean;
   client_secret_configured: boolean;
 }
+
+/** Instance env vars — admin listing with masked previews (#388). */
+export type InstanceEnvVarListing = ApiSchema<"InstanceEnvVarListing">;
+export type InstanceEnvVarPreview = ApiSchema<"InstanceEnvVarPreview">;
 
 export interface AdminInstanceSettings {
   auth: {

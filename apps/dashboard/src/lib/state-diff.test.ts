@@ -22,6 +22,7 @@ function makeState(overrides: Partial<PipelineState> = {}): PipelineState {
     verification_status: "pending",
     verification_reason: null,
     final_status: "running",
+    extensions: {},
     ...overrides,
   };
 }

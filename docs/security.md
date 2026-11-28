@@ -75,6 +75,26 @@ minimisation:
   enforces `dry_run_budget_usd` for the dashboard's Test panel,
   but it can't bound production `/runs` calls.
 
+### `bash` runtime policy
+
+The `bash` runtime executes a shell command with the engine process's
+permissions. It has no filesystem, process, or network sandbox. In a
+multi-user instance this is a host-control capability, not a normal
+LLM provider.
+
+Engine policy therefore blocks `bash` execution for non-admin users
+by default, including `/agents/dry-run` and `/runs`. Admins can still
+run `bash`, and single-user/local-trust deployments can opt in for
+non-admin users with:
+
+```bash
+DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1
+```
+
+That flag only changes RBAC. It does not confine the subprocess. If
+untrusted users can author agents, keep the flag unset or add a real
+sandbox layer outside DAP.
+
 ## Password storage
 
 ### Argon2id via pwdlib
@@ -327,6 +347,8 @@ In rough order of impact:
 - [ ] OAuth instead of password where possible (delegates 2FA to
       the provider).
 - [ ] `DAP_AUTH_LOG_RESET_TOKENS=0` or unset (default).
+- [ ] `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=0` or unset unless this
+      is a single-user/local-trust install.
 - [ ] Postgres instead of SQLite for >1 user (concurrent
       writes + better backup story).
 - [ ] Provider API keys scoped to DAP only (revocable
@@ -336,7 +358,7 @@ In rough order of impact:
       `api_token.created`, unexpected `user.password_reset`.
 - [ ] Backup automation for the DB (SQLite: `.backup`; Postgres:
       `pg_dump` cron). Test restore quarterly.
-- [ ] Pin the Docker image tag (`ghcr.io/rafeekpro/dap:0.3.0`,
+- [ ] Pin the Docker image tag (`ghcr.io/lagowski/dap:0.3.0`,
       not `latest`) so upgrades are intentional.
 
 ## See also
@@ -350,5 +372,5 @@ In rough order of impact:
 ## Reporting
 
 Found a vulnerability? Please file a **GitHub Security Advisory**
-on `rafeekpro/dap` (not a public issue) so we can triage and
+on `lagowski/dap` (not a public issue) so we can triage and
 ship a fix before the details land in the open tracker.

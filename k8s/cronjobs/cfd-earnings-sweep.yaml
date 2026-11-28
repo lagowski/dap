@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cfd-earnings-sweep
+  namespace: trading
+spec:
+  schedule: "0 20 * * 0"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: cfd-research
+            image: ghcr.io/dixter999/cfd-research:latest
+            args: ["cfd.sweep", "--watchlist", "earnings-week"]
+            envFrom:
+            - secretRef:
+                name: cfd-research-env
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "250m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          imagePullSecrets:
+          - name: ghcr-pull-secret

@@ -11,48 +11,30 @@ from __future__ import annotations
 
 from typing import Any, Final, Literal, Self
 
-from dap_types.agent import coerce_legacy_field_list, validate_field_list
-from dap_types.pipeline import PipelineDefaults, PipelineEdge, PipelineNode
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from dap_engine.contracts import AgentNamedPayload, PipelineCreate
 
 AGENT_EXPORT_SCHEMA_VERSION = "agent-export/1"
 
 
-class AgentExportPayload(BaseModel):
+class AgentExportPayload(AgentNamedPayload):
     """The portable subset of an agent — no per-installation fields.
 
-    Mirrors :class:`AgentCreate` field-by-field minus the fields the
-    server fills in (id, version, timestamps, archived_at). Reuses the
-    same ``input_schema`` / ``output_schema`` validators so an
-    exported agent that's importable here is also creatable directly
-    via ``POST /agents``.
+    Inherits the shared create/import/dry-run agent payload contract
+    minus the fields the server filled in (id, version, timestamps,
+    archived_at), keeping validators aligned with ``POST /agents``.
     """
 
-    model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=200)
-    role: str = Field(min_length=1, max_length=100)
+class BundledAgentImportPayload(AgentNamedPayload):
+    """Agent payload variant used inside pipeline-export bundles.
 
-    runtime_id: str
-    runtime_config: dict[str, Any] = Field(default_factory=dict)
-    prompt_template: str
-
-    input_schema: list[str] = Field(default_factory=list)
-    output_schema: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
-
-    budget_limit_usd: float | None = None
-    timeout_ms: int = Field(default=60_000, gt=0)
-
-    @field_validator("input_schema", "output_schema", mode="before")
-    @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
-        return coerce_legacy_field_list(value)
-
-    @field_validator("input_schema", "output_schema")
-    @classmethod
-    def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return validate_field_list(value)
+    Kept as a named API component so generated OpenAPI clients retain the
+    existing bundle schema surface. Validation is intentionally inherited from
+    ``AgentNamedPayload``: top-level PipelineState fields and extension field
+    references use the same formalized rules as normal agent create/import.
+    """
 
 
 class AgentExport(BaseModel):
@@ -88,20 +70,19 @@ class AgentImportRequest(BaseModel):
         return value
 
 
-# ``Final`` narrows the inferred type to ``Literal["pipeline-export/1"]``
+# ``Final`` narrows the inferred type to ``Literal["pipeline-export/2"]``
 # so the constant is assignable to the ``Literal`` schema_version
 # fields below without mypy complaining. Same string, stronger type.
-PIPELINE_EXPORT_SCHEMA_VERSION: Final = "pipeline-export/1"
+PIPELINE_EXPORT_SCHEMA_VERSION: Final = "pipeline-export/2"
 
 
-class PipelineExportPayload(BaseModel):
+class PipelineExportPayload(PipelineCreate):
     """The portable subset of a pipeline — no per-installation fields.
 
-    Mirrors :class:`PipelineCreate` field-by-field minus the fields
+    Inherits the ``PipelineCreate`` payload contract minus the fields
     the server fills in (``id``, ``version``, timestamps,
-    ``archived_at``). Reuses the same node / edge / defaults shapes
-    so an exported pipeline that's importable here is also creatable
-    directly via ``POST /pipelines``.
+    ``archived_at``), so node / edge / defaults shapes stay aligned
+    between create, export, and import.
 
     ``node.agent_id`` references the *source installation's* agent
     ids. The importer doesn't rewrite them — the existing DAG
@@ -110,22 +91,6 @@ class PipelineExportPayload(BaseModel):
     into the export envelope (so import auto-creates them and
     rewrites the references) is a separate follow-up.
     """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    description: str = ""
-
-    schema_version: Literal["langgraph/1.0"] = "langgraph/1.0"
-    state_schema_ref: str = Field(min_length=1)
-    entry_point: str = Field(min_length=1)
-
-    nodes: list[PipelineNode]
-    edges: list[PipelineEdge]
-    defaults: PipelineDefaults = Field(default_factory=PipelineDefaults)
-    # Dashboard-private layout metadata (node positions, etc.). Included in
-    # exports so positions survive round-trips through export/import (#226).
-    ui_metadata: dict[str, Any] | None = None
 
 
 class PipelineExport(BaseModel):
@@ -150,7 +115,14 @@ class PipelineExport(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["pipeline-export/1"] = PIPELINE_EXPORT_SCHEMA_VERSION
+    schema_version: Literal["pipeline-export/1", "pipeline-export/2"] = (
+        PIPELINE_EXPORT_SCHEMA_VERSION
+    )
+    min_dap_version: str | None = None
+    # The source pipeline's id, so a re-import can target it explicitly instead
+    # of guessing by name (#755). Importers honour it only when it matches a
+    # pipeline they own on the target install; otherwise it's ignored.
+    pipeline_id: str | None = None
     pipeline: PipelineExportPayload
     bundled_agents: dict[str, AgentExportPayload] | None = None
 
@@ -158,23 +130,70 @@ class PipelineExport(BaseModel):
 class PipelineImportRequest(BaseModel):
     """Body of ``POST /pipelines/import`` — same shape as :class:`PipelineExport`.
 
-    Pydantic enforces ``schema_version`` against the literal — a
-    different value comes back as a 422 from FastAPI's standard
-    request-validation error path with the offending value visible
-    in the detail. No custom validator needed.
+    ``schema_version`` accepts both the legacy v1 envelope and the
+    Cortex/DAP v2 envelope.
 
-    ``bundled_agents`` mirrors :class:`PipelineExport` — when
-    present the importer creates each agent, builds an
-    ``old_id → new_id`` map, and rewrites ``node.agent_id`` before
-    persisting the pipeline. Missing field = legacy pipeline-only
-    import (referenced agents must already exist locally).
+    v2 optional fields:
+    - ``min_dap_version``: semver gate — engine rejects bundles that
+      require a newer DAP than the running instance.
+    - ``_comment``: free-text documentation block, silently ignored.
+    - ``install_instructions``: operator install guide, silently ignored.
+    - ``backend_profiles``: per-provider agent assignment map,
+      persisted on the pipeline version and returned on GET.
+    - ``bundled_agents``: same as v1; agent ``input_schema`` and
+      ``output_schema`` may reference top-level ``PipelineState`` fields
+      or pipeline-defined extension fields that live in
+      ``PipelineState.extensions``.
     """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: Literal["pipeline-export/1", "pipeline-export/2"]
+    min_dap_version: str | None = None
+    # Explicit upgrade target (#755): when set and it matches a non-archived
+    # pipeline the caller owns, the import bumps that pipeline's version directly
+    # (ignoring name). An unknown / foreign / archived id is ignored and the
+    # import falls back to name-match-or-create.
+    pipeline_id: str | None = None
+    pipeline: PipelineExportPayload
+    bundled_agents: dict[str, BundledAgentImportPayload] | None = None
+    backend_profiles: dict[str, Any] | None = None
+    # Ignored on import, but real bundles ship it as a structured block (operator
+    # steps + required env vars), not just a string — accept any shape so a full
+    # bundle doesn't 422 with a ``string_type`` error (#755).
+    install_instructions: Any | None = None
+    # ``_comment`` is a reserved Python name convention; accept it via alias.
+    # Also accepted as any shape for the same reason.
+    comment: Any | None = Field(default=None, alias="_comment")
+
+
+class BackendProfileInspection(BaseModel):
+    """Availability result for one backend profile declared by a bundle."""
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["pipeline-export/1"]
-    pipeline: PipelineExportPayload
-    bundled_agents: dict[str, AgentExportPayload] | None = None
+    id: str
+    label: str
+    description: str | None = None
+    requires_env: list[str] = Field(default_factory=list)
+    missing_env: list[str] = Field(default_factory=list)
+    requires_service: str | None = None
+    service_available: bool | None = None
+    available: bool
+
+
+class BackendProfilesInspectionResponse(BaseModel):
+    """Response for the bundle-import backend configuration step."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_profile: str | None = None
+    overrides: dict[str, str] = Field(default_factory=dict)
+    # Per override key, the profile ids to fall back to on a backend error
+    # (#935), and the ones among them that ``available`` doesn't declare.
+    fallbacks: dict[str, list[str]] = Field(default_factory=dict)
+    unknown_fallbacks: list[str] = Field(default_factory=list)
+    profiles: list[BackendProfileInspection] = Field(default_factory=list)
 
 
 class ProjectRunRequest(BaseModel):
@@ -189,6 +208,34 @@ class ProjectRunRequest(BaseModel):
 
     pipeline_version: int | None = None
     initial_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class ValidateEnvRequest(BaseModel):
+    """Body for POST /projects/validate-env — identify and probe GH tokens."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    env_vars: dict[str, str]
+
+
+class EnvVarValidationResult(BaseModel):
+    """Per-key validation outcome."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    is_token: bool
+    valid: bool | None = None
+    login: str | None = None
+    error: str | None = None
+
+
+class ValidateEnvResponse(BaseModel):
+    """Response from POST /projects/validate-env."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[EnvVarValidationResult]
 
 
 class RenderPreviewRequest(BaseModel):
@@ -218,40 +265,14 @@ class RenderPreviewResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AgentDryRunDraft(BaseModel):
+class AgentDryRunDraft(AgentNamedPayload):
     """Inline agent definition for dry-runs from an unsaved form (``/agents/new``).
 
-    Mirrors :class:`AgentCreate` field-by-field — same constraints, same
-    field validators — so a draft that dry-runs cleanly is also creatable
-    via ``POST /agents``. We don't reuse ``AgentCreate`` directly only to
-    keep the type independent of any future create-only fields.
+    Inherits the shared create/import/dry-run agent payload contract,
+    so a draft that dry-runs cleanly is also creatable via
+    ``POST /agents``. Kept as a separate public schema name to preserve
+    the OpenAPI component for clients.
     """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    role: str = Field(min_length=1, max_length=100)
-
-    runtime_id: str
-    runtime_config: dict[str, Any] = Field(default_factory=dict)
-    prompt_template: str
-
-    input_schema: list[str] = Field(default_factory=list)
-    output_schema: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
-
-    budget_limit_usd: float | None = None
-    timeout_ms: int = Field(default=60_000, gt=0)
-
-    @field_validator("input_schema", "output_schema", mode="before")
-    @classmethod
-    def _coerce_legacy_dict_schema(cls, value: Any) -> Any:
-        return coerce_legacy_field_list(value)
-
-    @field_validator("input_schema", "output_schema")
-    @classmethod
-    def _check_known_fields(cls, value: list[str]) -> list[str]:
-        return validate_field_list(value)
 
 
 class AgentDryRunRequest(BaseModel):
@@ -315,6 +336,7 @@ class PaginatedAgents(BaseModel):
     total: int
     offset: int
     limit: int
+    has_more: bool
 
 
 class PaginatedPipelines(BaseModel):
@@ -322,6 +344,7 @@ class PaginatedPipelines(BaseModel):
     total: int
     offset: int
     limit: int
+    has_more: bool
 
 
 class PaginatedRuns(BaseModel):
@@ -329,3 +352,4 @@ class PaginatedRuns(BaseModel):
     total: int
     offset: int
     limit: int
+    has_more: bool

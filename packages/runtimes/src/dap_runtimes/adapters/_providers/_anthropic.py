@@ -8,7 +8,13 @@ from typing import Any, Final
 import anthropic
 from anthropic import AsyncAnthropic
 
-from dap_runtimes.adapters._providers._base import ProviderError, ProviderResult
+from dap_runtimes.adapters._error_category import category_for_status
+from dap_runtimes.adapters._providers._base import (
+    ProviderError,
+    ProviderResult,
+    calculate_cost_usd,
+    classify_provider_failure,
+)
 
 ID: Final = "anthropic"
 DEFAULT_ENV_VAR: Final = "ANTHROPIC_API_KEY"
@@ -26,8 +32,6 @@ PRICING: Final[dict[str, tuple[float, float]]] = {
 
 CACHE_WRITE_MULTIPLIER: Final = 1.25
 CACHE_READ_MULTIPLIER: Final = 0.10
-TOKENS_PER_MILLION: Final = 1_000_000
-
 DEFAULT_USER_MESSAGE: Final = "Execute the task as specified in the system instructions."
 VALID_EFFORT: Final = frozenset({"low", "medium", "high", "xhigh", "max"})
 
@@ -82,15 +86,24 @@ async def call(
     except anthropic.NotFoundError as exc:
         raise ProviderError(f"Model not found: {exc.message}") from exc
     except anthropic.BadRequestError as exc:
-        raise ProviderError(f"Bad request: {exc.message}") from exc
+        # Anthropic surfaces credit exhaustion as a 400 ("credit balance is
+        # too low"), not a 429 — classify so it reads as out-of-credits.
+        category = classify_provider_failure(exc.message, status_code=400)
+        label = "Out of credits" if category == "out_of_credits" else "Bad request"
+        raise ProviderError(f"{label}: {exc.message}", category=category) from exc
     except anthropic.RateLimitError as exc:
-        raise ProviderError(f"Rate limited: {exc.message}") from exc
+        category = classify_provider_failure(exc.message, status_code=429)
+        label = "Out of credits" if category == "out_of_credits" else "Rate limited"
+        raise ProviderError(f"{label}: {exc.message}", category=category) from exc
     except anthropic.APITimeoutError as exc:
-        raise ProviderError(f"API timeout: {exc}") from exc
+        raise ProviderError(f"API timeout: {exc}", category="timeout") from exc
     except anthropic.APIConnectionError as exc:
-        raise ProviderError(f"Connection error: {exc}") from exc
+        raise ProviderError(f"Connection error: {exc}", category="unavailable") from exc
     except anthropic.APIStatusError as exc:
-        raise ProviderError(f"API error {exc.status_code}: {exc.message}") from exc
+        raise ProviderError(
+            f"API error {exc.status_code}: {exc.message}",
+            category=category_for_status(exc.status_code),
+        ) from exc
     finally:
         await client.close()
 
@@ -164,15 +177,13 @@ def _calculate_cost(
     output_tokens: int,
 ) -> float | None:
     """USD cost from token counts. None for unknown models."""
-    pricing = PRICING.get(model_id)
-    if pricing is None:
-        return None
-    input_rate, output_rate = pricing
-
-    input_cost = input_tokens * input_rate
-    cache_creation_cost = cache_creation_tokens * input_rate * CACHE_WRITE_MULTIPLIER
-    cache_read_cost = cache_read_tokens * input_rate * CACHE_READ_MULTIPLIER
-    output_cost = output_tokens * output_rate
-
-    total_micro = input_cost + cache_creation_cost + cache_read_cost + output_cost
-    return total_micro / TOKENS_PER_MILLION
+    return calculate_cost_usd(
+        model_id=model_id,
+        pricing=PRICING,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_multiplier=CACHE_WRITE_MULTIPLIER,
+        cache_read_multiplier=CACHE_READ_MULTIPLIER,
+    )

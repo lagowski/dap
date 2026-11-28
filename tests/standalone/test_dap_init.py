@@ -75,7 +75,7 @@ def _try_login(db_path: Path, email: str, password: str) -> bool:
             "/auth/jwt/login",
             data={"username": email, "password": password},
         )
-    return 200 <= response.status_code < 300
+    return bool(200 <= response.status_code < 300)
 
 
 # --------------------------------------------------------------------- #

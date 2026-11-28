@@ -1,14 +1,27 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, Pencil, Plus, Upload } from "lucide-react";
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  Package,
+  Pencil,
+  Plus,
+  Upload,
+} from "lucide-react";
 import { useAgentsList, useArchiveAgent, useImportAgent } from "@/hooks/api";
 import { ApiError, formatApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
+import { isManagedAgent } from "@/lib/managed-agent";
+import { groupAgentsIntoPackages } from "@/lib/agent-packages";
 import type { AgentExport } from "@/lib/api/types";
 
 const ID_PREFIX = 8;
@@ -47,13 +60,15 @@ export default function AgentsPage() {
   const importAgent = useImportAgent();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const confirmDestructive = useConfirmDestructive();
 
-  const handleArchive = (id: string, name: string) => {
-    if (
-      !window.confirm(
-        `Archive agent "${name}"? It will disappear from pickers and the list. Run history keeps the agent reference intact.`,
-      )
-    ) {
+  const handleArchive = async (id: string, name: string) => {
+    const ok = await confirmDestructive({
+      title: "Archive agent",
+      description: `Archive agent "${name}"? It will disappear from pickers and the list. Run history keeps the agent reference intact.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(id);
@@ -99,16 +114,107 @@ export default function AgentsPage() {
     }
   };
 
+  // Managed (Cortex) agents are nodes of an externally-owned bundle (#739), not
+  // hand-authored agents — and there are dozens of them with no individual
+  // meaning. Present them as a single collapsible *package* instead of flooding
+  // the list; standalone agents render as normal rows above it.
+  const { standalone, packages } = useMemo(
+    () => groupAgentsIntoPackages(data?.items ?? []),
+    [data],
+  );
+
+  // Packages are collapsed by default (declutter); track which are expanded.
+  const [expandedPackages, setExpandedPackages] = useState<Set<string>>(() => new Set());
+  const togglePackage = (kind: string) =>
+    setExpandedPackages((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) {
+        next.delete(kind);
+      } else {
+        next.add(kind);
+      }
+      return next;
+    });
+
+  const renderRow = (agent: (typeof standalone)[number]) => {
+    const usage = agent.used_in_pipelines ?? 0;
+    const blockArchive = usage > 0;
+    return (
+      <tr key={agent.id} className="border-b last:border-0 hover:bg-muted/30">
+        <td className="p-0 font-medium">
+          <Link
+            href={`/agents/${agent.id}`}
+            className="flex items-center gap-2 px-4 py-2"
+          >
+            <span className="hover:underline">{agent.name}</span>
+            {isManagedAgent(agent) && (
+              <Badge variant="outline" className="font-normal">
+                Managed · Cortex
+              </Badge>
+            )}
+          </Link>
+        </td>
+        <td className="px-4 py-2">
+          <Badge variant="secondary">{agent.role}</Badge>
+        </td>
+        <td className="px-4 py-2 font-mono text-xs">{agent.runtime_id}</td>
+        <td className="px-4 py-2 tabular-nums">v{agent.version}</td>
+        <td className="px-4 py-2 tabular-nums">
+          {usage === 0 ? (
+            <span className="text-xs text-muted-foreground">—</span>
+          ) : (
+            <Badge variant="info">
+              {usage} pipeline{usage === 1 ? "" : "s"}
+            </Badge>
+          )}
+        </td>
+        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+          {agent.id.slice(0, ID_PREFIX)}…
+        </td>
+        <td className="px-4 py-2 text-right space-x-1 whitespace-nowrap">
+          <Tooltip label="Edit agent">
+            <Button asChild variant="outline" size="icon" className="h-8 w-8">
+              <Link href={`/agents/${agent.id}/edit`} aria-label="Edit agent">
+                <Pencil className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </Tooltip>
+          <Tooltip
+            label={
+              blockArchive
+                ? `Used by ${usage} pipeline${usage === 1 ? "" : "s"} — detach first`
+                : "Archive agent"
+            }
+          >
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              aria-label="Archive agent"
+              disabled={archive.isPending || blockArchive}
+              onClick={() => handleArchive(agent.id, agent.name)}
+            >
+              <Archive className="h-3.5 w-3.5" />
+            </Button>
+          </Tooltip>
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Agents</h1>
         <div className="flex items-center gap-2">
+          {/* sr-only (not display:none) — some Chromium builds refuse to
+              open the native file dialog when .click() targets a
+              display:none input; an off-screen input fires reliably. */}
           <input
             ref={fileInputRef}
             type="file"
             accept="application/json,.json"
-            className="hidden"
+            className="sr-only"
             onChange={handleFileChange}
             aria-hidden="true"
           />
@@ -162,7 +268,7 @@ export default function AgentsPage() {
         </p>
       ) : null}
 
-      {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {isPending && <LoadingState />}
       {isError && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">
@@ -179,73 +285,56 @@ export default function AgentsPage() {
       )}
       {data && data.items.length > 0 && (
         <Card>
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/50 text-left text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2 font-medium">Name</th>
-                <th className="px-4 py-2 font-medium">Role</th>
-                <th className="px-4 py-2 font-medium">Runtime</th>
-                <th className="px-4 py-2 font-medium">Version</th>
-                <th className="px-4 py-2 font-medium">Used in</th>
-                <th className="px-4 py-2 font-medium">ID</th>
-                <th className="px-4 py-2 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((agent) => {
-                const usage = agent.used_in_pipelines ?? 0;
-                const blockArchive = usage > 0;
-                return (
-                  <tr key={agent.id} className="border-b last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3 font-medium">
-                      <Link href={`/agents/${agent.id}`} className="hover:underline">
-                        {agent.name}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant="secondary">{agent.role}</Badge>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs">{agent.runtime_id}</td>
-                    <td className="px-4 py-3 tabular-nums">v{agent.version}</td>
-                    <td className="px-4 py-3 tabular-nums">
-                      {usage === 0 ? (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      ) : (
-                        <Badge variant="info">
-                          {usage} pipeline{usage === 1 ? "" : "s"}
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                      {agent.id.slice(0, ID_PREFIX)}…
-                    </td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      <Button asChild variant="outline" size="sm">
-                        <Link href={`/agents/${agent.id}/edit`}>
-                          <Pencil className="h-3.5 w-3.5 mr-1" />
-                          Edit
-                        </Link>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={archive.isPending || blockArchive}
-                        title={
-                          blockArchive
-                            ? `Used by ${usage} pipeline${usage === 1 ? "" : "s"} — archive or detach those first`
-                            : undefined
-                        }
-                        onClick={() => handleArchive(agent.id, agent.name)}
-                      >
-                        <Archive className="h-3.5 w-3.5 mr-1" />
-                        Archive
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b bg-muted/50 text-left text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Name</th>
+                  <th className="px-4 py-2 font-medium">Role</th>
+                  <th className="px-4 py-2 font-medium">Runtime</th>
+                  <th className="px-4 py-2 font-medium">Version</th>
+                  <th className="px-4 py-2 font-medium">Used in</th>
+                  <th className="px-4 py-2 font-medium">ID</th>
+                  <th className="px-4 py-2 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {standalone.map(renderRow)}
+                {packages.map((pkg) => {
+                  const isExpanded = expandedPackages.has(pkg.kind);
+                  return (
+                    <Fragment key={pkg.kind}>
+                      <tr className="border-y bg-muted/40">
+                        <td colSpan={7} className="px-2 py-2">
+                          <button
+                            type="button"
+                            onClick={() => togglePackage(pkg.kind)}
+                            aria-expanded={isExpanded}
+                            className="flex items-center gap-2 text-left hover:text-foreground"
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
+                            )}
+                            <Package className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            <span className="font-semibold">{pkg.label}</span>
+                            <Badge variant="secondary">
+                              {pkg.agents.length} agent{pkg.agents.length === 1 ? "" : "s"}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              package · from the {pkg.source} · imported as a unit
+                            </span>
+                          </button>
+                        </td>
+                      </tr>
+                      {isExpanded && pkg.agents.map(renderRow)}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </div>

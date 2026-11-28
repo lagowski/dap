@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useId, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy } from "lucide-react";
@@ -15,12 +16,15 @@ import {
   type VariantBOverrides,
 } from "@/components/agents/agent-test-panel";
 import { TemplatePicker } from "@/components/agents/template-picker";
+import { useAssistantPrefill } from "@/components/assistant/assistant-prefill";
+import { usePublishAssistantContext } from "@/components/assistant/assistant-context";
+import { agentFormAssistantContext } from "@/components/agents/agent-form/types";
 import type { AgentTemplate } from "@/lib/agent-templates";
 import type { Agent, AgentDryRunDraft } from "@/lib/api/types";
 
 export default function NewAgentPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}>
+    <Suspense fallback={<LoadingState className="p-6" />}>
       <NewAgentPageContent />
     </Suspense>
   );
@@ -42,6 +46,12 @@ function NewAgentPageContent() {
   // and we render the empty form straight away.
   const sourceQuery = useAgent(fromId);
 
+  // Assistant prefill (#689 slice 3): consume once on mount. When present we
+  // seed the form from it and skip the template chooser. Fully editable; the
+  // user still has to click Create.
+  const { consumePrefill } = useAssistantPrefill();
+  const [prefillValues] = useState(() => consumePrefill("agent"));
+
   // Template picker state (#93). Only meaningful when not cloning —
   // cloning + template would be confusing UX. Picker stays hidden in
   // the clone flow.
@@ -59,16 +69,37 @@ function NewAgentPageContent() {
   const formPanelId = useId();
   const testPanelId = useId();
 
+  // Tell the assistant what the user is building so it can tailor advice to the
+  // half-filled form (#689 phase 2). Non-secret fields only.
+  usePublishAssistantContext(
+    agentFormAssistantContext(snapshot?.values, isCloning ? "clone" : "new"),
+  );
+
+  // Two-step flow: step 1 picks a template (or scratch), step 2 shows the
+  // form with a "back to templates" affordance. Cloning skips straight to
+  // the form. Replaces the old single-page picker-with-form-below.
+  const [step, setStep] = useState<"choose" | "form">(
+    prefillValues ? "form" : "choose",
+  );
+  const handlePick = (next: AgentTemplate | null) => {
+    setTemplate(next);
+    setStep("form");
+  };
+  const showChooser = !isCloning && !prefillValues && step === "choose";
+  const showForm = isCloning || step === "form";
+
   // ``seedKey`` identifies which clone-source / template the form is
   // currently mounted against. We carry it alongside ``snapshot`` so
   // that switching templates / clone source clears stale snapshot
   // values from the previous seed (the existing "switch template to
   // reset" behaviour). Promote bumps within the same seed.
-  const seedKey = sourceQuery.data
-    ? `clone:${sourceQuery.data.id}`
-    : template !== null
-      ? `template:${template.id}`
-      : "scratch";
+  const seedKey = prefillValues
+    ? "assistant-prefill"
+    : sourceQuery.data
+      ? `clone:${sourceQuery.data.id}`
+      : template !== null
+        ? `template:${template.id}`
+        : "scratch";
 
   // Drop snapshot + promoted overrides when the user switches between
   // clone source / template / scratch — those are explicit "reset to
@@ -86,8 +117,9 @@ function NewAgentPageContent() {
   // promotion. ``snapshot`` is honoured only when its seed matches the
   // current one (effect above clears it on switch). Clone/template
   // are first-mount seeds.
-  const baseInitialValues =
-    sourceQuery.data !== undefined
+  const baseInitialValues = prefillValues
+    ? prefillInitialValuesFrom(prefillValues)
+    : sourceQuery.data !== undefined
       ? cloneInitialValuesFrom(sourceQuery.data)
       : template !== null
         ? templateInitialValuesFrom(template)
@@ -118,18 +150,35 @@ function NewAgentPageContent() {
         ) : null}
       </div>
 
-      {!isCloning ? (
+      {showChooser ? (
         <Card>
           <CardContent className="pt-6">
-            <TemplatePicker
-              value={template?.id ?? null}
-              onChange={setTemplate}
-            />
+            <TemplatePicker onSelect={handlePick} disabled={create.isPending} />
           </CardContent>
         </Card>
       ) : null}
 
-      {!isCloning || (sourceQuery.data && sourceQuery.data.is_active) ? (
+      {showForm && !isCloning ? (
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+          <button
+            type="button"
+            onClick={() => setStep("choose")}
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+            Back to templates
+          </button>
+          <span className="text-muted-foreground">
+            Starting from{" "}
+            <span className="font-medium text-foreground">
+              {template ? template.name : "scratch"}
+            </span>
+          </span>
+        </div>
+      ) : null}
+
+      {showForm &&
+      (!isCloning || (sourceQuery.data && sourceQuery.data.is_active)) ? (
         <AgentTabs
           tab={tab}
           onTabChange={setTab}
@@ -138,6 +187,7 @@ function NewAgentPageContent() {
         />
       ) : null}
 
+      {showForm ? (
       <Card>
         <CardContent className="pt-6">
           {isCloning && sourceQuery.isPending ? (
@@ -221,6 +271,7 @@ function NewAgentPageContent() {
           )}
         </CardContent>
       </Card>
+      ) : null}
     </div>
   );
 }
@@ -318,6 +369,37 @@ function toNewAgentDraft(
     budget_limit_usd: cloneSource ? cloneSource.budget_limit_usd : null,
     timeout_ms: cloneSource ? cloneSource.timeout_ms : 60_000,
   };
+}
+
+/**
+ * Map an assistant prefill payload (#689 slice 3) into the form's
+ * ``initialValues`` shape, keeping only known fields with valid types — a
+ * hallucinated/extra field can't reach the form. Everything stays editable.
+ */
+function prefillInitialValuesFrom(
+  values: Record<string, unknown>,
+): Partial<AgentFormValues> {
+  const out: Partial<AgentFormValues> = {};
+  if (typeof values.name === "string") out.name = values.name;
+  if (typeof values.role === "string") out.role = values.role;
+  if (typeof values.runtime_id === "string") out.runtime_id = values.runtime_id;
+  if (values.runtime_config && typeof values.runtime_config === "object") {
+    out.runtime_config = values.runtime_config as Record<string, unknown>;
+  }
+  if (typeof values.prompt_template === "string") {
+    out.prompt_template = values.prompt_template;
+  }
+  if (Array.isArray(values.input_schema)) {
+    out.input_schema = values.input_schema.filter(
+      (x): x is string => typeof x === "string",
+    );
+  }
+  if (Array.isArray(values.output_schema)) {
+    out.output_schema = values.output_schema.filter(
+      (x): x is string => typeof x === "string",
+    );
+  }
+  return out;
 }
 
 /**

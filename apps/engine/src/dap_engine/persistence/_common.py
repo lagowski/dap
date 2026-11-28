@@ -16,6 +16,14 @@ class NotFoundError(Exception):
     """Raised when an entity is not found by id/version."""
 
 
+class ConflictError(Exception):
+    """Raised when an operation conflicts with the entity's current state.
+
+    Maps to HTTP 409 at the API layer — e.g. trying to delete a run that is
+    still in-flight (must be aborted first).
+    """
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 

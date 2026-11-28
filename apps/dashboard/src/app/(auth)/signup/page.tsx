@@ -131,6 +131,7 @@ function SignupPageInner() {
               autoComplete="email"
               autoFocus
               disabled={register.isPending}
+              suppressHydrationWarning
               {...form.register("email")}
               aria-invalid={form.formState.errors.email ? true : undefined}
             />
@@ -147,6 +148,7 @@ function SignupPageInner() {
               type="password"
               autoComplete="new-password"
               disabled={register.isPending}
+              suppressHydrationWarning
               {...form.register("password")}
               aria-invalid={form.formState.errors.password ? true : undefined}
             />
@@ -163,6 +165,7 @@ function SignupPageInner() {
               type="password"
               autoComplete="new-password"
               disabled={register.isPending}
+              suppressHydrationWarning
               {...form.register("confirm")}
               aria-invalid={form.formState.errors.confirm ? true : undefined}
             />

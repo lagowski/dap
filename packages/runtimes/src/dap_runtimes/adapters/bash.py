@@ -13,16 +13,17 @@ timeout or engine cancellation kills the entire group (background jobs and
 nested children) rather than only the shell. Falls back to single-process
 kill on platforms without `os.setsid`.
 
-Security model (v0.1): single-user, local-trust. The command runs with the
-engine's privileges in the configured working directory; there is NO
-sandbox, network restriction, or filesystem confinement. Multi-user setups
-must wait for #38 (auth) plus a sandboxing layer before exposing this
-runtime to untrusted agent definitions.
+Security model: host-local code execution. The command runs with the engine's
+privileges in the configured working directory; there is NO sandbox, network
+restriction, or filesystem confinement. The engine blocks non-admin users from
+executing this runtime by default; operators can opt in for local-trust installs
+with DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1, but that does not add isolation.
 """
 
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import re
@@ -31,9 +32,10 @@ import signal
 import time
 from typing import Any, Final
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import HealthStatus, OutputCallback, RuntimeKind, RuntimeResult, RuntimeTask
 
 from dap_runtimes.adapters._subprocess_env import merge_subprocess_env
+from dap_runtimes.adapters._subprocess_stream import drain_subprocess_output
 from dap_runtimes.adapters.base import BaseAdapter
 
 logger = logging.getLogger("dap.runtimes.bash")
@@ -68,10 +70,28 @@ class BashAdapter(BaseAdapter):
             return HealthStatus(available=False, missing=[f"shell binary: {shell}"])
         return HealthStatus(available=True, version=shell)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:  # noqa: PLR0911
+    def tool_input_schema(self) -> dict[str, Any]:
+        """The input an agent model may give this runtime as a tool (#1022).
+
+        None: bash has no data fields apart from the command itself, and
+        ``command``, ``shell``, ``env`` and the working directory pick what runs
+        and where. The tool runs the command fixed in its static config.
+        """
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+
+    async def execute(  # noqa: PLR0911
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         # Many returns: each guard maps to a distinct precondition failure
         # with its own error message; collapsing into a dispatch dict obscures
         # the mapping (same rationale as ApiCallAdapter.execute).
+        # on_output (#662): bash has its own subprocess loop (it is NOT a
+        # _cli_base subclass), so streaming is wired here via the shared
+        # drain_subprocess_output helper — the same deadlock-safe concurrent
+        # drain + chunked read + incremental UTF-8 decode _cli_base uses.
+        # on_output never changes the returned full stdout/stderr.
         config = task.runtime_config
 
         command = _resolve_command(config, task.prompt_xml)
@@ -93,7 +113,11 @@ class BashAdapter(BaseAdapter):
                 shell=None,
             )
 
-        env, env_error = merge_subprocess_env(task.project_env_vars, config)
+        env, env_error = merge_subprocess_env(
+            task.project_env_vars,
+            config,
+            instance_env_vars=task.instance_env_vars,
+        )
         if env_error is not None:
             return _failed(env_error, duration_ms=0, command=command, shell=shell)
 
@@ -134,10 +158,20 @@ class BashAdapter(BaseAdapter):
             )
 
         try:
+            # Replace ``process.communicate()`` with a concurrent stdout +
+            # stderr drain (#662) so stdout can be streamed incrementally to
+            # ``on_output``. stdout is chunk-read (not readline) and decoded with
+            # an incremental UTF-8 decoder; a full stderr pipe is drained in the
+            # same gather to avoid a deadlock. The whole drain runs under one
+            # ``wait_for`` budget, preserving the previous timeout semantics; on
+            # EOF we reap the process to set its return code, exactly as
+            # ``communicate`` did. Bash pipes no stdin, so the helper's stdin
+            # feed is a no-op (``stdin=None``).
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
+                drain_subprocess_output(process, on_output=on_output, stdin=None),
                 timeout=timeout_seconds,
             )
+            await process.wait()
         except TimeoutError:
             await _kill_process_tree(process, new_session)
             return _failed(
@@ -193,7 +227,7 @@ def _resolve_command(config: dict[str, Any], prompt_xml: str) -> str | None:
 
     match = COMMAND_TAG_PATTERN.search(prompt_xml)
     if match is not None:
-        extracted = match.group(1).strip()
+        extracted = html.unescape(match.group(1).strip())
         if extracted:
             return extracted
 

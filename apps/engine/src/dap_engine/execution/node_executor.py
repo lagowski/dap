@@ -16,18 +16,34 @@ merge them.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import copy
 import logging
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
 from dap_prompt_dsl import PromptBuildError, build_prompt
 from dap_runtimes import RuntimeRegistry
-from dap_types import PipelineState, RuntimeResult, RuntimeTask
+from dap_types import (
+    OutputCallback,
+    PipelineState,
+    RuntimeResult,
+    RuntimeTask,
+    error_category,
+    is_backend_error,
+)
+from dap_types.pipeline import RetryPolicy
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
+from dap_engine.execution.backend_profiles import ResolvedBackendProfile
+from dap_engine.execution.interaction_recorder import record_node_interaction
 from dap_engine.execution.output_parser import parse_node_output
+from dap_engine.execution.retry_policy import apply_retry_policy
+from dap_engine.persistence import repository as repo
 from dap_engine.persistence.models import (
     AgentORM,
     AgentVersionORM,
@@ -38,6 +54,12 @@ from dap_engine.persistence.models import (
 logger = logging.getLogger("dap.engine.execution")
 
 NodeFn = Callable[[PipelineState], Coroutine[Any, Any, dict[str, Any]]]
+
+# How often the node's streamed stdout buffer is drained to
+# ``node_output_chunks`` while the adapter runs (#662 Phase 3b-2b). Each
+# flush coalesces the buffered output into a single chunk row, so a chatty
+# node writes ~2 rows/sec rather than one per stdout read.
+_OUTPUT_FLUSH_INTERVAL_S = 0.5
 
 
 class NodeContext:
@@ -52,10 +74,16 @@ class NodeContext:
         agent_version: AgentVersionORM,
         registry: RuntimeRegistry,
         session: Session,
+        runtime_id: str | None = None,
+        runtime_config: dict[str, Any] | None = None,
         runtime_overrides: dict[str, Any] | None = None,
         timeout_override_ms: int | None = None,
         project_working_directory: str | None = None,
         project_env_vars: dict[str, str] | None = None,
+        instance_env_vars: dict[str, str] | None = None,
+        retry: RetryPolicy | None = None,
+        profile_id: str | None = None,
+        fallbacks: tuple[ResolvedBackendProfile, ...] = (),
     ) -> None:
         self.run_id = run_id
         self.node_id = node_id
@@ -63,6 +91,10 @@ class NodeContext:
         self.agent_version = agent_version
         self.registry = registry
         self.session = session
+        self.runtime_id = runtime_id or agent_version.runtime_id
+        self.base_runtime_config = (
+            dict(runtime_config) if runtime_config is not None else agent_version.runtime_config
+        )
         self.runtime_overrides = runtime_overrides or {}
         self.timeout_override_ms = timeout_override_ms
         # Project context (#65) — propagated into RuntimeTask so adapters
@@ -70,15 +102,105 @@ class NodeContext:
         # ``None`` / ``{}`` for ad-hoc runs without a project.
         self.project_working_directory = project_working_directory
         self.project_env_vars = project_env_vars or {}
+        # Instance env-var overlay (#388) — shared operator-set defaults
+        # that flow into every run on top of the engine env. Captured
+        # here once per graph build, immutable for the run's lifetime.
+        self.instance_env_vars = instance_env_vars or {}
+        # The node's ``retry`` block (#932): each attempt's outcome is folded
+        # into the state diff before the snapshot so the runner can route it.
+        self.retry = retry
+        # The backend profile this context runs on, and the profiles to re-run
+        # the node on when it fails with a backend error (#935).
+        self.profile_id = profile_id
+        self.fallbacks = fallbacks
+
+    def with_backend(self, backend: ResolvedBackendProfile) -> NodeContext:
+        """A copy of this context that runs the node on ``backend`` instead."""
+        attempt = copy.copy(self)
+        attempt.runtime_id = backend.runtime_id
+        attempt.base_runtime_config = dict(backend.runtime_config)
+        attempt.profile_id = backend.profile_id
+        attempt.fallbacks = ()
+        return attempt
 
     @property
     def merged_runtime_config(self) -> dict[str, Any]:
         """Agent's runtime_config merged with per-node overrides."""
-        return {**self.agent_version.runtime_config, **self.runtime_overrides}
+        return {**self.base_runtime_config, **self.runtime_overrides}
 
     @property
     def timeout_ms(self) -> int:
         return self.timeout_override_ms or self.agent_version.timeout_ms
+
+
+@contextlib.asynccontextmanager
+async def _stream_node_output(ctx: NodeContext, execution_id: str) -> AsyncIterator[OutputCallback]:
+    """Yield an ``on_output`` sink that streams adapter stdout into
+    ``node_output_chunks`` (#662 Phase 3b-2b).
+
+    ``on_output`` is sync and runs on the event loop, so it only appends to an
+    in-memory buffer; a concurrent flush task drains the buffer to the DB in a
+    worker thread (``run_in_threadpool``) on a short-lived session — never
+    blocking the loop and never touching the node's own transaction on
+    ``ctx.session`` (#162). The buffer is coalesced into one chunk row per
+    flush (~2 rows/sec for a chatty node), and a final flush on exit persists
+    trailing output even when the adapter raised or timed out. Adapters that
+    don't stream (api-call / python-func / bash) never call the sink, so every
+    flush is a no-op.
+    """
+    output_buffer: list[str] = []
+    flush_signal = asyncio.Event()
+    bind = ctx.session.get_bind()
+
+    def _on_output(text: str) -> None:
+        # Called synchronously by the adapter on this event-loop thread (never
+        # from a worker thread), so the unlocked append is safe. Wake the flush
+        # task so the first output bytes are persisted with ~no latency.
+        output_buffer.append(text)
+        flush_signal.set()
+
+    def _write_chunk(text: str) -> None:
+        try:
+            with Session(bind=bind) as chunk_session:
+                repo.append_output_chunk(
+                    chunk_session,
+                    run_id=ctx.run_id,
+                    node_id=ctx.node_id,
+                    content=text,
+                    execution_id=execution_id,
+                )
+                chunk_session.commit()
+        except Exception:
+            # A transient chunk-write failure must never fail the node — the
+            # node's own execution log is the source of truth.
+            logger.warning("failed to persist output chunk for node %s", ctx.node_id, exc_info=True)
+
+    async def _flush() -> None:
+        if not output_buffer:
+            return
+        # _on_output only runs on this event-loop thread, so the join+clear is
+        # atomic with respect to appends — no fragment is lost across the drain.
+        pending = "".join(output_buffer)
+        output_buffer.clear()
+        await run_in_threadpool(_write_chunk, pending)
+
+    async def _flush_loop() -> None:
+        # Flush as soon as output arrives (near-zero first-byte latency), with a
+        # periodic tick as a fallback that also coalesces a burst of writes.
+        while True:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(flush_signal.wait(), timeout=_OUTPUT_FLUSH_INTERVAL_S)
+            flush_signal.clear()
+            await _flush()
+
+    flush_task = asyncio.create_task(_flush_loop())
+    try:
+        yield _on_output
+    finally:
+        flush_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await flush_task
+        await _flush()  # drain trailing output even on adapter error/timeout
 
 
 def make_node_fn(ctx: NodeContext) -> NodeFn:
@@ -88,12 +210,47 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
     """
 
     async def node_fn(state: PipelineState) -> dict[str, Any]:
-        started_at = datetime.now(UTC)
-        execution_id = str(uuid.uuid4())
+        # A backend error (#934) re-runs the node on the next fallback profile
+        # (#935); any other outcome, or the last profile, ends the node.
+        attempts = [ctx, *(ctx.with_backend(backend) for backend in ctx.fallbacks)]
+        for number, attempt in enumerate(attempts, start=1):
+            state_diff = await _run_attempt(
+                attempt,
+                state,
+                number=number,
+                chain_length=len(attempts),
+            )
+            if state_diff is not None:
+                return state_diff
+        msg = f"node {ctx.node_id}: no backend attempt finished"
+        raise RuntimeError(msg)
 
-        # 1. Render prompt — scoped to declared inputs when the agent
-        # version carries a contract (v0.5+); legacy dict-shaped or
-        # missing schemas pass through with full state visibility.
+    return node_fn
+
+
+async def _run_attempt(
+    ctx: NodeContext,
+    state: PipelineState,
+    *,
+    number: int,
+    chain_length: int,
+) -> dict[str, Any] | None:
+    """Run the node once on ``ctx``'s backend.
+
+    Returns the state diff, or ``None`` when the attempt failed with a backend
+    error and a later profile in the chain should run the node instead.
+    """
+    started_at = datetime.now(UTC)
+    execution_id = str(uuid.uuid4())
+
+    # 1. Render prompt — scoped to declared inputs when the agent
+    # version carries a contract (v0.5+); legacy dict-shaped or
+    # missing schemas pass through with full state visibility.
+    # python-func callables receive state directly via runtime_config;
+    # they have no prompt template, so skip XML build/validation entirely.
+    if ctx.runtime_id == "python-func":
+        prompt_xml = ""
+    else:
         raw_input_schema = ctx.agent_version.input_schema
         input_schema = list(raw_input_schema) if isinstance(raw_input_schema, list) else None
         try:
@@ -130,63 +287,43 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
 
         prompt_xml = build_result.xml
 
-        # 2. Build RuntimeTask. ``working_directory`` defaults to the
-        # project's ``working_directory`` when bound (#65), falling back
-        # to the legacy ``"."`` for ad-hoc runs.
-        task = RuntimeTask(
-            execution_id=execution_id,
-            prompt_xml=prompt_xml,
-            working_directory=ctx.project_working_directory or ".",
-            timeout_ms=ctx.timeout_ms,
-            # Inject full pipeline state so python-func callables can access
-            # top-level and extensions fields without a separate state fetch.
-            runtime_config={
-                **ctx.merged_runtime_config,
-                "__pipeline_state": state.model_dump(mode="json"),
-            },
-            project_env_vars=ctx.project_env_vars,
-        )
+    # 2. Build RuntimeTask. ``working_directory`` defaults to the
+    # project's ``working_directory`` when bound (#65), falling back
+    # to the legacy ``"."`` for ad-hoc runs.
+    task = RuntimeTask(
+        execution_id=execution_id,
+        prompt_xml=prompt_xml,
+        working_directory=ctx.project_working_directory or ".",
+        timeout_ms=ctx.timeout_ms,
+        # Inject full pipeline state so python-func callables can access
+        # top-level and extensions fields without a separate state fetch.
+        runtime_config={
+            **ctx.merged_runtime_config,
+            "__pipeline_state": state.model_dump(mode="json"),
+        },
+        instance_env_vars=ctx.instance_env_vars,
+        project_env_vars=ctx.project_env_vars,
+    )
 
-        # 3. Call adapter
-        adapter = ctx.registry.get(ctx.agent_version.runtime_id)
-        result: RuntimeResult = await adapter.execute(task)
-        ended_at = datetime.now(UTC)
+    # 3. Call adapter — stream its stdout into node_output_chunks so the
+    #    SSE endpoint can emit live ``node_log`` events (#662 Phase 3b-2b).
+    adapter = ctx.registry.get(ctx.runtime_id)
+    async with _stream_node_output(ctx, execution_id) as on_output:
+        result: RuntimeResult = await adapter.execute(task, on_output=on_output)
+    ended_at = datetime.now(UTC)
 
-        if not result.success:
-            error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
-            state_diff: dict[str, Any] = {
-                "final_status": "failed",
-                "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
-            }
-        else:
-            # python-func adapter wraps the callable's return dict in
-            # structured["state_delta"]. When that key is present, route the
-            # full delta through _route_extensions so Cortex-specific keys
-            # (task_assignments, decisions, issue_comments, …) land in
-            # extensions instead of being silently dropped by
-            # _merge_structured_into_state (which only keeps PipelineState
-            # top-level fields).
-            #
-            # Other adapters (bash, claude_code, api-call) put state-shaped
-            # keys directly at the top level of structured — use the existing
-            # merge + per-role parse path for those.
-            state_delta = (result.structured or {}).get("state_delta")
-            if state_delta is not None:
-                state_diff = _route_extensions(state, state_delta)
-            else:
-                # Adapter-supplied structured fields + per-role output parse.
-                state_diff = _merge_structured_into_state(result.structured)
-                parsed_diff = _parse_agent_output(ctx, result.output)
-                state_diff.update(parsed_diff)
-                state_diff = _route_extensions(state, state_diff)
-
-        # 4. Record execution log + snapshot, then commit immediately.
-        # Committing per-node rather than once at the end of the run means
-        # logs survive a CancelledError (pause/abort) that would otherwise
-        # roll back the bg_session before it could commit (#162).
-        # expire_on_commit=False (set on the session factory) ensures the
-        # in-memory pipeline/agent objects remain usable after the commit.
-        merged_state = state.model_copy(update=state_diff)
+    # Audit trail (#935): only a node with a fallback chain records which
+    # profile each attempt ran on, so other nodes' logs are unchanged.
+    backend_attempt = (
+        {
+            "attempt": number,
+            "profile_id": ctx.profile_id,
+            "error_category": error_category(result),
+        }
+        if chain_length > 1
+        else None
+    )
+    if number < chain_length and is_backend_error(result):
         _save_execution_log(
             ctx=ctx,
             execution_id=execution_id,
@@ -194,13 +331,67 @@ def make_node_fn(ctx: NodeContext) -> NodeFn:
             ended_at=ended_at,
             prompt_xml=prompt_xml,
             result=result,
+            backend_attempt=backend_attempt,
         )
-        _save_snapshot(ctx=ctx, state=merged_state)
         ctx.session.commit()
+        logger.warning(
+            "node %s: profile %s failed with %s, falling back",
+            ctx.node_id,
+            ctx.profile_id,
+            error_category(result),
+        )
+        return None
 
-        return state_diff
+    if not result.success:
+        error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
+        state_diff: dict[str, Any] = {
+            "final_status": "failed",
+            "verification_reason": f"Node {ctx.node_id} failed: {error_msg}",
+        }
+    else:
+        # python-func adapter wraps the callable's return dict in
+        # structured["state_delta"]. When that key is present, route the
+        # full delta through _route_extensions so Cortex-specific keys
+        # (task_assignments, decisions, issue_comments, …) land in
+        # extensions instead of being silently dropped by
+        # _merge_structured_into_state (which only keeps PipelineState
+        # top-level fields).
+        #
+        # Other adapters (bash, claude_code, api-call) put state-shaped
+        # keys directly at the top level of structured — use the existing
+        # merge + per-role parse path for those.
+        state_delta = (result.structured or {}).get("state_delta")
+        if state_delta is not None:
+            state_diff = _route_extensions(state, state_delta)
+        else:
+            # Adapter-supplied structured fields + per-role output parse.
+            state_diff = _merge_structured_into_state(result.structured)
+            parsed_diff = _parse_agent_output(ctx, result.output)
+            state_diff.update(parsed_diff)
+            state_diff = _route_extensions(state, state_diff)
 
-    return node_fn
+    state_diff = _apply_retry(ctx, state, state_diff)
+
+    # 4. Record execution log + snapshot, then commit immediately.
+    # Committing per-node rather than once at the end of the run means
+    # logs survive a CancelledError (pause/abort) that would otherwise
+    # roll back the bg_session before it could commit (#162).
+    # expire_on_commit=False (set on the session factory) ensures the
+    # in-memory pipeline/agent objects remain usable after the commit.
+    merged_state = state.model_copy(update=state_diff)
+    _save_execution_log(
+        ctx=ctx,
+        execution_id=execution_id,
+        started_at=started_at,
+        ended_at=ended_at,
+        prompt_xml=prompt_xml,
+        result=result,
+        backend_attempt=backend_attempt,
+    )
+    _save_snapshot(ctx=ctx, state=merged_state)
+    ctx.session.commit()
+
+    return state_diff
 
 
 def _record_failure(
@@ -218,7 +409,7 @@ def _record_failure(
         run_id=ctx.run_id,
         node_id=ctx.node_id,
         agent_id=ctx.agent.id,
-        runtime_id=ctx.agent_version.runtime_id,
+        runtime_id=ctx.runtime_id,
         started_at=started_at,
         ended_at=ended_at,
         prompt_xml=prompt_xml,
@@ -233,14 +424,90 @@ def _record_failure(
         extra_data=None,
     )
     ctx.session.add(log)
-    state_diff = {
-        "final_status": "failed",
-        "verification_reason": f"Node {ctx.node_id}: {error}",
-    }
+    state_diff = _apply_retry(
+        ctx,
+        state,
+        {
+            "final_status": "failed",
+            "verification_reason": f"Node {ctx.node_id}: {error}",
+        },
+    )
     _save_snapshot(ctx=ctx, state=state.model_copy(update=state_diff))
     ctx.session.commit()
     logger.warning("node %s failed: %s", ctx.node_id, error)
     return state_diff
+
+
+def _apply_retry(
+    ctx: NodeContext,
+    state: PipelineState,
+    state_diff: dict[str, Any],
+) -> dict[str, Any]:
+    if ctx.retry is None:
+        return state_diff
+    return apply_retry_policy(
+        node_id=ctx.node_id,
+        policy=ctx.retry,
+        state=state,
+        state_diff=state_diff,
+    )
+
+
+def _audit_tokens(audit: dict[str, Any] | None) -> int | None:
+    """Extract a per-node token count from a python-func adapter's audit dict (#637).
+
+    Supports both documented shapes: a direct ``tokens_used`` (int) key, or an
+    ``input_tokens`` + ``output_tokens`` split (the per-call shape cortex
+    records) which is summed (a missing side counts as 0). Returns ``None`` only
+    when none of those keys is present — callers treat that as "no audit token
+    data" and fall back to 0. A present-but-uncoercible value is logged (so
+    contract drift is visible, not silently swallowed) and treated as missing.
+    """
+    if not isinstance(audit, dict):
+        return None
+    direct = audit.get("tokens_used")
+    if direct is not None:
+        try:
+            return int(direct)
+        except (TypeError, ValueError):
+            logger.warning(
+                "audit 'tokens_used' present but uncoercible: %r (#637 contract drift?)",
+                direct,
+            )
+            return None
+    it, ot = audit.get("input_tokens"), audit.get("output_tokens")
+    if it is None and ot is None:
+        return None
+    try:
+        return (int(it) if it is not None else 0) + (int(ot) if ot is not None else 0)
+    except (TypeError, ValueError):
+        logger.warning(
+            "audit input/output tokens uncoercible: input=%r output=%r (#637 contract drift?)",
+            it,
+            ot,
+        )
+        return None
+
+
+def _audit_cost(audit: dict[str, Any] | None) -> float | None:
+    """Extract a USD cost from a python-func adapter's audit dict (#637).
+
+    Returns ``None`` when no ``cost_usd`` key is present or the value is not
+    coercible to ``float`` — callers fall back to 0.0.
+    """
+    if not isinstance(audit, dict):
+        return None
+    val = audit.get("cost_usd")
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        logger.warning(
+            "audit 'cost_usd' present but uncoercible: %r (#637 contract drift?)",
+            val,
+        )
+        return None
 
 
 def _save_execution_log(
@@ -251,34 +518,82 @@ def _save_execution_log(
     ended_at: datetime,
     prompt_xml: str,
     result: RuntimeResult,
+    backend_attempt: dict[str, Any] | None = None,
 ) -> None:
+    # ``audit`` stores domain-specific metadata produced by python-func
+    # adapters.  A python-func node signals audit data by including an
+    # ``__audit`` key in its return dict; the adapter moves that dict to
+    # ``result.structured["audit"]`` before returning.  CLI/LLM adapters
+    # never set "audit", so this is ``None`` for those runtimes.  The shape
+    # is intentionally open — see ``NodeExecutionLog.extra_data`` for
+    # documented common keys.
+    audit = result.structured.get("audit") if result.structured else None
+    # Token/cost rollup (#637): python-func adapters (cortex) leave
+    # ``result.tokens_used`` / ``result.cost_usd`` as ``None`` and carry the
+    # real per-node usage in ``audit``.  A real result field (api-call
+    # adapters) always wins; the audit dict is only a fallback when the
+    # result field is absent, so the values feeding the summed columns that
+    # ``_compute_run_totals`` aggregates are non-zero for cortex runs.
+    tokens_used = result.tokens_used if result.tokens_used is not None else _audit_tokens(audit)
+    cost_usd = result.cost_usd if result.cost_usd is not None else _audit_cost(audit)
     log = NodeExecutionLogORM(
         id=execution_id,
         run_id=ctx.run_id,
         node_id=ctx.node_id,
         agent_id=ctx.agent.id,
-        runtime_id=ctx.agent_version.runtime_id,
+        runtime_id=ctx.runtime_id,
         started_at=started_at,
         ended_at=ended_at,
         prompt_xml=prompt_xml,
         stdout=result.output,
         stderr="",
         output_json=result.structured,
-        tokens_used=result.tokens_used or 0,
-        cost_usd=result.cost_usd or 0.0,
+        tokens_used=int(tokens_used) if tokens_used is not None else 0,
+        cost_usd=float(cost_usd) if cost_usd is not None else 0.0,
         duration_ms=result.duration_ms,
         status="success" if result.success else "failed",
         error_message="; ".join(result.errors) if result.errors else None,
-        # ``extra_data`` stores domain-specific audit metadata produced by
-        # python-func adapters.  A python-func node signals audit data by
-        # including an ``__audit`` key in its return dict; the adapter moves
-        # that dict to ``result.structured["audit"]`` before returning.
-        # CLI/LLM adapters never set "audit", so this evaluates to ``None``
-        # for those runtimes.  The shape is intentionally open — see
-        # ``NodeExecutionLog.extra_data`` for documented common keys.
-        extra_data=result.structured.get("audit") if result.structured else None,
+        extra_data=(
+            {**(audit or {}), "backend_attempt": backend_attempt}
+            if backend_attempt is not None
+            else audit
+        ),
     )
     ctx.session.add(log)
+
+    # EU AI Act interaction log (#785) — follow-up to the assistant-path
+    # recorder from #722/#784. For model-invoking runtimes (``api``/``cli``),
+    # store a **redacted** copy of the rendered prompt + the model output,
+    # keyed on ``surface="node"``. Skipped for python-func/bash/http.
+    #
+    # If the registry doesn't know the runtime (unit tests that call
+    # ``_save_execution_log`` directly with a minimal fixture registry),
+    # skip logging quietly rather than fail the save path — the interaction
+    # log is a record-keeping layer, not on the critical path.
+    try:
+        adapter_kind = ctx.registry.get(ctx.runtime_id).kind
+    except KeyError:
+        return
+    # Merge known-secret sources for the exact-value redaction layer.
+    # project-scoped secrets take precedence over instance-scoped ones —
+    # same override order as ``env`` inside the assistant path.
+    known_secrets = {**ctx.instance_env_vars, **ctx.project_env_vars}
+    runtime_config = ctx.merged_runtime_config
+    provider = runtime_config.get("provider")
+    model = runtime_config.get("model_id") or runtime_config.get("model")
+    record_node_interaction(
+        ctx.session,
+        run_id=ctx.run_id,
+        node_id=ctx.node_id,
+        execution_id=execution_id,
+        runtime_id=ctx.runtime_id,
+        adapter_kind=adapter_kind,
+        prompt_xml=prompt_xml,
+        result=result,
+        known_secrets=known_secrets,
+        provider=str(provider) if provider is not None else None,
+        model=str(model) if model is not None else None,
+    )
 
 
 def _save_snapshot(*, ctx: NodeContext, state: PipelineState) -> None:

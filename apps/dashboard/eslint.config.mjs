@@ -14,6 +14,7 @@ const config = [
       ".next/**",
       "node_modules/**",
       "dist/**",
+      "next-env.d.ts",
       "src/lib/api/types.gen.ts",
     ],
   },

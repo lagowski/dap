@@ -25,24 +25,10 @@ from sqlalchemy import ColumnElement, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
-from dap_engine.contracts import PipelineCreate, PipelineUpdate
+from dap_engine.contracts import PipelineCreate, PipelineUiMetadataPatch, PipelineUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.persistence.base import get_owned_or_not_found, ownership_filter
 from dap_engine.persistence.models import PipelineORM, PipelineVersionORM
-
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Centralised so every list query gets the rule without copy-paste.
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see rows they own.
-    """
-    if is_admin:
-        return []
-    return [PipelineORM.user_id == actor_id]
 
 
 def _pipeline_from_orm(
@@ -66,6 +52,7 @@ def _pipeline_from_orm(
         updated_at=pipeline.updated_at if is_current else version.created_at,
         is_active=pipeline.archived_at is None,
         ui_metadata=version.ui_metadata,
+        backend_profiles=version.backend_profiles,
     )
 
 
@@ -100,6 +87,7 @@ def create_pipeline(
         edges=[e.model_dump(mode="json") for e in payload.edges],
         defaults=payload.defaults.model_dump(mode="json"),
         ui_metadata=payload.ui_metadata,
+        backend_profiles=getattr(payload, "backend_profiles", None),
         created_at=now,
     )
     session.add(pipeline)
@@ -112,6 +100,102 @@ def create_pipeline(
         event_data={"pipeline_id": pipeline.id, "name": payload.name},
     )
     return _pipeline_from_orm(pipeline, version, is_current=True)
+
+
+def _bump_pipeline_version(
+    session: Session,
+    existing: PipelineORM,
+    payload: PipelineCreate,
+    user_id: uuid.UUID,
+) -> Pipeline:
+    """Write a new version under ``existing`` at ``current + 1`` and make it current.
+
+    Carries ``backend_profiles`` onto the new version (unlike
+    :func:`update_pipeline`) and records a ``pipeline.updated`` audit row tagged
+    ``via=import``. Shared by both the explicit-id and name-match import paths.
+    The stored name is refreshed from the payload — an explicit-id import may
+    target a pipeline whose name differs from the bundle's.
+    """
+    now = _now()
+    new_version_number = existing.current_version + 1
+    existing.name = payload.name
+    existing.description = payload.description
+    existing.current_version = new_version_number
+    existing.updated_at = now
+    version = PipelineVersionORM(
+        id=_new_id(),
+        pipeline_id=existing.id,
+        version=new_version_number,
+        name=payload.name,
+        description=payload.description,
+        schema_version=payload.schema_version,
+        state_schema_ref=payload.state_schema_ref,
+        entry_point=payload.entry_point,
+        nodes=[n.model_dump(mode="json") for n in payload.nodes],
+        edges=[e.model_dump(mode="json") for e in payload.edges],
+        defaults=payload.defaults.model_dump(mode="json"),
+        ui_metadata=payload.ui_metadata,
+        backend_profiles=getattr(payload, "backend_profiles", None),
+        created_at=now,
+    )
+    session.add(version)
+    session.flush()
+    record_audit_event(
+        session,
+        user_id=user_id,
+        event_type="pipeline.updated",
+        event_data={
+            "pipeline_id": existing.id,
+            "version": new_version_number,
+            "via": "import",
+        },
+    )
+    return _pipeline_from_orm(existing, version, is_current=True)
+
+
+def import_pipeline(
+    session: Session,
+    payload: PipelineCreate,
+    *,
+    user_id: uuid.UUID,
+    target_pipeline_id: str | None = None,
+) -> Pipeline:
+    """Create a pipeline from an import, or bump the version of an existing one (#755).
+
+    Resolution order:
+
+    1. **Explicit target** — if ``target_pipeline_id`` is given and names a
+       non-archived pipeline the caller owns, bump *that* pipeline's version,
+       regardless of name. A foreign / archived / unknown id is ignored (no
+       enumeration leak, no cross-user mutation) and resolution falls through to:
+    2. **Name match** — the newest non-archived pipeline the caller owns with the
+       same name is bumped to ``current + 1`` under the SAME ``pipeline_id`` — so
+       new runs auto-route to the update and the prior version becomes historical.
+    3. **No match** — a brand-new pipeline is created.
+
+    Bumps carry ``backend_profiles`` onto the new version. There is no
+    "identical → no-op" short-circuit: bundle imports re-create their agents, so
+    node ``agent_id``s always differ and an identical-definition check could
+    never match anyway.
+    """
+    if target_pipeline_id is not None:
+        target = session.get(PipelineORM, target_pipeline_id)
+        if target is not None and target.user_id == user_id and target.archived_at is None:
+            return _bump_pipeline_version(session, target, payload, user_id)
+        # Unknown / not-owned / archived id → ignore it and fall through to the
+        # name-match-or-create path below.
+
+    existing = session.scalars(
+        select(PipelineORM)
+        .where(PipelineORM.user_id == user_id)
+        .where(PipelineORM.name == payload.name)
+        .where(PipelineORM.archived_at.is_(None))
+        .order_by(PipelineORM.created_at.asc())
+    ).first()
+    if existing is None:
+        return create_pipeline(session, payload, user_id=user_id)
+
+    return _bump_pipeline_version(session, existing, payload, user_id)
 
 
 def update_pipeline(
@@ -132,7 +216,8 @@ def update_pipeline(
         raise NotFoundError(f"Pipeline not found: {pipeline_id}")
 
     now = _now()
-    new_version_number = pipeline.current_version + 1
+    prev_version_number = pipeline.current_version
+    new_version_number = prev_version_number + 1
 
     if payload.name is not None:
         pipeline.name = payload.name
@@ -140,6 +225,19 @@ def update_pipeline(
         pipeline.description = payload.description
     pipeline.current_version = new_version_number
     pipeline.updated_at = now
+
+    # backend_profiles drives per-node LLM/backend resolution at run time. A PUT
+    # that omits it (e.g. the designer's layout save, which doesn't yet manage
+    # profiles) must NOT wipe an imported bundle's assignments — carry the prior
+    # version's value forward. An explicit payload value replaces it. (#755 follow-up)
+    backend_profiles = payload.backend_profiles
+    if backend_profiles is None:
+        prev_version = session.scalars(
+            select(PipelineVersionORM)
+            .where(PipelineVersionORM.pipeline_id == pipeline.id)
+            .where(PipelineVersionORM.version == prev_version_number)
+        ).first()
+        backend_profiles = prev_version.backend_profiles if prev_version else None
 
     version = PipelineVersionORM(
         id=_new_id(),
@@ -154,6 +252,7 @@ def update_pipeline(
         edges=[e.model_dump(mode="json") for e in payload.edges],
         defaults=payload.defaults.model_dump(mode="json"),
         ui_metadata=payload.ui_metadata,
+        backend_profiles=backend_profiles,
         created_at=now,
     )
     session.add(version)
@@ -165,6 +264,38 @@ def update_pipeline(
         event_data={"pipeline_id": pipeline.id, "version": new_version_number},
     )
     return _pipeline_from_orm(pipeline, version, is_current=True)
+
+
+def update_pipeline_ui_metadata(
+    session: Session,
+    pipeline_id: str,
+    payload: PipelineUiMetadataPatch,
+    *,
+    actor_id: uuid.UUID,
+    is_admin: bool,
+) -> None:
+    """Merge UI metadata into the current version without bumping version."""
+    pipeline = session.get(PipelineORM, pipeline_id)
+    if pipeline is None or pipeline.archived_at is not None:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    if not is_admin and pipeline.user_id != actor_id:
+        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+
+    version = _get_pipeline_version_orm(session, pipeline_id, pipeline.current_version)
+    existing = version.ui_metadata if isinstance(version.ui_metadata, dict) else {}
+    version.ui_metadata = {**existing, **payload.ui_metadata}
+    pipeline.updated_at = _now()
+    session.flush()
+    record_audit_event(
+        session,
+        user_id=actor_id,
+        event_type="pipeline.ui_metadata_updated",
+        event_data={
+            "pipeline_id": pipeline.id,
+            "version": pipeline.current_version,
+            "keys": sorted(payload.ui_metadata),
+        },
+    )
 
 
 def archive_pipeline(
@@ -200,11 +331,9 @@ def get_pipeline(
     is_admin: bool,
 ) -> Pipeline:
     """Fetch a pipeline. Non-admins only see their own."""
-    pipeline = session.get(PipelineORM, pipeline_id)
-    if pipeline is None:
-        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
-    if not is_admin and pipeline.user_id != actor_id:
-        raise NotFoundError(f"Pipeline not found: {pipeline_id}")
+    pipeline = get_owned_or_not_found(
+        session, PipelineORM, pipeline_id, actor_id=actor_id, is_admin=is_admin, label="Pipeline"
+    )
     version = _get_pipeline_version_orm(session, pipeline_id, pipeline.current_version)
     return _pipeline_from_orm(pipeline, version, is_current=True)
 
@@ -263,7 +392,7 @@ def list_pipelines(
     limit: int = 50,
 ) -> tuple[Sequence[Pipeline], int]:
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(PipelineORM, actor_id=actor_id, is_admin=is_admin))
     if not archived:
         where_clauses.append(PipelineORM.archived_at.is_(None))
 

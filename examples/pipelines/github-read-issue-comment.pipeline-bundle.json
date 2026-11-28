@@ -1,0 +1,63 @@
+{
+  "schema_version": "pipeline-export/1",
+  "comment": "Two github-runtime nodes, no LLM, no python-func: read an issue, then comment on it using what was read. Start a run with initial_state {\"repo\": \"owner/name\", \"branch\": \"main\", \"extensions\": {\"issue_number\": 42}}. The token comes from the env var named by token_env (default GH_TOKEN), set as an engine, instance or project env var; never put a token in this file.",
+  "bundled_agents": {
+    "tpl_gh_read_issue": {
+      "name": "GitHub: read issue",
+      "role": "post_check",
+      "runtime_id": "github",
+      "runtime_config": {
+        "op": "read_issue",
+        "repo": "{{ state.repo }}",
+        "issue": "{{ state.extensions.issue_number }}",
+        "token_env": "GH_TOKEN"
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["github_issue"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 30000
+    },
+    "tpl_gh_comment": {
+      "name": "GitHub: comment on issue",
+      "role": "post_check",
+      "runtime_id": "github",
+      "runtime_config": {
+        "op": "comment",
+        "repo": "{{ state.repo }}",
+        "issue": "{{ state.extensions.github_issue.number }}",
+        "body": "DAP read **{{ state.extensions.github_issue.title }}** (#{{ state.extensions.github_issue.number }}). Labels: {{ state.extensions.github_issue.labels | join(', ') or 'none' }}.",
+        "token_env": "GH_TOKEN"
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["github_comment"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 30000
+    }
+  },
+  "pipeline": {
+    "name": "GitHub: read issue, then comment",
+    "description": "Read an issue with the github runtime, then post a comment built from what was read. A minimal, LLM-free example of chaining github runtime nodes through state (#919).",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "read_issue",
+    "nodes": [
+      {"id": "read_issue", "agent_id": "tpl_gh_read_issue", "position": {"x": 0, "y": 0}},
+      {"id": "comment", "agent_id": "tpl_gh_comment", "position": {"x": 240, "y": 0}}
+    ],
+    "edges": [
+      {"id": "e1", "source": "__start__", "target": "read_issue"},
+      {"id": "e2", "source": "read_issue", "target": "comment"},
+      {"id": "e3", "source": "comment", "target": "__end__"}
+    ],
+    "defaults": {
+      "max_attempts": 1,
+      "budget_limit_usd": 0,
+      "approval_required_nodes": [],
+      "requires_terminal_final_status": false
+    }
+  }
+}

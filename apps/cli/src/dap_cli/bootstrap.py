@@ -22,16 +22,20 @@ import datetime as _dt
 import json
 import re
 import secrets
+import tempfile
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
 # Engine internals — same workspace, no public-API surface needed.
-from dap_engine.app import EngineConfig
+from dap_engine.app import EngineConfig, create_app
 from dap_engine.persistence.db import create_engine_for_sqlite
 from dap_engine.persistence.migrations import apply_migrations
 from dap_engine.persistence.models import UserORM
+from fastapi.testclient import TestClient
 from fastapi_users.password import PasswordHelper
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -248,13 +252,47 @@ def bootstrap_marker_path(dap_dir: Path) -> Path:
     return dap_dir / "bootstrap.json"
 
 
+# The admin user of a throwaway headless engine. Reserved TLD: it can never
+# be a real mailbox, and the user lives only as long as the temp database.
+HEADLESS_ADMIN_EMAIL = "headless@dap.invalid"
+
+
+@contextlib.contextmanager
+def headless_engine() -> Iterator[TestClient]:
+    """Run a throwaway engine in-process and yield an admin-authenticated client.
+
+    The engine (``dap_engine.app.create_app``, the same app ``dap start``
+    serves) gets a fresh SQLite database under a temporary directory that is
+    removed on exit, so nothing is left in the caller's cwd. The admin user is
+    created with :func:`ensure_admin_user` (the ``dap init`` path), then the
+    client logs in through ``/auth/jwt/login`` like any other caller. Requests
+    go through ASGI in this process: no port is opened and no network is used.
+    """
+    with tempfile.TemporaryDirectory(prefix="dap-headless-") as tmp:
+        db_path = Path(tmp) / "state.db"
+        password = generate_password()
+        ensure_admin_user(db_path, email=HEADLESS_ADMIN_EMAIL, password=password)
+        config = EngineConfig(db_path=str(db_path), auth_jwt_secret=secrets.token_urlsafe(32))
+        with TestClient(create_app(config)) as client:
+            login = client.post(
+                "/auth/jwt/login",
+                data={"username": HEADLESS_ADMIN_EMAIL, "password": password},
+            )
+            if login.status_code != HTTPStatus.OK:
+                raise RuntimeError(f"headless engine login failed: HTTP {login.status_code}")
+            client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+            yield client
+
+
 __all__ = [
     "GENERATED_PASSWORD_LENGTH",
+    "HEADLESS_ADMIN_EMAIL",
     "MIN_PASSWORD_LENGTH",
     "BootstrapResult",
     "bootstrap_marker_path",
     "ensure_admin_user",
     "generate_password",
+    "headless_engine",
     "read_bootstrap_marker",
     "validate_email",
     "validate_password",

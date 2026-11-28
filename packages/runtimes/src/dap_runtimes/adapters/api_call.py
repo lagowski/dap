@@ -9,9 +9,16 @@ Supported providers (v0.4):
 
 - ``anthropic`` — Anthropic SDK (Claude 4.x family).
 - ``openai`` — OpenAI SDK with default base URL (GPT-5, o-series).
+- ``glm`` — Z.AI GLM via OpenAI SDK, hardcoded base_url +
+  ``GLM_API_KEY`` (first-class registration, #115).
+- ``openrouter`` — OpenRouter multi-model gateway via OpenAI SDK,
+  hardcoded base_url + ``OPENROUTER_API_KEY`` + DAP identification
+  headers (first-class registration, #449). ``model_id`` is a
+  slash-namespaced id like ``anthropic/claude-3.5-sonnet``.
 - ``openai-compat`` — OpenAI SDK with a custom ``base_url`` and
-  ``api_key_env``. Covers GLM (z.ai), Together, OpenRouter, llama.cpp
-  servers and any other Chat Completions-compatible endpoint.
+  ``api_key_env``. Covers Together, llama.cpp servers, internal
+  proxies, and any other Chat Completions-compatible endpoint
+  that doesn't have a first-class registration above.
 - ``gemini`` — Google Gen AI SDK (Gemini 2.x / 3.x).
 """
 
@@ -21,10 +28,18 @@ import asyncio
 import logging
 import os
 import time
-from typing import Final
+from typing import Any, Final
 
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    BackendErrorCategory,
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 
+from dap_runtimes.adapters._error_category import with_category
 from dap_runtimes.adapters._providers import (
     PROVIDER_REGISTRY,
     ProviderError,
@@ -50,6 +65,24 @@ class ApiCallAdapter(BaseAdapter):
     id = "api-call"
     display_name = "Direct LLM API call (SDK)"
     kind: RuntimeKind = "api"
+
+    def tool_input_schema(self) -> dict[str, Any]:
+        """The input an agent model may give this runtime as a tool (#1022).
+
+        The prompt and sampling fields only (the user prompt is the agent's own
+        task prompt). ``provider``, ``model_id``, ``base_url`` and
+        ``api_key_env`` stay in the tool's static config, so a model can't send
+        a provider key to its own endpoint or switch to a costlier model.
+        """
+        return {
+            "type": "object",
+            "properties": {
+                "system_prompt": {"type": "string"},
+                "temperature": {"type": "number"},
+                "max_tokens": {"type": "integer", "minimum": 1},
+            },
+            "additionalProperties": False,
+        }
 
     async def healthcheck(self) -> HealthStatus:
         """Available if at least one provider's env var is set.
@@ -78,7 +111,15 @@ class ApiCallAdapter(BaseAdapter):
             missing=missing if missing else None,
         )
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
+        # on_output ignored: api-call doesn't spawn a subprocess, so there is no
+        # incremental stdout to stream. Streaming is wired only for subprocess
+        # adapters in Phase 3b-2a (#662).
+        del on_output
         config = task.runtime_config
         provider_id = config.get("provider", DEFAULT_PROVIDER)
 
@@ -100,7 +141,7 @@ class ApiCallAdapter(BaseAdapter):
             result: ProviderResult = await provider.call(provider_id, config, task.prompt_xml)
         except ProviderError as exc:
             logger.warning("api-call provider=%s failed: %s", provider_id, exc)
-            return _failed(start=start, message=str(exc))
+            return _failed(start=start, message=str(exc), category=exc.category)
         except asyncio.CancelledError:
             # Cooperative cancellation must propagate so the runner can mark
             # the run aborted.
@@ -140,13 +181,20 @@ class ApiCallAdapter(BaseAdapter):
         )
 
 
-def _failed(*, start: float, message: str) -> RuntimeResult:
-    """Build a failed RuntimeResult with elapsed-since-start duration."""
+def _failed(
+    *, start: float, message: str, category: BackendErrorCategory | None = None
+) -> RuntimeResult:
+    """Build a failed RuntimeResult with elapsed-since-start duration.
+
+    ``category`` (#934) is the provider's backend error category; ``structured``
+    stays ``None`` without one, as before.
+    """
     return RuntimeResult(
         success=False,
         output="",
         duration_ms=int((time.monotonic() - start) * 1000),
         errors=[message],
+        structured=with_category({}, category) or None,
     )
 
 

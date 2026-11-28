@@ -2,28 +2,21 @@
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
-from dap_engine.app import EngineConfig, create_app
 from fastapi.testclient import TestClient
-
-from tests.smoke._auth import authed_test_client
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-validate-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="smoke-secret",
-    )
-    app = create_app(config)
-    with authed_test_client(app) as c:
-        yield c
+def client(authed_client: TestClient) -> TestClient:
+    """Authed TestClient shim — see ``tests/smoke/conftest.py::authed_client``.
+
+    Kept as a local alias because most test bodies in this file already
+    take a ``client: TestClient`` parameter; renaming them all would
+    bloat the X1 diff without changing behaviour.
+    """
+    return authed_client
 
 
 def _create_agent(client: TestClient, name: str = "Agent") -> str:
@@ -392,6 +385,16 @@ def test_cohesion_linear_chain_writer_satisfies_reader(client: TestClient) -> No
     assert body["errors"] == []
     # No "no downstream reader" warning either — B reads what A writes.
     assert all("no downstream node reads" not in w for w in body["warnings"])
+
+
+def test_cohesion_extension_field_writer_satisfies_reader(client: TestClient) -> None:
+    """Extension fields are valid contracts and participate in cohesion checks."""
+    a = _create_agent_with_contract(client, name="Issue Loader", output_schema=["issue_number"])
+    b = _create_agent_with_contract(client, name="Coder", input_schema=["issue_number"])
+    body = client.post("/pipelines/validate", json=_two_node_payload(a_id=a, b_id=b)).json()
+    assert body["valid"] is True
+    assert body["errors"] == []
+    assert all("issue_number" not in w for w in body["warnings"])
 
 
 def test_cohesion_missing_writer_fails(client: TestClient) -> None:

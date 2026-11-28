@@ -1,45 +1,103 @@
 "use client";
 
-import Link from "next/link";
-import { useProject, useRunsList } from "@/hooks/api";
+import { Suspense, useMemo } from "react";
+import { LoadingState } from "@/components/ui/spinner";
+import { Play } from "lucide-react";
+import { useApproveGate, usePipelinesList, useProject, useProjectsList, useRunsList } from "@/hooks/api";
 import { useActiveProject } from "@/lib/active-project";
-import { RunStatusBadge } from "@/components/status-badge";
+import { useHasMounted } from "@/lib/use-has-mounted";
+import {
+  TriggerRunPageDialog,
+  useHasPipelines,
+} from "@/components/trigger-run-page-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
-import type { Run } from "@/lib/api/types";
-
-const RUN_ID_PREFIX_LENGTH = 8;
+import { RUN_ID_PREFIX_LENGTH, useRunsFilters } from "./_components/runs-filters";
+import { RunsFiltersBar } from "./_components/runs-filters-bar";
+import { RunsTable } from "./_components/runs-table";
+import { usePausedRunToasts } from "./_components/use-paused-run-toasts";
 
 export default function RunsPage() {
+  return (
+    <Suspense fallback={<LoadingState className="p-6" />}>
+      <RunsPageContent />
+    </Suspense>
+  );
+}
+
+function RunsPageContent() {
   const { activeProjectId, isHydrated } = useActiveProject();
   const { data: activeProject } = useProject(activeProjectId);
+  const { data: projectsData } = useProjectsList();
+  const { data: pipelinesData } = usePipelinesList();
+
+  const projects = useMemo(() => projectsData?.items ?? [], [projectsData?.items]);
+  const pipelines = useMemo(() => pipelinesData?.items ?? [], [pipelinesData?.items]);
+  const filters = useRunsFilters({
+    activeProjectId,
+    isHydrated,
+    projects,
+    pipelines,
+  });
+
   // Gate the request on hydration so we don't fire an org-wide query
   // first and then immediately re-fire a scoped one when the
   // persisted activeProjectId comes in. Until hydration ``isPending``
   // stays true and the page renders the existing "Loading…" state.
   const { data, isPending, isError, error, isFetching } = useRunsList(
-    activeProjectId !== null ? { projectId: activeProjectId } : undefined,
+    filters.runFilters,
     { enabled: isHydrated },
   );
+  // Client-only state (the active project from localStorage, react-query's
+  // fetch status) stays out of the hydration render (#917).
+  const hasMounted = useHasMounted();
+  const { hasPipelines } = useHasPipelines();
+  const approveGate = useApproveGate();
+  usePausedRunToasts(data?.items);
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h1 className="text-2xl font-semibold">Runs</h1>
-          {activeProjectId !== null ? (
+          {hasMounted && activeProjectId !== null ? (
             <Badge variant="secondary" className="font-normal">
               {activeProject?.name ?? "scoped"}
             </Badge>
           ) : null}
         </div>
-        <p className="text-sm text-muted-foreground">
-          {isFetching ? "Refreshing…" : data ? `${data.total} total` : null}
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-muted-foreground">
+            {!hasMounted ? null : isFetching ? "Refreshing…" : data ? `${data.total} total` : null}
+          </p>
+          {hasPipelines && (
+            <TriggerRunPageDialog>
+              {(open) => (
+                <Button size="sm" onClick={open}>
+                  <Play className="h-3.5 w-3.5 mr-1.5" />
+                  Trigger run
+                </Button>
+              )}
+            </TriggerRunPageDialog>
+          )}
+        </div>
       </div>
 
-      {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      <RunsFiltersBar
+        fromDate={filters.fromDate}
+        pipelineOptions={filters.pipelineOptions}
+        projectById={filters.projectById}
+        projects={projects}
+        selectedPipelineId={filters.selectedPipelineId}
+        selectedProjectId={filters.selectedProjectId}
+        selectedProjectValue={filters.selectedProjectValue}
+        selectedStatuses={filters.selectedStatuses}
+        toDate={filters.toDate}
+        updateQuery={filters.updateQuery}
+      />
+
+      {isPending && <LoadingState />}
       {isError && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">
@@ -49,76 +107,44 @@ export default function RunsPage() {
       )}
 
       {data && data.items.length === 0 && (
-        <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">
-            No runs yet. Trigger one via{" "}
-            <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
-              POST /runs
-            </code>
-            .
-          </CardContent>
-        </Card>
+        <TriggerRunPageDialog>
+          {(open) => (
+            <Card
+              className="cursor-pointer hover:bg-muted/30 transition-colors"
+              onClick={open}
+            >
+              <CardContent className="pt-6 text-sm text-muted-foreground text-center space-y-3">
+                <p>No runs yet.</p>
+                <Button size="sm" variant="outline">
+                  <Play className="h-3.5 w-3.5 mr-1.5" />
+                  Trigger your first run
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </TriggerRunPageDialog>
       )}
 
       {data && data.items.length > 0 && (
-        <Card>
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/50">
-              <tr className="text-left text-muted-foreground">
-                <th className="px-4 py-2 font-medium">Run</th>
-                <th className="px-4 py-2 font-medium">Pipeline</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium">Started</th>
-                <th className="px-4 py-2 font-medium text-right">Tokens</th>
-                <th className="px-4 py-2 font-medium text-right">Cost</th>
-                <th className="px-4 py-2 font-medium text-right">Duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((run) => (
-                <RunRow key={run.id} run={run} />
-              ))}
-            </tbody>
-          </table>
-        </Card>
+        <RunsTable
+          approving={approveGate.isPending}
+          onApproveRun={(run) => {
+            if (!run.paused_at_node) return;
+            approveGate.mutate({
+              runId: run.id,
+              nodeId: run.paused_at_node,
+            });
+          }}
+          pipelineById={filters.pipelineById}
+          projectNameForRun={(run) =>
+            run.project_id
+              ? filters.projectById.get(run.project_id)?.name ??
+                `${run.project_id.slice(0, RUN_ID_PREFIX_LENGTH)}...`
+              : "Ad-hoc"
+          }
+          runs={data.items}
+        />
       )}
     </div>
-  );
-}
-
-function RunRow({ run }: { run: Run }) {
-  const duration =
-    run.ended_at != null
-      ? new Date(run.ended_at).getTime() - new Date(run.started_at).getTime()
-      : Date.now() - new Date(run.started_at).getTime();
-
-  return (
-    <tr className="border-b last:border-0 hover:bg-muted/30">
-      <td className="px-4 py-3 font-mono text-xs">
-        <Link
-          href={`/runs/${run.id}`}
-          className="text-foreground hover:underline"
-        >
-          {run.id.slice(0, RUN_ID_PREFIX_LENGTH)}…
-        </Link>
-      </td>
-      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-        {run.pipeline_id.slice(0, RUN_ID_PREFIX_LENGTH)}…
-        <span className="ml-1 text-foreground">v{run.pipeline_version}</span>
-      </td>
-      <td className="px-4 py-3">
-        <RunStatusBadge status={run.final_status} />
-      </td>
-      <td className="px-4 py-3 text-muted-foreground text-xs">
-        {new Date(run.started_at).toLocaleString()}
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums">
-        {formatTokens(run.tokens_used)}
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums">
-        {formatCost(run.cost_usd)}
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums">{formatDuration(duration)}</td>
-    </tr>
   );
 }

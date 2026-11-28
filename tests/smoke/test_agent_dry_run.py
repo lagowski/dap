@@ -21,10 +21,12 @@ from tests.smoke._auth import authed_test_client
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory(prefix="dap-dryrun-test-") as tmp:
+    """Authed engine with bash dry-run explicitly enabled for these tests."""
+    with tempfile.TemporaryDirectory(prefix="dap-dryrun-") as tmp:
         config = EngineConfig(
             db_path=str(Path(tmp) / "state.db"),
             auth_jwt_secret="smoke-secret",
+            allow_bash_runtime_for_non_admin=True,
         )
         app = create_app(config)
         with authed_test_client(app) as c:
@@ -39,6 +41,7 @@ def low_cap_client() -> Iterator[TestClient]:
             db_path=str(Path(tmp) / "state.db"),
             auth_jwt_secret="smoke-secret",
             dry_run_budget_usd=0.05,
+            allow_bash_runtime_for_non_admin=True,
         )
         app = create_app(config)
         with authed_test_client(app) as c:
@@ -188,12 +191,12 @@ def test_dry_run_draft_validates_input_schema(client: TestClient) -> None:
     response = client.post(
         "/agents/dry-run",
         json={
-            "draft": _bash_draft(input_schema=["definitely_not_a_field"]),
+            "draft": _bash_draft(input_schema=["extensions."]),
             "context": {},
         },
     )
     assert response.status_code == 422
-    assert "definitely_not_a_field" in str(response.json()["detail"])
+    assert "extensions." in str(response.json()["detail"])
 
 
 def test_dry_run_prompt_render_error_returns_422(client: TestClient) -> None:

@@ -1,0 +1,82 @@
+{
+  "schema_version": "pipeline-export/1",
+  "pipeline": {
+    "name": "Ops Pipeline",
+    "description": "Command-execution pipeline for issues that require running commands on a remote host (benchmarks, migrations, restarts). Routes trigger → specify → executor → done instead of the coder→PR sequence.",
+    "schema_version": "langgraph/1.0",
+    "state_schema_ref": "PipelineState.v1",
+    "entry_point": "trigger",
+    "nodes": [
+      { "id": "trigger",  "agent_id": "tpl_ops_trigger",  "position": { "x": 0,   "y": 0 } },
+      { "id": "specify",  "agent_id": "tpl_ops_specify",  "position": { "x": 200, "y": 0 } },
+      { "id": "executor", "agent_id": "tpl_ops_executor", "position": { "x": 400, "y": 0 } },
+      { "id": "done",     "agent_id": "tpl_ops_done",     "position": { "x": 600, "y": 0 } }
+    ],
+    "edges": [
+      { "id": "e1", "source": "__start__", "target": "trigger"  },
+      { "id": "e2", "source": "trigger",   "target": "specify"  },
+      { "id": "e3", "source": "specify",   "target": "executor" },
+      { "id": "e4", "source": "executor",  "target": "done"     },
+      { "id": "e5", "source": "done",      "target": "__end__"  }
+    ],
+    "defaults": {
+      "max_attempts": 1,
+      "budget_limit_usd": 0.1,
+      "approval_required_nodes": []
+    }
+  },
+  "bundled_agents": {
+    "tpl_ops_trigger": {
+      "name": "Ops Trigger",
+      "role": "post_check",
+      "runtime_id": "bash",
+      "runtime_config": { "shell": "/bin/bash" },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <command>set -e\n# Validate that the required execution_target extension key is present.\n# The engine's 422 guard (apps/engine/src/dap_engine/api/runs.py) already\n# rejects execution_commands that is not a list, so we only surface a\n# human-readable check here.\nTARGET='{{ extensions.execution_target | default(\"\") }}'\nif [ -z \"$TARGET\" ]; then\n  echo 'ERROR: extensions.execution_target is required for ops pipelines.' >&2\n  exit 1\nfi\nprintf '<output>{\"implementation_notes\": \"execution_target=%s\"}</output>\\n' \"$TARGET\"\n</command>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["implementation_notes"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 10000
+    },
+    "tpl_ops_specify": {
+      "name": "Ops Specify",
+      "role": "task_selector",
+      "runtime_id": "api-call",
+      "runtime_config": {
+        "provider": "glm",
+        "model_id": "glm-4.5",
+        "max_tokens": 2048
+      },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <task>\n    You are the specify node of an ops pipeline. Your job is to validate and\n    enrich the operator-supplied execution intent before the executor runs.\n\n    Inputs available on PipelineState.extensions:\n      - execution_target  : string — name of the remote host / Cortex executor node\n      - execution_commands: list[str] — shell commands to run, in order\n      - execution_env     : dict[str, str] (optional) — extra env vars\n\n    Do the following:\n      1. Confirm execution_commands is a non-empty list. If empty, write a\n         clear error into implementation_notes and stop (the executor node will\n         read it and abort gracefully).\n      2. Produce a concise plain-text run-plan in implementation_notes:\n           Target : <execution_target>\n           Commands:\n             1. <cmd1>\n             2. <cmd2>\n             …\n           Env: <key=value pairs, or \"(none)\">\n\n    Return ONLY in the <output> block:\n      implementation_notes: the run-plan string (or error string)\n  </task>\n  <execution_target>{{ extensions.execution_target }}</execution_target>\n  <execution_commands>{{ extensions.execution_commands | tojson }}</execution_commands>\n  <execution_env>{{ extensions.execution_env | default({}) | tojson }}</execution_env>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["implementation_notes"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 60000
+    },
+    "tpl_ops_executor": {
+      "name": "Cortex Executor",
+      "role": "post_check",
+      "runtime_id": "cortex-agent",
+      "runtime_config": {},
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <task>\n    Execute the commands listed in execution_commands on the remote host\n    identified by execution_target, using execution_env as additional\n    environment variables.\n\n    Report the combined stdout/stderr of each command in implementation_notes\n    using the format:\n\n      ## Command results — <execution_target>\n\n      ### 1. `<cmd>`\n      ```\n      <stdout+stderr>\n      ```\n      Exit code: <N>\n\n      ### 2. …\n\n    If any command exits non-zero, continue running the remaining commands\n    (collect all results) but set a top-level \"FAILURE\" marker at the start\n    of implementation_notes so the done node can detect it.\n\n    Return ONLY in the <output> block:\n      implementation_notes: the full result report string\n  </task>\n  <execution_target>{{ extensions.execution_target }}</execution_target>\n  <execution_commands>{{ extensions.execution_commands | tojson }}</execution_commands>\n  <execution_env>{{ extensions.execution_env | default({}) | tojson }}</execution_env>\n  <run_plan>{{ implementation_notes }}</run_plan>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["implementation_notes"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 300000
+    },
+    "tpl_ops_done": {
+      "name": "Ops Done",
+      "role": "post_check",
+      "runtime_id": "bash",
+      "runtime_config": { "shell": "/bin/bash" },
+      "prompt_template": "<agent_prompt version=\"1\">\n  <role>{{ role }}</role>\n  <command>set -e\n# Post execution results back to the GitHub issue.\n# GITHUB_ISSUE_URL must be set in the engine's env or passed via execution_env.\nISSUE_URL='{{ extensions.execution_env.GITHUB_ISSUE_URL | default(\"\") }}'\nRESULTS=$(cat <<'RESULTS_EOF'\n{{ implementation_notes }}\nRESULTS_EOF\n)\nif [ -n \"$ISSUE_URL\" ]; then\n  gh issue comment \"$ISSUE_URL\" --body \"$RESULTS\"\n  printf '<output>{\"implementation_notes\": \"%s\"}</output>\\n' \"$(echo \"$RESULTS\" | head -1 | jq -Rs .)\"\nelse\n  echo 'GITHUB_ISSUE_URL not set — skipping GitHub comment. Results are in implementation_notes.' >&2\n  printf '<output>{\"implementation_notes\": \"%s\"}</output>\\n' \"$(echo \"$RESULTS\" | head -1 | jq -Rs .)\"\nfi\n</command>\n</agent_prompt>",
+      "input_schema": [],
+      "output_schema": ["implementation_notes"],
+      "constraints": [],
+      "budget_limit_usd": null,
+      "timeout_ms": 30000
+    }
+  }
+}

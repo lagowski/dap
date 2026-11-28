@@ -19,9 +19,7 @@ suite — same pattern ``test_runs_trigger.py`` uses.
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Iterator
-from pathlib import Path
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -34,13 +32,15 @@ from tests.smoke._auth import authed_test_client, register_and_login
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    tmp = tempfile.mkdtemp(prefix="dap-ownership-runs-")
-    config = EngineConfig(
-        db_path=str(Path(tmp) / "state.db"),
-        auth_jwt_secret="ownership-runs-secret",
-    )
-    app = create_app(config)
+def client(
+    engine_config_factory: Callable[..., EngineConfig],
+) -> Iterator[TestClient]:
+    """Authed engine with bash runtime explicitly enabled for these smoke tests.
+
+    These tests predate the runtime policy and intentionally use the
+    deterministic bash adapter to exercise run ownership paths.
+    """
+    app = create_app(engine_config_factory(allow_bash_runtime_for_non_admin=True))
     with authed_test_client(app) as c:
         yield c
 

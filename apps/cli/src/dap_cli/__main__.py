@@ -5,7 +5,9 @@ from __future__ import annotations
 import typer
 
 from dap_cli import __version__
+from dap_cli.commands.demo import demo_command
 from dap_cli.commands.init import init_command
+from dap_cli.commands.pipeline import pipeline_app
 from dap_cli.commands.project import project_app
 from dap_cli.commands.start import start_command
 from dap_cli.commands.status import status_command
@@ -20,6 +22,7 @@ app = typer.Typer(
 )
 
 app.add_typer(project_app, name="project")
+app.add_typer(pipeline_app, name="pipeline")
 
 
 def _version_callback(value: bool) -> None:
@@ -81,6 +84,20 @@ def cmd_start(
 ) -> None:
     """Start engine + dashboard, open browser."""
     start_command(port=port, engine_port=engine_port, headless=headless)
+
+
+@app.command("demo")
+def cmd_demo(
+    no_dashboard: bool = typer.Option(
+        False,
+        "--no-dashboard",
+        help="Run end to end with the gate auto-approved, then exit",
+    ),
+    port: int = typer.Option(DEFAULT_DASHBOARD_PORT, "--port", "-p", help="Dashboard port"),
+    engine_port: int = typer.Option(DEFAULT_ENGINE_PORT, "--engine-port", help="Engine port"),
+) -> None:
+    """Run the example pipeline on a throwaway instance: no API key, login or network."""
+    demo_command(no_dashboard=no_dashboard, port=port, engine_port=engine_port)
 
 
 @app.command("stop")

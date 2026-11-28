@@ -19,21 +19,33 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Imported under TYPE_CHECKING to avoid the cycle with ``dap_engine.app``
+    # (app.py imports this module). ``from __future__ import annotations``
+    # keeps the dep signature lazy.
+    from dap_engine.app import EngineConfig
 
 from dap_runtimes import RuntimeRegistry
 from dap_runtimes.adapters._providers import PROVIDER_REGISTRY
 from dap_types import HealthStatus, RuntimeAdapter
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from dap_engine.api.deps import get_registry
-from dap_engine.auth.users import current_active_user
+from dap_engine.api.deps import get_engine_config, get_registry, get_session
+from dap_engine.auth.audit import AuditEventType, record_audit_event
+from dap_engine.auth.encryption import EncryptionError, encrypt_value
+from dap_engine.auth.users import require_admin_user
 from dap_engine.execution.runner import DEFAULT_RECURSION_LIMIT
-from dap_engine.persistence.db import detect_dialect
-from dap_engine.persistence.models import UserORM
+from dap_engine.persistence import repository as repo
+from dap_engine.persistence._common import NotFoundError
+from dap_engine.persistence.db import detect_dialect, redact_database_url
+from dap_engine.persistence.models import InstanceEnvVarORM, UserORM
 
 logger = logging.getLogger("dap.engine.api.settings")
 
@@ -122,6 +134,14 @@ def _collect_providers() -> list[dict[str, Any]]:
                 "display_name": info.display_name,
                 "default_env_var": info.default_env_var,
                 "configured": configured,
+                "config_fields": [
+                    {
+                        "key": field.key,
+                        "required": field.required,
+                        "description": field.description,
+                    }
+                    for field in info.config_fields
+                ],
             }
         )
     rows.sort(key=lambda row: row["id"])
@@ -150,10 +170,12 @@ def _collect_engine_info(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/settings/admin")
+@router.get(
+    "/settings/admin",
+    dependencies=[Depends(require_admin_user)],
+)
 async def get_admin_settings(
     request: Request,
-    user: UserORM = Depends(current_active_user),
 ) -> dict[str, Any]:
     """Read-only snapshot of instance-wide config for the admin panel.
 
@@ -163,9 +185,9 @@ async def get_admin_settings(
     reset-token logging flag, storage backend. No mutations; instance
     config is env-var driven and requires a restart to change.
 
-    Anti-enumeration: non-admins get ``404`` (mirrors the rest of the
-    admin surface — sub-A4b2 series). Anonymous gets ``401`` from
-    ``current_active_user``.
+    Admin-only via :func:`require_admin_user`. Anti-enumeration:
+    non-admins get ``404`` (mirrors the rest of the admin surface).
+    Anonymous gets ``401`` from the underlying ``current_active_user``.
 
     **Never exposes secrets.** OAuth client_secrets and the JWT
     secret are presence-only — the response says ``True`` /
@@ -173,12 +195,6 @@ async def get_admin_settings(
     Mirrors the rule the ``/audit/events`` route applies to its
     own ``event_data`` payloads.
     """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
-
     config = request.app.state.config
 
     db_backend, db_location = _describe_database(config)
@@ -263,26 +279,268 @@ def _describe_database(config: Any) -> tuple[str, str]:
         # SQLite-via-URL is rare but supported; show the path the
         # way an operator would type it.
         return "sqlite", url
-    return "postgresql", _redact_database_url(url)
+    return "postgresql", redact_database_url(url)
 
 
-def _redact_database_url(url: str) -> str:
-    """Mask the password in a database URL.
+# ---------------------------------------------------------------------------
+# Admin-only instance env vars (#388)
+# ---------------------------------------------------------------------------
 
-    Uses SQLAlchemy's ``make_url`` + ``render_as_string(hide_password=True)``
-    so URL-encoded passwords, IPv6 hosts, query params, and other
-    quirks of real-world database URLs round-trip safely (Copilot
-    review on PR #332). A previous string-splitting version would
-    leak credentials on URLs whose password contained ``@`` or other
-    edge characters.
 
-    Falls back to the input string if SQLAlchemy can't parse the URL
-    — better to show a raw value than to silently strip something
-    important. The endpoint's secret-redaction test asserts the
-    happy path, and the engine refuses to start with an unparseable
-    URL anyway.
+# Posix env-var name shape: leading letter or underscore, then
+# alphanumerics / underscores. Uppercase-only by convention — operators
+# who name them otherwise are likely typoing.
+_KEY_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
+# Refuse keys that could shadow engine bootstrap settings or hijack
+# the subprocess loader. The merge layer would otherwise let an
+# admin override DATABASE_URL or LD_PRELOAD via the instance store —
+# powerful enough to brick the engine or sneak code into every shell
+# we spawn. ``DAP_`` is reserved for the engine's own config.
+_RESERVED_PREFIXES = ("DAP_", "POSTGRES_", "PYTHON")
+_RESERVED_EXACT = frozenset({"DATABASE_URL", "PATH", "LD_LIBRARY_PATH", "LD_PRELOAD"})
+
+
+def _validate_key(key: str) -> None:
+    """Raise 422 if ``key`` is not a legal env-var name or is reserved."""
+    if not key or not _KEY_PATTERN.fullmatch(key):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Invalid env-var name {key!r}: must match ^[A-Z_][A-Z0-9_]*$ "
+                "(uppercase letters, digits and underscores; no leading digit)."
+            ),
+        )
+    if key in _RESERVED_EXACT or any(key.startswith(p) for p in _RESERVED_PREFIXES):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Env-var name {key!r} is reserved — these keys are owned by "
+                "the engine or the subprocess loader and cannot be set via "
+                "instance settings. Set them as OS env vars on the engine "
+                "process if you need them."
+            ),
+        )
+
+
+def _build_preview(plaintext: str) -> str:
+    """Short non-secret hint shown in the admin UI listing.
+
+    Goal: enough to tell ``ghp_`` apart from ``gho_`` at a glance,
+    without leaking enough characters to weaken the secret. Eight
+    chars on screen (``XXXX••••``) feels close to GitHub's own
+    obfuscation in their UI.
     """
+    head = plaintext[:4]
+    return f"{head}••••"
+
+
+def _require_encryption_key(config: Any) -> str:
+    """Refuse POST writes when no Fernet key is configured.
+
+    Only the POST upsert path calls this helper — DELETE deliberately
+    does not require the key (removing a row whose ciphertext we
+    couldn't decrypt is a legitimate cleanup path after a botched
+    rotation), and GET reads use the unencrypted ``preview`` column
+    so the listing works without the key either.
+
+    Writing rows we couldn't decrypt on restart would be worse than
+    rejecting the write — the admin can rotate / set
+    ``DAP_INSTANCE_ENV_VARS_KEY`` and try again. ``503`` (rather than
+    500) signals "operator config issue", which is what this is.
+    """
+    key = config.instance_env_vars_key
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Instance env-var store is not configured: set "
+                "DAP_INSTANCE_ENV_VARS_KEY to a Fernet key (generate one "
+                "with `python -c 'from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())'`)."
+            ),
+        )
+    return str(key)
+
+
+class InstanceEnvVarPreview(BaseModel):
+    """Admin GET shape — never carries the plaintext."""
+
+    key: str
+    preview: str
+    value_set: bool
+
+
+class InstanceEnvVarListing(BaseModel):
+    env_vars: list[InstanceEnvVarPreview]
+
+
+@router.get(
+    "/settings/admin/env-vars",
+    response_model=InstanceEnvVarListing,
+    dependencies=[Depends(require_admin_user)],
+)
+def list_instance_env_vars(
+    session: Session = Depends(get_session),
+) -> InstanceEnvVarListing:
+    """List instance env vars with masked previews — never the raw value.
+
+    Admin-only via the route-level ``require_admin_user`` dep (see
+    decorator). Mirrors the read shape the dashboard uses for other
+    secret stores: one row per key with ``value_set=True`` and a
+    short non-secret ``preview`` (first four chars + four bullets).
+    The full value only ever leaves the engine into the subprocess
+    env at run time.
+    """
+    rows = repo.list_env_vars(session)
+    return InstanceEnvVarListing(
+        env_vars=[
+            InstanceEnvVarPreview(key=row.key, preview=row.preview, value_set=True) for row in rows
+        ]
+    )
+
+
+@router.post(
+    "/settings/admin/env-vars",
+    response_model=InstanceEnvVarListing,
+)
+def upsert_instance_env_vars(
+    body: dict[str, str],
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(require_admin_user),
+    config: EngineConfig = Depends(get_engine_config),
+) -> InstanceEnvVarListing:
+    """Upsert one or more instance env vars.
+
+    Admin-only via :func:`require_admin_user` — non-admin gets 404,
+    anonymous gets 401. Request body is a flat ``{key: value}`` dict
+    — matches the shape the issue (#388) calls out. Each key is
+    validated; each value is encrypted with the configured Fernet
+    key before it ever touches the DB. An audit event is recorded
+    per key (``created`` or ``updated``); the value never appears in
+    ``event_data`` — only the key name.
+
+    Typed as ``dict[str, str]`` so FastAPI's body validation rejects
+    non-string values with a 422 before the handler runs — keeps the
+    OpenAPI schema honest about what we accept.
+    """
+    if not body:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Request body must be a non-empty {key: value} mapping.",
+        )
+    encryption_key = _require_encryption_key(config)
+
+    # Validate everything first so a partial batch never lands — either
+    # the whole POST applies or nothing does (the session rollback
+    # in get_session handles the latter on any raise below).
+    # ``isinstance(value, str)`` is guaranteed by the typed body above;
+    # only emptiness still needs an application-layer check (Pydantic
+    # accepts ``""`` as a valid string).
+    for key, value in body.items():
+        _validate_key(key)
+        if not value:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Value for {key!r} is empty — use DELETE to remove an "
+                    "env var, not POST with an empty string."
+                ),
+            )
+
+    # Single SELECT keyed by ``key IN (body.keys())`` — avoids the N+1
+    # the per-key lookup version did on bulk upserts. Two admins POSTing
+    # the same key concurrently can still race past this check and both
+    # try to INSERT; the UNIQUE constraint on ``key`` makes one of them
+    # roll back at commit. That's an acceptable corner case for a
+    # single-operator install (the loser sees 5xx and retries).
+    existing_by_key = repo.find_env_vars_by_keys(session, body.keys())
+
+    now = datetime.now(UTC)
+    for key, value in body.items():
+        try:
+            ciphertext = encrypt_value(value, key=encryption_key)
+        except EncryptionError as exc:
+            # Bad Fernet key → 503 (same class as missing key). The
+            # operator needs to fix DAP_INSTANCE_ENV_VARS_KEY.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        preview = _build_preview(value)
+        existing = existing_by_key.get(key)
+        # Annotated so mypy narrows to the ``AuditEventType`` Literal
+        # accepted by ``record_audit_event`` below — without it the
+        # assignments would widen to ``str`` and the call would fail
+        # type-checking.
+        event_type: AuditEventType
+        if existing is None:
+            session.add(
+                InstanceEnvVarORM(
+                    key=key,
+                    ciphertext=ciphertext,
+                    preview=preview,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            event_type = "settings.env_var.created"
+        else:
+            existing.ciphertext = ciphertext
+            existing.preview = preview
+            existing.updated_at = now
+            event_type = "settings.env_var.updated"
+
+        # event_data carries the *key name only* — never the value.
+        # The audit log JSONB is admin-visible at /audit/events; any
+        # leak here would defeat the whole point of encrypting at rest.
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type=event_type,
+            event_data={"key": key},
+        )
+
+    # Flush so the listing below reflects the inserts/updates within
+    # the same transaction.
+    session.flush()
+    rows = repo.list_env_vars(session)
+    return InstanceEnvVarListing(
+        env_vars=[
+            InstanceEnvVarPreview(key=row.key, preview=row.preview, value_set=True) for row in rows
+        ]
+    )
+
+
+@router.delete(
+    "/settings/admin/env-vars/{key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def delete_instance_env_var(
+    key: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(require_admin_user),
+) -> Response:
+    """Remove one instance env var. Admin-only via
+    :func:`require_admin_user` — non-admin gets 404 (anti-
+    enumeration), anonymous gets 401. Unknown key returns 404
+    (no enumeration concern — admin already knows what they're
+    deleting)."""
     try:
-        return make_url(url).render_as_string(hide_password=True)
-    except ArgumentError:
-        return url
+        repo.delete_env_var_by_key(session, key)
+    except NotFoundError as exc:
+        # Preserve the existing 404 wording so the dashboard's error
+        # toast and any cached snapshots keep matching.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Instance env var {key!r} not found.",
+        ) from exc
+    record_audit_event(
+        session,
+        user_id=user.id,
+        event_type="settings.env_var.deleted",
+        event_data={"key": key},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -15,33 +15,25 @@ operate on pipeline data, so they reuse the private
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Iterable, Sequence
+from typing import Any
 
 from dap_types import Agent
+from dap_types.agent import validate_field_list
+from pydantic import ValidationError
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from dap_engine.auth.audit import record_audit_event
 from dap_engine.contracts import AgentCreate, AgentUpdate
 from dap_engine.persistence._common import NotFoundError, _new_id, _now
+from dap_engine.persistence.base import get_owned_or_not_found, ownership_filter
 from dap_engine.persistence.models import AgentORM, AgentVersionORM, PipelineORM
 from dap_engine.persistence.pipelines import _current_pipeline_versions
 
-
-def _ownership_filter(
-    actor_id: uuid.UUID,
-    is_admin: bool,
-) -> list[ColumnElement[bool]]:
-    """Return ``[]`` for admins, else a single-clause filter for the actor.
-
-    Centralised so every list query gets the rule without copy-paste.
-    Admins see all rows (including legacy NULL ``user_id`` rows from
-    the pre-v0.3 backfill); non-admins only see rows they own.
-    """
-    if is_admin:
-        return []
-    return [AgentORM.user_id == actor_id]
+logger = logging.getLogger("dap.engine.persistence.agents")
 
 
 def _agent_from_orm(
@@ -50,23 +42,61 @@ def _agent_from_orm(
     *,
     is_current: bool,
 ) -> Agent:
-    return Agent(
-        id=agent.id,
-        name=agent.name if is_current else version.name,
-        role=agent.role,
-        version=version.version,
-        runtime_id=version.runtime_id,
-        runtime_config=version.runtime_config,
-        prompt_template=version.prompt_template,
-        input_schema=version.input_schema,
-        output_schema=version.output_schema,
-        constraints=version.constraints,
-        budget_limit_usd=version.budget_limit_usd,
-        timeout_ms=version.timeout_ms,
-        created_at=agent.created_at,
-        updated_at=agent.updated_at if is_current else version.created_at,
-        is_active=agent.archived_at is None,
-    )
+    payload: dict[str, Any] = {
+        "id": agent.id,
+        "name": agent.name if is_current else version.name,
+        "role": agent.role,
+        "version": version.version,
+        "runtime_id": version.runtime_id,
+        "runtime_config": version.runtime_config,
+        "prompt_template": version.prompt_template,
+        "input_schema": version.input_schema,
+        "output_schema": version.output_schema,
+        "constraints": version.constraints,
+        "budget_limit_usd": version.budget_limit_usd,
+        "timeout_ms": version.timeout_ms,
+        "created_at": agent.created_at,
+        "updated_at": agent.updated_at if is_current else version.created_at,
+        "is_active": agent.archived_at is None,
+    }
+    try:
+        return Agent.model_validate(payload)
+    except ValidationError as exc:
+        if not _is_schema_ref_validation_error(exc):
+            raise
+        sanitized = {
+            **payload,
+            "input_schema": _sanitize_stored_schema_refs(version.input_schema),
+            "output_schema": _sanitize_stored_schema_refs(version.output_schema),
+        }
+        logger.warning(
+            "Agent %s version %s has invalid stored schema refs; sanitized on read",
+            agent.id,
+            version.version,
+        )
+        return Agent.model_validate(sanitized)
+
+
+def _is_schema_ref_validation_error(exc: ValidationError) -> bool:
+    """Return True when every validation error is scoped to agent schemas."""
+    schema_fields = {"input_schema", "output_schema"}
+    return all(error["loc"] and error["loc"][0] in schema_fields for error in exc.errors())
+
+
+def _sanitize_stored_schema_refs(raw: Any) -> list[str]:
+    """Drop malformed legacy schema refs while preserving valid unique strings."""
+    if not isinstance(raw, list):
+        return []
+    sanitized: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or item in sanitized:
+            continue
+        try:
+            validate_field_list([item])
+        except ValueError:
+            continue
+        sanitized.append(item)
+    return sanitized
 
 
 def create_agent(
@@ -248,11 +278,9 @@ def get_agent(
     is_admin: bool,
 ) -> Agent:
     """Fetch an agent. Non-admins only see their own."""
-    agent = session.get(AgentORM, agent_id)
-    if agent is None:
-        raise NotFoundError(f"Agent not found: {agent_id}")
-    if not is_admin and agent.user_id != actor_id:
-        raise NotFoundError(f"Agent not found: {agent_id}")
+    agent = get_owned_or_not_found(
+        session, AgentORM, agent_id, actor_id=actor_id, is_admin=is_admin, label="Agent"
+    )
     version = _get_agent_version_orm(session, agent_id, agent.current_version)
     return _agent_from_orm(agent, version, is_current=True)
 
@@ -371,7 +399,7 @@ def list_agents(
     limit: int = 50,
 ) -> tuple[Sequence[Agent], int]:
     where_clauses: list[ColumnElement[bool]] = []
-    where_clauses.extend(_ownership_filter(actor_id, is_admin))
+    where_clauses.extend(ownership_filter(AgentORM, actor_id=actor_id, is_admin=is_admin))
     if not archived:
         where_clauses.append(AgentORM.archived_at.is_(None))
     if role is not None:

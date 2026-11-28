@@ -46,6 +46,19 @@ def with_glm_key() -> Iterator[None]:
             os.environ["GLM_API_KEY"] = original
 
 
+@pytest.fixture
+def with_openrouter_key() -> Iterator[None]:
+    original = os.environ.get("OPENROUTER_API_KEY")
+    os.environ["OPENROUTER_API_KEY"] = "or-test-fake"
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+        else:
+            os.environ["OPENROUTER_API_KEY"] = original
+
+
 def _task(provider: str = "openai", **runtime_config_overrides: Any) -> RuntimeTask:
     runtime_config: dict[str, Any] = {
         "provider": provider,
@@ -282,6 +295,129 @@ async def test_glm_provider_does_not_require_base_url_or_api_key_env(
         )
 
     assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter (#449) — first-class OpenAI-compatible multi-model gateway
+# ---------------------------------------------------------------------------
+
+
+async def test_openrouter_provider_uses_hardcoded_base_url_and_env_var(
+    with_openrouter_key: None,
+) -> None:
+    """``provider: "openrouter"`` doesn't require base_url / api_key_env on
+    the agent — the provider hardcodes both. SDK call should land at
+    OpenRouter with ``OPENROUTER_API_KEY`` for auth."""
+    adapter = ApiCallAdapter()
+    fake = _mock_chat_completion(text="from openrouter", model="anthropic/claude-3.5-sonnet")
+
+    with patch(_OPENAI_CLIENT_PATH) as mock_cls:
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(return_value=fake)
+        client.close = AsyncMock()
+        mock_cls.return_value = client
+
+        result = await adapter.execute(
+            _task(provider="openrouter", model_id="anthropic/claude-3.5-sonnet"),
+        )
+        ctor_kwargs = mock_cls.call_args.kwargs
+
+    assert result.success is True
+    assert ctor_kwargs["api_key"] == "or-test-fake"
+    assert ctor_kwargs["base_url"] == "https://openrouter.ai/api/v1"
+    assert result.structured is not None
+    assert result.structured["provider"] == "openrouter"
+
+
+async def test_openrouter_provider_injects_referer_and_title_headers(
+    with_openrouter_key: None,
+) -> None:
+    """OpenRouter convention: requests carry ``HTTP-Referer`` + ``X-Title``
+    so they show up labelled in the OpenRouter dashboard's traffic log.
+    Headers are passed via the SDK's ``default_headers`` constructor arg
+    — no auth or billing impact, just attribution."""
+    adapter = ApiCallAdapter()
+    fake = _mock_chat_completion(text="ok", model="deepseek/deepseek-v3-pro")
+
+    with patch(_OPENAI_CLIENT_PATH) as mock_cls:
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(return_value=fake)
+        client.close = AsyncMock()
+        mock_cls.return_value = client
+
+        await adapter.execute(
+            _task(provider="openrouter", model_id="deepseek/deepseek-v3-pro"),
+        )
+        ctor_kwargs = mock_cls.call_args.kwargs
+
+    headers = ctor_kwargs.get("default_headers")
+    assert headers is not None, (
+        "openrouter must pass default_headers to AsyncOpenAI for attribution"
+    )
+    assert "HTTP-Referer" in headers
+    assert "X-Title" in headers
+    assert headers["X-Title"] == "DAP"
+    # The referer should be a real URL pointing at DAP, not a placeholder.
+    assert headers["HTTP-Referer"].startswith("https://")
+
+
+async def test_openrouter_provider_missing_env_var_returns_error() -> None:
+    """No ``OPENROUTER_API_KEY`` → validate_config refuses before SDK call.
+    The error message must name the canonical env var so the operator
+    knows what to set without spelunking through provider source."""
+    saved = os.environ.pop("OPENROUTER_API_KEY", None)
+    try:
+        adapter = ApiCallAdapter()
+        result = await adapter.execute(
+            _task(provider="openrouter", model_id="anthropic/claude-3.5-sonnet"),
+        )
+        assert result.success is False
+        assert any("OPENROUTER_API_KEY" in e for e in result.errors)
+    finally:
+        if saved is not None:
+            os.environ["OPENROUTER_API_KEY"] = saved
+
+
+async def test_openrouter_provider_does_not_require_base_url_or_api_key_env(
+    with_openrouter_key: None,
+) -> None:
+    """The two openai-compat-specific fields are optional for
+    ``openrouter``; leaving them out should not produce a 'required'
+    error. This is the core ergonomic win over the legacy
+    ``openai-compat`` recipe — one knob (``provider``) instead of three."""
+    adapter = ApiCallAdapter()
+    fake = _mock_chat_completion(text="ok", model="anthropic/claude-3.5-sonnet")
+
+    with patch(_OPENAI_CLIENT_PATH) as mock_cls:
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(return_value=fake)
+        client.close = AsyncMock()
+        mock_cls.return_value = client
+
+        result = await adapter.execute(
+            _task(provider="openrouter", model_id="anthropic/claude-3.5-sonnet"),
+        )
+
+    assert result.success is True
+
+
+def test_openrouter_registered_with_canonical_env_var() -> None:
+    """``openrouter`` must be listed by ``list_provider_ids`` and its
+    metadata must point at the OpenAI module + ``OPENROUTER_API_KEY``.
+    This is the wiring the dashboard's runtime picker + Settings page
+    pick up automatically once the registry entry is in place."""
+    from dap_runtimes.adapters._providers import (
+        get_provider_info,
+        list_provider_ids,
+    )
+
+    assert "openrouter" in list_provider_ids()
+    info = get_provider_info("openrouter")
+    assert info is not None
+    assert info.default_env_var == "OPENROUTER_API_KEY"
+    # Same module as openai / openai-compat / glm — proves we're reusing
+    # the OpenAI SDK dispatch path, not introducing a parallel provider.
+    assert info.module_path == "dap_runtimes.adapters._providers._openai"
 
 
 # ---------------------------------------------------------------------------

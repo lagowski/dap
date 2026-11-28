@@ -23,6 +23,115 @@ the DAG. Once imported, every agent becomes a real DB row editable from
 
 ## Available bundles
 
+### `github-read-issue-comment.pipeline-bundle.json`
+
+The smallest useful `github` runtime pipeline: read an issue, then comment on
+it using what was read. Two nodes, no LLM, no shell, no `python-func`.
+
+```
+__start__ → read_issue → comment → __end__
+```
+
+| Node | Runtime | What it does |
+|---|---|---|
+| `read_issue` | github (`op: read_issue`) | Reads `{{ state.extensions.issue_number }}` in `{{ state.repo }}`, writes `extensions.github_issue` |
+| `comment` | github (`op: comment`) | Posts "DAP read **<title>** (#N). Labels: …", rendered from `extensions.github_issue` |
+
+**Run it** with an initial state naming the repo and issue:
+
+```json
+{"repo": "owner/name", "branch": "main", "extensions": {"issue_number": 42}}
+```
+
+**Prerequisites:**
+
+- A token that can read the repo and comment on its issues, in an env var
+  named `GH_TOKEN`: in the engine env, as an instance env var
+  (`/settings/admin/env-vars`) or as a project env var. To use another
+  variable (e.g. a role token like `CORTEX_GH_TOKEN_ISSUES`), change both
+  agents' `token_env`. Never put the token itself in the bundle.
+
+**Why `requires_terminal_final_status: false`:** the last node is a `github`
+call, which can't set `final_status`. With the default (`true`, since #628)
+every run would end `failed` even though both nodes succeeded. See
+[`docs/runtimes.md`](../../docs/runtimes.md#the-final_status-contract).
+
+Every op, its params and outputs: [`docs/runtimes.md` → `github`](../../docs/runtimes.md#github-github-operations-as-nodes-920-921).
+
+### `tester-coder-retry.pipeline-bundle.json`
+
+A retry-driven **tester → coder** loop (#811). The coder works on a git branch;
+the tester runs the suite. A failed attempt goes back to the coder with the
+failure in its prompt, up to 3 retries, then to `escalate`.
+
+```
+__start__ → coder → tester → __end__
+              ↑        │ retry (≤ 3, feedback in extensions.test_feedback)
+              └────────┤
+                       └ retries spent → escalate → __end__
+```
+
+| Node | Runtime | What it does |
+|---|---|---|
+| `coder` | claude-code (`branch: dap/retry-example`), falls back to codex | Implements `description`; from the second attempt on, its prompt carries the tester's failure |
+| `tester` | bash (`pytest -q`) | Fails the attempt on a non-zero exit, or when the coder changed no files (`not diff_stats.files > 0`) |
+| `escalate` | bash | Reached only through `retry.on_failure`; exits 1 so the run ends `failed` |
+
+**Run it** with:
+
+```json
+{"repo": "owner/name", "branch": "develop", "description": "Make the failing test in tests/test_x.py pass"}
+```
+
+**Prerequisites:**
+
+- The `claude` CLI (and `codex`, for the fallback) on the engine host, and the
+  target repo as the engine's working directory or the project's.
+- An admin triggers the run, or the engine has
+  `DAP_ALLOW_BASH_RUNTIME_FOR_NON_ADMIN=1`: the tester and escalate are `bash`.
+- Edit the tester's `command`, the coder's `branch`/`base` and the backend
+  profiles to fit the repo. Each profile's `model_id` (`claude-opus-4-7`,
+  `gpt-5-codex`) is a placeholder for the model you run; both CLI runtimes
+  require one.
+
+Every key it uses (`retry`, `diff_stats`, `not`, `fallback`):
+[`docs/pipelines.md`](../../docs/pipelines.md).
+
+### `project-bootstrap.pipeline-bundle.json`
+
+Cortex's project-bootstrap pipeline (cortex epic #749): it turns an idea-arena
+verdict into a scaffolded, cortex-managed project (repo, PR-review gate, database,
+cortex registration, MVP issues). 13 `python-func` nodes calling
+`cortex.pipelines.project_bootstrap.nodes`, with five human gates paused by
+`interrupt_before`: `gate_params`, `gate_scope`, `gate_scaffold`,
+`gate_provision`, `gate_decompose`. `gate_scaffold` always continues;
+`decompose_issues` runs twice, once to draft the issues before `gate_decompose`
+and once to file them after it.
+
+Vendored from cortex `cortex/dap_bundles/project-bootstrap.pipeline-bundle.json`
+with `_comment` and `install_instructions` removed and three changes for DAP:
+
+- `min_dap_version` is `0.3.0`; the cortex copy asks for `0.8.0`, which no DAP
+  release has, so the import was refused (`422 Bundle requires DAP >= 0.8.0,
+  but this instance is 0.3.0`).
+- The edge conditions read `extensions.gate_*_approved`. A node's return keys
+  that are not `PipelineState` fields are stored under `extensions`, so a bare
+  `gate_*_approved` never matched and every gate ended the run.
+- `decompose_issues → gate_decompose` is `not (extensions.gate_decompose_approved == true)`.
+  The flag is unset on the first pass, and a missing field never equals `false`.
+
+**Run it** with the inputs under `extensions` (top-level keys are rejected):
+
+```json
+{"extensions": {"project_slug": "demo-app", "repo_layout": "single", "stack": "python", "db_choice": "postgres", "arena_verdict": "go"}}
+```
+
+**Prerequisites:** the `cortex` package importable by the engine (`POST /runs`
+refuses a callable it cannot import), and the GitHub and k8s credentials the
+`wire_gate`, `provision_db` and `register_project` nodes use.
+`tests/smoke/test_project_bootstrap_bundle.py` checks the import, the routing and
+a dry run that pauses at `gate_params`, without cortex installed.
+
 ### `github-issue-triage.pipeline-bundle.json`
 
 Five-node linear pipeline that picks the most sensible open GitHub issue,
@@ -107,4 +216,60 @@ issue title, the rest as the body, and pipe:
 ```bash
 TITLE="<copy from H1>"
 gh issue create --title "$TITLE" --body-file <(echo "$BODY")
+```
+
+### `ops-pipeline`
+
+Four-node pipeline for **command-execution issues** — issues that require
+running shell commands on a remote host (benchmarks, migrations, service
+restarts) instead of producing a code change.
+
+```
+__start__ → trigger → specify → executor → done → __end__
+```
+
+| Node | Role | What it does |
+|---|---|---|
+| `trigger` | `post_check` | Validates `extensions.execution_target` is present |
+| `specify` | `task_selector` | Validates commands list and produces a human-readable run-plan |
+| `executor` | `post_check` | Runs commands on the target host via the Cortex executor node (Dixter999/cortex-project#446) |
+| `done` | `post_check` | Posts results back to the GitHub issue via `gh issue comment` |
+
+**Extension keys** (passed in `initial_state.extensions` at trigger time):
+
+| Key | Type | Required |
+|---|---|---|
+| `execution_target` | `string` | yes |
+| `execution_commands` | `list[string]` | yes |
+| `execution_env` | `dict[string, string]` | no — pass `GITHUB_ISSUE_URL` here for automatic write-back |
+
+**Note:** This bundle lives in its own subdirectory (`examples/ops-pipeline/`)
+rather than the flat `examples/pipelines/` convention used by the other bundles.
+See [`examples/ops-pipeline/README.md`](../ops-pipeline/README.md) for the full
+node table, trigger payload example, GitHub write-back ownership statement, and
+Cortex executor prerequisites.
+
+## Publishing a bundle as a hub tutorial
+
+`dap pipeline export <bundle> --hub <slug> --tagline5 "<text>" --io <in>:<out> [--out DIR]` writes `DIR/<slug>/page/page.json`. It is a tutorial page (schema 1, `kind: pipeline`, English) with a `graph` field (`entry`, `nodes` with id/title/runtime/inputs/outputs/x/y, `edges` with from/to/optional label), which a read-only canvas can draw.
+Only structural facts are copied: the name, the description, the node and agent names, the runtimes, the input/output field names, the positions, the edge conditions and the run defaults. Prompts, `runtime_config`, env var names and backend profiles are never read. If a URL, IP address, email, absolute path, token or private host name is still in the output, the export is refused (exit 2) and no file is written.
+
+The hub card needs two more values, and both options are required with `--hub`:
+
+- `--tagline5 "<text>"`: the card line. After trimming it must be 3-6 words, at most 60 characters, on one line, in plain text, with no `...` or `…`, no markup and no link or path. It is written as `tagline5`.
+- `--io <in>:<out>`: the card icons, written as `io_icons: {in, out}`. Each name must be one of `bulb scale repo issue merge docs post search report script clapperboard blocks pipeline list fanout comment`.
+
+If either value breaks a rule, the export is refused (exit 2). Each graph node also gets a `type`: `gate` for a node in `defaults.approval_required_nodes`, `llm` for a node whose agent runs on an LLM runtime (`api-call`, `agent`, `claude-code`, `codex`, `gemini-cli`, `aider`), and the runtime id for any other node. A node gets a one-line `purpose` (at most 90 characters) only when its bundled agent has a description with no link or path in it.
+
+Card values for the exported examples (en):
+
+| Bundle | `--tagline5` | `--io` |
+|---|---|---|
+| `github-read-issue-comment` | Read an issue, then comment | `issue:comment` |
+| `github-issue-triage` | Pick and enrich the next issue | `list:issue` |
+| `team-collaboration` | Turn a problem into a brief | `comment:report` |
+
+```bash
+dap pipeline export examples/pipelines/github-read-issue-comment.pipeline-bundle.json \
+  --hub github-read-issue-comment --tagline5 "Read an issue, then comment" --io issue:comment --out hub/
 ```

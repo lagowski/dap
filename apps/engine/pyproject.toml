@@ -1,23 +1,30 @@
 [project]
 name = "dap-engine"
-version = "0.3.0"
+version = "0.4.0"
 description = "DAP engine — FastAPI + LangGraph + SQLAlchemy + SQLite / PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "Rafał Łagowski" },
+    { name = "Daniel Łagowski" },
+]
 dependencies = [
-    "dap-types",
-    "dap-runtimes",
-    "dap-prompt-dsl",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "sqlalchemy>=2.0.36",
-    "alembic>=1.13.3",
+    "dap-schemas>=0.4,<0.5",
+    "dap-runtimes[all]>=0.4,<0.5",
+    "dap-prompt-dsl>=0.4,<0.5",
+    "dap-database>=0.4,<0.5",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.1",
+    "sqlalchemy>=2.0.52",
+    "alembic>=1.19.0",
     "pydantic>=2.9.2",
     "anyio>=4.6.0",
     "langgraph>=0.2.50",
     "langgraph-checkpoint-sqlite>=2.0.0",
+    "packaging>=24.0",
     # PostgreSQL backend (optional — only used when DAP_DATABASE_URL points to pg)
-    "psycopg[binary,pool]>=3.2",
+    "psycopg[binary,pool]>=3.3.4",
     "langgraph-checkpoint-postgres>=2.0",
     # Auth (v0.3 — see #299).
     # `fastapi-users[sqlalchemy]` pulls aiosqlite already; the `oauth`
@@ -25,7 +32,53 @@ dependencies = [
     # the OAuth sub-PR. Explicit pin so `--frozen` installs catch
     # breaking minor bumps in pre-commit hooks.
     "fastapi-users[sqlalchemy,oauth]>=15.0.5",
+    # PyJWT — transitive of fastapi-users, but constrained explicitly to
+    # >=2.13.0 to pull in the 2026-06 security patches that close
+    # PYSEC-2026-175/-177/-178/-179 (4 CVEs in 2.12.1). Without this
+    # constraint, uv resolves fastapi-users' looser bound to 2.12.1 and
+    # the pip-audit CI gate fails. The ``[crypto]`` extra matches the
+    # transitive resolution shape so the install surface isn't widened.
+    "pyjwt[crypto]>=2.13.0",
+    # At-rest encryption for instance env-var values (#388). Already
+    # pulled transitively by fastapi-users, but declared explicitly so
+    # the dependency is visible to anyone auditing what we encrypt
+    # with and which version of Fernet we rely on. Floor at 48.0.1
+    # to clear GHSA-537c-gmf6-5ccf.
+    "cryptography>=50.0.0",
+    # Transitive deps with active CVE advisories — explicit floors so
+    # ``uv lock`` always pulls a non-vulnerable resolution. Drop these
+    # once fastapi-users / starlette upstream pins satisfy the floors
+    # transitively.
+    # python-multipart >= 0.0.31 — CVE-2026-53538/53539/53540
+    "python-multipart>=0.0.31",
+    # starlette >= 1.3.1 — CVE-2026-54282/54283
+    "starlette>=1.3.1",
+    # langgraph stack — transitive via langgraph / langgraph-checkpoint-*.
+    # Advisories published after #791; the green CVE-scan checkmarks on
+    # develop predate them. Floors so ``uv lock`` skips the vulnerable
+    # resolutions.
+    # langgraph-checkpoint >= 4.1.1 — CVE-2026-48775
+    "langgraph-checkpoint>=4.1.1",
+    # langgraph-checkpoint-sqlite >= 3.1.1 — PYSEC-2026-3636. Same shape and same
+    # remedy as the postgres sibling in 8f3db0e: the direct requirement above is
+    # `>=2.0.0`, which resolved happily to the vulnerable 3.1.0, so the floor goes
+    # HERE where the other advisories live rather than being tightened up there —
+    # one list, read in one place, when the next advisory lands.
+    "langgraph-checkpoint-sqlite>=3.1.1",
+    # langgraph-sdk >= 0.4.4 — CVE-2026-104873 (transitive via langgraph)
+    "langgraph-sdk>=0.4.4",
+    # langsmith >= 0.8.18 — GHSA-f4xh-w4cj-qxq8
+    "langsmith>=0.8.18",
+    # msgpack >= 1.2.1 — GHSA-6v7p-g79w-8964
+    "msgpack>=1.2.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lagowski/dap"
+Repository = "https://github.com/lagowski/dap"
+Issues = "https://github.com/lagowski/dap/issues"
+"Author — Rafał Łagowski" = "https://www.linkedin.com/in/rafallagowski/"
+"Author — Daniel Łagowski" = "https://www.linkedin.com/in/daniellagowski/"
 
 [project.scripts]
 dap-engine = "dap_engine.__main__:main"

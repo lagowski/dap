@@ -20,7 +20,13 @@ from pathlib import Path
 import pytest
 from dap_engine.app import EngineConfig, create_app
 from dap_runtimes import RuntimeRegistry
-from dap_types import HealthStatus, RuntimeKind, RuntimeResult, RuntimeTask
+from dap_types import (
+    HealthStatus,
+    OutputCallback,
+    RuntimeKind,
+    RuntimeResult,
+    RuntimeTask,
+)
 from fastapi.testclient import TestClient
 
 from tests.smoke._auth import authed_test_client
@@ -42,7 +48,11 @@ class Phase2BashStub:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         return RuntimeResult(
             success=True,
             output="switched to branch feature-123",
@@ -70,7 +80,11 @@ class Phase2PythonFuncStub:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.calls.append(task.execution_id)
         return RuntimeResult(
             success=True,
@@ -104,7 +118,11 @@ class Phase2CodeReviewerStub:
     async def healthcheck(self) -> HealthStatus:
         return HealthStatus(available=True)
 
-    async def execute(self, task: RuntimeTask) -> RuntimeResult:
+    async def execute(
+        self,
+        task: RuntimeTask,
+        on_output: OutputCallback | None = None,
+    ) -> RuntimeResult:
         self.call_count += 1
         # Pop next result, default to "clean" if exhausted
         status = self._results.pop(0) if self._results else "clean"
@@ -248,6 +266,11 @@ def _create_phase2_pipeline(
                 "max_attempts": 3,
                 "budget_limit_usd": 10.0,
                 "approval_required_nodes": approval_required_nodes,
+                # This phase-2 smoke pipeline verifies DAG ordering, retry loops
+                # and gate routing, not terminal-status enforcement (#628). Opt
+                # out so a residual ``running`` keeps the legacy "no node raised
+                # = success" semantics these tests rely on.
+                "requires_terminal_final_status": False,
             },
         },
     )
@@ -266,7 +289,11 @@ def phase2_clean_client() -> Iterator[
 ]:
     """Client with code-reviewer configured to return 'clean' on first call."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-clean-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="smoke-secret",
+        allow_bash_runtime_for_non_admin=True,
+    )
     app = create_app(config)
     pf_stub = Phase2PythonFuncStub()
     reviewer = Phase2CodeReviewerStub(review_results=["clean"])
@@ -284,7 +311,11 @@ def phase2_retry_client() -> Iterator[
 ]:
     """Client with code-reviewer configured to return 'needs_work' repeatedly."""
     tmp = tempfile.mkdtemp(prefix="dap-phase2-retry-")
-    config = EngineConfig(db_path=str(Path(tmp) / "state.db"), auth_jwt_secret="smoke-secret")
+    config = EngineConfig(
+        db_path=str(Path(tmp) / "state.db"),
+        auth_jwt_secret="smoke-secret",
+        allow_bash_runtime_for_non_admin=True,
+    )
     app = create_app(config)
     pf_stub = Phase2PythonFuncStub()
     # needs_work, needs_work, then clean (but cap should trigger at 2)
@@ -402,7 +433,7 @@ def test_phase2_gate_pauses_via_interrupt_before(
 
     # Approve the gate
     approve_resp = client.post(f"/runs/{run_id}/nodes/gate-phase2/approve")
-    assert approve_resp.status_code == 200
+    assert approve_resp.status_code == 202  # accepted; resumes in background (#623)
     assert approve_resp.json()["final_status"] == "running"
 
     # Run completes after approval

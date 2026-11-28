@@ -3,31 +3,50 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
+from dap_runtimes import RuntimeRegistry
 from dap_types import Pipeline
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from dap_engine.api.agents import build_agent_export_payload
-from dap_engine.api.deps import get_session
+from dap_engine.api.backend_profiles import inspect_backend_profiles
+from dap_engine.api.deps import get_registry, get_session
+from dap_engine.api.pipeline_bundles import (
+    PipelineBundleError,
+    build_pipeline_export,
+    fetch_pipeline_import_request_from_url,
+    materialise_pipeline_import,
+)
+from dap_engine.api.pipeline_generator import (
+    GeneratedPipeline,
+    GeneratePipelineRequest,
+    PipelineGeneratorError,
+    PipelineGeneratorStatus,
+    run_generator,
+)
+from dap_engine.api.run_callable_preflight import inspect_pipeline_callables
 from dap_engine.api.schemas import (
-    PIPELINE_EXPORT_SCHEMA_VERSION,
-    AgentExportPayload,
+    BackendProfilesInspectionResponse,
     PipelineExport,
-    PipelineExportPayload,
     PipelineImportRequest,
 )
+from dap_engine.auth.audit import record_audit_event
 from dap_engine.auth.users import current_active_user
-from dap_engine.contracts import AgentCreate, PipelineCreate, PipelineUpdate
+from dap_engine.contracts import PipelineCreate, PipelineUiMetadataPatch, PipelineUpdate
 from dap_engine.execution import ValidationResult, validate_pipeline_dag
 from dap_engine.persistence import repository as repo
-from dap_engine.persistence.models import UserORM
+from dap_engine.persistence.models import PipelineVersionORM, UserORM
 
 logger = logging.getLogger("dap.engine.pipelines")
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
+
+
+def _raise_bundle_http_error(exc: PipelineBundleError) -> NoReturn:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.get("")
@@ -51,6 +70,7 @@ def list_pipelines(
         "total": total,
         "offset": offset,
         "limit": limit,
+        "has_more": offset + limit < total,
     }
 
 
@@ -105,6 +125,7 @@ def _update_to_create_shape(payload: PipelineUpdate) -> PipelineCreate:
         nodes=payload.nodes,
         edges=payload.edges,
         defaults=payload.defaults,
+        backend_profiles=payload.backend_profiles,
     )
 
 
@@ -160,87 +181,172 @@ def import_pipeline(
 ) -> Pipeline:
     """Create a new pipeline (v1) from an exported JSON payload (#124).
 
-    Two paths share this endpoint:
-
-    - **Pipeline-only** (``bundled_agents`` absent): same as Phase 1.
-      Referenced agents must already exist in this DB or the DAG
-      validator returns 422.
-    - **Bundle** (``bundled_agents`` present, #126): creates each
-      bundled agent first, builds an ``old_id → new_id`` remap,
-      rewrites every ``node.agent_id`` in the pipeline payload,
-      then runs the standard validator + create path. The whole
-      thing rides the request session, so a failure anywhere
-      (agent validation, pipeline validation, repo write) rolls
-      back the agents that were created earlier — no orphans
-      land in the DB.
-
-    Round-trips agents/pipeline through their ``Create`` types so
-    any future field added flows automatically rather than relying
-    on this function staying in lockstep with three models.
+    Pure file-upload path: the caller embeds the entire bundle JSON
+    in the request body. For the URL-based registry flow see
+    ``POST /pipelines/import-from-url``.
     """
-    bundled = payload.bundled_agents
-    pipeline_payload = payload.pipeline
+    try:
+        return materialise_pipeline_import(payload, session, user)
+    except PipelineBundleError as exc:
+        _raise_bundle_http_error(exc)
 
-    # Bundle mode is keyed on *presence* of the field, not truthiness
-    # — the contract is "bundle if the caller chose to send it",
-    # which an empty dict still expresses (no agents to remap, but
-    # the user explicitly opted in). Keeps the contract documented
-    # in :class:`PipelineImportRequest` accurate.
-    if bundled is not None:
-        # Step 1 — create bundled agents (no inter-agent ordering
-        # required today). Build the remap from source ids to
-        # fresh local ids.
-        id_remap: dict[str, str] = {}
-        for source_id, agent_payload in bundled.items():
-            try:
-                agent_create = AgentCreate.model_validate(agent_payload.model_dump())
-            except ValidationError as exc:
-                # Keep the structured Pydantic error list intact
-                # under ``agent_validation_errors`` so frontends can
-                # surface field-level issues. ``errors`` keeps the
-                # human-friendly summary the rest of the import
-                # paths use, including the offending source id so
-                # operators know which entry in the bundle broke.
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail={
-                        "errors": [
-                            f"bundled_agents['{source_id}'] is not a valid agent payload",
-                        ],
-                        "warnings": [],
-                        "agent_validation_errors": exc.errors(),
-                        "source_id": source_id,
-                    },
-                ) from exc
-            new_agent = repo.create_agent(session, agent_create, user_id=user.id)
-            id_remap[source_id] = new_agent.id
 
-        # Step 2 — rewrite node.agent_id in the pipeline payload.
-        # Nodes whose agent_id isn't in the bundle keep their
-        # original string; the validator will catch them if they
-        # don't exist locally either (legitimate use case: a
-        # partial bundle that relies on some pre-existing agents).
-        rewritten_nodes = [
-            node.model_copy(
-                update={"agent_id": id_remap.get(node.agent_id, node.agent_id)},
-            )
-            for node in pipeline_payload.nodes
-        ]
-        pipeline_payload = pipeline_payload.model_copy(update={"nodes": rewritten_nodes})
+@router.post(
+    "/import/inspect-backends",
+    response_model=BackendProfilesInspectionResponse,
+)
+def inspect_pipeline_import_backends(
+    payload: PipelineImportRequest,
+    session: Session = Depends(get_session),
+    _user: UserORM = Depends(current_active_user),
+) -> BackendProfilesInspectionResponse:
+    """Inspect backend profiles declared by a pipeline bundle.
+
+    This is the read-only preflight endpoint for the dashboard's import
+    configuration step. It accepts the same bundle envelope as
+    ``POST /pipelines/import`` and returns only non-secret availability
+    metadata; the actual import path remains unchanged.
+    """
+    return inspect_backend_profiles(payload, session)
+
+
+# ---------------------------------------------------------------------------
+# Private template registry — import from URL (#385)
+# ---------------------------------------------------------------------------
+
+
+class ImportFromUrlRequest(BaseModel):
+    """Body of ``POST /pipelines/import-from-url`` (#385)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(
+        description=(
+            "Absolute URL of a ``.pipeline-bundle.json`` file. Hostname "
+            "must match an entry in ``DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS`` "
+            "(set on the engine). HTTPS required except for ``localhost`` "
+            "/ ``127.0.0.1`` (dev only)."
+        )
+    )
+
+
+@router.post(
+    "/import-from-url",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Pipeline,
+)
+def import_pipeline_from_url(
+    payload: ImportFromUrlRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Pipeline:
+    """Fetch a ``.pipeline-bundle.json`` from a trusted URL + import (#385).
+
+    Iter 1 of the private template registry. The endpoint:
+
+    1. Validates the URL against ``DAP_TEMPLATE_REGISTRY_ALLOWED_HOSTS``.
+    2. GETs the bundle with a 10s timeout and a 10MB response cap.
+    3. Optionally attaches ``Authorization: Bearer
+       $DAP_TEMPLATE_REGISTRY_AUTH_TOKEN`` if the engine is configured
+       with a token (private GitHub/GitLab repos).
+    4. Parses the response as ``PipelineImportRequest`` and delegates
+       to the shared import path.
+    5. Writes a ``pipeline.imported_from_url`` audit event with the
+       source URL and resulting pipeline id, so operators have an
+       auditable trail of *where* each pipeline came from.
+
+    Trust model: only operators with write access to the engine's
+    config can add hosts to the allow-list, so a misbehaving user
+    can't redirect the engine at an internal SSRF target.
+    """
+    cfg = request.app.state.config
+    allowed_hosts: list[str] = cfg.template_registry_allowed_hosts or []
+    auth_token: str | None = cfg.template_registry_auth_token
 
     try:
-        create_payload = PipelineCreate.model_validate(pipeline_payload.model_dump())
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=exc.errors(),
-        ) from exc
+        fetched = fetch_pipeline_import_request_from_url(
+            payload.url,
+            allowed_hosts=allowed_hosts,
+            auth_token=auth_token,
+        )
+        pipeline = materialise_pipeline_import(fetched.import_request, session, user)
+    except PipelineBundleError as exc:
+        _raise_bundle_http_error(exc)
 
-    # ``_enforce_validation`` raises 422 on any DAG / cohesion
-    # error. The session-wide rollback in ``get_session`` then
-    # tears down the bundled agents created above — no orphans.
-    _enforce_validation(create_payload, session)
-    return repo.create_pipeline(session, create_payload, user_id=user.id)
+    # Audit trail — operators need to know *where* this pipeline came
+    # from later. Query strings/fragments are stripped by the fetch
+    # helper before audit so accidental URL tokens don't land in logs.
+    try:
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type="pipeline.imported_from_url",
+            event_data={"url": fetched.audit_url, "pipeline_id": pipeline.id},
+        )
+    except Exception:
+        # Audit-log failures shouldn't block a successful import; we
+        # already paid the network + bundle materialisation cost. The
+        # repo layer logs the underlying error.
+        logger.exception("audit-log write failed for imported pipeline %s", pipeline.id)
+
+    return pipeline
+
+
+# ---------------------------------------------------------------------------
+# Prompt box — generate a bundle from a prompt (cortex#1774 S5)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/generate", response_model=PipelineGeneratorStatus)
+def pipeline_generator_status(
+    request: Request,
+    _user: UserORM = Depends(current_active_user),
+) -> PipelineGeneratorStatus:
+    """Whether this engine has a pipeline generator configured (the prompt box shows if so)."""
+    return PipelineGeneratorStatus(
+        enabled=bool(request.app.state.config.server.pipeline_generator_command)
+    )
+
+
+@router.post("/generate", response_model=GeneratedPipeline)
+def generate_pipeline(
+    payload: GeneratePipelineRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> GeneratedPipeline:
+    """Turn a prompt into a pipeline bundle with the operator's generator.
+
+    Returns the bundle only; nothing is imported. The dashboard imports it with
+    ``POST /pipelines/import`` (so the usual import checks apply) or offers it
+    as a JSON download. 503 = no generator configured, 422 = the generator
+    refused the prompt, 502 = it failed or returned something that is not a
+    valid bundle, 504 = it timed out.
+    """
+    server = request.app.state.config.server
+    try:
+        generated = run_generator(
+            server.pipeline_generator_command,
+            payload.prompt,
+            server.pipeline_generator_timeout_seconds,
+        )
+    except PipelineGeneratorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    try:
+        record_audit_event(
+            session,
+            user_id=user.id,
+            event_type="pipeline.generated",
+            event_data={
+                "name": generated.name,
+                "nodes": generated.nodes,
+                "prompt_chars": len(payload.prompt),
+            },
+        )
+    except Exception:
+        logger.exception("audit-log write failed for generated pipeline %s", generated.name)
+    return generated
 
 
 @router.get("/{pipeline_id}", response_model=Pipeline)
@@ -253,6 +359,111 @@ def get_pipeline(
         return repo.get_pipeline(session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser)
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+class _PipelineProjectRef(BaseModel):
+    id: str
+    name: str
+    kinds: list[str]
+
+
+class PipelineUsageResponse(BaseModel):
+    """Projects that bind this pipeline, and as which workflow kind(s) (#697)."""
+
+    projects: list[_PipelineProjectRef]
+
+
+@router.get("/{pipeline_id}/usage", response_model=PipelineUsageResponse)
+def get_pipeline_usage(
+    pipeline_id: str,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> PipelineUsageResponse:
+    """Which projects bind this pipeline (and as what workflow kind) — the
+    symmetric 'used in' for pipelines (#697). Gated on pipeline ownership."""
+    try:
+        repo.get_pipeline(session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser)
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    projects = repo.projects_using_pipelines(session, [pipeline_id])
+    return PipelineUsageResponse(
+        projects=[
+            _PipelineProjectRef(id=pid, name=name, kinds=[kind for kind, _ in binds])
+            for pid, name, binds in projects
+        ],
+    )
+
+
+class NodeReadiness(BaseModel):
+    """Whether one ``python-func`` node's callable resolves on this engine."""
+
+    node_id: str
+    agent_id: str
+    callable_path: str | None
+    resolvable: bool
+    error: str | None
+
+
+class PipelineReadinessResponse(BaseModel):
+    """Pre-run readiness of a pipeline's ``python-func`` nodes (#710 read-only).
+
+    ``ready`` is true when every checked node's callable resolves. ``checks`` is
+    empty for pipelines with no ``python-func`` nodes (nothing to resolve).
+    """
+
+    ready: bool
+    checks: list[NodeReadiness]
+
+
+@router.get("/{pipeline_id}/readiness", response_model=PipelineReadinessResponse)
+def get_pipeline_readiness(
+    pipeline_id: str,
+    session: Session = Depends(get_session),
+    registry: RuntimeRegistry = Depends(get_registry),
+    user: UserORM = Depends(current_active_user),
+) -> PipelineReadinessResponse:
+    """Resolve every ``python-func`` node's callable without running it (#710).
+
+    The read-only counterpart to the trigger-time preflight: it surfaces, before
+    you start a run, which nodes can't run on this engine (e.g. ``dap-cortex``
+    not installed, a wrong ``callable_path``, an import-time error) — the #1
+    cryptic cause of mid-run cortex failures. Per-request, so a package
+    installed after engine start shows ready on the next check. Gated on
+    pipeline ownership.
+    """
+    try:
+        pipeline = repo.get_pipeline(
+            session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    pipeline_version = session.scalar(
+        select(PipelineVersionORM)
+        .where(PipelineVersionORM.pipeline_id == pipeline_id)
+        .where(PipelineVersionORM.version == pipeline.version)
+    )
+    if pipeline_version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pipeline version not found: {pipeline_id}@v{pipeline.version}",
+        )
+
+    checks = [
+        NodeReadiness(
+            node_id=c.node_id,
+            agent_id=c.agent_id,
+            callable_path=c.callable_path,
+            resolvable=c.resolvable,
+            error=c.error,
+        )
+        for c in inspect_pipeline_callables(session, pipeline_version, registry)
+    ]
+    return PipelineReadinessResponse(
+        ready=all(c.resolvable for c in checks),
+        checks=checks,
+    )
 
 
 @router.put("/{pipeline_id}", response_model=Pipeline)
@@ -291,6 +502,31 @@ def update_pipeline(
         )
     except repo.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.patch("/{pipeline_id}/ui-metadata", status_code=status.HTTP_204_NO_CONTENT)
+def update_pipeline_ui_metadata(
+    pipeline_id: str,
+    payload: PipelineUiMetadataPatch,
+    session: Session = Depends(get_session),
+    user: UserORM = Depends(current_active_user),
+) -> Response:
+    """Merge dashboard layout metadata into the current version.
+
+    Unlike ``PUT /pipelines/{id}``, this is intentionally versionless:
+    drag/pan autosave should not create v2/v3 history rows.
+    """
+    try:
+        repo.update_pipeline_ui_metadata(
+            session,
+            pipeline_id,
+            payload,
+            actor_id=user.id,
+            is_admin=user.is_superuser,
+        )
+    except repo.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -373,56 +609,12 @@ def export_pipeline(
     referenced agent gets the standard 422 from the DAG validator.
     """
     try:
-        pipeline = repo.get_pipeline(
-            session, pipeline_id, actor_id=user.id, is_admin=user.is_superuser
+        return build_pipeline_export(
+            session,
+            pipeline_id,
+            actor_id=user.id,
+            is_admin=user.is_superuser,
+            bundle=bundle,
         )
-    except repo.NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-    try:
-        payload = PipelineExportPayload(
-            name=pipeline.name,
-            description=pipeline.description,
-            schema_version=pipeline.schema_version,
-            state_schema_ref=pipeline.state_schema_ref,
-            entry_point=pipeline.entry_point,
-            nodes=list(pipeline.nodes),
-            edges=list(pipeline.edges),
-            defaults=pipeline.defaults,
-            ui_metadata=pipeline.ui_metadata,
-        )
-    except ValidationError as exc:
-        # Shouldn't happen — stored shape was validated on write —
-        # but if a future migration ever introduces a stored shape
-        # we can't export, surface it as 500 with details rather
-        # than crashing without context.
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Stored pipeline could not be re-validated for export: {exc.errors()}",
-        ) from exc
-
-    bundled_agents: dict[str, AgentExportPayload] | None = None
-    if bundle:
-        # One batched fetch for every unique agent_id in the pipeline
-        # — a 2-query lookup regardless of node count (#126 review).
-        # ``_check_agents`` at save time guarantees a valid pipeline
-        # has no archived references, so any id we don't find here
-        # would be a row that vanished after save (race / manual DB
-        # tinkering). Skip silently in that case; the importer falls
-        # back to "agent not found" 422 on the receiving end if the
-        # bundle ends up incomplete.
-        agent_ids = sorted({node.agent_id for node in payload.nodes})
-        agents_by_id = repo.get_agents_by_ids(
-            session, agent_ids, actor_id=user.id, is_admin=user.is_superuser
-        )
-        bundled_agents = {
-            agent_id: build_agent_export_payload(agents_by_id[agent_id])
-            for agent_id in agent_ids
-            if agent_id in agents_by_id
-        }
-
-    return PipelineExport(
-        schema_version=PIPELINE_EXPORT_SCHEMA_VERSION,
-        pipeline=payload,
-        bundled_agents=bundled_agents,
-    )
+    except PipelineBundleError as exc:
+        _raise_bundle_http_error(exc)

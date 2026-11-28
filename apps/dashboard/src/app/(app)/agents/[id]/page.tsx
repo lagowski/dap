@@ -1,16 +1,31 @@
 "use client";
 
 import { use, useState } from "react";
+import { LoadingState } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Archive, ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Pencil } from "lucide-react";
-import { useAgent, useAgentVersions, useArchiveAgent } from "@/hooks/api";
+import {
+  useAgent,
+  useAgentCallableInfo,
+  useAgentExecutions,
+  useAgentUsage,
+  useAgentVersions,
+  useArchiveAgent,
+} from "@/hooks/api";
 import { downloadAgentExportWithAlert } from "@/lib/agent-export";
 import { formatApiError } from "@/lib/api/client";
+import { formatCost, formatDuration, formatTokens } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { Agent } from "@/lib/api/types";
+import { NodeStatusBadge } from "@/components/status-badge";
+import { PromptTemplateCard } from "@/components/agents/agent-prompt-template-card";
+import { ManagedAgentBanner } from "@/components/agents/managed-agent-banner";
+import { CallableDoc } from "@/components/agents/callable-doc";
+import { isManagedAgent } from "@/lib/managed-agent";
+import { useConfirmDestructive } from "@/components/confirm-destructive-dialog";
+import type { Agent, NodeStatus } from "@/lib/api/types";
 
 export default function AgentDetailPage({
   params,
@@ -22,9 +37,15 @@ export default function AgentDetailPage({
   const { data: agent, isPending, isError, error } = useAgent(id);
   const versions = useAgentVersions(id);
   const archive = useArchiveAgent();
+  const confirmDestructive = useConfirmDestructive();
+  // "What this agent does" (#747) — only fetched for managed agents, where the
+  // callable's docstring is the real description (the prompt is inert).
+  const callableInfo = useAgentCallableInfo(id, {
+    enabled: agent != null && isManagedAgent(agent),
+  });
 
   if (isPending) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingState className="p-6" />;
   }
   if (isError) {
     return (
@@ -38,12 +59,13 @@ export default function AgentDetailPage({
     );
   }
 
-  const handleArchive = () => {
-    if (
-      !window.confirm(
-        `Archive agent "${agent.name}"? Existing pipelines that reference it will keep working, but it won't appear in pickers.`,
-      )
-    ) {
+  const handleArchive = async () => {
+    const ok = await confirmDestructive({
+      title: "Archive agent",
+      description: `Archive agent "${agent.name}"? Existing pipelines that reference it will keep working, but it won't appear in pickers.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) {
       return;
     }
     archive.mutate(id, {
@@ -114,14 +136,16 @@ export default function AgentDetailPage({
         <Metric label="ID" value={agent.id.slice(0, 8) + "…"} mono />
       </div>
 
-      <Card>
-        <CardContent className="pt-6 space-y-2">
-          <h2 className="text-sm font-medium">Prompt template (current — v{agent.version})</h2>
-          <pre className="rounded border bg-muted/30 p-3 text-xs overflow-x-auto whitespace-pre-wrap">
-            {agent.prompt_template}
-          </pre>
-        </CardContent>
-      </Card>
+      <ManagedAgentBanner agent={agent} />
+
+      {isManagedAgent(agent) && <CallableDoc info={callableInfo.data} />}
+
+      <PromptTemplateCard
+        runtimeId={agent.runtime_id}
+        promptTemplate={agent.prompt_template}
+        runtimeConfig={agent.runtime_config}
+        version={agent.version}
+      />
 
       {Object.keys(agent.runtime_config).length > 0 && (
         <Card>
@@ -146,6 +170,10 @@ export default function AgentDetailPage({
         </CardContent>
       </Card>
 
+      <UsedInCard agentId={id} />
+
+      <ActivityCard agentId={id} />
+
       <VersionHistory
         currentVersion={agent.version}
         versions={versions.data}
@@ -154,6 +182,178 @@ export default function AgentDetailPage({
         error={versions.error}
       />
     </div>
+  );
+}
+
+function UsedInCard({ agentId }: { agentId: string }) {
+  const usage = useAgentUsage(agentId);
+  const data = usage.data;
+  const hasAny =
+    data != null && (data.pipelines.length > 0 || data.projects.length > 0);
+
+  return (
+    <Card>
+      <CardContent className="pt-6 space-y-3">
+        <h2 className="text-sm font-medium">Used in</h2>
+        {usage.isPending ? (
+          <LoadingState />
+        ) : usage.isError ? (
+          <p className="text-sm text-destructive">
+            {formatApiError(usage.error)}
+          </p>
+        ) : hasAny ? (
+          <div className="space-y-4">
+            <div>
+              <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Pipelines ({data.pipelines.length})
+              </h3>
+              {data.pipelines.length > 0 ? (
+                <ul className="space-y-1">
+                  {data.pipelines.map((p) => (
+                    <li key={p.id}>
+                      <Link
+                        href={`/pipelines/${p.id}/edit`}
+                        className="text-sm hover:underline"
+                      >
+                        {p.name}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">—</p>
+              )}
+            </div>
+            <div>
+              <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Projects ({data.projects.length})
+              </h3>
+              {data.projects.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {data.projects.map((proj) => (
+                    <li
+                      key={proj.id}
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <Link
+                        href={`/projects/${proj.id}`}
+                        className="text-sm hover:underline"
+                      >
+                        {proj.name}
+                      </Link>
+                      {proj.bindings.map((b) => (
+                        <Badge
+                          key={`${b.kind}:${b.pipeline_id}`}
+                          variant="secondary"
+                          className="font-mono text-[10px]"
+                          title={`bound as ${b.kind}`}
+                        >
+                          {b.kind}
+                        </Badge>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Not bound into any project.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Not used in any pipeline yet — safe to edit or archive.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActivityCard({ agentId }: { agentId: string }) {
+  const exec = useAgentExecutions(agentId);
+  const data = exec.data;
+
+  return (
+    <Card>
+      <CardContent className="pt-6 space-y-3">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-medium">Activity</h2>
+          {data && data.total > 0 ? (
+            <span className="text-xs text-muted-foreground">
+              {data.items.length >= data.total
+                ? `${data.total} execution${data.total === 1 ? "" : "s"}`
+                : `latest ${data.items.length} of ${data.total}`}
+            </span>
+          ) : null}
+        </div>
+        {exec.isPending ? (
+          <LoadingState />
+        ) : exec.isError ? (
+          <p className="text-sm text-destructive">
+            {formatApiError(exec.error)}
+          </p>
+        ) : data && data.items.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-1.5 font-medium">Run</th>
+                  <th className="px-3 py-1.5 font-medium">Node</th>
+                  <th className="px-3 py-1.5 font-medium">Status</th>
+                  <th className="px-3 py-1.5 font-medium">Started</th>
+                  <th className="px-3 py-1.5 font-medium text-right">Duration</th>
+                  <th className="px-3 py-1.5 font-medium text-right">Tokens</th>
+                  <th className="px-3 py-1.5 font-medium text-right">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((e) => (
+                  <tr
+                    key={e.id}
+                    className="border-b last:border-0 hover:bg-muted/30"
+                    title={e.error_message ?? undefined}
+                  >
+                    <td className="p-0 font-mono text-xs">
+                      <Link
+                        href={`/runs/${e.run_id}`}
+                        className="block px-3 py-1.5 hover:underline"
+                      >
+                        {e.run_id.slice(0, 8)}…
+                      </Link>
+                    </td>
+                    <td className="px-3 py-1.5 font-mono text-xs">{e.node_id}</td>
+                    <td className="px-3 py-1.5">
+                      <NodeStatusBadge status={e.status as NodeStatus} />
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-3 py-1.5 text-xs text-muted-foreground"
+                      suppressHydrationWarning
+                    >
+                      {new Date(e.started_at).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {formatDuration(e.duration_ms)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {formatTokens(e.tokens_used)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {formatCost(e.cost_usd)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No executions yet — this agent hasn&apos;t run in any pipeline.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -234,7 +434,7 @@ function VersionRow({ version }: { version: Agent }) {
         <Badge variant="outline">v{version.version}</Badge>
         <span className="font-medium">{version.name}</span>
         <span className="text-muted-foreground ml-auto">
-          {new Date(version.created_at).toLocaleString()}
+          <span suppressHydrationWarning><span suppressHydrationWarning>{new Date(version.created_at).toLocaleString()}</span></span>
         </span>
       </button>
       {expanded && (

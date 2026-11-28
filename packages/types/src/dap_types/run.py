@@ -31,6 +31,13 @@ class Run(BaseModel):
     initial_state: PipelineState
 
     current_node: str | None = None
+    # Populated when final_status=="paused" via an interrupt_before gate.
+    # Contains the node id the graph is staged to run next, so the dashboard
+    # can show "Approve" (not generic "Resume") and call the right endpoint.
+    paused_at_node: str | None = None
+    # Stores task_assignments (and optionally spec) extracted from the gate
+    # checkpoint so the dashboard can render them without querying the store.
+    gate_payload: dict[str, Any] | None = None
     node_statuses: dict[str, NodeStatus] = Field(default_factory=dict)
 
     final_status: FinalStatus = "running"
@@ -38,11 +45,17 @@ class Run(BaseModel):
     # when ``mark_stale_running_runs_as_failed`` finalises orphan runs on
     # engine restart; otherwise ``None``.
     failure_reason: str | None = None
+    # Deadline for gate approval (#582). Set when the run pauses at a gate;
+    # None for runs that predate this feature or use the noop gate path.
+    gate_expires_at: datetime | None = None
     started_at: datetime
     ended_at: datetime | None = None
 
     tokens_used: int = 0
     cost_usd: float = 0.0
+
+    created_at: datetime
+    updated_at: datetime
 
 
 class NodeExecutionLog(BaseModel):
@@ -85,3 +98,26 @@ class NodeExecutionLog(BaseModel):
             "``None`` for CLI/LLM adapter nodes that do not produce audit data."
         ),
     )
+
+
+class NodeOutputChunk(BaseModel):
+    """One incremental chunk of a node's output stream (#662, Phase 3b).
+
+    Adapters append a row per stdout/stderr flush while a node runs; the
+    SSE ``/runs/{id}/events`` endpoint pages new chunks (``id > cursor``)
+    and emits each as a ``node_log`` event. ``id`` is an autoincrement
+    integer that doubles as the **monotonic cursor** the stream resumes
+    from — it strictly increases over the life of a run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    run_id: str
+    node_id: str
+    # The ``node_execution_logs.id`` this output belongs to, when known.
+    # Nullable: adapters may stream output before the log row is written.
+    execution_id: str | None = None
+    stream: str = "stdout"
+    content: str
+    created_at: datetime
