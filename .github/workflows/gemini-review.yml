@@ -12,9 +12,11 @@
 #     checkout is the canon engine at a pinned 40-hex SHA.
 #   * The reviewer CLI starts with no tools and no MCP servers (the engine refuses otherwise,
 #     #700/#721), so text in a PR can sway a verdict but cannot run anything.
-#   * The review runners are in workflow-restricted groups that allow only this file at the
-#     branches below (deploy/runner-group-sync.js). A fork's pull_request workflow runs at
-#     refs/pull/N/merge and cannot land on them.
+#   * The review runners are in workflow-restricted groups that allow only this file at exact
+#     refs/heads/ refs: the fixed branches below, plus each collector matching a pattern below
+#     while it has an open PR (deploy/runner-group-sync.js, reconciled every 10 min). A fork's
+#     pull_request workflow runs at refs/pull/N/merge and cannot land on them, and a fork cannot
+#     create a branch here.
 #   * FORK_POLICY=label: a fork-head PR is reviewed only after a maintainer adds the
 #     `safe-to-review` label (then by the next sweep, or by "Run workflow" here).
 #     pull_request_target ignores GitHub's fork-approval setting, so the label is the approval gate.
