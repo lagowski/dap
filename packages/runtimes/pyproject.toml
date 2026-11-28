@@ -1,6 +1,6 @@
 [project]
 name = "dap-runtimes"
-version = "0.3.0"
+version = "0.4.0"
 description = "Runtime adapters for DAP (claude-code, gemini-cli, codex, aider, api-call, bash, http)"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -10,7 +10,7 @@ authors = [
     { name = "Daniel Łagowski" },
 ]
 dependencies = [
-    "dap-schemas>=0.3,<0.4",
+    "dap-schemas>=0.4,<0.5",
     "anyio>=4.14.2",
 ]
 keywords = ["agent", "llm", "pipeline", "runtime", "workflow"]

@@ -1,6 +1,6 @@
 [project]
 name = "dap-cli"
-version = "0.3.0"
+version = "0.4.0"
 description = "DAP CLI launcher (dap init / start / stop / status)"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -10,7 +10,7 @@ authors = [
     { name = "Daniel Łagowski" },
 ]
 dependencies = [
-    "dap-engine>=0.3,<0.4",
+    "dap-engine>=0.4,<0.5",
     "typer>=0.27.1",
     "rich>=13.9.2",
     "uvicorn[standard]>=0.52.1",
