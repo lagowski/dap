@@ -184,6 +184,18 @@ one in the demo: `greet → shout → gate → end`.
 
 How the nodes are written: [`docs/python-func-pipelines.md`](docs/python-func-pipelines.md).
 
+To run the same bundle from a terminal, with no dashboard (for example in CI):
+
+```bash
+dap pipeline run examples/python-func-pipeline/example.pipeline-bundle.json --headless --approve-gates
+```
+
+`--headless` starts a throwaway in-process engine; without it the command talks to a running
+engine (`--engine` / `DAP_ENGINE_URL`, `--token` / `DAP_AUTH_TOKEN`). Without `--approve-gates` the
+run stops at the gate. Exit codes: `0` success, `1` a node failed, `2` bad input or refused by
+the engine, `3` stopped at a gate, `4` timeout. `--state KEY=VALUE`, `--json` and `--timeout`
+are also available; see [`docs/usage.md`](docs/usage.md).
+
 ### Second pipeline: with real tools
 
 `examples/pipelines/github-issue-triage.pipeline-bundle.json` calls GitHub and an LLM. Before
