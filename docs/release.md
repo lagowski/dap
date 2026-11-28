@@ -27,16 +27,26 @@ install a mixed workspace such as `dap-engine 0.4.x` with
 | `dap-schemas` | `dap_types` | `packages/types` | Base schema package for the release family. |
 | `dap-prompt-dsl` | `dap_prompt_dsl` | `packages/prompt-dsl` | Independent within the same DAP release family. |
 | `dap-runtimes` | `dap_runtimes` | `packages/runtimes` | Depends on `dap-schemas >=X.Y,<X.(Y+1)`. |
-| `dap-engine` | `dap_engine` | `apps/engine` | Depends on `dap-schemas`, `dap-runtimes[all]`, and `dap-prompt-dsl` in the same `>=X.Y,<X.(Y+1)` family. |
+| `dap-database` | `dap_database` | `packages/database` | Independent within the same DAP release family (published since 0.4.1, #1070). |
+| `dap-engine` | `dap_engine` | `apps/engine` | Depends on `dap-schemas`, `dap-runtimes[all]`, `dap-prompt-dsl` and `dap-database` in the same `>=X.Y,<X.(Y+1)` family. |
 | `dap-cli` | `dap_cli` | `apps/cli` | Depends on `dap-engine >=X.Y,<X.(Y+1)`. |
 
-Current `0.3.x` release-family constraints:
+Current `0.4.x` release-family constraints:
 
 | Consumer | Required first-party packages |
 |---|---|
-| `dap-runtimes 0.3.x` | `dap-schemas >=0.3,<0.4` |
-| `dap-engine 0.3.x` | `dap-schemas >=0.3,<0.4`; `dap-runtimes[all] >=0.3,<0.4`; `dap-prompt-dsl >=0.3,<0.4` |
-| `dap-cli 0.3.x` | `dap-engine >=0.3,<0.4` |
+| `dap-runtimes 0.4.x` | `dap-schemas >=0.4,<0.5` |
+| `dap-engine 0.4.x` | `dap-schemas >=0.4,<0.5`; `dap-runtimes[all] >=0.4,<0.5`; `dap-prompt-dsl >=0.4,<0.5`; `dap-database >=0.4,<0.5` |
+| `dap-cli 0.4.x` | `dap-engine >=0.4,<0.5` |
+
+Every first-party dependency of a published package must itself be
+published. `scripts/check-release-metadata.py` fails when a published
+package depends on a workspace member that is not in its published set
+(v0.4.0 shipped `dap-engine` depending on an unpublished `dap-database`,
+so `pipx install dap-cli==0.4.0` could not resolve until 0.4.1, #1070).
+A new published package goes into that script's `RELEASE_PACKAGES`,
+into both `for pkg in` loops of `release.yml`, into
+`scripts/bump-version.sh` and into the trusted-publisher setup below.
 
 `code-review-council` is an internal CI tool in this repository. It is
 not part of the public DAP PyPI release set and is intentionally not
@@ -54,7 +64,7 @@ published by `release.yml`.
 ### PyPI trusted publishers
 
 Each published PyPI project (`dap-cli`, `dap-engine`, `dap-schemas`,
-`dap-runtimes`, `dap-prompt-dsl`) needs a trusted-publisher rule
+`dap-runtimes`, `dap-prompt-dsl`, `dap-database`) needs a trusted-publisher rule
 pointing at this repo's `release.yml` workflow. (`dap-cortex` was
 extracted to its own repo after v0.3.0 — releases now flow from
 there, not from here.) For an existing project (which is the case
@@ -71,6 +81,18 @@ for all five after v0.3.0):
    - **Environment name**: `pypi`.
 4. Save. PyPI will mint short-lived OIDC tokens for the
    `release.yml` workflow whenever it runs against a tag.
+
+**A new project** (one that does not exist on PyPI yet, such as
+`dap-database` before its first upload in 0.4.1) has no project page to
+manage, so the steps above don't apply. Register a *pending* trusted
+publisher first: PyPI account → **Publishing** → **Add a new pending
+publisher**, with the **PyPI project name** (e.g. `dap-database`) and the
+same owner, repository, workflow (`release.yml`) and environment (`pypi`)
+as above. The first `release.yml` upload creates the project and turns
+the pending publisher into a normal one. Without it the publish step
+fails with an OIDC "invalid-publisher" error. The publish step has
+`skip-existing: true`, so re-running the workflow on the same tag after
+fixing the publisher uploads only what is missing.
 
 The `environment: pypi` block in the workflow scopes publishing
 to a specific GitHub Environment. Attach required-reviewers or

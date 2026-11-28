@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-28
+
+### Fixed
+- **`dap-database` is published to PyPI (#1070).** `dap-engine` 0.4.0
+  requires `dap-database>=0.4,<0.5`, but `release.yml` never built or
+  uploaded `dap-database`, so `pipx install dap-cli==0.4.0` failed to
+  resolve. `release.yml` now builds, publishes and attaches it with the
+  other five packages. Existing 0.4.0 installs resolve as soon as
+  `dap-database` 0.4.1 is on PyPI, because `dap-engine` 0.4.0 accepts
+  `>=0.4,<0.5`.
+- `scripts/check-release-metadata.py` fails when a published package
+  depends on a workspace member that is not published, so this can't
+  recur; `scripts/bump-version.sh` now bumps `packages/database` too.
+
 ## [0.4.0] — 2026-11-28
 
 Half a year of `develop` since v0.3.0. Headlines: the agent tool-loop

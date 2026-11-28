@@ -35,11 +35,12 @@ RELEASE_PACKAGES: tuple[ReleasePackage, ...] = (
         dependencies=("dap-schemas",),
     ),
     ReleasePackage("dap-prompt-dsl", Path("packages/prompt-dsl/pyproject.toml"), "dap_prompt_dsl"),
+    ReleasePackage("dap-database", Path("packages/database/pyproject.toml"), "dap_database"),
     ReleasePackage(
         "dap-engine",
         Path("apps/engine/pyproject.toml"),
         "dap_engine",
-        dependencies=("dap-schemas", "dap-runtimes[all]", "dap-prompt-dsl"),
+        dependencies=("dap-schemas", "dap-runtimes[all]", "dap-prompt-dsl", "dap-database"),
     ),
     ReleasePackage(
         "dap-cli",
@@ -57,10 +58,30 @@ INTERNAL_PACKAGES: tuple[ReleasePackage, ...] = (
     ),
 )
 
+# The distribution name at the start of a PEP 508 requirement string.
+REQUIREMENT_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
 VERSION_RE = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-[0-9A-Za-z.-]+)?$")
 
 
 def main() -> int:
+    errors = check(RELEASE_PACKAGES)
+    if errors:
+        print("Release metadata check failed:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+
+    root_version = _project(_load_pyproject(Path("pyproject.toml")))["version"]
+    print(f"Release metadata OK for {root_version}")
+    print(f"First-party compatibility spec: {_minor_compat_spec(root_version)}")
+    for package in RELEASE_PACKAGES:
+        print(f"  - {package.distribution}")
+    return 0
+
+
+def check(release_packages: tuple[ReleasePackage, ...]) -> list[str]:
+    """Return every release-metadata error for ``release_packages`` (the published set)."""
     errors: list[str] = []
     root = _load_pyproject(Path("pyproject.toml"))
     root_version = _project(root).get("version")
@@ -71,7 +92,7 @@ def main() -> int:
     expected_spec = _minor_compat_spec(root_version)
     seen_names: set[str] = set()
 
-    for package in RELEASE_PACKAGES:
+    for package in release_packages:
         _validate_release_package(
             package,
             root_version=root_version,
@@ -83,17 +104,60 @@ def main() -> int:
     for package in INTERNAL_PACKAGES:
         _validate_internal_package(package, errors)
 
-    if errors:
-        print("Release metadata check failed:", file=sys.stderr)
-        for error in errors:
-            print(f"  - {error}", file=sys.stderr)
-        return 1
+    _validate_first_party_dependencies_are_published(root, release_packages, errors)
+    return errors
 
-    print(f"Release metadata OK for {root_version}")
-    print(f"First-party compatibility spec: {expected_spec}")
-    for package in RELEASE_PACKAGES:
-        print(f"  - {package.distribution}")
-    return 0
+
+def _validate_first_party_dependencies_are_published(
+    root: dict[str, Any],
+    release_packages: tuple[ReleasePackage, ...],
+    errors: list[str],
+) -> None:
+    """A published package may depend only on workspace members that are published too.
+
+    PyPI cannot resolve a dependency on a workspace member that was never
+    uploaded (dap-engine 0.4.0 -> dap-database, #1070).
+    """
+    workspace = _workspace_distributions(root)
+    published = {_normalize(package.distribution) for package in release_packages}
+    for package in release_packages:
+        project = _project(_load_pyproject(package.path))
+        dependencies = project.get("dependencies", [])
+        if not isinstance(dependencies, list):
+            continue
+        for dependency in dependencies:
+            if not isinstance(dependency, str):
+                continue
+            match = REQUIREMENT_NAME_RE.match(dependency)
+            if match is None:
+                continue
+            name = _normalize(match.group(1))
+            if name in workspace and name not in published:
+                errors.append(
+                    f"{package.path}: depends on first-party package {match.group(1)!r} "
+                    f"({workspace[name]}), which is not published; add it to "
+                    "RELEASE_PACKAGES and to release.yml"
+                )
+
+
+def _workspace_distributions(root: dict[str, Any]) -> dict[str, str]:
+    """Map each workspace member's normalized distribution name to its directory."""
+    tool = _dict_value(root, "tool")
+    uv = _dict_value(tool, "uv")
+    members = _dict_value(uv, "workspace").get("members", [])
+    distributions: dict[str, str] = {}
+    for member in members if isinstance(members, list) else []:
+        pyproject = Path(str(member)) / "pyproject.toml"
+        if not (REPO_ROOT / pyproject).is_file():
+            continue
+        name = _project(_load_pyproject(pyproject)).get("name")
+        if isinstance(name, str):
+            distributions[_normalize(name)] = str(member)
+    return distributions
+
+
+def _normalize(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _validate_release_package(

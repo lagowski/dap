@@ -7,7 +7,7 @@
 # factories. Schema creation and migrations stay in the engine — this
 # package never imports ORM models.
 name = "dap-database"
-version = "0.4.0"
+version = "0.4.1"
 description = "Shared SQLAlchemy engine + session factories for DAP (SQLite WAL / PostgreSQL)"
 readme = "README.md"
 requires-python = ">=3.13"

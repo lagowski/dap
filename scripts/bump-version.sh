@@ -33,13 +33,14 @@ FIRST_PARTY_SPEC=">=${LOWER_BOUND},<${UPPER_BOUND}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Bump the root workspace metadata plus the five packages published by
+# Bump the root workspace metadata plus the six packages published by
 # release.yml. Internal tooling packages can keep their own cadence.
 PYPROJECTS=(
     "pyproject.toml"
     "packages/types/pyproject.toml"
     "packages/runtimes/pyproject.toml"
     "packages/prompt-dsl/pyproject.toml"
+    "packages/database/pyproject.toml"
     "apps/engine/pyproject.toml"
     "apps/cli/pyproject.toml"
 )
@@ -101,6 +102,7 @@ FIRST_PARTY_DEPS=(
     "apps/engine/pyproject.toml:dap-schemas"
     "apps/engine/pyproject.toml:dap-runtimes[all]"
     "apps/engine/pyproject.toml:dap-prompt-dsl"
+    "apps/engine/pyproject.toml:dap-database"
     "apps/cli/pyproject.toml:dap-engine"
 )
 echo "Aligning first-party dependency bounds to ${FIRST_PARTY_SPEC}..."
