@@ -160,8 +160,11 @@ The model chooses every tool argument, so two capabilities are off unless you tu
 
 - `--allow-bundle-path DIR`: `run_pipeline` may read bundle files, and only files that resolve
   inside `DIR`. With `--headless` the bundle's directory goes on the server's import path, so a
-  bundle can run Python code in a process that holds your environment: point `DIR` at bundles you
-  trust.
+  bundle can run Python code in a process that holds your environment. Every python-func
+  `callable_path` in the bundle must name a module in a `.py` file inside `DIR`. A callable such as
+  `os:system`, or a module that resolves (symlinks followed) outside `DIR`, is refused. `DIR` limits
+  where code comes from, not what that code does: it must hold only code you trust, and it must
+  **not be writable by the model** (not your working tree, if the agent can edit files there).
 - `--allow-approve`: registers `approve_gate`. Without it the agent can start runs and reject a
   gate, but a human-approval gate is approved by a human (dashboard or API), not by the agent that
   started the run.

@@ -23,7 +23,10 @@ The server is driven by a model, so it trusts none of its arguments:
 - ``bundle_path`` is refused unless ``--allow-bundle-path DIR`` is given, and the
   file must resolve inside ``DIR``. Only then does its directory go on
   ``sys.path`` (headless python-func packages), since that runs code in a
-  process that holds the environment's secrets.
+  process that holds the environment's secrets. Every python-func
+  ``callable_path`` in the bundle must name a module in a ``.py`` file inside
+  ``DIR`` (``os:system`` is refused). ``DIR`` itself must be trusted and not
+  writable by the model: the code in it runs.
 - ``approve_gate`` exists only with ``--allow-approve``: without it the agent
   cannot approve its own human gate.
 - Ids are validated as slugs before they go into an engine URL, so ``../agents``
@@ -36,9 +39,12 @@ import contextlib
 import json
 import os
 import re
+import sys
 import threading
 from collections.abc import Iterator, Mapping
+from importlib.machinery import FrozenImporter
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import httpx
@@ -137,6 +143,59 @@ def _id(value: str, what: str) -> str:
     if not isinstance(value, str) or not _ID_RE.fullmatch(value):
         raise _RunError(f"invalid {what} {value!r}: expected a UUID or a slug ([A-Za-z0-9_-])")
     return value
+
+
+def _callable_paths(node: Any) -> Iterator[Any]:
+    """Every ``callable_path`` value anywhere in a bundle payload."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "callable_path":
+                yield value
+            else:
+                yield from _callable_paths(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _callable_paths(value)
+
+
+def _loaded_locations(module: ModuleType) -> list[str]:
+    file = getattr(module, "__file__", None)
+    return [file] if file else list(getattr(module, "__path__", []))
+
+
+def _module_inside(module_path: str, base: Path, root: Path) -> bool:
+    """Whether ``import_module(module_path)`` would load a ``.py`` file inside
+    ``root`` once the bundle's directory ``base`` is first on ``sys.path``.
+
+    Found on the filesystem, never imported. Refused: a builtin or frozen module
+    (they win over ``sys.path``), a module already loaded from elsewhere, a file
+    that resolves (symlinks followed) outside ``root``."""
+    parts = module_path.split(".")
+    if not module_path or not all(part.isidentifier() for part in parts):
+        return False
+    top = parts[0]
+    if top in sys.builtin_module_names or FrozenImporter.find_spec(top) is not None:
+        return False
+    for i in range(len(parts)):
+        loaded = sys.modules.get(".".join(parts[: i + 1]))
+        if loaded is not None:
+            locations = _loaded_locations(loaded)
+            if not locations or not all(
+                Path(loc).resolve().is_relative_to(root) for loc in locations
+            ):
+                return False
+    # Regular packages only: a namespace package loses to a regular package of the
+    # same name further down sys.path.
+    *packages, leaf = parts
+    current = base
+    for package in packages:
+        current = current / package
+        if not (current / "__init__.py").is_file():
+            return False
+    for candidate in (current / f"{leaf}.py", current / leaf / "__init__.py"):
+        if candidate.is_file():
+            return candidate.resolve().is_relative_to(root)
+    return False
 
 
 class _LockedClient:
@@ -238,6 +297,7 @@ class DapTools:
                 payload = json.loads(bundle.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise _RunError(f"cannot read bundle {bundle}: {exc}") from exc
+            self._check_callables(payload, bundle.parent)
             self._import_path(bundle)
             pipeline = _check(self._client.post("/pipelines/import", json=payload), "bundle import")
             pipeline_id = str(pipeline["id"])
@@ -296,6 +356,21 @@ class DapTools:
         if not bundle.is_relative_to(self._bundle_root):
             raise _RunError(f"bundle_path must be inside {self._bundle_root}")
         return bundle
+
+    def _check_callables(self, payload: Any, base: Path) -> None:
+        """Refuse a bundle whose python-func ``callable_path`` would import a module
+        from outside ``--allow-bundle-path``: confining where the bundle is read
+        from means nothing if it may run ``os:system``."""
+        root = self._bundle_root
+        if root is None:  # only reached through _allowed_bundle
+            raise _RunError("bundle_path is disabled")
+        for callable_path in _callable_paths(payload):
+            module = callable_path.rsplit(":", 1)[0] if isinstance(callable_path, str) else ""
+            if not _module_inside(module, base, root):
+                raise _RunError(
+                    f"callable_path {callable_path!r} must name a module in a .py file "
+                    f"inside {self._bundle_root}"
+                )
 
     def _import_path(self, bundle: Path) -> None:
         """Headless: let a python-func package next to the bundle import, for the

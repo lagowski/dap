@@ -121,7 +121,11 @@ def cmd_mcp(
     allow_bundle_path: str | None = typer.Option(
         None,
         "--allow-bundle-path",
-        help="Let run_pipeline read bundle files inside DIR (off by default)",
+        help=(
+            "Let run_pipeline read bundle files inside DIR (off by default). Their "
+            "python-func callables must live in DIR too, and run in this process: DIR "
+            "must be trusted and NOT writable by the model"
+        ),
         metavar="DIR",
     ),
     allow_approve: bool = typer.Option(

@@ -266,7 +266,13 @@ async def test_a_path_traversal_id_is_refused(
 
 
 @contextlib.asynccontextmanager
-async def _remote(handler: Any, environ: dict[str, str], *, allow_approve: bool = False) -> Any:
+async def _remote(
+    handler: Any,
+    environ: dict[str, str],
+    *,
+    allow_approve: bool = False,
+    bundle_root: Path | None = None,
+) -> Any:
     """The server against a 'remote' engine, an in-process MockTransport."""
     redactor = Redactor(collect_secrets(environ, TOKEN_SENTINEL))
     with _engine_client(
@@ -276,9 +282,133 @@ async def _remote(handler: Any, environ: dict[str, str], *, allow_approve: bool 
         redactor=redactor,
         transport=httpx.MockTransport(handler),
     ) as (client, stack):
-        server = build_server(DapTools(client, stack=stack), redactor, allow_approve=allow_approve)
+        tools = DapTools(client, stack=stack, bundle_root=bundle_root)
+        server = build_server(tools, redactor, allow_approve=allow_approve)
         async with Client(server) as session:
             yield session
+
+
+class _Engine:
+    """A fake remote engine: records requests; one paused run, imports succeed."""
+
+    def __init__(self) -> None:
+        self.requests: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(f"{request.method} {request.url.path}")
+        if request.method == "POST" and request.url.path == "/pipelines/import":
+            return httpx.Response(201, json={"id": "p1"})
+        if request.method == "POST" and request.url.path == "/runs":
+            return httpx.Response(201, json={"id": "r1", "final_status": "running"})
+        if request.url.path == "/runs/r1":
+            return httpx.Response(
+                200, json={"id": "r1", "final_status": "paused", "paused_at_node": "gate"}
+            )
+        return httpx.Response(404, json={"detail": "not found"})
+
+    @property
+    def posts(self) -> list[str]:
+        return [r for r in self.requests if r.startswith("POST")]
+
+
+async def _call(session: Any, tool: str, arguments: dict[str, Any]) -> tuple[bool, str]:
+    result = await session.call_tool(tool, arguments)
+    text = "".join(getattr(block, "text", "") for block in result.content)
+    return bool(result.is_error), text
+
+
+def _bundle_dir(tmp_path: Path, *, callable_path: str | None = None) -> Path:
+    """DIR with a copy of the example bundle and its package; optionally one
+    node's callable_path replaced."""
+    root = tmp_path / "bundles"
+    shutil.copytree(EXAMPLE_BUNDLE.parent / "examplepipe", root / "examplepipe")
+    payload = json.loads(EXAMPLE_BUNDLE.read_text(encoding="utf-8"))
+    if callable_path is not None:
+        payload["bundled_agents"]["ex_shout"]["runtime_config"]["callable_path"] = callable_path
+    (root / "x.pipeline-bundle.json").write_text(json.dumps(payload), encoding="utf-8")
+    return root
+
+
+async def test_a_bundle_symlink_escaping_dir_is_refused(tmp_path: Path) -> None:
+    outside = _bundle_dir(tmp_path / "out")
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    (allowed / "link.pipeline-bundle.json").symlink_to(outside / "x.pipeline-bundle.json")
+    engine = _Engine()
+    async with _remote(engine, {}, bundle_root=allowed) as session:
+        bad, text = await _call(
+            session,
+            "run_pipeline",
+            {"bundle_path": str(allowed / "link.pipeline-bundle.json")},
+        )
+    assert bad and "must be inside" in text, text
+    assert engine.posts == []
+
+
+async def test_an_absolute_bundle_path_inside_dir_is_accepted(tmp_path: Path) -> None:
+    root = _bundle_dir(tmp_path)
+    engine = _Engine()
+    async with _remote(engine, {}, bundle_root=root) as session:
+        bad, text = await _call(
+            session, "run_pipeline", {"bundle_path": str(root.resolve() / "x.pipeline-bundle.json")}
+        )
+    assert not bad, text
+    assert json.loads(text)["run_id"] == "r1"
+    assert engine.posts == ["POST /pipelines/import", "POST /runs"]
+
+
+@pytest.mark.parametrize(
+    "callable_path",
+    [
+        "os:system",  # frozen / already loaded stdlib
+        "subprocess:run",
+        "sys:exit",  # builtin
+        "escape.mod:run",  # a package in DIR that is a symlink to outside
+        "examplepipe.missing:run",  # no such file in DIR: would fall through sys.path
+        "../x:run",
+        42,
+    ],
+)
+async def test_a_bundle_whose_callable_is_outside_dir_is_refused(
+    tmp_path: Path, callable_path: Any
+) -> None:
+    root = _bundle_dir(tmp_path, callable_path=callable_path)
+    elsewhere = tmp_path / "elsewhere" / "escape"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "__init__.py").write_text("", encoding="utf-8")
+    (elsewhere / "mod.py").write_text("def run(state, config):\n    return {}\n", encoding="utf-8")
+    (root / "escape").symlink_to(elsewhere, target_is_directory=True)
+    engine = _Engine()
+    async with _remote(engine, {}, bundle_root=root) as session:
+        bad, text = await _call(
+            session, "run_pipeline", {"bundle_path": str(root / "x.pipeline-bundle.json")}
+        )
+    assert bad and "callable_path" in text and "inside" in text, text
+    assert engine.posts == []  # nothing imported, nothing run
+
+
+@pytest.mark.parametrize("run_id", ["%2e%2e", "r1/", "..", "r1\n", "r1%2F..%2Fpipelines"])
+async def test_an_encoded_or_trailing_slash_id_is_refused_before_any_request(run_id: str) -> None:
+    engine = _Engine()
+    async with _remote(engine, {}, allow_approve=True) as session:
+        for tool, arguments in (
+            ("run_status", {"run_id": run_id}),
+            ("approve_gate", {"run_id": run_id, "node_id": "gate"}),
+            ("approve_gate", {"run_id": "r1", "node_id": run_id}),
+        ):
+            bad, text = await _call(session, tool, arguments)
+            assert bad and "invalid" in text, (tool, text)
+    assert engine.requests == []
+
+
+async def test_approve_gate_at_the_wrong_node_is_refused() -> None:
+    engine = _Engine()
+    async with _remote(engine, {}, allow_approve=True) as session:
+        bad, text = await _call(session, "approve_gate", {"run_id": "r1", "node_id": "greet"})
+        assert bad and "not waiting at gate" in text, text
+        assert engine.posts == []
+        _, text = await _call(session, "approve_gate", {"run_id": "r1", "node_id": "gate"})
+    assert engine.posts == ["POST /runs/r1/nodes/gate/approve"], text
 
 
 async def test_remote_engine_gets_the_bearer_token_and_echoed_secrets_are_redacted() -> None:
