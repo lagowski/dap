@@ -67,7 +67,7 @@ def test_workspace_status_invalid_repo_url_returns_422(client: TestClient) -> No
     pid = _create_project(client, repo_url="https://evil.com/owner/repo.git")
     resp = client.get(f"/projects/{pid}/workspace/status")
     assert resp.status_code == 422
-    assert "github.com" in resp.json()["detail"]
+    assert resp.json()["detail"].startswith("repo_url must point to ")
 
 
 def test_workspace_status_real_git_repo(client: TestClient) -> None:
@@ -117,7 +117,7 @@ def test_workspace_init_non_github_url_returns_422(client: TestClient) -> None:
     pid = _create_project(client, repo_url="https://gitlab.com/owner/repo.git")
     resp = client.post(f"/projects/{pid}/workspace/init")
     assert resp.status_code == 422
-    assert "github.com" in resp.json()["detail"]
+    assert resp.json()["detail"].startswith("repo_url must point to ")
 
 
 def test_workspace_init_unknown_project_returns_404(client: TestClient) -> None:
