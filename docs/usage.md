@@ -165,6 +165,11 @@ The model chooses every tool argument, so two capabilities are off unless you tu
   `os:system`, or a module that resolves (symlinks followed) outside `DIR`, is refused. `DIR` limits
   where code comes from, not what that code does: it must hold only code you trust, and it must
   **not be writable by the model** (not your working tree, if the agent can edit files there).
+  Every agent bundled in the file must use one of the runtimes `python-func`, `api-call` or
+  `http`. A bundled agent on any other runtime (`bash`, `claude-code`, `codex`, `aider`,
+  `gemini-cli`, `agent`, ...) would run local code with the server's environment, so the bundle is
+  refused with an error naming the agent and its runtime. Pipelines already in the engine, run by
+  `pipeline_id`, are not restricted.
 - `--allow-approve`: registers `approve_gate`. Without it the agent can start runs and reject a
   gate, but a human-approval gate is approved by a human (dashboard or API), not by the agent that
   started the run.

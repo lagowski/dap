@@ -62,6 +62,9 @@ _NOT_SECRET_VALUES = frozenset({"true", "false", "none", "null", "yes", "no", "o
 # A pipeline, run or node id: a UUID or a slug. No "/", no ".", so an id cannot
 # leave the route it is put into.
 _ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
+# Runtimes a --allow-bundle-path bundle may use: python-func (its callables are
+# confined to DIR) and api-call / http, which run no local code.
+BUNDLE_RUNTIMES = ("python-func", "api-call", "http")
 
 # Variables whose values are not secrets and are routinely part of legitimate
 # results (paths). Everything else in the environment is scrubbed.
@@ -297,6 +300,7 @@ class DapTools:
                 payload = json.loads(bundle.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise _RunError(f"cannot read bundle {bundle}: {exc}") from exc
+            self._check_runtimes(payload)
             self._check_callables(payload, bundle.parent)
             self._import_path(bundle)
             pipeline = _check(self._client.post("/pipelines/import", json=payload), "bundle import")
@@ -356,6 +360,23 @@ class DapTools:
         if not bundle.is_relative_to(self._bundle_root):
             raise _RunError(f"bundle_path must be inside {self._bundle_root}")
         return bundle
+
+    def _check_runtimes(self, payload: Any) -> None:
+        """Refuse a bundle with an agent whose runtime runs local code other than
+        a confined python-func (bash, claude-code, codex, aider, gemini-cli, ...):
+        headless, it would run in this process's environment, secrets included."""
+        agents = payload.get("bundled_agents") if isinstance(payload, dict) else None
+        if agents is None:
+            return
+        if not isinstance(agents, dict):
+            raise _RunError("bundled_agents must be an object of agent id to agent")
+        for agent_id, agent in agents.items():
+            runtime = agent.get("runtime_id") if isinstance(agent, dict) else None
+            if runtime not in BUNDLE_RUNTIMES:
+                raise _RunError(
+                    f"bundled agent {agent_id!r} uses runtime {runtime!r}: a bundle_path "
+                    f"bundle may only use the runtimes {', '.join(BUNDLE_RUNTIMES)}"
+                )
 
     def _check_callables(self, payload: Any, base: Path) -> None:
         """Refuse a bundle whose python-func ``callable_path`` would import a module
