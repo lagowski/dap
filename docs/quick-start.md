@@ -316,14 +316,46 @@ in [`self-hosting.md`](self-hosting.md#troubleshooting).
 
 ---
 
+## First pipeline (no API key)
+
+Once you're logged in, run a pipeline that needs no API key, no `gh auth` and no extra files:
+[`examples/python-func-pipeline`](../examples/python-func-pipeline/) (`greet → shout → gate → end`).
+Its nodes are plain Python, so the package has to be importable by the engine.
+
+1. Get the example and install it into the engine's Python environment, then restart the engine:
+
+   ```bash
+   git clone https://github.com/lagowski/dap.git && cd dap
+   # source install (./scripts/dev):
+   uv pip install -e examples/python-func-pipeline
+   # Path A (pipx):
+   pipx inject --editable dap-cli ./examples/python-func-pipeline
+   ```
+
+   On Path B or C the package has to be in the image; see
+   [`python-func-pipelines.md`](python-func-pipelines.md).
+2. In the dashboard open **Pipelines**, click **Import JSON** and pick
+   `examples/python-func-pipeline/example.pipeline-bundle.json`.
+3. Click **Run**. `greet` and `shout` finish, then the run waits at `gate`.
+4. Approve the gate. The run ends with status `success` and `extensions.greeting_loud` = `HELLO, WORLD!`.
+
+### Second pipeline: with real tools
+
+`examples/pipelines/github-issue-triage.pipeline-bundle.json` calls GitHub and an LLM. It needs
+`gh auth login` on the host, `GLM_API_KEY` in the engine's environment (restart after you set it)
+and a `docs/PRD.md` in the repo the engine is started from. The steps are in
+[`README.md`](../README.md#second-pipeline-with-real-tools).
+
+---
+
 ## Runtime adapters — how DAP talks to LLMs
 
 After install, every agent needs to know **which LLM to call** and
-**how to authenticate**. DAP ships 8 runtime adapters; you pick one
+**how to authenticate**. DAP ships 10 runtime adapters; you pick one
 per agent in `runtime_config`. The choice has big consequences for
 deployment, especially in Docker.
 
-### The 8 runtimes
+### The 10 runtimes
 
 | Runtime | What it does | Needs binary on PATH? | Auth |
 |---|---|---|---|
@@ -335,6 +367,8 @@ deployment, especially in Docker.
 | `bash` | Arbitrary shell command | system `bash` | n/a (whatever the script needs) |
 | `python-func` | In-process Python callable | ❌ No | n/a (runs in the engine process) |
 | `http` | Generic HTTP request | ❌ No | Whatever the endpoint wants |
+| `github` | GitHub REST calls (read/comment issues, branches, PRs) | ❌ No | Token env var (default `GH_TOKEN`) |
+| `agent` | LLM tool-use loop whose tools are other runtimes | ❌ No | Provider API key env var (as `api-call`) |
 
 CLI runtimes (`claude-code`, `gemini-cli`, `codex`, `aider`) let you
 reuse provider OAuth logins (e.g. Claude Code Pro / Max plan
@@ -481,7 +515,8 @@ The engine reads env at startup only, not per-request.
 
 Once you're logged in:
 
-- **First pipeline** — [`README.md`](../README.md#first-pipeline--try-it-now)
+- **First pipeline** — [First pipeline (no API key)](#first-pipeline-no-api-key) above, then
+  [`README.md`](../README.md#second-pipeline-with-real-tools) for one with real tools
 - **Invite a teammate** — [`admin-guide.md`](admin-guide.md#user-management--adminusers) walks through `/admin/users`
 - **GitHub / Google login** — [`auth.md`](auth.md#github-oauth) for the OAuth app registration walkthrough
 - **API tokens for CI / scripts** — [`auth.md`](auth.md#api-tokens) for mint + revoke

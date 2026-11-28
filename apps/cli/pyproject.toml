@@ -52,10 +52,22 @@ exclude = [
 [tool.hatch.build.targets.wheel.force-include]
 "src/dap_cli/_dashboard" = "dap_cli/_dashboard"
 
+# ``dap demo`` (#1042) ships examples/python-func-pipeline as dap_cli/_demo:
+# hatch_build.py adds it from a checkout; a wheel built from the sdist gets it
+# from the copy the sdist carries (below).
+[tool.hatch.build.targets.wheel.hooks.custom]
+
 # Same rule for the sdist so ``uv pip install dap-cli`` from a
 # source distribution still has the bundle.
 [tool.hatch.build.targets.sdist]
 include = [
     "src/dap_cli",
     "README.md",
+    "hatch_build.py",
 ]
+
+[tool.hatch.build.targets.sdist.force-include]
+"../../examples/python-func-pipeline/example.pipeline-bundle.json" = "src/dap_cli/_demo/example.pipeline-bundle.json"
+"../../examples/python-func-pipeline/examplepipe/__init__.py" = "src/dap_cli/_demo/examplepipe/__init__.py"
+"../../examples/python-func-pipeline/examplepipe/nodes.py" = "src/dap_cli/_demo/examplepipe/nodes.py"
+"../../examples/python-func-pipeline/examplepipe/gates.py" = "src/dap_cli/_demo/examplepipe/gates.py"

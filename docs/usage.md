@@ -68,6 +68,69 @@ to a gate that can be auto-approved; "NEEDS_WORK" goes to one that needs a human
 that sets `defaults.requires_terminal_final_status` is marked failed, not successful, if it
 ends without reaching a terminal state.
 
+## Running a bundle from the command line (CI)
+
+`dap pipeline run` imports a `*.pipeline-bundle.json`, runs it to the end and exits with the
+run's outcome. With `--headless` it needs no running engine and no dashboard: it starts a
+throwaway engine inside the command, on a SQLite database in a temporary directory that is
+deleted when the command exits (nothing is written to `./.dap/`), and talks to it in-process
+(no port is opened).
+
+```bash
+dap pipeline run examples/python-func-pipeline/example.pipeline-bundle.json \
+  --headless --approve-gates
+```
+
+Each node's status, cost and duration are printed as the run goes. Options:
+
+| Option | Effect |
+|---|---|
+| `--headless` | Throwaway in-process engine. Without it the command uses the engine at `--engine` (default `http://localhost:7333`, or `DAP_ENGINE_URL`) with `--token` / `DAP_AUTH_TOKEN` |
+| `--state KEY=VALUE` | Put `KEY` in `initial_state.extensions` (repeatable; a JSON value such as `3` or `[1,2]` is decoded) |
+| `--approve-gates` | Approve every human-approval gate automatically |
+| `--json` | Print `{"exit_code", "run", "state"}` with the run's final state on stdout; progress goes to stderr |
+| `--timeout SECONDS` | Give up after this long (default 3600) |
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| `0` | The run succeeded |
+| `1` | A node failed (named in the last line) or the run ended failed/aborted |
+| `2` | Bad input: an unreadable bundle, a bad `--state`, or a bundle or run the engine refused |
+| `3` | The run stopped at a human-approval gate and `--approve-gates` was not given |
+| `4` | The run did not finish within `--timeout` |
+
+In headless mode the bundle's own directory is put on the import path, so a `python-func`
+package that sits next to the bundle (like `examplepipe/` in the example) imports without an
+install. Agents that call a model need their provider keys in the environment, as with
+`dap start`.
+
+A GitHub Actions job that runs a bundle on every pull request:
+
+```yaml
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv tool install dap-cli
+      - name: Run the pipeline
+        run: |
+          dap pipeline run pipelines/review.pipeline-bundle.json \
+            --headless --approve-gates --json > run.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-run
+          path: run.json
+```
+
+The step fails when the command exits non-zero, so a failed node fails the job. `dap pipeline run`
+is new after `v0.3.0`: until the next release, install from the repository instead
+(`uv tool install "git+https://github.com/lagowski/dap#subdirectory=apps/cli"`).
+
 ## Logs
 
 Every node execution writes a row to `node_execution_logs` (in `./.dap/state.db`, or in

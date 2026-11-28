@@ -45,7 +45,10 @@ WORKDIR /build
 # because each pyproject.toml declares ``readme = "README.md"`` and
 # hatchling refuses to build without it.
 COPY pyproject.toml uv.lock README.md ./
-COPY apps/cli/pyproject.toml apps/cli/README.md ./apps/cli/
+# hatch_build.py is dap-cli's wheel build hook (it adds the ``dap demo``
+# example when examples/ is present; .dockerignore keeps it out, so the
+# hook is a no-op here). hatchling refuses to build if the file is missing.
+COPY apps/cli/pyproject.toml apps/cli/README.md apps/cli/hatch_build.py ./apps/cli/
 COPY apps/engine/pyproject.toml apps/engine/README.md ./apps/engine/
 COPY packages/prompt-dsl/pyproject.toml packages/prompt-dsl/README.md ./packages/prompt-dsl/
 COPY packages/runtimes/pyproject.toml packages/runtimes/README.md ./packages/runtimes/

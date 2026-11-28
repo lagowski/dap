@@ -21,7 +21,8 @@
     "defaults": {
       "max_attempts": 1,
       "budget_limit_usd": 0.0,
-      "approval_required_nodes": ["gate"]
+      "approval_required_nodes": ["gate"],
+      "requires_terminal_final_status": false
     }
   },
   "bundled_agents": {
